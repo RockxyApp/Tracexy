@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.amunx.tracexy.helper</string>
+    <key>CFBundleName</key>
+    <string>TracexyCaptureHelper</string>
+    <key>CFBundleExecutable</key>
+    <string>TracexyCaptureHelper</string>
+    <key>CFBundleVersion</key>
+    <string>$(TRACEXY_HELPER_BUILD)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(TRACEXY_HELPER_VERSION)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>TracexyHelperProtocolVersion</key>
+    <string>1</string>
+    <key>TracexyFamilyNamespace</key>
+    <string>com.amunx.tracexy</string>
+    <key>TracexyHelperBundleIdentifier</key>
+    <string>com.amunx.tracexy.helper</string>
+    <key>TracexyHelperMachServiceName</key>
+    <string>com.amunx.tracexy.helper</string>
+    <key>TracexyAllowedCallerIdentifiers</key>
+    <string>com.amunx.tracexy.community com.amunx.tracexy</string>
+    <key>TracexyLogSubsystem</key>
+    <string>com.amunx.tracexy.helper</string>
+</dict>
+</plist>

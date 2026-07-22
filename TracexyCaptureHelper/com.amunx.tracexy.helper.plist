@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.amunx.tracexy.helper</string>
+    <key>BundleProgram</key>
+    <string>Contents/Library/HelperTools/TracexyCaptureHelper</string>
+    <key>MachServices</key>
+    <dict>
+        <key>com.amunx.tracexy.helper</key>
+        <true/>
+    </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.amunx.tracexy.community</string>
+        <string>com.amunx.tracexy</string>
+    </array>
+</dict>
+</plist>

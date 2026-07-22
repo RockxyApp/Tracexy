@@ -1,0 +1,25 @@
+// TracexyBase.xcconfig — Generic Tracexy product identity.
+//
+// Included by product/channel-specific configs.
+// Defines the app-facing product name and neutral defaults. Public
+// Community shipping identity lives in CommunityBase.xcconfig.
+
+#include "Base.xcconfig"
+
+// Product naming
+TRACEXY_PRODUCT_NAME = Tracexy
+TRACEXY_EXECUTABLE_NAME = Tracexy
+TRACEXY_RELEASE_ARTIFACT_BASENAME = Tracexy
+
+// Neutral defaults; product/channel configs can override as needed.
+TRACEXY_APP_BUNDLE_ID = $(TRACEXY_FAMILY_NAMESPACE)
+TRACEXY_APP_NAMESPACE = $(TRACEXY_APP_BUNDLE_ID)
+TRACEXY_LOG_SUBSYSTEM = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_DEFAULTS_PREFIX = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_NOTIFICATION_PREFIX = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_APP_SUPPORT_DIRECTORY_NAME = $(TRACEXY_APP_NAMESPACE)
+
+// Helper trust allowlist — space-separated bundle identifiers of trusted callers.
+// Drives both AssociatedBundleIdentifiers in the generated launchd plist
+// and SecRequirement in ConnectionValidator.swift.
+TRACEXY_ALLOWED_CALLER_IDENTIFIERS = $(TRACEXY_APP_BUNDLE_ID)

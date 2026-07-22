@@ -1,0 +1,110 @@
+import SwiftUI
+
+/// First-run prompt that explains and installs the privileged capture helper.
+/// Shown automatically when the helper isn't installed yet.
+struct HelperInstallPromptView: View {
+    // MARK: Internal
+
+    var coordinator: MainContentCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            reasons
+            Divider()
+            footer
+        }
+        .frame(width: 580)
+        .background(.background)
+    }
+
+    // MARK: Private
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isInstalling = false
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 18) {
+            icon
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Install Helper Tool")
+                    .font(Theme.Typography.hero)
+                Text("Tracexy uses a small privileged helper so macOS can grant packet-capture access securely.")
+                    .font(Theme.Typography.surfaceTitle)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+    }
+
+    private var icon: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(LinearGradient(
+                colors: [Color(red: 0.13, green: 0.45, blue: 0.95), Color(red: 0.18, green: 0.30, blue: 0.78)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+            .frame(width: 84, height: 84)
+            .overlay(
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: Theme.Icon.heroLarge, weight: .medium))
+                    .foregroundStyle(.white)
+            )
+            .shadow(color: Color.blue.opacity(0.25), radius: 8, y: 3)
+    }
+
+    private var reasons: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Why install it?")
+                .font(.headline)
+            reasonRow("Capture live traffic without running Tracexy as root.")
+            reasonRow("Keep /dev/bpf* capture permissions repaired automatically.")
+            reasonRow("Stay local: the helper never inspects, stores, or uploads traffic.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            Button {
+                Task {
+                    isInstalling = true
+                    await coordinator.helper.install()
+                    isInstalling = false
+                    dismiss()
+                }
+            } label: {
+                if isInstalling {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Install Helper Tool", systemImage: "arrow.down.circle.fill")
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .buttonStyle(.borderedProminent)
+            .disabled(isInstalling)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+
+    private func reasonRow(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 11) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(Theme.Typography.title)
+            Text(text).font(Theme.Typography.surfaceTitle)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+#Preview {
+    HelperInstallPromptView(coordinator: MainContentCoordinator())
+}

@@ -1,0 +1,7 @@
+// LocalDev.xcconfig — Local development configuration.
+// Uses release identity so dev builds can communicate with the helper
+// without full identity isolation.
+
+#include "CommunityBase.xcconfig"
+
+TRACEXY_RELEASE_CHANNEL = local-dev

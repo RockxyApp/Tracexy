@@ -1,32 +1,83 @@
-//
-//  TracexyApp.swift
-//  Tracexy
-//
-//  Created by Stephen on 26/5/26.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
 struct TracexyApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    // MARK: Internal
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    static let focusSetEditorWindowID = "focus-set-editor"
+    static let noiseControlWindowID = "noise-control"
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView(coordinator: coordinator)
+                .frame(minWidth: 1_000, minHeight: 640)
+                .preferredColorScheme(colorScheme)
+                .onChange(of: appearance, initial: true) { _, newValue in
+                    // Force the preference app-wide at the AppKit level (menus,
+                    // panels, alerts, any future AppKit window) — not just SwiftUI
+                    // scene content. `initial: true` applies the saved preference
+                    // once at launch. Mirrors the sibling app's AppThemeApplier.
+                    AppThemeApplier.apply(AppAppearance(rawValue: newValue) ?? .system)
+                }
         }
-        .modelContainer(sharedModelContainer)
+        .defaultSize(width: 1_320, height: 840)
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified)
+        .commands {
+            // Grouping belongs in the View menu, not on a tab strip over the
+            // table. It is a way of looking at the list, not a place to go — and
+            // an always-visible control for a rarely-changed setting is chrome
+            // competing with the data it describes.
+            CommandGroup(after: .toolbar) {
+                Picker("Session Grouping", selection: Binding(
+                    get: { coordinator.activeWorkspace.sessionGrouping },
+                    set: { coordinator.activeWorkspace.sessionGrouping = $0 }
+                )) {
+                    Text("Group Into Actions").tag(SessionGrouping.action)
+                    Text("Show Every Session").tag(SessionGrouping.none)
+                }
+                .pickerStyle(.inline)
+                Divider()
+            }
+        }
+
+        // Focus / Noise managers open as real Mac windows (not sheets), sharing the
+        // one app-level coordinator so edits flow straight back to the main window.
+        Window("Edit Focus Set", id: Self.focusSetEditorWindowID) {
+            FocusSetEditorWindow(coordinator: coordinator)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 600, height: 420)
+        .windowResizability(.contentMinSize)
+
+        Window("Noise Control", id: Self.noiseControlWindowID) {
+            NoiseControlWindow(coordinator: coordinator)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 460, height: 560)
+        .windowResizability(.contentMinSize)
+
+        Settings {
+            SettingsView()
+                .preferredColorScheme(colorScheme)
+        }
+    }
+
+    // MARK: Private
+
+    /// The single shared coordinator, owned by the app so every scene (main
+    /// window + editor/manager windows) reads and mutates the same state.
+    ///
+    /// This is the composition root: the app's capacity limits are resolved
+    /// once, here, and handed down. No type below this line asks what build it
+    /// is running in.
+    @State private var coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+
+    /// The user's General → Appearance preference, applied app-wide. `nil` follows
+    /// the system.
+    @AppStorage(SettingsKeys.appearance) private var appearance = AppAppearance.system.rawValue
+
+    private var colorScheme: ColorScheme? {
+        AppAppearance(rawValue: appearance)?.colorScheme
     }
 }

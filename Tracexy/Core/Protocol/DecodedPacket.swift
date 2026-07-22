@@ -1,0 +1,103 @@
+import Foundation
+
+// MARK: - DecodedField
+
+nonisolated struct DecodedField: Hashable {
+    // MARK: Lifecycle
+
+    init(name: String, value: String, byteRange: Range<Int>? = nil) {
+        self.name = name
+        self.value = value
+        self.byteRange = byteRange
+    }
+
+    // MARK: Internal
+
+    let name: String
+    let value: String
+    /// Absolute byte range of this field within the frame's `rawBytes`, for
+    /// hex highlighting. `nil` when the field isn't backed by contiguous bytes.
+    var byteRange: Range<Int>?
+
+    /// Identity is name + value; `byteRange` is positional metadata and is
+    /// deliberately excluded so golden-fixture equality in tests stays stable.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.name == rhs.name && lhs.value == rhs.value
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(value)
+    }
+}
+
+// MARK: - DecodedLayer
+
+/// One protocol layer in the decode tree (Eth → IP → TCP → TLS …).
+nonisolated struct DecodedLayer: Hashable, Identifiable {
+    // MARK: Lifecycle
+
+    init(
+        proto: ProtocolKind,
+        title: String,
+        summary: String = "",
+        fields: [DecodedField] = [],
+        children: [DecodedLayer] = [],
+        byteRange: Range<Int>? = nil
+    ) {
+        self.proto = proto
+        self.title = title
+        self.summary = summary
+        self.fields = fields
+        self.children = children
+        self.byteRange = byteRange
+    }
+
+    // MARK: Internal
+
+    let id = UUID()
+    let proto: ProtocolKind
+    let title: String
+    var summary: String
+    var fields: [DecodedField]
+    var children: [DecodedLayer]
+    /// Absolute byte range of this whole layer within the frame's `rawBytes`.
+    var byteRange: Range<Int>?
+}
+
+// MARK: - DecodedPacket
+
+nonisolated struct DecodedPacket {
+    // MARK: Lifecycle
+
+    init(timestamp: Date, originalLength: Int) {
+        self.timestamp = timestamp
+        self.originalLength = originalLength
+        layers = []
+        dnsAnswers = []
+    }
+
+    // MARK: Internal
+
+    var timestamp: Date
+    var originalLength: Int
+    /// The captured on-wire bytes of this packet (≤ snaplen), retained for the
+    /// inspector's hex pane. Empty if not built from a real frame.
+    var rawBytes: [UInt8] = []
+    /// Originating process (from pktap), propagated to the session. nil = unknown.
+    var processName: String?
+    var layers: [DecodedLayer]
+    var fiveTuple: FiveTuple?
+    var transport: ProtocolKind?
+    var appProtocol: ProtocolKind?
+    var sni: String?
+    var dnsQuery: String?
+    var dnsAnswers: [String]
+    var sourceEndpoint: IPEndpoint?
+    var destinationEndpoint: IPEndpoint?
+
+    /// Protocol stack outer→inner, e.g. [.tcp, .tls]. Used by the session list.
+    var protocolStack: [ProtocolKind] {
+        layers.map(\.proto).filter { $0 != .ethernet }
+    }
+}

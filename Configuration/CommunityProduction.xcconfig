@@ -1,0 +1,5 @@
+// CommunityProduction.xcconfig — Public production release channel.
+
+#include "CommunityBase.xcconfig"
+
+TRACEXY_RELEASE_CHANNEL = community-prod

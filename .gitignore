@@ -1,0 +1,67 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local workspace metadata — editor and agent configuration is per-machine and
+# never part of the shipped source.
+.claude/
+.codex/
+.agents/
+.cursor/
+CLAUDE.md
+AGENTS.md
+
+# Signing and local build configuration. Copy Configuration/Developer.xcconfig.template
+# to Configuration/Developer.xcconfig and fill in your own team ID.
+Configuration/Developer.xcconfig
+Secrets.xcconfig
+*.pem
+*.p12
+*.mobileprovision
+
+# Maintainer automation — not part of the published source.
+scripts/
+RELEASE.md
+
+# Release artifacts
+releases/
+signatures/
+*.dmg
+*.dmg.sha256
+*.xcarchive
+*.zip
+*.tar.gz
+
+# Tooling
+*.log
+.swiftformat.lock

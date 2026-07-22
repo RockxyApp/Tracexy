@@ -6,7 +6,38 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		02A37B65186CD80882C9CF4D /* HelperInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F733C1CA84E6904417326EC /* HelperInfo.swift */; };
+		11FE07C54750260133EEEEF1 /* PcapCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */; };
+		13E2CF9CD158831FA4C23219 /* TracexyBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */; };
+		1CEFE5E60B291EBDCA6641F0 /* TracexyIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */; };
+		2A82E07979C2756532116FE3 /* CaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C853626AE74F0B476E6A1681 /* CaptureService.swift */; };
+		2FE34D4B30F56204A4417791 /* ConnectionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */; };
+		31F74C17C27AA7E196B79BDF /* IdleExitMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41EBD37FC023FED06FA5A0CB /* IdleExitMonitor.swift */; };
+		34DF3AC728DA6A7E39C2F270 /* TracexyHelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */; };
+		4CCF21553EC9D3F333DA98AA /* com.amunx.tracexy.helper.plist in Copy LaunchDaemon Plist */ = {isa = PBXBuildFile; fileRef = C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */; };
+		5524C528A8FE1BF6D5CB984E /* HelperInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F733C1CA84E6904417326EC /* HelperInfo.swift */; };
+		60565C582957D61CB3F79879 /* BinaryValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B26CD17054C8F0C53702EE /* BinaryValidator.swift */; };
+		9048387235F516821C29B3A9 /* CallerValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */; };
+		93EA27962EC577D4C8AD8F06 /* CallerValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */; };
+		99173077B07D2BE1025B4483 /* TracexyCaptureHelper in Embed Helper Tool */ = {isa = PBXBuildFile; fileRef = 62006F83A0AACCB9789CE845 /* TracexyCaptureHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A08548034A631A028668479D /* TracexyIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */; };
+		A8FBD1156475B2F99998E12E /* TracexyBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */; };
+		B387C745BF73D514FDE0E2E0 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41E98779F9050D1F8C6D2AB4 /* Cocoa.framework */; };
+		C1480FB75AB9045A17ACEB39 /* HelperDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EC4FF1B6BC48A8692E136CD /* HelperDelegate.swift */; };
+		CF7D8469E919D20EA77D3311 /* ConnectionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */; };
+		DE693E218EEFA535EF66011C /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1213CAE9676B88FE7D6069 /* main.swift */; };
+		E6F73811F50920809ECD92D4 /* TracexyHelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		98597D8F210D6E1A5F058608 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DCD3357C2FC5555D003CEC6D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EFE1796E2CC38F94647452D8;
+			remoteInfo = TracexyCaptureHelper;
+		};
 		DCD335942FC5555F003CEC6D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = DCD3357C2FC5555D003CEC6D /* Project object */;
@@ -23,10 +54,59 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		4F859D2689E8E705CC81EF18 /* Embed Helper Tool */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/HelperTools;
+			dstSubfolderSpec = 1;
+			files = (
+				99173077B07D2BE1025B4483 /* TracexyCaptureHelper in Embed Helper Tool */,
+			);
+			name = "Embed Helper Tool";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6743245B35AE4167CE846A3D /* Copy LaunchDaemon Plist */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchDaemons;
+			dstSubfolderSpec = 1;
+			files = (
+				4CCF21553EC9D3F333DA98AA /* com.amunx.tracexy.helper.plist in Copy LaunchDaemon Plist */,
+			);
+			name = "Copy LaunchDaemon Plist";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyBrand.swift; sourceTree = "<group>"; };
+		3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyHelperProtocol.swift; sourceTree = "<group>"; };
+		3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionValidator.swift; sourceTree = "<group>"; };
+		3F733C1CA84E6904417326EC /* HelperInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HelperInfo.swift; sourceTree = "<group>"; };
+		41E98779F9050D1F8C6D2AB4 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		41EBD37FC023FED06FA5A0CB /* IdleExitMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IdleExitMonitor.swift; sourceTree = "<group>"; };
+		5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallerValidation.swift; sourceTree = "<group>"; };
+		62006F83A0AACCB9789CE845 /* TracexyCaptureHelper */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = text; path = TracexyCaptureHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		7EC4FF1B6BC48A8692E136CD /* HelperDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HelperDelegate.swift; sourceTree = "<group>"; };
+		9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyIdentity.swift; sourceTree = "<group>"; };
+		A8B26CD17054C8F0C53702EE /* BinaryValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BinaryValidator.swift; sourceTree = "<group>"; };
+		C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = com.amunx.tracexy.helper.plist; sourceTree = "<group>"; };
+		C853626AE74F0B476E6A1681 /* CaptureService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureService.swift; sourceTree = "<group>"; };
 		DCD335842FC5555D003CEC6D /* Tracexy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tracexy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DCD335932FC5555F003CEC6D /* TracexyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TracexyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DCD3359D2FC5555F003CEC6D /* TracexyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TracexyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PcapCapture.swift; sourceTree = "<group>"; };
+		FE1213CAE9676B88FE7D6069 /* main.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		CF60000000000000000000A1 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A2 /* CommunityBase.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CommunityBase.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A3 /* CommunityProduction.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CommunityProduction.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A4 /* CommunityStaging.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CommunityStaging.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A5 /* Developer.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Developer.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A6 /* Developer.xcconfig.template */ = {isa = PBXFileReference; lastKnownFileType = text; path = Developer.xcconfig.template; sourceTree = "<group>"; };
+		CF60000000000000000000A7 /* LocalDev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = LocalDev.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A8 /* TracexyBase.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TracexyBase.xcconfig; sourceTree = "<group>"; };
+		CF60000000000000000000A9 /* Versions.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Versions.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -48,6 +128,14 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D9EFEAC4B5223E0AB18E278E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B387C745BF73D514FDE0E2E0 /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DCD335812FC5555D003CEC6D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -72,6 +160,65 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		CF60000000000000000000C1 /* Configuration */ = {
+			isa = PBXGroup;
+			children = (
+				CF60000000000000000000A1 /* Base.xcconfig */,
+				CF60000000000000000000A8 /* TracexyBase.xcconfig */,
+				CF60000000000000000000A2 /* CommunityBase.xcconfig */,
+				CF60000000000000000000A3 /* CommunityProduction.xcconfig */,
+				CF60000000000000000000A4 /* CommunityStaging.xcconfig */,
+				CF60000000000000000000A9 /* Versions.xcconfig */,
+				CF60000000000000000000A5 /* Developer.xcconfig */,
+				CF60000000000000000000A6 /* Developer.xcconfig.template */,
+				CF60000000000000000000A7 /* LocalDev.xcconfig */,
+			);
+			path = Configuration;
+			sourceTree = "<group>";
+		};
+		169099A7F650B4FEC9BDEC1D /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				41E98779F9050D1F8C6D2AB4 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		20A9F1445B0F470950BFD2DB /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */,
+				3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */,
+				3F733C1CA84E6904417326EC /* HelperInfo.swift */,
+				09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */,
+				3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */,
+				9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		29354144A213E25B28908AF1 /* TracexyCaptureHelper */ = {
+			isa = PBXGroup;
+			children = (
+				A8B26CD17054C8F0C53702EE /* BinaryValidator.swift */,
+				C853626AE74F0B476E6A1681 /* CaptureService.swift */,
+				7EC4FF1B6BC48A8692E136CD /* HelperDelegate.swift */,
+				41EBD37FC023FED06FA5A0CB /* IdleExitMonitor.swift */,
+				EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */,
+				FE1213CAE9676B88FE7D6069 /* main.swift */,
+				C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */,
+			);
+			path = TracexyCaptureHelper;
+			sourceTree = "<group>";
+		};
+		7A55B8FEA77BBBB8063D08BC /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				169099A7F650B4FEC9BDEC1D /* OS X */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		DCD3357B2FC5555D003CEC6D = {
 			isa = PBXGroup;
 			children = (
@@ -79,6 +226,10 @@
 				DCD335962FC5555F003CEC6D /* TracexyTests */,
 				DCD335A02FC5555F003CEC6D /* TracexyUITests */,
 				DCD335852FC5555D003CEC6D /* Products */,
+				7A55B8FEA77BBBB8063D08BC /* Frameworks */,
+				29354144A213E25B28908AF1 /* TracexyCaptureHelper */,
+				20A9F1445B0F470950BFD2DB /* Shared */,
+				CF60000000000000000000C1 /* Configuration */,
 			);
 			sourceTree = "<group>";
 		};
@@ -88,6 +239,7 @@
 				DCD335842FC5555D003CEC6D /* Tracexy.app */,
 				DCD335932FC5555F003CEC6D /* TracexyTests.xctest */,
 				DCD3359D2FC5555F003CEC6D /* TracexyUITests.xctest */,
+				62006F83A0AACCB9789CE845 /* TracexyCaptureHelper */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -102,17 +254,18 @@
 				DCD335802FC5555D003CEC6D /* Sources */,
 				DCD335812FC5555D003CEC6D /* Frameworks */,
 				DCD335822FC5555D003CEC6D /* Resources */,
+				4F859D2689E8E705CC81EF18 /* Embed Helper Tool */,
+				6743245B35AE4167CE846A3D /* Copy LaunchDaemon Plist */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3CC7676E195DE8823F188877 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				DCD335862FC5555D003CEC6D /* Tracexy */,
 			);
 			name = Tracexy;
-			packageProductDependencies = (
-			);
 			productName = Tracexy;
 			productReference = DCD335842FC5555D003CEC6D /* Tracexy.app */;
 			productType = "com.apple.product-type.application";
@@ -134,8 +287,6 @@
 				DCD335962FC5555F003CEC6D /* TracexyTests */,
 			);
 			name = TracexyTests;
-			packageProductDependencies = (
-			);
 			productName = TracexyTests;
 			productReference = DCD335932FC5555F003CEC6D /* TracexyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -157,11 +308,25 @@
 				DCD335A02FC5555F003CEC6D /* TracexyUITests */,
 			);
 			name = TracexyUITests;
-			packageProductDependencies = (
-			);
 			productName = TracexyUITests;
 			productReference = DCD3359D2FC5555F003CEC6D /* TracexyUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		EFE1796E2CC38F94647452D8 /* TracexyCaptureHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9BECA5FE44B88FCC5C54ECCE /* Build configuration list for PBXNativeTarget "TracexyCaptureHelper" */;
+			buildPhases = (
+				0B63B95D53F6452925CE2ABF /* Sources */,
+				D9EFEAC4B5223E0AB18E278E /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TracexyCaptureHelper;
+			productName = TracexyCaptureHelper;
+			productReference = 62006F83A0AACCB9789CE845 /* TracexyCaptureHelper */;
+			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
 
@@ -203,6 +368,7 @@
 				DCD335832FC5555D003CEC6D /* Tracexy */,
 				DCD335922FC5555F003CEC6D /* TracexyTests */,
 				DCD3359C2FC5555F003CEC6D /* TracexyUITests */,
+				EFE1796E2CC38F94647452D8 /* TracexyCaptureHelper */,
 			);
 		};
 /* End PBXProject section */
@@ -232,10 +398,35 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0B63B95D53F6452925CE2ABF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				60565C582957D61CB3F79879 /* BinaryValidator.swift in Sources */,
+				2A82E07979C2756532116FE3 /* CaptureService.swift in Sources */,
+				C1480FB75AB9045A17ACEB39 /* HelperDelegate.swift in Sources */,
+				31F74C17C27AA7E196B79BDF /* IdleExitMonitor.swift in Sources */,
+				11FE07C54750260133EEEEF1 /* PcapCapture.swift in Sources */,
+				DE693E218EEFA535EF66011C /* main.swift in Sources */,
+				93EA27962EC577D4C8AD8F06 /* CallerValidation.swift in Sources */,
+				2FE34D4B30F56204A4417791 /* ConnectionValidator.swift in Sources */,
+				02A37B65186CD80882C9CF4D /* HelperInfo.swift in Sources */,
+				A8FBD1156475B2F99998E12E /* TracexyBrand.swift in Sources */,
+				34DF3AC728DA6A7E39C2F270 /* TracexyHelperProtocol.swift in Sources */,
+				A08548034A631A028668479D /* TracexyIdentity.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DCD335802FC5555D003CEC6D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9048387235F516821C29B3A9 /* CallerValidation.swift in Sources */,
+				CF7D8469E919D20EA77D3311 /* ConnectionValidator.swift in Sources */,
+				5524C528A8FE1BF6D5CB984E /* HelperInfo.swift in Sources */,
+				13E2CF9CD158831FA4C23219 /* TracexyBrand.swift in Sources */,
+				E6F73811F50920809ECD92D4 /* TracexyHelperProtocol.swift in Sources */,
+				1CEFE5E60B291EBDCA6641F0 /* TracexyIdentity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -256,6 +447,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		3CC7676E195DE8823F188877 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = TracexyCaptureHelper;
+			target = EFE1796E2CC38F94647452D8 /* TracexyCaptureHelper */;
+			targetProxy = 98597D8F210D6E1A5F058608 /* PBXContainerItemProxy */;
+		};
 		DCD335952FC5555F003CEC6D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = DCD335832FC5555D003CEC6D /* Tracexy */;
@@ -269,6 +466,44 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		71B0CA68AC062E8862C891D9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TracexyCaptureHelper/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.helper;
+				PRODUCT_NAME = TracexyCaptureHelper;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CCB09540C43D4A78F8BFBB0D /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TracexyCaptureHelper/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.helper;
+				PRODUCT_NAME = TracexyCaptureHelper;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		DCD335A52FC5555F003CEC6D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -391,14 +626,15 @@
 		};
 		DCD335A82FC5555F003CEC6D /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = "$(TRACEXY_APP_BUILD)";
 				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -408,8 +644,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.Tracexy;
+				MARKETING_VERSION = "$(TRACEXY_APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.community;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -423,14 +659,15 @@
 		};
 		DCD335A92FC5555F003CEC6D /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = "$(TRACEXY_APP_BUILD)";
 				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -440,8 +677,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.Tracexy;
+				MARKETING_VERSION = "$(TRACEXY_APP_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.community;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -536,6 +773,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		9BECA5FE44B88FCC5C54ECCE /* Build configuration list for PBXNativeTarget "TracexyCaptureHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CCB09540C43D4A78F8BFBB0D /* Release */,
+				71B0CA68AC062E8862C891D9 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		DCD3357F2FC5555D003CEC6D /* Build configuration list for PBXProject "Tracexy" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

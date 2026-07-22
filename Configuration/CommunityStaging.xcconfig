@@ -1,0 +1,6 @@
+// CommunityStaging.xcconfig — Staging/beta channel for release candidates.
+// Same release identity as production — promotes the same build without rebuilding.
+
+#include "CommunityBase.xcconfig"
+
+TRACEXY_RELEASE_CHANNEL = community-stag

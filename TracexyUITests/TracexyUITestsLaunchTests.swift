@@ -1,14 +1,6 @@
-//
-//  TracexyUITestsLaunchTests.swift
-//  TracexyUITests
-//
-//  Created by Stephen on 26/5/26.
-//
-
 import XCTest
 
 final class TracexyUITestsLaunchTests: XCTestCase {
-
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
     }
@@ -18,7 +10,7 @@ final class TracexyUITestsLaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunch() throws {
+    func testLaunch() {
         let app = XCUIApplication()
         app.launch()
 

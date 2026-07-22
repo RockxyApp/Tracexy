@@ -1,0 +1,131 @@
+import Foundation
+
+// MARK: - CapturedFrame
+
+/// One captured packet read from a `.pcap` file: the captured bytes, its
+/// timestamp, and the original on-wire length (which may exceed the captured
+/// length when a snaplen truncated the packet).
+nonisolated struct CapturedFrame {
+    // MARK: Lifecycle
+
+    init(bytes: [UInt8], timestamp: Date, originalLength: Int, processName: String? = nil) {
+        self.bytes = bytes
+        self.timestamp = timestamp
+        self.originalLength = originalLength
+        self.processName = processName
+    }
+
+    // MARK: Internal
+
+    let bytes: [UInt8]
+    let timestamp: Date
+    let originalLength: Int
+    /// Originating process name from pktap, when capturing live (nil = unknown).
+    var processName: String?
+}
+
+// MARK: - PcapReader
+
+/// Reader for the classic libpcap (`.pcap`) capture file format.
+///
+/// This handles the *classic* format only (24-byte global header + 16-byte
+/// per-packet records), not the newer pcapng block format. Both byte orders and
+/// the microsecond / nanosecond timestamp variants are supported.
+nonisolated enum PcapReader {
+    // MARK: Internal
+
+    /// Sentinel link type returned when a file declares one we don't map.
+    static let linkTypeUnknown: UInt32 = 0xFFFFFFFF
+
+    /// Parse a classic `.pcap` file's bytes.
+    ///
+    /// - Returns: the file's link-layer type and every fully captured frame.
+    /// - Throws: `PacketError.malformed` on a bad magic or truncated global header.
+    static func read(_ data: [UInt8]) throws -> (linkType: UInt32, frames: [CapturedFrame]) {
+        let buffer = PacketBuffer(data)
+        guard buffer.length >= globalHeaderSize else {
+            throw PacketError.malformed("pcap: file shorter than 24-byte global header")
+        }
+
+        let rawMagic = try buffer.u32(0)
+        guard let format = MagicFormat(rawMagic: rawMagic) else {
+            throw PacketError.malformed(String(format: "pcap: unknown magic 0x%08X", rawMagic))
+        }
+
+        let linkType = format.littleEndian ? try buffer.u32le(20) : try buffer.u32(20)
+
+        var frames: [CapturedFrame] = []
+        var offset = globalHeaderSize
+        while offset + recordHeaderSize <= buffer.length {
+            let tsSec = format.littleEndian ? try buffer.u32le(offset) : try buffer.u32(offset)
+            let tsFrac = format.littleEndian ? try buffer.u32le(offset + 4) : try buffer.u32(offset + 4)
+            let inclLen = try Int(format.littleEndian ? buffer.u32le(offset + 8) : buffer.u32(offset + 8))
+            let origLen = try Int(format.littleEndian ? buffer.u32le(offset + 12) : buffer.u32(offset + 12))
+
+            let dataStart = offset + recordHeaderSize
+            // A truncated final record (declared length exceeds what remains): stop cleanly.
+            guard inclLen >= 0, dataStart + inclLen <= buffer.length else {
+                break
+            }
+
+            let bytes = try buffer.bytes(dataStart, inclLen)
+            frames.append(CapturedFrame(
+                bytes: bytes,
+                timestamp: format.timestamp(seconds: tsSec, fraction: tsFrac),
+                originalLength: origLen
+            ))
+            offset = dataStart + inclLen
+        }
+
+        return (linkType, frames)
+    }
+
+    /// Convenience: read and parse a classic `.pcap` file from a URL.
+    static func read(contentsOf url: URL) throws -> (linkType: UInt32, frames: [CapturedFrame]) {
+        let data = try Data(contentsOf: url)
+        return try read([UInt8](data))
+    }
+
+    // MARK: Private
+
+    private static let globalHeaderSize = 24
+    private static let recordHeaderSize = 16
+}
+
+// MARK: - MagicFormat
+
+/// The byte order and timestamp resolution implied by a global header's magic.
+nonisolated private struct MagicFormat {
+    // MARK: Lifecycle
+
+    init?(rawMagic: UInt32) {
+        switch rawMagic {
+        case 0xA1B2C3D4: // big-endian, microsecond
+            littleEndian = false
+            nanosecond = false
+        case 0xD4C3B2A1: // little-endian, microsecond
+            littleEndian = true
+            nanosecond = false
+        case 0xA1B23C4D: // big-endian, nanosecond
+            littleEndian = false
+            nanosecond = true
+        case 0x4D3CB2A1: // little-endian, nanosecond
+            littleEndian = true
+            nanosecond = true
+        default:
+            return nil
+        }
+    }
+
+    // MARK: Internal
+
+    let littleEndian: Bool
+    let nanosecond: Bool
+
+    /// Convert a record's seconds + fractional field into a `Date`.
+    func timestamp(seconds: UInt32, fraction: UInt32) -> Date {
+        let denominator = nanosecond ? 1_000_000_000.0 : 1_000_000.0
+        let interval = Double(seconds) + Double(fraction) / denominator
+        return Date(timeIntervalSince1970: interval)
+    }
+}

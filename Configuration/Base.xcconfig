@@ -1,0 +1,36 @@
+// Base.xcconfig — Family-scoped shared build defaults.
+//
+// Contains values that are the same across all product identities and
+// release channels: deployment target, family namespace, helper identity,
+// shared prefixes, and keychain access group.
+//
+// Product-facing identity (name, bundle ID, app namespace) lives in
+// TracexyBase.xcconfig, which includes this file.
+//
+// Version/build numbers live in Versions.xcconfig (included below).
+//
+// NOTE: MACOSX_DEPLOYMENT_TARGET here is a family floor. Per-target values
+// set directly in project.pbxproj take precedence over this xcconfig.
+
+#include "Versions.xcconfig"
+
+// Toolchain / deployment
+MACOSX_DEPLOYMENT_TARGET = 14.0
+SWIFT_VERSION = 5.0
+
+// Family namespace and shared identity
+TRACEXY_FAMILY_NAMESPACE = com.amunx.tracexy
+TRACEXY_SHARED_SUPPORT_DIRECTORY_NAME = $(TRACEXY_FAMILY_NAMESPACE)
+TRACEXY_SHARED_UTTYPE_PREFIX = $(TRACEXY_FAMILY_NAMESPACE)
+
+// Helper identity and service names (explicit, not derived from app bundle ID)
+TRACEXY_HELPER_BUNDLE_ID = $(TRACEXY_FAMILY_NAMESPACE).helper
+TRACEXY_HELPER_MACH_SERVICE_NAME = $(TRACEXY_HELPER_BUNDLE_ID)
+TRACEXY_HELPER_PLIST_NAME = $(TRACEXY_HELPER_BUNDLE_ID).plist
+TRACEXY_HELPER_BINARY_NAME = TracexyCaptureHelper
+TRACEXY_HELPER_TOOLS_SUBPATH = Library/HelperTools
+TRACEXY_HELPER_BINARY_SUBPATH = $(TRACEXY_HELPER_TOOLS_SUBPATH)/$(TRACEXY_HELPER_BINARY_NAME)
+TRACEXY_HELPER_BUNDLE_PROGRAM = Contents/$(TRACEXY_HELPER_BINARY_SUBPATH)
+
+// Keychain access group (shared across product identities)
+TRACEXY_KEYCHAIN_ACCESS_GROUP = $(TRACEXY_FAMILY_NAMESPACE).shared
