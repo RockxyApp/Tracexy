@@ -19,6 +19,8 @@ protocol AppPolicy: Sendable {
     var maxFocusSets: Int { get }
     /// Maximum pinned favorite hosts.
     var maxPinnedHosts: Int { get }
+    /// Maximum advanced session-filter rule rows in a single workspace.
+    var maxSessionFilterRules: Int { get }
 }
 
 extension AppPolicy {
@@ -33,6 +35,10 @@ extension AppPolicy {
     var maxPinnedHosts: Int {
         5
     }
+
+    var maxSessionFilterRules: Int {
+        12
+    }
 }
 
 // MARK: - DefaultAppPolicy
@@ -44,4 +50,5 @@ struct DefaultAppPolicy: AppPolicy {
     let maxWorkspaceTabs = 8
     let maxFocusSets = 5
     let maxPinnedHosts = 5
+    let maxSessionFilterRules = 12
 }

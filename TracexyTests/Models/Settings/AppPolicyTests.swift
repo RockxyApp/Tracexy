@@ -10,6 +10,23 @@ private struct TestPolicy: AppPolicy {
     var maxWorkspaceTabs = 8
     var maxFocusSets = 5
     var maxPinnedHosts = 5
+    var maxSessionFilterRules = 12
+}
+
+// MARK: - AppPolicyDefaultsTests
+
+@Suite("App policy defaults")
+struct AppPolicyDefaultsTests {
+    @Test("The shipping baseline caps advanced filter rules at 12")
+    func defaultSessionFilterRuleCap() {
+        #expect(DefaultAppPolicy().maxSessionFilterRules == 12)
+    }
+
+    @Test("The protocol extension supplies the same rule cap when a policy omits it")
+    func extensionSuppliesRuleCap() {
+        struct Bare: AppPolicy {}
+        #expect(Bare().maxSessionFilterRules == 12)
+    }
 }
 
 // MARK: - FocusPolicyGateTests

@@ -59,6 +59,13 @@ final class WorkspaceState: Identifiable {
 
     /// Filtering
     var filterText: String = ""
+    /// Which session attribute(s) the search box matches against. Defaults to
+    /// spanning everything the list shows.
+    var searchField: SessionSearchField = .allFields
+    /// The search box has its own on/off switch, independent of whether it holds
+    /// text. Turning it off keeps the typed query but stops it constraining the
+    /// list — and a disabled search does not count as an active filter.
+    var isSearchEnabled: Bool = true
     /// Active category tabs (protocol group + status group). Empty = "All".
     var categoryFilters: Set<SessionFilterCategory> = []
     /// Sidebar drill-down scopes (a single host / process / IP selected in the sidebar).
@@ -80,9 +87,15 @@ final class WorkspaceState: Identifiable {
         SessionFilterRuleEvaluator.activeRules(in: filterRules)
     }
 
-    /// True when any user filter (text, category tabs, sidebar scope, advanced rules) is active.
+    /// Whether the search box is currently constraining the list: it must be
+    /// switched on *and* hold text. A disabled search never counts as active.
+    var isSearchActive: Bool {
+        isSearchEnabled && !filterText.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// True when any user filter (search, category tabs, sidebar scope, advanced rules) is active.
     var hasActiveFilters: Bool {
-        !filterText.trimmingCharacters(in: .whitespaces).isEmpty
+        isSearchActive
             || !categoryFilters.isEmpty
             || hostFilter != nil
             || processFilter != nil

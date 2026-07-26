@@ -163,8 +163,15 @@ final class MainContentCoordinator {
         let ws = activeWorkspace
         let protocolFilter = ws.sidebarSelection.protocolFilter
         let categories = ws.categoryFilters
-        let query = ws.filterText.trimmingCharacters(in: .whitespaces).lowercased()
+        // A disabled search keeps its text but stops constraining the list.
+        let query = ws.isSearchActive
+            ? ws.filterText.trimmingCharacters(in: .whitespaces).lowercased()
+            : ""
+        let searchField = ws.searchField
         let advancedRules = ws.activeFilterRules
+        // Compile the advanced rules' regex patterns once for the whole pass,
+        // not once per session.
+        let preparedRules = SessionFilterRuleEvaluator.prepared(advancedRules)
 
         return sessions.filter { session in
             // Noise Control (sidebar Focus) hides muted hosts/protocols everywhere.
@@ -177,9 +184,7 @@ final class MainContentCoordinator {
             if let proto = protocolFilter, !session.protocolStack.contains(proto) {
                 return false
             }
-            // Quick-filter chips are OR-ed together (TCPViewer semantics): a session
-            // passes if it matches ANY active chip. Empty set ("All") = no constraint.
-            if !categories.isEmpty, !categories.contains(where: { matches(session, category: $0) }) {
+            if !Self.categoryFilterMatches(session, categories: categories) {
                 return false
             }
             if let host = ws.hostFilter, session.host != host {
@@ -194,16 +199,11 @@ final class MainContentCoordinator {
             {
                 return false
             }
-            if !query.isEmpty {
-                let haystack = ([session.host, session.sourceEndpoint, session.destinationEndpoint]
-                    + session.protocolStack.map(\.label)
-                    + [session.processName ?? ""]).joined(separator: " ").lowercased()
-                if !haystack.contains(query) {
-                    return false
-                }
+            if !query.isEmpty, !searchField.haystack(in: session).contains(query) {
+                return false
             }
             // Advanced rule builder: AND/OR rows, applied on top of everything above.
-            if !advancedRules.isEmpty, !SessionFilterRuleEvaluator.matches(session, rules: advancedRules) {
+            if !advancedRules.isEmpty, !preparedRules.matches(session) {
                 return false
             }
             return true
@@ -351,8 +351,7 @@ final class MainContentCoordinator {
             .sorted { $0.count > $1.count }
     }
 
-    /// Coarse capture state for the toolbar status capsule (Tracexy's analog of
-    /// the sibling app's `ProxyDisplayState`).
+    /// Coarse capture state for the toolbar status capsule.
     var captureDisplayState: CaptureDisplayState {
         if captureError != nil {
             return .error
@@ -507,6 +506,44 @@ final class MainContentCoordinator {
     /// the cap is visible before the user commits to a name and rules.
     var canAddFocusSet: Bool {
         focusGate.canInsertFocusSet(into: focusSets)
+    }
+
+    /// Whether a session matches a single quick-filter chip: a protocol chip
+    /// matches anywhere in the decoded stack; `Errors` matches *exactly* an
+    /// error session (a warning is not an error and must not be swept in).
+    nonisolated static func categoryMatches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
+        if category == .errors {
+            return session.status == .error
+        }
+        if let kind = category.protocolKind {
+            return session.protocolStack.contains(kind)
+        }
+        return true
+    }
+
+    /// Quick-category group semantics, in one testable place: selected protocol
+    /// chips are OR-ed within their group, selected status chips are OR-ed within
+    /// theirs, and the two groups combine with AND. An empty set ("All") is no
+    /// constraint.
+    nonisolated static func categoryFilterMatches(
+        _ session: SessionSummary,
+        categories: Set<SessionFilterCategory>
+    )
+        -> Bool
+    {
+        let protocolCategories = categories.filter { !$0.isStatusFilter }
+        let statusCategories = categories.filter(\.isStatusFilter)
+        if !protocolCategories.isEmpty,
+           !protocolCategories.contains(where: { categoryMatches(session, category: $0) })
+        {
+            return false
+        }
+        if !statusCategories.isEmpty,
+           !statusCategories.contains(where: { categoryMatches(session, category: $0) })
+        {
+            return false
+        }
+        return true
     }
 
     // MARK: Correlation
@@ -765,16 +802,21 @@ final class MainContentCoordinator {
     /// A save that would exceed the focus-set cap leaves the stored sets
     /// untouched and reports why through ``policyNotice``.
     func saveFocusSet(_ set: FocusSet) {
+        var normalizedSet = set
+        normalizedSet.rules = SessionFilterRule.normalized(
+            set.rules,
+            limit: policy.maxSessionFilterRules
+        )
         do {
-            try focusGate.validateSavingFocusSet(set, into: focusSets)
+            try focusGate.validateSavingFocusSet(normalizedSet, into: focusSets)
         } catch {
             policyNotice = error.localizedDescription
             return
         }
-        if let index = focusSets.firstIndex(where: { $0.id == set.id }) {
-            focusSets[index] = set
+        if let index = focusSets.firstIndex(where: { $0.id == normalizedSet.id }) {
+            focusSets[index] = normalizedSet
         } else {
-            focusSets.append(set)
+            focusSets.append(normalizedSet)
         }
         policyNotice = nil
         persistFocusSets()
@@ -787,7 +829,10 @@ final class MainContentCoordinator {
         ws.hostFilter = nil
         ws.processFilter = nil
         ws.ipFilter = nil
-        ws.filterRules = set.rules.isEmpty ? [SessionFilterRule()] : set.rules
+        // A saved set may hold more rows than this build allows (it was saved on
+        // a different build, or the cap changed). Clamp to capacity, and never
+        // leave the builder with zero rows.
+        ws.filterRules = SessionFilterRule.normalized(set.rules, limit: policy.maxSessionFilterRules)
         ws.isFilterBarVisible = true
         ws.isAdvancedFilterVisible = true
     }
@@ -910,17 +955,10 @@ final class MainContentCoordinator {
         visibleSessions.filter { $0.protocolStack.contains(proto) }.count
     }
 
-    /// Whether a session matches a single quick-filter chip (TCPViewer semantics:
-    /// a protocol chip matches anywhere in the decoded stack; Errors matches any
-    /// non-OK session).
+    /// Whether a session matches a single quick-filter chip. Delegates to the
+    /// pure ``categoryMatches(_:category:)`` so the decision lives in one place.
     func matches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        if category == .errors {
-            return session.status != .ok
-        }
-        if let kind = category.protocolKind {
-            return session.protocolStack.contains(kind)
-        }
-        return true
+        Self.categoryMatches(session, category: category)
     }
 
     // MARK: Private
@@ -1212,8 +1250,7 @@ final class MainContentCoordinator {
 
 // MARK: - CaptureDisplayState
 
-/// Coarse capture state shown in the toolbar status capsule, mirroring the sibling app's
-/// `ProxyDisplayState`. Drives both the dot color and the trailing word.
+/// Coarse capture state shown in the toolbar status capsule. Drives both the dot color and the trailing word.
 enum CaptureDisplayState {
     case stopped
     case starting

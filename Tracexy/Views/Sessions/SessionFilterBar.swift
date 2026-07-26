@@ -2,9 +2,20 @@ import SwiftUI
 
 // MARK: - SessionFilterBar
 
-/// Flat category-tab filter bar above the session table — a direct port of
-/// the sibling app's `ProtocolFilterBar`: an "All" tab, a protocol group, an independent
-/// status group (Errors), and a trailing "Reset Filters" action.
+/// The session filter area above the table. Two native rows, mirroring the
+/// interaction architecture used across the app's sibling products:
+///
+///   1. a horizontally-scrolling **protocol/category pill row** ("All" + the
+///      protocol group + the independent status group), with a trailing
+///      "Reset Filters" action when anything is active;
+///   2. a **search row** — an enable checkbox, a field-scope dropdown, a rounded
+///      search field with a clear button, an "Add Filter" button that drives the
+///      advanced rule builder, a disclosure showing the active rule count, and
+///      the Group By menu.
+///
+/// Every field here is a Tracexy session attribute. There is deliberately no
+/// URL, HTTP method/status-code, header, body, mapping, proxy, or interception
+/// concept anywhere in this surface.
 struct SessionFilterBar: View {
     // MARK: Internal
 
@@ -12,20 +23,59 @@ struct SessionFilterBar: View {
 
     var body: some View {
         let workspace = coordinator.activeWorkspace
+        VStack(spacing: 0) {
+            categoryRow(workspace)
+                .padding(.vertical, 5)
+            Divider()
+            searchRow(workspace)
+                .padding(.vertical, 5)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottom) { Divider() }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: Private
+
+    private var maxRules: Int {
+        coordinator.policy.maxSessionFilterRules
+    }
+
+    // MARK: Category pills
+
+    private func categoryRow(_ workspace: WorkspaceState) -> some View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    FilterPillButton(title: "All", isActive: workspace.categoryFilters.isEmpty) {
-                        workspace.categoryFilters = []
+                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isStatusFilter }
+                    FilterPillButton(title: "All", isActive: !hasProtocolFilter) {
+                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isStatusFilter)
                     }
+                    .accessibilityLabel("All protocols")
+                    .accessibilityAddTraits(!hasProtocolFilter ? [.isSelected] : [])
 
-                    ForEach(SessionFilterCategory.allCases) { category in
-                        FilterPillButton(
-                            title: category.title,
-                            isActive: workspace.categoryFilters.contains(category)
-                        ) {
+                    ForEach(SessionFilterCategory.protocolFilters) { category in
+                        let isActive = workspace.categoryFilters.contains(category)
+                        FilterPillButton(title: category.title, isActive: isActive) {
                             toggle(category, in: workspace)
                         }
+                        .accessibilityLabel(category.title)
+                        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+                        .accessibilityHint(isActive ? "Active filter" : "Inactive filter")
+                    }
+
+                    Divider()
+                        .frame(height: 16)
+                        .padding(.horizontal, 4)
+
+                    ForEach(SessionFilterCategory.statusFilters) { category in
+                        let isActive = workspace.categoryFilters.contains(category)
+                        FilterPillButton(title: category.title, isActive: isActive) {
+                            toggle(category, in: workspace)
+                        }
+                        .accessibilityLabel(category.title)
+                        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+                        .accessibilityHint(isActive ? "Active filter" : "Inactive filter")
                     }
                 }
                 .padding(.horizontal, 8)
@@ -40,30 +90,156 @@ struct SessionFilterBar: View {
                 .buttonStyle(.borderless)
                 .font(Theme.Typography.body)
                 .foregroundStyle(.secondary)
-            }
-
-            groupByMenu(workspace)
                 .padding(.trailing, 8)
+                .help("Clear all session filters")
+                .accessibilityLabel("Reset filters")
+            }
         }
-        .padding(.vertical, 5)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
-    // MARK: Private
+    // MARK: Search row
 
-    /// Grouping, as a trailing icon menu on the filter row.
-    ///
-    /// It began as a labelled segmented control on its own strip, which was
-    /// wrong twice over. It cost a full row of height to express one setting
-    /// that is changed rarely — and a permanently-visible segmented control is
-    /// how a *filter* looks on macOS, not how a view option does. Finder, Mail
-    /// and Xcode all put grouping behind a small toolbar menu, so this does too.
-    ///
-    /// The icon carries the state rather than a text label: tinted when a
-    /// grouping is applied, secondary when the list is flat, which is the same
-    /// signal the filter pills beside it already use.
+    private func searchRow(_ workspace: WorkspaceState) -> some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { workspace.isSearchEnabled },
+                set: { workspace.isSearchEnabled = $0 }
+            ))
+            .toggleStyle(.checkbox)
+            .tint(.green)
+            .labelsHidden()
+            .help(workspace.isSearchEnabled ? "Search is on — uncheck to ignore it" : "Search is off")
+            .accessibilityLabel("Enable search")
+
+            searchFieldPicker(workspace)
+
+            searchField(workspace)
+                .layoutPriority(1)
+
+            Divider()
+                .frame(height: 18)
+
+            ViewThatFits(in: .horizontal) {
+                actionCluster(workspace, compact: false)
+                actionCluster(workspace, compact: true)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    /// The field-scope dropdown: which session attribute(s) the query matches.
+    private func searchFieldPicker(_ workspace: WorkspaceState) -> some View {
+        Picker("", selection: Binding(
+            get: { workspace.searchField },
+            set: { workspace.searchField = $0 }
+        )) {
+            ForEach(SessionSearchField.allCases) { field in
+                Text(field.displayName).tag(field)
+            }
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(width: 130)
+        .help("Choose which session fields the search matches")
+        .accessibilityLabel("Search field")
+    }
+
+    /// Free-text session filtering. Kept here (not in the sidebar navigator) so
+    /// it lives with the filters it belongs to; the sidebar footer searches only
+    /// sidebar rows.
+    private func searchField(_ workspace: WorkspaceState) -> some View {
+        HStack(spacing: 4) {
+            TextField(
+                "Search sessions",
+                text: Binding(
+                    get: { workspace.filterText },
+                    set: { workspace.filterText = $0 }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(Theme.Typography.body)
+            .accessibilityLabel("Search sessions")
+            if !workspace.filterText.isEmpty {
+                Button {
+                    workspace.filterText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: Theme.Icon.small))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear the search text")
+                .accessibilityLabel("Clear session search")
+            }
+        }
+        .frame(minWidth: 140)
+        .opacity(workspace.isSearchEnabled ? 1.0 : 0.5)
+    }
+
+    /// The trailing controls: Add Filter, the active-rule disclosure, and Group
+    /// By. `compact` drops the text labels to icons for a narrow center pane,
+    /// keeping every action visible and accessibility-labelled.
+    private func actionCluster(_ workspace: WorkspaceState, compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            addFilterButton(workspace, compact: compact)
+            advancedDisclosure(workspace, compact: compact)
+            groupByMenu(workspace)
+        }
+        .fixedSize()
+    }
+
+    private func addFilterButton(_ workspace: WorkspaceState, compact: Bool) -> some View {
+        let disabled = isAddFilterDisabled(workspace)
+        return Button {
+            addFilter(workspace)
+        } label: {
+            if compact {
+                Image(systemName: "plus")
+            } else {
+                Label("Add Filter", systemImage: "plus")
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .font(Theme.Typography.body)
+        .disabled(disabled)
+        .help(disabled
+            ? "Filter limit reached — this build allows \(maxRules) rules"
+            : "Add an advanced filter rule")
+        .accessibilityLabel("Add filter")
+    }
+
+    private func advancedDisclosure(_ workspace: WorkspaceState, compact: Bool) -> some View {
+        let count = workspace.activeFilterRules.count
+        let isOn = workspace.isAdvancedFilterVisible
+        return Button {
+            workspace.isAdvancedFilterVisible.toggle()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                if !compact || count > 0 {
+                    Text("\(count)")
+                        .font(Theme.Typography.body)
+                        .monospacedDigit()
+                }
+                Image(systemName: isOn ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
+            }
+            .foregroundStyle(isOn || count > 0 ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help(count > 0
+            ? "\(count) advanced rule\(count == 1 ? "" : "s") active — click to \(isOn ? "hide" : "show") the builder"
+            : "Show the advanced filter rule builder")
+        .accessibilityLabel("Advanced filters")
+        .accessibilityValue("\(count) active")
+    }
+
+    /// Grouping, as a trailing icon menu. Finder, Mail and Xcode all put grouping
+    /// behind a small toolbar menu rather than a permanently-visible segmented
+    /// control (which is how a *filter* looks on macOS, not a view option). The
+    /// icon carries the state: tinted when grouped, secondary when flat.
     private func groupByMenu(_ workspace: WorkspaceState) -> some View {
         let isGrouped = workspace.sessionGrouping != .none
         return Menu {
@@ -87,6 +263,26 @@ struct SessionFilterBar: View {
         .help(isGrouped
             ? "Grouping by \(workspace.sessionGrouping.title) — click to change"
             : "Group the session list")
+        .accessibilityLabel("Group sessions")
+        .accessibilityValue(isGrouped ? workspace.sessionGrouping.title : "None")
+    }
+
+    /// "Add Filter": if the advanced editor is hidden, reveal it *without* adding
+    /// a duplicate blank row; if it is already visible, append a blank row up to
+    /// the capacity cap.
+    private func addFilter(_ workspace: WorkspaceState) {
+        guard workspace.isAdvancedFilterVisible else {
+            workspace.isAdvancedFilterVisible = true
+            return
+        }
+        guard workspace.filterRules.count < maxRules else {
+            return
+        }
+        workspace.filterRules.append(SessionFilterRule())
+    }
+
+    private func isAddFilterDisabled(_ workspace: WorkspaceState) -> Bool {
+        workspace.isAdvancedFilterVisible && workspace.filterRules.count >= maxRules
     }
 
     private func toggle(_ category: SessionFilterCategory, in workspace: WorkspaceState) {
@@ -97,6 +293,9 @@ struct SessionFilterBar: View {
         }
     }
 
+    /// Reset clears the quick categories, the search text, the sidebar drill-down
+    /// scopes, and the advanced rules (back to a single blank row), then hides the
+    /// advanced editor. It does not touch Noise Control or any capture state.
     private func reset(_ workspace: WorkspaceState) {
         workspace.categoryFilters = []
         workspace.filterText = ""
@@ -104,13 +303,14 @@ struct SessionFilterBar: View {
         workspace.processFilter = nil
         workspace.ipFilter = nil
         workspace.filterRules = [SessionFilterRule()]
+        workspace.isAdvancedFilterVisible = false
     }
 }
 
 // MARK: - FilterPillButton
 
-/// Compact flat toggle button used in the filter bar — the sibling app's `FilterPillButton`
-/// styling: accent-tinted background + text when active, plain secondary when not.
+/// Compact flat toggle button used in the filter bar: accent-tinted background + text
+/// when active, plain secondary when not.
 struct FilterPillButton: View {
     let title: String
     let isActive: Bool
