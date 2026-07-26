@@ -25,10 +25,10 @@ struct InspectorView: View {
                 }
                 Divider()
                 if activeTab == .layers {
-                    layersInspector(session, layout: workspace.inspectorLayout)
+                    layersInspector(session)
                 } else {
                     ScrollView {
-                        content(tab: activeTab, session: session, layout: workspace.inspectorLayout)
+                        content(tab: activeTab, session: session)
                             .padding(Theme.Metrics.spacingL)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -51,6 +51,8 @@ struct InspectorView: View {
         // spacer inside a subview that may or may not be rendered.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Session evidence inspector")
         .onChange(of: workspace.selectedSessionID) {
             selectedRange = nil
             // Reconcile the persisted tab so the picker never shows a hidden facet.
@@ -76,6 +78,8 @@ struct InspectorView: View {
             if !fieldQuery.isEmpty {
                 Button { fieldQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .accessibilityLabel("Clear field filter")
+                    .help("Clear the field filter")
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -115,11 +119,11 @@ struct InspectorView: View {
     }
 
     /// Wireshark-style linked view: a selectable decode tree paired with a hex pane,
-    /// where selecting a field/layer highlights its bytes. The tree and hex sit
-    /// **side by side** in the wide bottom dock and **stacked** in the tall right
-    /// dock, so each orientation uses the space it has.
+    /// where selecting a field/layer highlights its bytes. The evidence inspector
+    /// is the wide bottom dock, so the tree and hex sit **side by side** and use
+    /// the horizontal space deliberately.
     @ViewBuilder
-    private func layersInspector(_ session: SessionSummary, layout: InspectorLayout) -> some View {
+    private func layersInspector(_ session: SessionSummary) -> some View {
         let layers = filterLayers(session.decodedLayers, query: fieldQuery)
         if session.decodedLayers.isEmpty {
             placeholder("No decode available for this session.")
@@ -129,17 +133,10 @@ struct InspectorView: View {
             placeholder("No inspector fields match “\(fieldQuery)”.")
                 .padding(Theme.Metrics.spacingL)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if layout == .bottom {
-            // Bottom (horizontal) dock: lay the tree and hex out in a row.
+        } else {
             HSplitView {
                 layerTree(layers)
-                hexPane(session, horizontal: true)
-            }
-        } else {
-            // Right (vertical) dock: stack the tree above the hex.
-            VSplitView {
-                layerTree(layers)
-                hexPane(session, horizontal: false)
+                hexPane(session)
             }
         }
     }
@@ -155,14 +152,14 @@ struct InspectorView: View {
     }
 
     @ViewBuilder
-    private func hexPane(_ session: SessionSummary, horizontal: Bool) -> some View {
+    private func hexPane(_ session: SessionSummary) -> some View {
         if !session.representativeBytes.isEmpty {
             ScrollView {
                 HexDumpView(bytes: session.representativeBytes, highlight: selectedRange)
                     .padding(Theme.Metrics.spacingL)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minWidth: horizontal ? 280 : nil, minHeight: horizontal ? nil : 130)
+            .frame(minWidth: 280)
         }
     }
 
@@ -180,38 +177,62 @@ struct InspectorView: View {
     )
         -> some View
     {
-        HStack(spacing: 2) {
-            ForEach(visibleTabs) { tab in
-                Button {
-                    workspace.inspectorTab = tab
-                } label: {
-                    Text(tab.title)
-                        .font(tab == activeTab ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                        .foregroundStyle(tab == activeTab ? Color.accentColor : Color.secondary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(tab == activeTab ? Color.accentColor.opacity(0.12) : Color.clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(tab.title)
+        // Wide: tabs and the scope pill share one row. Compact: the tabs scroll
+        // horizontally and the scope drops to a second row, so neither clips when
+        // the pane is narrow (e.g. while the right inspector is also open).
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 2) {
+                tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
+                Spacer(minLength: Theme.Metrics.spacingL)
+                scopeLabel(session)
             }
-            Spacer(minLength: Theme.Metrics.spacingL)
-            scopeLabel(session)
+            VStack(alignment: .leading, spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
+                    }
+                }
+                scopeLabel(session)
+            }
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 6)
         .background(.background.secondary)
     }
 
+    private func tabButtons(
+        workspace: WorkspaceState,
+        visibleTabs: [InspectorTab],
+        activeTab: InspectorTab
+    )
+        -> some View
+    {
+        ForEach(visibleTabs) { tab in
+            Button {
+                workspace.inspectorTab = tab
+            } label: {
+                Text(tab.title)
+                    .font(tab == activeTab ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
+                    .foregroundStyle(tab == activeTab ? Color.accentColor : Color.secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(tab == activeTab ? Color.accentColor.opacity(0.12) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(tab == activeTab ? .isSelected : [])
+            .help(tab.title)
+        }
+    }
+
     @ViewBuilder
-    private func content(tab: InspectorTab, session: SessionSummary, layout: InspectorLayout) -> some View {
+    private func content(tab: InspectorTab, session: SessionSummary) -> some View {
         switch tab {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
-        case .timeline: timeline(session, layout: layout)
+        case .timeline: timeline(session)
         case .requests: requests(session)
         case .payload: payload(session)
         case .hex: HexDumpView(bytes: session.representativeBytes, highlight: nil)
@@ -278,9 +299,8 @@ struct InspectorView: View {
     /// The Timing facet: an honest phase-bar over the session's real `duration`,
     /// split into a leading Handshake/TTFB segment and a Transfer segment when a
     /// measured latency exists (otherwise a single Duration bar). Wide, time-based
-    /// content — it lays out full-width and reads best in the bottom dock, while
-    /// staying compact enough not to clip in the narrow right dock.
-    private func timeline(_ session: SessionSummary, layout: InspectorLayout) -> some View {
+    /// content — the bottom dock has the width, so the legend lays out on one line.
+    private func timeline(_ session: SessionSummary) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             if let activity = coordinator.activity(containing: session), activity.sessions.count > 1 {
                 CorrelatedActionTimeline(activity: activity, selectedID: session.id)
@@ -289,7 +309,7 @@ struct InspectorView: View {
                 // falls back to the honest phase split of its own duration.
                 let phases = timingPhases(session)
                 field("Total Duration", String(format: "%.3f s", session.duration))
-                timingBar(phases, compact: false, wideLabels: layout == .bottom)
+                timingBar(phases, compact: false)
                 if session.latencyMilliseconds == nil {
                     placeholder("No handshake / TTFB latency was measured for this session.")
                 }
@@ -299,10 +319,10 @@ struct InspectorView: View {
 
     /// Renders the proportional bar plus a wrapping-safe legend (one row per phase
     /// with a color swatch + ms label). `compact` gives the thin Summary-embedded
-    /// variant; `wideLabels` opts into a single-line legend when there is room
-    /// (bottom dock), else the legend stacks so it never clips in the right dock.
+    /// variant with a stacked legend; the full-size variant uses the bottom dock's
+    /// width for a single-line legend.
     @ViewBuilder
-    private func timingBar(_ phases: [TimingPhase], compact: Bool, wideLabels: Bool) -> some View {
+    private func timingBar(_ phases: [TimingPhase], compact: Bool) -> some View {
         let total = max(phases.reduce(0) { $0 + $1.milliseconds }, 0.0001)
         VStack(alignment: .leading, spacing: compact ? Theme.Metrics.spacingS : Theme.Metrics.spacingM) {
             GeometryReader { geo in
@@ -319,7 +339,7 @@ struct InspectorView: View {
             }
             .frame(height: compact ? 8 : 18)
             .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 5))
-            timingLegend(phases, wide: wideLabels && !compact)
+            timingLegend(phases, wide: !compact)
         }
     }
 

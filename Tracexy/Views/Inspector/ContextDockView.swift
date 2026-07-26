@@ -2,12 +2,14 @@ import SwiftUI
 
 // MARK: - ContextDockView
 
-/// The right-hand **interpretation** column.
+/// The right-hand **Details and AI Assistant** column.
 ///
 /// It is a separate object from the evidence inspector, not a second orientation
 /// of it. The evidence inspector answers *what does this session contain*; the
-/// dock answers *what does it mean* — how this session compares with the rest of
-/// the capture, what else is related to it, and what was flagged about it.
+/// Details combines the selection's identity with interpretation — how this
+/// session compares with the rest of the capture, what else is related to it,
+/// and what was flagged about it. AI Assistant reserves a truthful, disconnected
+/// place for future help.
 ///
 /// The division matters because it is what stops the two panels duplicating each
 /// other. Anything that is a literal fact about the selected session (headers,
@@ -18,8 +20,9 @@ import SwiftUI
 /// Scope is always the current selection. Capture-wide aggregation belongs to the
 /// Overview surface, never to this dock.
 ///
-/// The dock has to hold four selection states, and the approved design treats
-/// them as one component rather than four screens:
+/// The dock has two primary modes, `Details` and `AI Assistant`, and the
+/// approved design treats each as one component that adapts to the selection
+/// rather than a screen per selection state:
 ///
 /// - **A · single session** — one conversation; the layer's own facts lead.
 /// - **B · correlated group** — the recommended default unit; the action leads.
@@ -35,27 +38,68 @@ struct ContextDockView: View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            ScrollView {
-                content
-                    .padding(.horizontal, Theme.Metrics.spacingL)
-                    .padding(.vertical, Theme.Metrics.spacingL)
+            // Details reads as one native inset list with a summary footer; the
+            // AI Assistant owns its own layout so its composer can pin below a
+            // scrolling transcript.
+            switch coordinator.activeWorkspace.contextDockTab {
+            case .details:
+                VStack(spacing: 0) {
+                    detailsList
+                    detailsFooter
+                }
+            case .aiAssistant:
+                aiAssistant
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Inspector")
     }
 
     // MARK: Private
 
-    /// The facet picker. Always three tabs, unlike the evidence inspector's
+    private var detailsFooterSummary: String {
+        guard let session = coordinator.selectedSession else {
+            return ContextDockDetailsFooter.summary(
+                hasSelection: false,
+                sessionCount: 0,
+                primaryProtocol: nil,
+                formattedBytes: nil
+            )
+        }
+        return ContextDockDetailsFooter.summary(
+            hasSelection: true,
+            sessionCount: 1,
+            primaryProtocol: session.primaryProtocol.label,
+            formattedBytes: session.totalBytes > 0
+                ? Int64(session.totalBytes).formatted(.byteCount(style: .memory))
+                : nil
+        )
+    }
+
+    /// Picker callbacks can arrive during the native inspector's constraint
+    /// pass. Publish the content swap on the next run-loop turn so the hosting
+    /// root keeps a stable size while AppKit finishes the current layout.
+    private var selectedTab: Binding<ContextDockTab> {
+        Binding(
+            get: { coordinator.activeWorkspace.contextDockTab },
+            set: { tab in
+                guard coordinator.activeWorkspace.contextDockTab != tab else {
+                    return
+                }
+                DispatchQueue.main.async { [weak coordinator] in
+                    coordinator?.activeWorkspace.contextDockTab = tab
+                }
+            }
+        )
+    }
+
+    /// The mode picker. Always the two tabs, unlike the evidence inspector's
     /// progressive disclosure: the dock's tabs are *places* the user learns once,
     /// and a strip that changes width per selection is what made them un-learnable.
-    /// A facet with nothing to say says so in its body instead of vanishing.
+    /// A section with nothing to say omits itself; the mode never vanishes.
     private var tabStrip: some View {
-        Picker("Context", selection: Binding(
-            get: { coordinator.activeWorkspace.contextDockTab },
-            set: { coordinator.activeWorkspace.contextDockTab = $0 }
-        )) {
+        Picker("Inspector Mode", selection: selectedTab) {
             ForEach(ContextDockTab.allCases) { tab in
                 Text(tab.title).tag(tab)
             }
@@ -64,14 +108,6 @@ struct ContextDockView: View {
         .labelsHidden()
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, Theme.Metrics.spacingM)
-    }
-
-    @ViewBuilder private var content: some View {
-        switch coordinator.activeWorkspace.contextDockTab {
-        case .insight: insight
-        case .related: relatedTab
-        case .security: securityTab
-        }
     }
 
     // MARK: State D — no selection
@@ -86,7 +122,7 @@ struct ContextDockView: View {
                 .foregroundStyle(.tertiary)
             Text("No selection")
                 .font(Theme.Typography.surfaceTitle)
-            Text("Select an action to see how it compares with its own history.")
+            Text("Select a session to inspect its details, relationships, and capture context.")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -97,88 +133,223 @@ struct ContextDockView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: Insight
+    // MARK: Details
 
-    @ViewBuilder private var insight: some View {
+    /// Everything the app can *say* about the selection, in one native inset list:
+    /// identity, verdict, layer facts, host baseline, related actions, security
+    /// findings and grouping evidence. Identity stays mounted as the selection
+    /// header while native `Section` containers own the diagnostic groups below.
+    /// The derivations are unchanged; only their presentation hierarchy moved.
+    @ViewBuilder private var detailsList: some View {
         if let session = coordinator.selectedSession {
             let activity = coordinator.activity(containing: session)
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+            VStack(spacing: 0) {
                 identity(for: session, activity: activity)
-                verdict(for: session)
-                // State B leads with how the action spent its time; state A has a
-                // single span, so its own layer's facts lead instead.
-                if let activity, activity.sessions.count > 1 {
-                    whereTheTimeWent(activity)
-                } else {
-                    thisLayer(session)
-                }
-                hostBaseline(for: session)
-                relatedActions(for: session)
-                if let activity, activity.sessions.count > 1 {
-                    whyGrouped(activity)
-                } else if let activity {
-                    partOfAnAction(activity, selected: session)
-                }
-                askButton(activity == nil ? "Ask about this session" : "Ask about this action")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            noSelection
-        }
-    }
+                    .padding(.horizontal, Theme.Metrics.spacingL)
+                    .padding(.vertical, Theme.Metrics.spacingM)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-    // MARK: Related tab
+                Divider()
 
-    @ViewBuilder private var relatedTab: some View {
-        if let session = coordinator.selectedSession {
-            let peers = relatedSessions(for: session)
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                SectionHeader("OTHER SESSIONS")
-                if peers.isEmpty {
-                    facetEmpty("Nothing else in this capture shares this host or process.")
-                } else {
-                    ForEach(peers) { peer in
-                        relatedCard(peer, to: session)
+                List {
+                    Section("Assessment") {
+                        verdict(for: session)
                     }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            noSelection
-        }
-    }
 
-    // MARK: Security tab
-
-    @ViewBuilder private var securityTab: some View {
-        if let session = coordinator.selectedSession {
-            let items = findings(for: session)
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                SectionHeader("FLAGGED HERE")
-                if items.isEmpty {
-                    facetEmpty("Nothing was flagged on this selection.")
-                } else {
-                    ForEach(items) { finding in
-                        HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-                            Image(systemName: finding.severity.systemImage)
-                                .foregroundStyle(finding.severity.tint)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(finding.title)
-                                    .font(Theme.Typography.bodyMedium)
-                                Text(finding.subtitle)
-                                    .font(Theme.Typography.micro)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer(minLength: 0)
+                    // State B leads with how the action spent its time; state A has
+                    // a single span, so its own layer's facts lead instead.
+                    if let activity, activity.sessions.count > 1 {
+                        Section("Where the Time Went") {
+                            whereTheTimeWent(activity)
                         }
-                        .padding(.vertical, 3)
+                    } else if !topLayerFields(session).isEmpty {
+                        Section("Layer Details") {
+                            thisLayer(session)
+                        }
+                    }
+
+                    if baselineHistory(for: session).count >= 3 {
+                        Section("Host Baseline · Last 60 Min") {
+                            hostBaseline(for: session)
+                        }
+                    }
+
+                    if !relatedSessions(for: session).isEmpty {
+                        Section("Related Actions") {
+                            relatedActions(for: session)
+                        }
+                    }
+
+                    if !findings(for: session).isEmpty {
+                        Section("Flagged Here") {
+                            securityFindings(for: session)
+                        }
+                    }
+
+                    if let activity, activity.sessions.count > 1 {
+                        Section("Grouping Evidence") {
+                            whyGrouped(activity)
+                        }
+                    } else if let activity {
+                        Section("Part of an Action") {
+                            partOfAnAction(activity, selected: session)
+                        }
                     }
                 }
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             noSelection
+        }
+    }
+
+    // MARK: Details footer
+
+    /// A quiet, selection-derived summary pinned to the bottom of Details on the
+    /// shared footer chrome, so the right column meets the workspace and sidebar
+    /// footers on one baseline. It states only facts the selection already carries
+    /// — Details has no actions to offer, so it adds none.
+    private var detailsFooter: some View {
+        WorkspaceFooterBar(surface: .workspace) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                Text(detailsFooterSummary)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Theme.Metrics.spacingL)
+        }
+    }
+
+    // MARK: AI Assistant
+
+    /// An honest presentation shell for a future assistant. It shows what the
+    /// selection *would* be handed to an assistant (attached context), an empty
+    /// transcript, and a composer that is disabled because nothing is connected.
+    ///
+    /// It deliberately does nothing: no send, no storage, no simulated reply, no
+    /// settings call. The point is to make the assistant's place in the panel
+    /// learnable and to be truthful that it is not wired up yet.
+    private var aiAssistant: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+                    attachedContext
+                    transcriptEmptyState
+                }
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.vertical, Theme.Metrics.spacingL)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            composer
+        }
+    }
+
+    /// The selection the assistant would reason over, summarised from values the
+    /// session already carries — nothing derived, nothing fetched.
+    private var attachedContext: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            SectionHeader("ATTACHED CONTEXT")
+            if let session = coordinator.selectedSession {
+                attachedCard(session, activity: coordinator.activity(containing: session))
+            } else {
+                facetEmpty("Select a session and it is attached here for the assistant to reference.")
+            }
+        }
+    }
+
+    /// No transcript exists because nothing has run. Said plainly rather than
+    /// faked with sample messages.
+    private var transcriptEmptyState: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            SectionHeader("CONVERSATION")
+            VStack(spacing: Theme.Metrics.spacingM) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: Theme.Icon.hero))
+                    .foregroundStyle(.tertiary)
+                Text("No messages yet")
+                    .font(Theme.Typography.bodyMedium)
+                Text("Once an assistant is connected, your questions and its answers "
+                    + "about this capture will appear here.")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Theme.Metrics.spacingL)
+        }
+    }
+
+    /// The prompt/send affordance, disabled with a plain "not connected" note.
+    /// The text field binds to a constant so there is nowhere for input to be
+    /// stored, and the button does nothing — the shell cannot send by accident.
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: Theme.Icon.small))
+                    .foregroundStyle(.secondary)
+                Text("Captured data stays on this Mac. Nothing is sent until you connect "
+                    + "an assistant and explicitly ask.")
+                    .font(Theme.Typography.micro)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: Theme.Metrics.spacingM) {
+                TextField("Ask about this selection…", text: .constant(""))
+                    .textFieldStyle(.roundedBorder)
+                    .font(Theme.Typography.body)
+                    .disabled(true)
+                    .accessibilityLabel("Message the assistant")
+                Button {
+                    // Intentionally inert: there is no assistant backend to send to.
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: Theme.Icon.large))
+                }
+                .buttonStyle(.plain)
+                .disabled(true)
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel("Send message")
+                .help("The assistant is not connected yet.")
+            }
+            Text("Assistant not connected yet.")
+                .font(Theme.Typography.micro)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    // MARK: Security findings
+
+    /// What was flagged on this selection, folded into Details rather than living
+    /// on its own tab. Absent when nothing was flagged — the same rule the other
+    /// sections follow, so the read never carries an empty box.
+    @ViewBuilder
+    private func securityFindings(for session: SessionSummary) -> some View {
+        let items = findings(for: session)
+        if !items.isEmpty {
+            ForEach(items) { finding in
+                HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
+                    Image(systemName: finding.severity.systemImage)
+                        .foregroundStyle(finding.severity.tint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(finding.title)
+                            .font(Theme.Typography.bodyMedium)
+                        Text(finding.subtitle)
+                            .font(Theme.Typography.micro)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 
@@ -217,12 +388,7 @@ struct ContextDockView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(Theme.Metrics.spacingM)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius)
-                    .fill((isSlow ? Color.orange : Color.green).opacity(0.10))
-            )
         } else {
             Text("Not enough history on this host to compare yet.")
                 .font(Theme.Typography.micro)
@@ -243,7 +409,6 @@ struct ContextDockView: View {
         let total = phases.reduce(0) { $0 + $1.milliseconds }
         if total > 0 {
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                SectionHeader("WHERE THE TIME WENT")
                 GeometryReader { geo in
                     HStack(spacing: 1) {
                         ForEach(phases) { phase in
@@ -286,21 +451,15 @@ struct ContextDockView: View {
     private func thisLayer(_ session: SessionSummary) -> some View {
         let fields = topLayerFields(session)
         if !fields.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                SectionHeader("THIS LAYER")
-                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
-                    HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-                        Text(field.name)
-                            .font(Theme.Typography.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 78, alignment: .leading)
-                        Text(field.value)
-                            .font(Theme.Typography.caption)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
+            ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
+                LabeledContent(field.name) {
+                    Text(field.value)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .font(Theme.Typography.caption)
             }
         }
     }
@@ -319,7 +478,6 @@ struct ContextDockView: View {
         if history.count >= 3 {
             let peak = history.map(\.milliseconds).max() ?? 1
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                SectionHeader("HOST BASELINE · LAST 60 MIN")
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(history) { point in
                         RoundedRectangle(cornerRadius: 1)
@@ -353,11 +511,8 @@ struct ContextDockView: View {
     private func relatedActions(for session: SessionSummary) -> some View {
         let peers = relatedSessions(for: session)
         if !peers.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                SectionHeader("RELATED ACTIONS")
-                ForEach(peers.prefix(4)) { peer in
-                    relatedCard(peer, to: session)
-                }
+            ForEach(peers.prefix(4)) { peer in
+                relatedCard(peer, to: session)
             }
         }
     }
@@ -392,17 +547,7 @@ struct ContextDockView: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, Theme.Metrics.spacingM)
-            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.primary.opacity(0.04))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -420,8 +565,6 @@ struct ContextDockView: View {
     /// a guess they can't disagree with.
     private func whyGrouped(_ activity: Activity) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("WHY THESE ARE GROUPED")
-
             Text(activity.protocolPath.map(\.label).joined(separator: " → "))
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
@@ -462,7 +605,6 @@ struct ContextDockView: View {
     /// it and offers the way up, instead of explaining a grouping it isn't part of.
     private func partOfAnAction(_ activity: Activity, selected: SessionSummary) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("PART OF AN ACTION")
             Button {
                 if let first = activity.sessions.first(where: { $0.id != selected.id }) {
                     coordinator.select(first)
@@ -481,17 +623,7 @@ struct ContextDockView: View {
                         .font(Theme.Typography.micro)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, Theme.Metrics.spacingM)
-                .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.accentColor.opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
-                        )
-                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -518,22 +650,61 @@ struct ContextDockView: View {
             .foregroundStyle(Self.tint(for: tier))
     }
 
-    /// The handoff to the assistant, carrying the current scope. Disabled rather
-    /// than hidden until the session API lands, so the affordance's place in the
-    /// panel is already learnable.
-    private func askButton(_ title: String) -> some View {
-        Button {
-            // TODO: routes to the in-app session API once TracexyMCP lands.
-        } label: {
-            Text(title)
-                .font(Theme.Typography.bodyMedium)
-                .frame(maxWidth: .infinity)
+    private func attachedCard(_ session: SessionSummary, activity: Activity?) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+            Text(activity?.title ?? session.host)
+                .font(Theme.Typography.bodyEmphasis)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !session.protocolStack.isEmpty {
+                HStack(spacing: Theme.Metrics.spacingS) {
+                    ForEach(session.protocolStack, id: \.self) { proto in
+                        Text(proto.label)
+                            .font(Theme.Typography.badge)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.color(for: proto).opacity(0.18), in: Capsule())
+                            .foregroundStyle(Theme.color(for: proto))
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                attachedFact("Process", session.processName ?? "—")
+                attachedFact("Status", session.status.label)
+                if let latency = session.latencyMilliseconds {
+                    attachedFact("Latency", Self.ms(latency))
+                }
+                attachedFact("Bytes", Int64(session.totalBytes).formatted(.byteCount(style: .memory)))
+                if let activity, activity.sessions.count > 1 {
+                    attachedFact("Action", "\(activity.sessions.count) sessions")
+                }
+            }
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(Color.accentColor)
-        .disabled(true)
-        .help("Ask the assistant about this selection — available once the session API ships.")
+        .padding(Theme.Metrics.spacingM)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
+    private func attachedFact(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
+            Text(label)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(Theme.Typography.caption)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     /// A glyph per tier, so confidence is legible without relying on colour —
@@ -680,6 +851,34 @@ struct ContextDockView: View {
         let sorted = values.sorted()
         let mid = sorted.count / 2
         return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+    }
+}
+
+// MARK: - ContextDockDetailsFooter
+
+/// Pure builder for the Details footer summary, derived only from values the
+/// selection already carries. Free of SwiftUI so the string is unit-testable and
+/// stays honest: with no selection it says so, and it never invents a figure.
+enum ContextDockDetailsFooter {
+    static func summary(
+        hasSelection: Bool,
+        sessionCount: Int,
+        primaryProtocol: String?,
+        formattedBytes: String?
+    )
+        -> String
+    {
+        guard hasSelection else {
+            return "No selection"
+        }
+        var parts = [sessionCount == 1 ? "1 session" : "\(sessionCount) sessions"]
+        if let primaryProtocol, !primaryProtocol.isEmpty {
+            parts.append(primaryProtocol)
+        }
+        if let formattedBytes, !formattedBytes.isEmpty {
+            parts.append(formattedBytes)
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

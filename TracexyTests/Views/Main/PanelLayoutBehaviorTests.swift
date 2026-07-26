@@ -14,6 +14,22 @@ struct PanelLayoutBehaviorTests {
         #expect(InspectorLayout(rawValue: "right") == nil)
     }
 
+    @Test("The right inspector has exactly two modes: Details and AI Assistant")
+    func contextDockHasTwoModes() {
+        #expect(ContextDockTab.allCases == [.details, .aiAssistant])
+        #expect(ContextDockTab.details.title == "Details")
+        #expect(ContextDockTab.aiAssistant.title == "AI Assistant")
+        // The prior Insight/Related/Security cases are gone.
+        #expect(ContextDockTab(rawValue: "insight") == nil)
+        #expect(ContextDockTab(rawValue: "related") == nil)
+    }
+
+    @Test("A fresh workspace opens the right inspector on Details")
+    func contextDockDefaultsToDetails() {
+        let workspace = WorkspaceState(title: "Test")
+        #expect(workspace.contextDockTab == .details)
+    }
+
     @Test("A fresh workspace opens with both panels closed")
     func defaultsAreClosed() {
         let env = makeEnvironment()

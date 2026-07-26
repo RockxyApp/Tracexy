@@ -41,7 +41,7 @@ final class WorkspaceState: Identifiable {
     /// from the evidence inspector: separate visibility, separate tab, separate
     /// toggle. Both may be open at once.
     var isContextDockVisible: Bool
-    var contextDockTab: ContextDockTab = .insight
+    var contextDockTab: ContextDockTab = .details
 
     /// Tri-state auto-reveal. `nil` means the user has never expressed a
     /// preference, so selecting a session may reveal the evidence inspector for

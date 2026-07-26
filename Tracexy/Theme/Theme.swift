@@ -6,7 +6,7 @@ import SwiftUI
 /// Applies the user's appearance preference (system / light / dark) at the AppKit
 /// level via `NSApp.appearance`, so a forced light/dark covers *everything* —
 /// menus, Save/Open panels, alerts, and any AppKit-hosted or future window — not
-/// only SwiftUI scene content. Mirrors the sibling app's `AppThemeApplier`.
+/// only SwiftUI scene content.
 ///
 /// `TracexyApp` also applies `.preferredColorScheme` to each scene; both derive
 /// from the same `AppAppearance`, so they never disagree. This applier is the
@@ -30,26 +30,32 @@ enum Theme {
     enum Metrics {
         static let sidebarMinWidth: CGFloat = 200
         static let sidebarIdealWidth: CGFloat = 240
+        /// Cap the source list so a wide window doesn't stretch the sidebar past
+        /// the point where its rows read as navigation rather than content.
+        static let sidebarMaxWidth: CGFloat = 320
         static let inspectorWidth: CGFloat = 320
         static let rowHeight: CGFloat = 28
-        static let statusBarHeight: CGFloat = 28
+        /// Shared row height for every bottom bar — the sidebar footer, the
+        /// workspace/session status bar and the right Details inspector footer —
+        /// so all three meet on one baseline (see `WorkspaceFooterBar`).
+        static let footerBarHeight: CGFloat = 34
         static let cornerRadius: CGFloat = 8
         static let spacingS: CGFloat = 4
         static let spacingM: CGFloat = 8
         static let spacingL: CGFloat = 12
 
-        // Inspector docks — approved metrics (design-system.md): native
-        // HSplitView (right) + VSplitView (bottom).
+        // Inspector docks — approved metrics (design-system.md), now seated in
+        // native AppKit split items: right inspector as a semantic inspector
+        // column, evidence inspector as a horizontal split below the table.
         static let contextDockMinWidth: CGFloat = 320
         static let contextDockIdealWidth: CGFloat = 336
         static let contextDockMaxWidth: CGFloat = 460
+        // Minimum heights bound the native evidence-split divider; there is no
+        // artificial maximum, so the divider drags freely to any height the two
+        // minimums allow.
         static let bottomInspectorMinHeight: CGFloat = 220
-        static let bottomInspectorIdealHeight: CGFloat = 250
         static let sessionTableMinWidth: CGFloat = 420
         static let sessionTableMinHeight: CGFloat = 240
-        /// Below this content width the right dock is suppressed so the table
-        /// isn't crushed (the sibling app gates its Context Dock the same way).
-        static let contextDockGateWidth: CGFloat = 820
 
         // Chrome pills/chips
         static let pillCornerRadius: CGFloat = 6
@@ -137,6 +143,31 @@ enum Theme {
         static let hero: CGFloat = 28
         /// The single focal glyph of an onboarding or install sheet.
         static let heroLarge: CGFloat = 40
+    }
+
+    // MARK: Chrome (sidebar + workspace footers)
+
+    /// Semantic surfaces for the two bottom bars, so the sidebar footer and the
+    /// workspace status bar meet on one baseline and adapt to light/dark and
+    /// accessibility contrast without hand-tuned colors.
+    ///
+    /// They are deliberately *different* materials: the sidebar footer lives
+    /// inside the source-list column, so it expresses that column's own sidebar
+    /// material; the workspace footer spans the (non-vibrant) content area, so it
+    /// uses an opaque window background rather than a `.bar` that would tint
+    /// whatever scrolls beneath it.
+    enum Chrome {
+        /// Sidebar footer fill. Clear on purpose: it sits over the source-list
+        /// column and inherits that column's sidebar material, reading as part of
+        /// the sidebar rather than a separate strip. The top hairline is the seam.
+        static let sidebarFooterBackground = Color.clear
+
+        /// Workspace footer / status-bar fill — opaque window background so the
+        /// table and inspector never bleed up through it.
+        static let workspaceFooterBackground = Color(nsColor: .windowBackgroundColor)
+
+        /// Hairline between either footer and the content above it.
+        static let separator = Color(nsColor: .separatorColor)
     }
 
     // MARK: Protocol accents

@@ -45,7 +45,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     /// Tabs to show for a session, in display order. Never render an empty
     /// facet: each one appears only once there is something for it to show.
     ///
-    /// Unlike the Context Dock — whose three tabs are fixed places the user
+    /// Unlike the right inspector — whose two modes are fixed places the user
     /// learns once — the evidence tabs describe what this session literally
     /// contains, so a facet with no bytes behind it would be a promise the
     /// decode cannot keep.
@@ -67,19 +67,19 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
 // MARK: - InspectorLayout
 
 /// Where the **evidence** inspector docks. There is deliberately no `.right`
-/// case: the right-hand column is a separate object, the Context Dock, with its
+/// case: the right-hand column is a separate inspector, with its
 /// own state, tabs and toggle (`WorkspaceState.isContextDockVisible`).
 ///
-/// Two orientations of one inspector was tried in the sibling app and produced
-/// panels that duplicated each other's purpose — a wide pane spent its width on
-/// key/value pairs the narrow column rendered better. Splitting them by *job*
+/// Two orientations of one inspector produced panels that duplicated each other's
+/// purpose — a wide pane spent its width on key/value pairs the narrow column
+/// rendered better. Splitting them by *job*
 /// instead of by *orientation* is what removed the duplication:
 ///
 /// - the bottom inspector owns **evidence** — what the selection literally
 ///   contains: decoded layers, hex, payload, the action timeline. Wide,
 ///   chronological, read-only.
-/// - the Context Dock owns **interpretation** — what the selection means:
-///   baselines, deviation, grouping evidence, related actions.
+/// - the right inspector owns **details and assistance** — facts, interpretation,
+///   relationships, and the honest placeholder for future AI help.
 ///
 /// They live on different axes (the bottom pane is nested inside the centre
 /// column, the dock is a sibling of it), so both can be open at once without
@@ -104,14 +104,18 @@ enum InspectorLayout: String, CaseIterable, Identifiable, Hashable {
 
 // MARK: - ContextDockTab
 
-/// Facets of the Context Dock. Scoped to the current selection — a single
-/// session, or (once correlation lands) the action it belongs to. Capture-wide
-/// aggregation is deliberately absent: that belongs to a centre-pane mode, not
-/// here.
+/// The two primary modes of the right-hand inspector column. Both are fixed
+/// places the user learns once, scoped to the current selection.
+///
+/// - **Details** gathers everything the app can *say* about the selection:
+///   identity, verdict, layer facts, host baseline, related actions, grouping
+///   evidence and security findings, in one vertically scrollable read.
+/// - **AI Assistant** is a presentation shell for a future assistant. It carries
+///   the current selection as attached context and a disabled composer; it is
+///   not connected to any backend and neither sends nor stores anything.
 enum ContextDockTab: String, CaseIterable, Identifiable, Hashable {
-    case insight
-    case related
-    case security
+    case details
+    case aiAssistant
 
     // MARK: Internal
 
@@ -121,17 +125,15 @@ enum ContextDockTab: String, CaseIterable, Identifiable, Hashable {
 
     nonisolated var title: String {
         switch self {
-        case .insight: "Insight"
-        case .related: "Related"
-        case .security: "Security"
+        case .details: "Details"
+        case .aiAssistant: "AI Assistant"
         }
     }
 
     nonisolated var systemImage: String {
         switch self {
-        case .insight: "lightbulb"
-        case .related: "point.3.connected.trianglepath.dotted"
-        case .security: "lock.shield"
+        case .details: "list.bullet.rectangle"
+        case .aiAssistant: "sparkles"
         }
     }
 }
