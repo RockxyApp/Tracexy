@@ -25,6 +25,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
         inspectorMinimumWidth: CGFloat,
         inspectorIdealWidth: CGFloat,
         inspectorMaximumWidth: CGFloat,
+        toolbarConfiguration: NativeWorkspaceToolbarConfiguration? = nil,
         @ViewBuilder sidebar: @escaping () -> Sidebar,
         @ViewBuilder workspace: @escaping () -> Workspace,
         @ViewBuilder inspector: @escaping () -> Inspector
@@ -39,6 +40,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
         self.inspectorMinimumWidth = inspectorMinimumWidth
         self.inspectorIdealWidth = inspectorIdealWidth
         self.inspectorMaximumWidth = inspectorMaximumWidth
+        self.toolbarConfiguration = toolbarConfiguration
         self.sidebar = sidebar
         self.workspace = workspace
         self.inspector = inspector
@@ -91,6 +93,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
     let inspectorMinimumWidth: CGFloat
     let inspectorIdealWidth: CGFloat
     let inspectorMaximumWidth: CGFloat
+    let toolbarConfiguration: NativeWorkspaceToolbarConfiguration?
     @ViewBuilder let sidebar: () -> Sidebar
     @ViewBuilder let workspace: () -> Workspace
     @ViewBuilder let inspector: () -> Inspector
@@ -110,6 +113,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
         )
 
         let controller = NativeWorkspaceSplitViewController()
+        controller.toolbarConfiguration = toolbarConfiguration
         controller.configure(
             sidebarController: sidebarController,
             workspaceController: workspaceController,
@@ -341,6 +345,10 @@ final class NativeWorkspaceSplitViewController: NSSplitViewController {
     var onSidebarVisibilityChanged: ((Bool) -> Void)?
     var onInspectorVisibilityChanged: ((Bool) -> Void)?
 
+    /// The native window toolbar to install once this controller is attached to a
+    /// window. Nil when the split is used without window chrome (previews/tests).
+    var toolbarConfiguration: NativeWorkspaceToolbarConfiguration?
+
     var isSidebarPresented: Bool {
         sidebarItem.map { !$0.isCollapsed } ?? false
     }
@@ -351,6 +359,7 @@ final class NativeWorkspaceSplitViewController: NSSplitViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        installWindowChromeIfNeeded()
         guard !didApplyInitialLayout else {
             return
         }
@@ -383,6 +392,16 @@ final class NativeWorkspaceSplitViewController: NSSplitViewController {
             applyIdealInitialPositions(totalWidth: bounds.width)
         }
         isApplyingInitialState = false
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        installWindowChromeIfNeeded()
+        // The window can finish attaching a beat after the first appearance pass;
+        // a deferred retry guarantees the toolbar lands even then.
+        DispatchQueue.main.async { [weak self] in
+            self?.installWindowChromeIfNeeded()
+        }
     }
 
     func configure(
@@ -460,7 +479,7 @@ final class NativeWorkspaceSplitViewController: NSSplitViewController {
     private weak var sidebarItem: NSSplitViewItem?
     private weak var inspectorItem: NSSplitViewItem?
     private var collapseObservations: [NSKeyValueObservation] = []
-    private var sidebarIdealWidth: CGFloat = 240
+    private var sidebarIdealWidth: CGFloat = 260
     private var inspectorIdealWidth: CGFloat = 336
     private var sidebarMinimumWidth: CGFloat = 0
     private var workspaceMinimumWidth: CGFloat = 0
@@ -472,6 +491,17 @@ final class NativeWorkspaceSplitViewController: NSSplitViewController {
     private var hasAutosavedFrames = false
     private var didApplyInitialLayout = false
     private var isApplyingInitialState = true
+
+    private func installWindowChromeIfNeeded() {
+        guard let window = view.window else {
+            return
+        }
+        NativeWorkspaceWindowChrome.configure(
+            window,
+            workspaceSplitController: self,
+            toolbarConfiguration: toolbarConfiguration
+        )
+    }
 
     private func applyIdealInitialPositions(totalWidth: CGFloat) {
         guard let placement = NativeWorkspaceSplitSizing.idealPlacement(

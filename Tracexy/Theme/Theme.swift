@@ -28,8 +28,8 @@ enum Theme {
     // MARK: Layout metrics
 
     enum Metrics {
-        static let sidebarMinWidth: CGFloat = 200
-        static let sidebarIdealWidth: CGFloat = 240
+        static let sidebarMinWidth: CGFloat = 220
+        static let sidebarIdealWidth: CGFloat = 260
         /// Cap the source list so a wide window doesn't stretch the sidebar past
         /// the point where its rows read as navigation rather than content.
         static let sidebarMaxWidth: CGFloat = 320
@@ -64,60 +64,82 @@ enum Theme {
 
     // MARK: Typography
 
-    /// The app's whole type scale — **five sizes**, SF throughout.
+    /// The app's whole type scale, expressed in **semantic macOS text styles**
+    /// rather than hardcoded point sizes.
     ///
-    /// This exists because the alternative was measured and failed: call sites
-    /// had grown nineteen distinct sizes, including 9.5, 10.5, 11.5 and 12.5.
-    /// Half-point steps are invisible as *intent* and very visible as
-    /// misalignment — two labels meant to read as one row would sit a hair
-    /// apart, and nothing in the code said which was the mistake.
+    /// This used to be a fixed five-size ladder (16 / 13 / 12 / 11 / 10). That
+    /// killed the half-point drift it was written to kill, but it also opted the
+    /// whole app out of Dynamic Type: every label was a frozen pixel count, so a
+    /// user who raised their text size saw nothing move. Rebinding each token to
+    /// a `Font.TextStyle` keeps the same visual hierarchy on the default macOS 14
+    /// setting *and* lets one accessibility setting scale the entire app from a
+    /// single source of truth.
     ///
-    /// A step is only worth having if it changes meaning. These do:
+    /// The mapping preserves the old ranking (each style's default point size on
+    /// macOS is noted), so call sites inherit the same relative scale:
     ///
-    /// | Token          | Size | Job                                          |
-    /// |----------------|------|----------------------------------------------|
-    /// | `title`        | 16   | What a panel is about — one per panel         |
-    /// | `surfaceTitle` | 13   | Surface and sheet headers                     |
-    /// | `body`         | 12   | Rows, fields, controls — the default          |
-    /// | `caption`      | 11   | Supporting text hung off a body line          |
-    /// | `micro`        | 10   | Axis ticks, badges, section headers           |
+    /// | Token          | Text style     | ~pt | Job                              |
+    /// |----------------|----------------|-----|----------------------------------|
+    /// | `title`        | `.title3`      | 15  | What a panel is about            |
+    /// | `surfaceTitle` | `.headline`    | 13  | Surface and sheet headers        |
+    /// | `navigation`   | `.body`        | 13  | Source-list navigation rows      |
+    /// | `body`         | `.callout`     | 12  | Rows, fields, controls — default |
+    /// | `caption`      | `.subheadline` | 11  | Supporting text off a body line  |
+    /// | `micro`        | `.caption`     | 10  | Ticks, badges, section headers   |
     ///
     /// Weight carries emphasis *within* a step; reach for the emphasis variant
     /// before reaching for a bigger size. Never write `.system(size:)` in a
     /// view — if something here doesn't fit, the scale is wrong and should be
-    /// changed here, once.
+    /// changed here, once. The only exceptions are the display metrics below.
     enum Typography {
         // Structure
-        static let title = Font.system(size: 16, weight: .semibold)
-        static let surfaceTitle = Font.system(size: 13, weight: .semibold)
+        static let title = Font.title3.weight(.semibold)
+        static let surfaceTitle = Font.headline
+
+        // Navigation — source-list rows read at the native sidebar size.
+        static let navigation = Font.body
+        static let navigationMedium = Font.body.weight(.medium)
 
         // Body — the default for rows, fields and controls
-        static let body = Font.system(size: 12)
-        static let bodyMedium = Font.system(size: 12, weight: .medium)
-        static let bodyEmphasis = Font.system(size: 12, weight: .semibold)
+        static let body = Font.callout
+        static let bodyMedium = Font.callout.weight(.medium)
+        static let bodyEmphasis = Font.callout.weight(.semibold)
 
         // Supporting text
-        static let caption = Font.system(size: 11)
-        static let captionMedium = Font.system(size: 11, weight: .medium)
-        static let captionEmphasis = Font.system(size: 11, weight: .semibold)
+        static let caption = Font.subheadline
+        static let captionMedium = Font.subheadline.weight(.medium)
+        static let captionEmphasis = Font.subheadline.weight(.semibold)
 
         // Smallest legible step: ticks, badges, uppercase section headers
-        static let micro = Font.system(size: 10)
-        static let microMedium = Font.system(size: 10, weight: .medium)
-        static let badge = Font.system(size: 10, weight: .semibold)
-        static let sectionHeader = Font.system(size: 10, weight: .semibold)
+        static let micro = Font.caption
+        static let microMedium = Font.caption.weight(.medium)
+        static let microEmphasis = Font.caption.weight(.semibold)
+        static let badge = Font.caption.weight(.semibold)
+        static let sectionHeader = Font.caption.weight(.semibold)
+
+        /// Mode switchers — the sidebar navigator and the inspector's segmented
+        /// control. Sits on the body step so a switcher reads as chrome, not text.
+        static let modeSwitcher = Font.callout
+
+        // Workspace chrome — the shared footer/status baseline. `WorkspaceFooterBar`
+        // installs `chrome` as the environment font so every bottom bar inherits it;
+        // `chromeAction` labels an inline footer button and `chromeSecondary` is the
+        // quieter telemetry/summary text hung beside it.
+        static let chrome = Font.callout
+        static let chromeAction = Font.callout.weight(.medium)
+        static let chromeSecondary = Font.subheadline
 
         // Monospaced — for values read digit-by-digit (addresses, hex, bytes).
-        // Sizes track the proportional scale so a mono value sits on the same
-        // baseline as the label next to it.
-        static let mono = Font.system(size: 12, design: .monospaced)
-        static let monoSmall = Font.system(size: 11, design: .monospaced)
-        static let monoMicro = Font.system(size: 10, design: .monospaced)
+        // Styles track the proportional scale so a mono value sits on the same
+        // baseline as the label next to it, and scale with Dynamic Type together.
+        static let mono = Font.system(.callout, design: .monospaced)
+        static let monoSmall = Font.system(.subheadline, design: .monospaced)
+        static let monoMicro = Font.system(.caption, design: .monospaced)
 
         /// Big read-at-a-glance figures — Overview stat tiles, onboarding
-        /// headlines. Outside the five-step scale on purpose: these are display
-        /// numerals, not text, and sizing them from the body scale made them
-        /// look like a heading that had gone wrong.
+        /// headlines. Kept as deliberate fixed sizes, outside the semantic scale:
+        /// these are display numerals, not text, and sizing them from the body
+        /// step made them look like a heading that had gone wrong.
         static let metric = Font.system(size: 26, weight: .semibold)
         static let metricRounded = Font.system(size: 26, weight: .semibold, design: .rounded)
         static let hero = Font.system(size: 28, weight: .bold)

@@ -373,12 +373,12 @@ struct InspectorView: View {
     }
 
     private func placeholder(_ text: String) -> some View {
-        Text(text).font(.callout).foregroundStyle(.secondary)
+        Text(text).font(Theme.Typography.body).foregroundStyle(.secondary)
     }
 
     private func field(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(Theme.Typography.sectionHeader).foregroundStyle(.secondary)
+            Text(label).font(Theme.Typography.captionMedium).foregroundStyle(.secondary)
             Text(value).font(Theme.Typography.mono).textSelection(.enabled)
         }
     }
@@ -577,16 +577,7 @@ private struct CorrelatedActionTimeline: View {
     }
 
     private var header: some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
-            Text("CORRELATED ACTION TIMELINE")
-                .font(Theme.Typography.sectionHeader)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: Theme.Metrics.spacingM)
-            Text(headerDetail)
-                .font(Theme.Typography.micro)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
+        SectionHeader("Correlated Action Timeline", detail: headerDetail)
     }
 
     private var gridlines: some View {
@@ -737,7 +728,7 @@ private struct DecodedLayerTree: View {
     private func layerHeader(_ layer: DecodedLayer) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "chevron.down").font(.system(size: Theme.Icon.small)).foregroundStyle(.secondary)
-            Text(layer.title).font(.system(size: Theme.Icon.medium))
+            Text(layer.title).font(Theme.Typography.bodyMedium)
                 .foregroundStyle(Theme.color(for: layer.proto))
             if !layer.summary.isEmpty {
                 Text(layer.summary).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)

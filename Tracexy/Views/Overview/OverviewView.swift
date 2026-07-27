@@ -1,10 +1,10 @@
 import Charts
 import SwiftUI
 
-/// The earned intelligence surface: a scrollable set of cards that only becomes
-/// valuable once sessions exist. Capture *fidelity* leads, because every figure
-/// below it is conditional on it; then findings (the centerpiece), top talkers,
-/// throughput, protocol mix and latency.
+/// The earned intelligence surface: a bounded dashboard that only becomes
+/// valuable once sessions exist. Capture health and traffic charts stay visible
+/// near the top; findings are a severity summary plus a short actionable preview,
+/// never an unbounded list that pushes every chart below the fold.
 ///
 /// Live capture state — interface, running/stopped, current throughput — is
 /// deliberately absent: the toolbar and status bar already carry it on every
@@ -22,13 +22,9 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
                 scopeNotice
-                captureFidelityCard
-                findingsCard
-                LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                    topTalkersCard
-                    throughputCard
-                    protocolMixCard
-                    latencyCard
+                ViewThatFits(in: .horizontal) {
+                    wideDashboard
+                    compactDashboard
                 }
             }
             .padding(Theme.Metrics.spacingL)
@@ -44,7 +40,53 @@ struct OverviewView: View {
         return formatter
     }()
 
-    private let columns = [GridItem(.adaptive(minimum: 240), spacing: Theme.Metrics.spacingL)]
+    private static let findingPreviewLimit = 5
+
+    private let compactColumns = [
+        GridItem(.adaptive(minimum: 260), spacing: Theme.Metrics.spacingL),
+    ]
+
+    /// Scoped like every other rollup here. The sidebar badge and Security
+    /// surface remain capture-wide on purpose; this preview describes the same
+    /// filtered session set as the surrounding charts.
+    private var scopedFindings: [Finding] {
+        let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
+        return coordinator.findings.filter { finding in
+            guard let id = finding.sessionID else {
+                return true
+            }
+            return visibleIDs.contains(id)
+        }
+    }
+
+    private var wideDashboard: some View {
+        HStack(alignment: .top, spacing: Theme.Metrics.spacingL) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+                captureHealthCard
+                throughputCard
+                HStack(alignment: .top, spacing: Theme.Metrics.spacingL) {
+                    topTalkersCard
+                    protocolMixCard
+                }
+            }
+            .frame(minWidth: 520)
+
+            findingsCard
+                .frame(width: 340)
+        }
+    }
+
+    private var compactDashboard: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+            captureHealthCard
+            throughputCard
+            LazyVGrid(columns: compactColumns, alignment: .leading, spacing: Theme.Metrics.spacingL) {
+                topTalkersCard
+                protocolMixCard
+            }
+            findingsCard
+        }
+    }
 
     /// Says out loud when the numbers below describe a filtered subset. Without
     /// this the surface and the session list can disagree with no visible reason.
@@ -60,20 +102,36 @@ struct OverviewView: View {
         }
     }
 
-    // MARK: Capture fidelity
+    // MARK: Capture health
 
-    /// The first thing on this surface, because every figure below it is
-    /// conditional on it. Interface, capture state and throughput used to lead
-    /// here; they were already on the toolbar and the status bar on every
-    /// surface, so the surface opened with the one thing that was both redundant
-    /// and instantaneous, and pushed its only unique content below the fold.
-    ///
-    /// What belongs here instead is the question none of that chrome answers:
-    /// are these numbers computed over all the traffic, or only some of it?
-    private var captureFidelityCard: some View {
+    /// Capture fidelity and decoded latency share one compact health card. Both
+    /// qualify the charts below, and neither needs a full-width card of its own.
+    private var captureHealthCard: some View {
+        card {
+            sectionLabel("Capture Health", systemImage: "checkmark.seal")
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: Theme.Metrics.spacingL) {
+                    fidelitySummary
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Divider()
+                        .frame(height: 68)
+                    latencySummary
+                }
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                    fidelitySummary
+                    Divider()
+                    latencySummary
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var fidelitySummary: some View {
         let stats = coordinator.captureStatistics
-        return card {
-            sectionLabel("Capture fidelity", systemImage: "checkmark.seal")
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            Text("Fidelity")
+                .font(Theme.Typography.captionMedium)
+                .foregroundStyle(.secondary)
             if let stats, let fidelity = stats.fidelity {
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
                     Text(Self.percent.string(from: fidelity as NSNumber) ?? "—")
@@ -107,33 +165,51 @@ struct OverviewView: View {
         }
     }
 
+    private var latencySummary: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            Text("Latency")
+                .font(Theme.Typography.captionMedium)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingL) {
+                latencyStat("Median", coordinator.medianLatencyMilliseconds)
+                latencyStat("p95", coordinator.p95LatencyMilliseconds)
+            }
+        }
+    }
+
     // MARK: Findings
 
     private var findingsCard: some View {
-        // Scoped like every other rollup here. The sidebar badge and the Security
-        // surface stay capture-wide on purpose — those answer "does this capture
-        // have problems", not "does what I am looking at have problems".
-        let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
-        let all = coordinator.findings.filter { finding in
-            guard let id = finding.sessionID else {
-                return true
-            }
-            return visibleIDs.contains(id)
-        }
-        let shown = Array(all.prefix(20))
+        let all = scopedFindings
+        let shown = Array(all.prefix(Self.findingPreviewLimit))
         return card {
-            sectionLabel("Findings", systemImage: "sparkle.magnifyingglass")
+            HStack(spacing: Theme.Metrics.spacingM) {
+                sectionLabel("Findings", systemImage: "sparkle.magnifyingglass")
+                Spacer()
+                Text(all.count.formatted())
+                    .font(Theme.Typography.monoSmall)
+                    .foregroundStyle(.secondary)
+                if !all.isEmpty {
+                    Button("Open Security") {
+                        coordinator.selectSidebarItem(.security)
+                    }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+                    .help("Show the capture-wide Security findings list")
+                }
+            }
             if all.isEmpty {
                 emptyFindings
             } else {
+                findingSeveritySummary(all)
+                Divider()
                 ForEach(shown) { finding in
                     findingRow(finding)
                 }
                 if all.count > shown.count {
-                    Text("+\(all.count - shown.count) more")
-                        .font(Theme.Typography.monoSmall)
+                    Text("Showing \(shown.count.formatted()) of \(all.count.formatted())")
+                        .font(Theme.Typography.caption)
                         .foregroundStyle(.tertiary)
-                        .padding(.top, 2)
                 }
             }
         }
@@ -191,7 +267,7 @@ struct OverviewView: View {
 
     private var throughputCard: some View {
         RealtimeChart(samples: coordinator.throughputSamples)
-            .frame(height: 140)
+            .frame(height: 184)
     }
 
     // MARK: Protocol mix
@@ -235,14 +311,19 @@ struct OverviewView: View {
         }
     }
 
-    // MARK: Latency
-
-    private var latencyCard: some View {
-        card {
-            sectionLabel("Latency", systemImage: "clock")
-            HStack(alignment: .firstTextBaseline, spacing: 20) {
-                latencyStat("Median", coordinator.medianLatencyMilliseconds)
-                latencyStat("p95", coordinator.p95LatencyMilliseconds)
+    private func findingSeveritySummary(_ findings: [Finding]) -> some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            ForEach(Finding.Severity.allCases, id: \.self) { severity in
+                let count = findings.filter { $0.severity == severity }.count
+                if count > 0 {
+                    Label(count.formatted(), systemImage: severity.systemImage)
+                        .font(Theme.Typography.microMedium)
+                        .foregroundStyle(severity.tint)
+                        .padding(.horizontal, Theme.Metrics.spacingM)
+                        .padding(.vertical, Theme.Metrics.spacingS)
+                        .background(severity.tint.opacity(0.1), in: Capsule())
+                        .accessibilityLabel("\(severityTitle(severity)): \(count.formatted())")
+                }
             }
         }
     }
@@ -268,9 +349,9 @@ struct OverviewView: View {
     }
 
     private func sectionLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(Theme.Typography.sectionHeader)
-            .foregroundStyle(.secondary)
+        // Centralize casing, tracking, font and colour in `SectionHeader` so every
+        // Overview card titles the same way; the glyph keeps its secondary tint.
+        SectionHeader(title, systemImage: systemImage)
     }
 
     private func findingRow(_ finding: Finding) -> some View {
@@ -307,5 +388,13 @@ struct OverviewView: View {
         return "\(stats.received.formatted()) captured · "
             + "\(stats.droppedByKernel.formatted()) dropped by the kernel buffer · "
             + "\(stats.droppedByInterface.formatted()) dropped by the interface"
+    }
+
+    private func severityTitle(_ severity: Finding.Severity) -> String {
+        switch severity {
+        case .error: String(localized: "Errors")
+        case .warning: String(localized: "Warnings")
+        case .note: String(localized: "Notes")
+        }
     }
 }

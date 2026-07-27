@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - SessionFilterCategory
 
-/// A category tab in the session filter bar. Mirrors the sibling app's `ProtocolFilter`:
+/// A category tab in the session filter bar:
 /// protocol categories form one group (a session matches if it matches *any*
 /// active protocol), and status categories (Errors) form an independent group.
 enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {

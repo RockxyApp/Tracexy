@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import SwiftUI
@@ -10,6 +11,8 @@ import Testing
 /// and evidence splits from latching a provisional, too-narrow layout or driving a pane's
 /// geometry negative on the first layout pass.
 struct NativeSplitLayoutTests {
+    // MARK: Internal
+
     // MARK: Workspace split — layout readiness
 
     @Test("Layout is ready only for finite, strictly-positive bounds")
@@ -134,5 +137,179 @@ struct NativeSplitLayoutTests {
         #expect(!workspace.isEmpty)
         #expect(!bottom.isEmpty)
         #expect(workspace != bottom)
+    }
+
+    // MARK: Native window toolbar chrome
+
+    @MainActor
+    @Test("Main toolbar places the bordered sidebar toggle immediately before its tracking separator")
+    func nativeSidebarToolbarChrome() {
+        let controller = makeToolbarController()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+
+        let identifiers = toolbar.managedToolbar.items.map(\.itemIdentifier)
+        let toggleIndex = identifiers.firstIndex(
+            of: NativeWorkspaceToolbar.sidebarToggleIdentifier
+        )
+        let trackingSeparatorIndex = identifiers.firstIndex(
+            of: NativeWorkspaceToolbar.sidebarTrackingSeparatorIdentifier
+        )
+
+        // Flexible space leads, then the bordered toggle, then the tracking separator
+        // bound to the sidebar's divider — the geometric contract that seats the
+        // toggle above the source list.
+        #expect(identifiers.first == .flexibleSpace)
+        #expect(toggleIndex != nil)
+        #expect(trackingSeparatorIndex == toggleIndex.map { $0 + 1 })
+        if let toggleIndex {
+            #expect(toolbar.managedToolbar.items[toggleIndex].isBordered)
+        }
+        if let trackingSeparatorIndex {
+            #expect(
+                toolbar.managedToolbar.items[trackingSeparatorIndex]
+                    is NSTrackingSeparatorToolbarItem
+            )
+        }
+    }
+
+    @MainActor
+    @Test("Trailing actions are one toolbar item group of three ordered subitems")
+    func nativeActionGroupStructure() {
+        let controller = makeToolbarController()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+
+        guard let actionsItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.actionsIdentifier
+        }) else {
+            Issue.record("Trailing actions item was not installed")
+            return
+        }
+
+        // The trailing cluster is a real native group — capture, bottom inspector,
+        // context dock — in that order, not a hosted SwiftUI stack.
+        let group = actionsItem as? NSToolbarItemGroup
+        #expect(group != nil)
+        #expect(group?.subitems.count == 3)
+        #expect(group?.subitems.map(\.label) == ["Start", "Bottom Inspector", "Inspector"])
+    }
+
+    @MainActor
+    @Test("Capture action observes an immediate launch-state transition")
+    func nativeCaptureActionObservesImmediateStart() async {
+        let controller = makeToolbarController()
+        let coordinator = MainContentCoordinator()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: coordinator)
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+
+        guard let actions = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.actionsIdentifier
+        }) as? NSToolbarItemGroup,
+            let captureItem = actions.subitems.first else
+        {
+            Issue.record("Capture toolbar item was not installed")
+            return
+        }
+
+        toolbar.startObservingState()
+        // Mirrors launch auto-start: the coordinator can become live before the
+        // observation task receives its first MainActor turn.
+        coordinator.isCapturing = true
+        await Task.yield()
+
+        #expect(captureItem.label == "Stop")
+        #expect(captureItem.toolTip == "Stop capture")
+        #expect(captureItem.image?.accessibilityDescription == "Stop")
+    }
+
+    @MainActor
+    @Test("Native toolbar toggle collapses and restores the real sidebar split item")
+    func nativeToolbarTogglesSidebar() {
+        let controller = makeToolbarController()
+        var publishedPresentations: [Bool] = []
+        controller.onSidebarVisibilityChanged = {
+            publishedPresentations.append($0)
+        }
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+        guard let toggleItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.sidebarToggleIdentifier
+        }),
+            let action = toggleItem.action else
+        {
+            Issue.record("Sidebar toolbar item was not installed")
+            return
+        }
+
+        NSApp.sendAction(action, to: toggleItem.target, from: toggleItem)
+        #expect(!controller.isSidebarPresented)
+        #expect(publishedPresentations.last == false)
+
+        NSApp.sendAction(action, to: toggleItem.target, from: toggleItem)
+        #expect(controller.isSidebarPresented)
+        #expect(publishedPresentations.last == true)
+    }
+
+    @MainActor
+    @Test("Native toolbar does not retain its workspace split controller")
+    func nativeToolbarDoesNotRetainSplitController() {
+        weak var releasedController: NativeWorkspaceSplitViewController?
+        let toolbar: NativeWorkspaceToolbar = {
+            let controller = NativeWorkspaceSplitViewController()
+            releasedController = controller
+            return NativeWorkspaceToolbar(
+                splitViewController: controller,
+                configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+            )
+        }()
+
+        #expect(releasedController == nil)
+        withExtendedLifetime(toolbar) {}
+    }
+
+    // MARK: Private
+
+    /// A laid-out three-pane workspace controller for the toolbar chrome tests.
+    @MainActor
+    private func makeToolbarController() -> NativeWorkspaceSplitViewController {
+        let controller = NativeWorkspaceSplitViewController()
+        controller.configure(
+            sidebarController: NSHostingController(rootView: Color.clear),
+            workspaceController: NSHostingController(rootView: Color.clear),
+            inspectorController: NSHostingController(rootView: Color.clear),
+            isSidebarPresented: true,
+            isInspectorPresented: true,
+            layout: NativeWorkspaceSplitLayout(
+                autosaveName: "NativeSplitLayoutTests-\(UUID().uuidString)",
+                sidebarMinimumWidth: 200,
+                sidebarIdealWidth: 240,
+                sidebarMaximumWidth: 350,
+                workspaceMinimumWidth: 420,
+                inspectorMinimumWidth: 320,
+                inspectorIdealWidth: 336,
+                inspectorMaximumWidth: 520
+            )
+        )
+        controller.view.frame = CGRect(x: 0, y: 0, width: 1_300, height: 700)
+        controller.view.needsLayout = true
+        controller.view.layoutSubtreeIfNeeded()
+        return controller
     }
 }

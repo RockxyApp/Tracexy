@@ -1,6 +1,6 @@
 import Foundation
 
-/// The three sidebar navigator modes, mirroring the sibling app's Browse/Focus/Library
+/// The three sidebar navigator modes — a Browse/Focus/Library
 /// segmented control. Each mode swaps the whole sidebar body so only one kind of
 /// work is on screen at a time — the antidote to a single over-stacked list.
 enum SidebarNavigatorMode: String, CaseIterable, Identifiable, Hashable {

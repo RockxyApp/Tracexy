@@ -173,6 +173,9 @@ enum SessionFilterOperator: String, CaseIterable, Codable, Hashable {
 struct SessionFilterRule: Identifiable, Codable, Hashable {
     // MARK: Lifecycle
 
+    // Swift's synthesized initializer inherits main-actor isolation in this target.
+    // Keep this explicit initializer available to capture-processing code.
+    // swiftlint:disable:next unneeded_synthesized_initializer
     nonisolated init(
         id: UUID = UUID(),
         isEnabled: Bool = true,

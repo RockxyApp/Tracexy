@@ -5,7 +5,7 @@ import SwiftUI
 /// Native window that mutes chatty hosts and protocols so a busy capture (mDNS,
 /// ARP, ICMPv6…) stops flooding the session list. Muting is global and persisted;
 /// the session list, counts, and stats all respect it. Opened via `openWindow`
-/// from the Focus sidebar. Mirrors the sibling app's `NoiseControlManagerSheet`.
+/// from the Focus sidebar.
 struct NoiseControlWindow: View {
     // MARK: Internal
 

@@ -24,15 +24,15 @@ struct SidebarView: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         VStack(spacing: 0) {
+            // The Browse / Focus / Library navigator is the first content row. The
+            // sidebar owns no show/hide chrome — that toggle lives in the native
+            // window toolbar, above this column (see `NativeWorkspaceWindowChrome`).
             Picker("Navigator", selection: navigatorBinding(workspace)) {
                 ForEach(SidebarNavigatorMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .workspaceSegmentedPicker()
 
             Divider()
 
@@ -45,7 +45,7 @@ struct SidebarView: View {
             // Final sibling of the root VStack (not a `safeAreaInset`) so the
             // footer is a real member of the source-list pane and sits inside the
             // native sidebar column rather than floating above its scroll edge.
-            SidebarBottomBar(filterText: filterBinding(workspace)) {
+            SidebarBottomBar(searchText: $sidebarSearch) {
                 Button("Save Current Capture", systemImage: "square.and.arrow.down") {
                     coordinator.saveCurrentCapture()
                 }
@@ -226,6 +226,9 @@ struct SidebarView: View {
                     .controlSize(.small)
                     .help("Create a focus set")
                 }
+                // Nudge just this header + its New button down a step; Noise
+                // Control below keeps its own baseline.
+                .padding(.top, Theme.Metrics.spacingS)
             }
 
             if showsNoiseControl {
@@ -287,7 +290,7 @@ struct SidebarView: View {
                 ForEach(filteredPinnedHosts, id: \.self) { host in
                     Label(host, systemImage: "globe")
                         .foregroundStyle(isActiveHost(host) ? Color.accentColor : .secondary)
-                        .fontWeight(isActiveHost(host) ? .medium : .regular)
+                        .font(isActiveHost(host) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                         .lineLimit(1)
                         .contentShape(Rectangle())
                         .onTapGesture { coordinator.selectHost(host) }
@@ -381,7 +384,7 @@ struct SidebarView: View {
             ForEach(hosts, id: \.name) { host in
                 Label(host.name, systemImage: "number")
                     .foregroundStyle(isActiveIP(host.name) ? Color.accentColor : .secondary)
-                    .fontWeight(isActiveIP(host.name) ? .medium : .regular)
+                    .font(isActiveIP(host.name) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .lineLimit(1).badge(host.count)
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.selectIP(host.name) }
@@ -402,7 +405,11 @@ struct SidebarView: View {
         HStack {
             Text(title)
             Spacer()
+            // A modest trailing inset pulls both header buttons ("New" /
+            // "Configure…") off the sidebar's trailing edge without shifting the
+            // list rows below, which keep the list's own leading/trailing insets.
             button()
+                .padding(.trailing, Theme.Metrics.spacingM)
         }
     }
 
@@ -473,13 +480,6 @@ struct SidebarView: View {
         }
         .badge(badge(for: item))
         .tag(item)
-    }
-
-    private func filterBinding(_ workspace: WorkspaceState) -> Binding<String> {
-        Binding(
-            get: { workspace.filterText },
-            set: { workspace.filterText = $0 }
-        )
     }
 
     /// Case-insensitive substring match; always true when not searching so call
@@ -620,7 +620,7 @@ private struct DomainRow: View {
             ForEach(group.ips, id: \.self) { ip in
                 Label(ip, systemImage: "number")
                     .foregroundStyle(isActiveIP(ip) ? Color.accentColor : .secondary)
-                    .fontWeight(isActiveIP(ip) ? .medium : .regular)
+                    .font(isActiveIP(ip) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .lineLimit(1)
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.selectIP(ip) }
@@ -632,7 +632,7 @@ private struct DomainRow: View {
         } label: {
             Label(group.domain, systemImage: "globe")
                 .foregroundStyle(isActiveHost ? Color.accentColor : .secondary)
-                .fontWeight(isActiveHost ? .medium : .regular)
+                .font(isActiveHost ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                 .lineLimit(1).badge(group.count)
                 .contentShape(Rectangle())
                 .onTapGesture { coordinator.selectHost(group.domain) }
@@ -695,7 +695,7 @@ private struct AppRow: View {
                 Label(host, systemImage: "arrow.right")
                     .labelStyle(.titleOnly)
                     .foregroundStyle(isActiveHost(host) ? Color.accentColor : .secondary)
-                    .fontWeight(isActiveHost(host) ? .medium : .regular)
+                    .font(isActiveHost(host) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .lineLimit(1)
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.selectHost(host) }
@@ -708,7 +708,7 @@ private struct AppRow: View {
             HStack(spacing: 6) {
                 AppIconView(name: group.app)
                 Text(group.app).lineLimit(1)
-                    .fontWeight(isActiveApp ? .medium : .regular)
+                    .font(isActiveApp ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .foregroundStyle(isActiveApp ? Color.accentColor : .primary)
             }
             .badge(group.count)

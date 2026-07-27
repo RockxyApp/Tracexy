@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Renders an app icon: the real NSWorkspace icon when the app can be resolved
-/// by name, otherwise a gradient monogram fallback. Ported from the sibling app.
+/// by name, otherwise a gradient monogram fallback.
 struct AppIconView: View {
     // MARK: Internal
 

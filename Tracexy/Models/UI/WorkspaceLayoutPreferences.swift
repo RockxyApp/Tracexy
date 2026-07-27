@@ -4,7 +4,7 @@ import Foundation
 /// means "never chosen", so a new workspace starts with both panels closed and
 /// may reveal the evidence inspector automatically on first selection. Once the
 /// user toggles a panel by hand that choice becomes the default for later
-/// workspaces and launches. Mirrors the sibling app's `WorkspaceLayoutPreferences`.
+/// workspaces and launches.
 struct WorkspaceLayoutPreferences {
     // MARK: Lifecycle
 

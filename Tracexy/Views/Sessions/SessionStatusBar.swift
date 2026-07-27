@@ -4,10 +4,10 @@ import SwiftUI
 // MARK: - StatusSurface
 
 /// Which central surface the status bar sits under. Only the session list owns
-/// the Clear / Filter / Auto Select controls — those act on the session stream,
-/// so on Overview / Flow / Security they would be dead affordances. The
-/// intelligence surfaces get a quiet summary of the same real capture instead.
-enum StatusSurface {
+/// the feature launchers and List Options — those act on the session stream, so
+/// on Overview / Flow / Security they would be dead affordances. The intelligence
+/// surfaces get a quiet summary of the same real capture instead.
+nonisolated enum StatusSurface {
     case sessionList
     case overview
     case flow
@@ -20,81 +20,314 @@ enum StatusSurface {
     }
 }
 
-// MARK: - SessionFooterAction
+// MARK: - FooterActionDescriptor
 
-/// A stable, pure description of one session-footer control.
+/// A stable, pure description of one footer control.
 ///
-/// It carries no view and no closure, so its ordering, identity and
-/// active/enabled state can be asserted directly in a unit test. The view maps
-/// `kind` to the matching coordinator/workspace callback; the descriptor itself
-/// never mutates capture or session data. `systemImage` is the *base* symbol —
-/// the active fill variant is applied at render time, so the descriptor stays a
-/// value with no rendering concerns.
-struct SessionFooterAction: Identifiable, Equatable {
+/// It carries no view and no closure, so its ordering, identity, placement and
+/// enabled/active/destructive state can be asserted directly in a unit test. The
+/// view maps `kind` to the matching effect through the `onAction` callback; the
+/// descriptor itself never mutates capture or session data. `systemImage` is the
+/// *base* symbol — the active fill/check treatment is applied at render time, so
+/// the descriptor stays a value with no rendering concerns.
+nonisolated struct FooterActionDescriptor: Identifiable, Equatable {
+    /// Every real footer effect, in one place. The first three are the inline
+    /// feature launchers; the rest are contextual List Options that live in the
+    /// More menu.
     enum Kind: String, CaseIterable {
-        case clear
-        case filter
-        case autoSelect
+        case saveCapture
+        case newFocusSet
+        case noiseControl
+        case clearSessions
+        case advancedFilters
+        case autoSelectLatest
+    }
+
+    /// Where a descriptor is allowed to appear. Primary tools are the inline quick
+    /// launchers; list options are the contextual menu items.
+    enum Placement: String {
+        case primary
+        case listOptions
     }
 
     let kind: Kind
     let title: String
+    let help: String
     let systemImage: String
-    let isActive: Bool
+    let placement: Placement
+    /// Stable rank used for ordering; primaries precede list options.
+    let priority: Int
     let isEnabled: Bool
+    let isActive: Bool
+    let isDestructive: Bool
 
     var id: Kind {
         kind
     }
 }
 
+// MARK: - FooterTelemetry
+
+/// A stable, pure description of one right-hand telemetry chip.
+///
+/// Ordered by importance and emitted only when the underlying data exists, so the
+/// footer never shows a zeroed or invented figure. `role` drives colour at render
+/// time and encodes the app's status semantics: green is reserved for live
+/// capture, red for session errors, orange only for material packet loss, and
+/// everything else stays neutral.
+nonisolated struct FooterTelemetry: Identifiable, Equatable {
+    enum Kind {
+        case packetDrops
+        case sessionErrors
+        case captureDuration
+        case liveRate
+        case totalBytes
+        case bytesUp
+        case bytesDown
+    }
+
+    enum Role {
+        case neutral
+        case warning
+        case error
+        case live
+    }
+
+    let kind: Kind
+    /// Pre-formatted display text. Empty for `captureDuration`, which the view
+    /// renders as a live ticking timer from `FooterSnapshot.captureStartedAt`.
+    let text: String
+    let help: String
+    let systemImage: String?
+    let role: Role
+
+    var id: Kind {
+        kind
+    }
+}
+
+// MARK: - FooterSnapshot
+
+/// The complete, pre-derived state the footer needs to render. Built once by the
+/// owning view (`MainDetailView`) from the coordinator and handed to the
+/// presentation-only `SessionStatusBar`, which never reads the coordinator itself.
+nonisolated struct FooterSnapshot: Equatable {
+    let summary: String
+    let telemetry: [FooterTelemetry]
+    /// Present only while a capture is running, so the view can drive the live
+    /// duration timer without owning capture state.
+    let captureStartedAt: Date?
+}
+
 // MARK: - SessionStatusBarModel
 
-/// Pure derivations for the session footer: the ordered action descriptors and
-/// the center status string. Kept free of SwiftUI so both are unit-testable and
-/// so every responsive presentation reads from one source of truth rather than
-/// re-deriving state per layout.
-enum SessionStatusBarModel {
-    /// The footer actions, always in the same order (Clear → Filter → Auto
-    /// Select). Order and identity are stable so the overflow menu and the inline
-    /// variants never disagree about which control is which.
+/// Pure derivations for the footer: the ordered action descriptors, the ordered
+/// telemetry chips, and the center status string. Kept free of SwiftUI so all
+/// three are unit-testable and so every responsive presentation reads from one
+/// source of truth rather than re-deriving state per layout.
+nonisolated enum SessionStatusBarModel {
+    // MARK: Internal
+
+    /// The footer's feature launchers and List Options, always in the same order:
+    /// Save Capture → New Focus Set → Noise Control, then Clear Current Sessions →
+    /// Advanced Filters → Auto Select Latest. Order and identity are stable so the
+    /// inline row, the More menu and the compact menu never disagree about which
+    /// control is which.
     static func actions(
+        canSaveCapture: Bool,
+        canAddFocusSet: Bool,
+        isNoiseControlActive: Bool,
+        hasSessions: Bool,
         activeFilterRuleCount: Int,
         isAdvancedFilterVisible: Bool,
-        autoSelectLatest: Bool,
-        hasSessions: Bool
+        autoSelectLatest: Bool
     )
-        -> [SessionFooterAction]
+        -> [FooterActionDescriptor]
     {
         [
-            SessionFooterAction(
-                kind: .clear,
-                title: "Clear",
-                systemImage: "trash",
+            // Primary launchers — the three inline quick feature tools.
+            FooterActionDescriptor(
+                kind: .saveCapture,
+                title: "Save Capture",
+                help: "Save the current capture to a .pcap file.",
+                systemImage: "square.and.arrow.down",
+                placement: .primary,
+                priority: 0,
+                // Nothing to save until frames have been retained.
+                isEnabled: canSaveCapture,
                 isActive: false,
-                // Nothing to clear on an empty capture — a disabled Clear is more
-                // honest than one that silently no-ops.
-                isEnabled: hasSessions
+                isDestructive: false
             ),
-            SessionFooterAction(
-                kind: .filter,
-                title: activeFilterRuleCount > 0 ? "Filter (on)" : "Filter",
+            FooterActionDescriptor(
+                kind: .newFocusSet,
+                title: "New Focus Set",
+                help: "Create a focus set from the current advanced filter rules.",
+                systemImage: "scope",
+                placement: .primary,
+                priority: 1,
+                isEnabled: canAddFocusSet,
+                isActive: false,
+                isDestructive: false
+            ),
+            FooterActionDescriptor(
+                kind: .noiseControl,
+                title: "Noise Control",
+                help: "Mute noisy hosts or protocols so the list stops flooding.",
+                systemImage: "speaker.slash",
+                placement: .primary,
+                priority: 2,
+                // Always available: muting is useful before anything is captured.
+                isEnabled: true,
+                isActive: isNoiseControlActive,
+                isDestructive: false
+            ),
+
+            // Contextual List Options — the More menu.
+            FooterActionDescriptor(
+                kind: .clearSessions,
+                title: "Clear Capture Data…",
+                help: "Remove decoded sessions, retained packets, capture statistics, and throughput history.",
+                systemImage: "trash",
+                placement: .listOptions,
+                priority: 3,
+                // A disabled Clear is more honest than one that silently no-ops.
+                isEnabled: hasSessions,
+                isActive: false,
+                isDestructive: true
+            ),
+            FooterActionDescriptor(
+                kind: .advancedFilters,
+                title: activeFilterRuleCount > 0 ? "Advanced Filters (on)" : "Advanced Filters",
+                help: "Show the advanced filter rule builder.",
                 systemImage: "line.3.horizontal.decrease.circle",
+                placement: .listOptions,
+                priority: 4,
+                isEnabled: true,
                 isActive: isAdvancedFilterVisible || activeFilterRuleCount > 0,
-                isEnabled: true
+                isDestructive: false
             ),
-            SessionFooterAction(
-                kind: .autoSelect,
-                title: "Auto Select",
+            FooterActionDescriptor(
+                kind: .autoSelectLatest,
+                title: "Auto Select Latest",
+                help: "Automatically select the newest session as it arrives.",
                 systemImage: "arrow.down.circle",
+                placement: .listOptions,
+                priority: 5,
+                isEnabled: true,
                 isActive: autoSelectLatest,
-                isEnabled: true
+                isDestructive: false
             ),
         ]
     }
 
-    /// The center status string. This is the exact behaviour the footer shipped
-    /// with, lifted verbatim into a pure function so it can be tested and reused.
+    /// The right-hand telemetry chips, ordered by importance and emitted only when
+    /// their data exists: packet drops → session errors → capture duration →
+    /// combined live rate → session-attributed total → directional totals.
+    static func telemetry(
+        isCapturing: Bool,
+        hasCaptureStatistics: Bool,
+        totalDropped: Int,
+        isMaterialLoss: Bool,
+        errorCount: Int,
+        hasCaptureDuration: Bool,
+        liveBytesPerSecond: Double?,
+        totalBytes: Int,
+        bytesUp: Int,
+        bytesDown: Int
+    )
+        -> [FooterTelemetry]
+    {
+        var items: [FooterTelemetry] = []
+
+        // Packet drops — only when the source reports stats and something was
+        // actually lost. Material loss warns (orange); anything below the
+        // threshold is shown neutrally rather than dressed up as an alarm. With no
+        // statistics at all the chip is omitted, never faked as "none dropped".
+        if hasCaptureStatistics, totalDropped > 0 {
+            items.append(FooterTelemetry(
+                kind: .packetDrops,
+                text: "\(totalDropped.formatted()) dropped",
+                help: isMaterialLoss
+                    ? "Material packet loss — the derived numbers may understate the real traffic."
+                    : "Some packets were dropped, but below the level that skews the numbers.",
+                systemImage: "exclamationmark.triangle.fill",
+                role: isMaterialLoss ? .warning : .neutral
+            ))
+        }
+
+        // Session errors — labelled "session errors", never a bare "errors".
+        if errorCount > 0 {
+            items.append(FooterTelemetry(
+                kind: .sessionErrors,
+                text: errorCount == 1 ? "1 session error" : "\(errorCount.formatted()) session errors",
+                help: "Sessions that ended in an error state.",
+                systemImage: "xmark.octagon.fill",
+                role: .error
+            ))
+        }
+
+        // Elapsed capture duration — a live timer; the view renders it.
+        if hasCaptureDuration {
+            items.append(FooterTelemetry(
+                kind: .captureDuration,
+                text: "",
+                help: "Elapsed time since this capture started.",
+                systemImage: nil,
+                role: .neutral
+            ))
+        }
+
+        // Combined live rate — only while capturing and only once a sample exists.
+        // A single combined figure: directional live speeds are never invented.
+        if isCapturing, let bps = liveBytesPerSecond {
+            items.append(FooterTelemetry(
+                kind: .liveRate,
+                text: "\(formatBytes(Int(bps)))/s",
+                help: "Combined live throughput across both directions.",
+                systemImage: "waveform.path.ecg",
+                role: .live
+            ))
+        }
+
+        // Session-attributed total — the sum of each session's accounted bytes,
+        // explicitly not raw payload.
+        if totalBytes > 0 {
+            items.append(FooterTelemetry(
+                kind: .totalBytes,
+                text: "\(formatBytes(totalBytes)) total",
+                help: "Session-attributed bytes — the sum of each session's accounted bytes, not raw payload.",
+                systemImage: nil,
+                role: .neutral
+            ))
+        }
+
+        // Directional cumulative totals (first-observed ↑, reverse ↓). Neutral —
+        // green is reserved for live capture status, so a static total never
+        // borrows it.
+        if bytesUp > 0 {
+            items.append(FooterTelemetry(
+                kind: .bytesUp,
+                text: "↑ \(formatBytes(bytesUp))",
+                help: "First-observed direction — cumulative bytes.",
+                systemImage: nil,
+                role: .neutral
+            ))
+        }
+        if bytesDown > 0 {
+            items.append(FooterTelemetry(
+                kind: .bytesDown,
+                text: "↓ \(formatBytes(bytesDown))",
+                help: "Reverse direction — cumulative bytes.",
+                systemImage: nil,
+                role: .neutral
+            ))
+        }
+
+        return items
+    }
+
+    /// The center status string. Session-list summaries follow a strict
+    /// hierarchy; the intelligence surfaces keep their own quiet summaries.
     static func statusText(
         surface: StatusSurface,
         totalSessions: Int,
@@ -123,50 +356,48 @@ enum SessionStatusBarModel {
         // Single-selection model: the count is derived from the flag, never a
         // hardcoded "1", so it stays honest if selection is ever cleared.
         let selectedCount = hasSelection ? 1 : 0
+        let isFiltered = visibleCount != totalSessions
         if selectedCount > 0 {
-            return "\(visibleCount) shown · \(selectedCount) selected"
+            return isFiltered
+                ? "\(selectedCount) selected · \(visibleCount) of \(totalSessions) shown"
+                : "\(selectedCount) selected · \(totalSessions) sessions"
         }
-        if visibleCount != totalSessions {
+        if isFiltered {
             return "\(visibleCount) of \(totalSessions) sessions"
         }
         return "\(totalSessions) sessions"
+    }
+
+    // MARK: Private
+
+    private static func formatBytes(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
     }
 }
 
 // MARK: - SessionStatusBar
 
-/// Bottom status bar showing session counts, error count, capture duration, and
-/// byte totals. Surface-aware: session controls appear only over the session
-/// list; every surface still gets the shared summary + capture stats footer.
-///
-/// The left-hand controls are descriptor-driven (`SessionStatusBarModel`) and
-/// responsive: `ViewThatFits` steps from labelled icon buttons, to icon-only
-/// buttons, to a single native overflow menu as the window narrows.
+/// Bottom status bar showing the feature launchers, the session/capture summary,
+/// and health/telemetry. **Presentation-only**: it receives a pure snapshot,
+/// ordered descriptors and an `onAction` callback, and owns no coordinator and no
+/// workspace mutation. It lays out as one row in three zones — quick tools on the
+/// left, the summary centred, telemetry trailing — inside the shared
+/// `WorkspaceFooterBar`.
 struct SessionStatusBar: View {
     // MARK: Internal
 
-    @Bindable var coordinator: MainContentCoordinator
-
-    let visibleCount: Int
-
-    var surface: StatusSurface = .sessionList
+    let snapshot: FooterSnapshot
+    let descriptors: [FooterActionDescriptor]
+    let onAction: (FooterActionDescriptor.Kind) -> Void
 
     var body: some View {
-        let workspace = coordinator.activeWorkspace
         WorkspaceFooterBar(surface: .workspace) {
             HStack(spacing: 0) {
-                if surface.showsSessionControls {
-                    leftControls(workspace)
-                }
-                Spacer(minLength: Theme.Metrics.spacingL)
-                Text(statusText(workspace))
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
-                Spacer(minLength: Theme.Metrics.spacingL)
-                rightStats
+                quickTools
+                Spacer(minLength: 24)
+                centerSummary
+                Spacer(minLength: 24)
+                telemetryRow
             }
             .padding(.horizontal, Theme.Metrics.spacingL)
         }
@@ -174,102 +405,66 @@ struct SessionStatusBar: View {
 
     // MARK: Private
 
-    /// Full and compact variants share one `ViewThatFits`: as the window
-    /// narrows the bandwidth breakdown drops away, but the error state and byte
-    /// total — the two things worth knowing at a glance — always survive.
-    private var rightStats: some View {
-        ViewThatFits(in: .horizontal) {
-            fullStats
-            compactStats
+    private var primaryDescriptors: [FooterActionDescriptor] {
+        descriptors.filter { $0.placement == .primary }
+    }
+
+    private var listOptionDescriptors: [FooterActionDescriptor] {
+        descriptors.filter { $0.placement == .listOptions }
+    }
+
+    @ViewBuilder private var quickTools: some View {
+        if descriptors.isEmpty {
+            // Non-session surfaces expose no actions — status/telemetry only.
+            EmptyView()
+        } else {
+            HStack(spacing: 6) {
+                ForEach(primaryDescriptors) { descriptor in
+                    FooterActionButton(descriptor: descriptor) {
+                        onAction(descriptor.kind)
+                    }
+                }
+                if !listOptionDescriptors.isEmpty {
+                    moreMenu(primary: [], options: listOptionDescriptors, help: "List options")
+                }
+            }
+        }
+    }
+
+    private var centerSummary: some View {
+        Text(snapshot.summary)
+            .font(Theme.Typography.chromeSecondary)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .layoutPriority(2)
+    }
+
+    private var telemetryRow: some View {
+        HStack(spacing: 8) {
+            ForEach(snapshot.telemetry) { item in
+                telemetryChip(item)
+            }
         }
         .lineLimit(1)
     }
 
-    private var fullStats: some View {
-        HStack(spacing: 10) {
-            errorBadge
-
-            if let startedAt = coordinator.captureStartedAt {
-                CaptureDurationView(startedAt: startedAt)
-            }
-
-            Text("\(formattedBytes(coordinator.totalBytes)) total")
-                .font(Theme.Typography.body)
-                .foregroundStyle(.tertiary)
-                .help("Total captured payload bytes")
-
-            Text("↑ \(formattedBytes(coordinator.totalBytesUp))")
-                .font(Theme.Typography.body)
-                .foregroundStyle(Color(nsColor: .systemGreen))
-                .help("Total bytes sent")
-
-            Text("↓ \(formattedBytes(coordinator.totalBytesDown))")
-                .font(Theme.Typography.body)
-                .foregroundStyle(Color.accentColor)
-                .help("Total bytes received")
-        }
-    }
-
-    private var compactStats: some View {
-        HStack(spacing: 8) {
-            errorBadge
-
-            Text("\(formattedBytes(coordinator.totalBytes)) total")
-                .font(Theme.Typography.body)
-                .foregroundStyle(.tertiary)
-                .help("Total captured payload bytes")
-        }
-    }
-
-    @ViewBuilder private var errorBadge: some View {
-        if coordinator.errorCount > 0 {
-            HStack(spacing: 3) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: Theme.Icon.small))
-                Text("\(coordinator.errorCount) errors")
-                    .font(Theme.Typography.body)
-            }
-            .foregroundStyle(Color(nsColor: .systemRed))
-        }
-    }
-
-    /// The Clear / Filter / Auto Select controls, responsive by width: labelled
-    /// icon buttons first, then icon-only buttons, then a single overflow menu.
-    /// All three read from the same ordered descriptors, so they never disagree.
-    private func leftControls(_ workspace: WorkspaceState) -> some View {
-        let actions = footerActions(workspace)
-        return ViewThatFits(in: .horizontal) {
-            actionRow(actions, workspace, showsLabels: true)
-            actionRow(actions, workspace, showsLabels: false)
-            overflowMenu(actions, workspace)
-        }
-    }
-
-    private func actionRow(
-        _ actions: [SessionFooterAction],
-        _ workspace: WorkspaceState,
-        showsLabels: Bool
+    private func moreMenu(
+        primary: [FooterActionDescriptor],
+        options: [FooterActionDescriptor],
+        help: String
     )
         -> some View
     {
-        HStack(spacing: 6) {
-            ForEach(actions) { action in
-                FooterActionButton(action: action, showsLabel: showsLabels) {
-                    performAction(action.kind, workspace)
-                }
-            }
-        }
-    }
-
-    private func overflowMenu(_ actions: [SessionFooterAction], _ workspace: WorkspaceState) -> some View {
         Menu {
-            ForEach(actions) { action in
-                Button {
-                    performAction(action.kind, workspace)
-                } label: {
-                    Label(action.title, systemImage: action.systemImage)
+            ForEach(primary) { menuButton($0) }
+            if !primary.isEmpty, !options.isEmpty {
+                Divider()
+            }
+            if !options.isEmpty {
+                Section("List Options") {
+                    ForEach(options) { menuButton($0) }
                 }
-                .disabled(!action.isEnabled)
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -278,111 +473,113 @@ struct SessionStatusBar: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Session actions")
-        .accessibilityLabel("Session actions")
+        .help(help)
+        .accessibilityLabel(help)
     }
 
-    private func footerActions(_ workspace: WorkspaceState) -> [SessionFooterAction] {
-        SessionStatusBarModel.actions(
-            activeFilterRuleCount: workspace.activeFilterRules.count,
-            isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
-            autoSelectLatest: workspace.autoSelectLatest,
-            hasSessions: !coordinator.sessions.isEmpty
-        )
-    }
-
-    /// Maps a descriptor's identity to its existing real callback. These are the
-    /// same three effects the footer always had; nothing new is wired here.
-    private func performAction(_ kind: SessionFooterAction.Kind, _ workspace: WorkspaceState) {
-        switch kind {
-        case .clear:
-            coordinator.clearSessions()
-        case .filter:
-            // Keep the category tabs visible and reveal/hide the advanced rule
-            // builder directly beneath them.
-            workspace.isFilterBarVisible = true
-            workspace.isAdvancedFilterVisible.toggle()
-        case .autoSelect:
-            workspace.autoSelectLatest.toggle()
+    @ViewBuilder
+    private func menuButton(_ descriptor: FooterActionDescriptor) -> some View {
+        if descriptor.kind == .autoSelectLatest {
+            Toggle(
+                isOn: Binding(
+                    get: { descriptor.isActive },
+                    set: { _ in onAction(descriptor.kind) }
+                )
+            ) {
+                Label(descriptor.title, systemImage: descriptor.systemImage)
+            }
+            .disabled(!descriptor.isEnabled)
+            .help(descriptor.help)
+        } else {
+            Button(role: descriptor.isDestructive ? .destructive : nil) {
+                onAction(descriptor.kind)
+            } label: {
+                // Active manager/filter states read as a check in compact menus.
+                Label(descriptor.title, systemImage: descriptor.isActive ? "checkmark" : descriptor.systemImage)
+            }
+            .disabled(!descriptor.isEnabled)
+            .help(descriptor.help)
+            .accessibilityValue(descriptor.isActive ? "Active" : "Inactive")
         }
     }
 
-    private func statusText(_ workspace: WorkspaceState) -> String {
-        SessionStatusBarModel.statusText(
-            surface: surface,
-            totalSessions: coordinator.sessions.count,
-            visibleCount: visibleCount,
-            hasSelection: workspace.selectedSessionID != nil,
-            findingCount: coordinator.findings.count
-        )
+    private func telemetryChip(_ item: FooterTelemetry) -> some View {
+        HStack(spacing: 3) {
+            if let symbol = item.systemImage {
+                Image(systemName: symbol).font(.system(size: Theme.Icon.small))
+            }
+            if item.kind == .captureDuration, let startedAt = snapshot.captureStartedAt {
+                CaptureDurationView(startedAt: startedAt)
+            } else {
+                Text(item.text)
+                    .font(item.role == .neutral ? Theme.Typography.chromeSecondary : Theme.Typography.chrome)
+            }
+        }
+        .foregroundStyle(color(for: item.role))
+        .help(item.help)
     }
 
-    private func formattedBytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
+    private func color(for role: FooterTelemetry.Role) -> Color {
+        switch role {
+        case .neutral: .secondary
+        case .warning: Color(nsColor: .systemOrange)
+        case .error: Color(nsColor: .systemRed)
+        case .live: Color(nsColor: .systemGreen)
+        }
     }
 }
 
 // MARK: - FooterActionButton
 
-/// One footer control rendered from a `SessionFooterAction`: an SF Symbol with an
-/// optional label, an accent fill when active, and a subtle hover fill otherwise.
-/// Help and accessibility label come straight from the descriptor's title so the
-/// icon-only variant stays legible to VoiceOver and on hover.
+/// One inline footer launcher rendered from a `FooterActionDescriptor`: a compact
+/// badge capsule pairing the SF Symbol with its title in white. The capsule fills
+/// with the accent colour when active, a secondary-label wash on hover, and a
+/// tertiary-label wash otherwise, dimming when disabled. Help and accessibility
+/// label come straight from the descriptor.
 private struct FooterActionButton: View {
     // MARK: Internal
 
-    let action: SessionFooterAction
-    var showsLabel: Bool
+    let descriptor: FooterActionDescriptor
     let perform: () -> Void
 
     var body: some View {
         Button(action: perform) {
-            HStack(spacing: 4) {
-                Image(systemName: action.systemImage)
-                    .symbolVariant(action.isActive ? .fill : .none)
-                    .font(.system(size: Theme.Icon.medium))
-                if showsLabel {
-                    Text(action.title)
-                        .font(Theme.Typography.captionEmphasis)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, showsLabel ? 9 : 6)
-            .padding(.vertical, 3)
-            .background(background, in: Capsule())
-            .contentShape(Capsule())
+            Label(descriptor.title, systemImage: descriptor.systemImage)
+                .font(Theme.Typography.badge)
+                .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(background, in: Capsule())
+                .opacity(descriptor.isEnabled ? 1 : 0.45)
         }
         .buttonStyle(.plain)
-        .disabled(!action.isEnabled)
+        .disabled(!descriptor.isEnabled)
         .onHover { isHovered = $0 }
-        .help(action.title)
-        .accessibilityLabel(action.title)
-        .accessibilityAddTraits(action.isActive ? .isSelected : [])
+        .help(descriptor.help)
+        .accessibilityLabel(descriptor.title)
+        .accessibilityAddTraits(descriptor.isActive ? .isSelected : [])
     }
 
     // MARK: Private
 
     @State private var isHovered = false
 
-    private var foreground: Color {
-        if action.isActive {
-            return .white
-        }
-        return isHovered ? .primary : .secondary
-    }
-
     private var background: Color {
-        if action.isActive {
+        if descriptor.isActive {
             return Color.accentColor
         }
-        return isHovered ? Color.secondary.opacity(0.18) : .clear
+        if isHovered, descriptor.isEnabled {
+            return Color(nsColor: .secondaryLabelColor).opacity(0.86)
+        }
+        return Color(nsColor: .tertiaryLabelColor)
     }
 }
 
 // MARK: - CaptureDurationView
 
-/// Elapsed capture time, updating every second.
+/// Elapsed capture time, updating every second. Neutral by design — the parent
+/// telemetry chip owns the colour.
 private struct CaptureDurationView: View {
     // MARK: Internal
 
@@ -391,9 +588,8 @@ private struct CaptureDurationView: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: "clock").font(.system(size: Theme.Icon.small))
-            Text(formatted).font(Theme.Typography.caption.monospacedDigit())
+            Text(formatted).font(Theme.Typography.chromeSecondary.monospacedDigit())
         }
-        .foregroundStyle(.tertiary)
         .onReceive(timer) { now = $0 }
     }
 

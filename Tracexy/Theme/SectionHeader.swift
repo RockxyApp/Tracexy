@@ -17,15 +17,21 @@ import SwiftUI
 struct SectionHeader: View {
     // MARK: Lifecycle
 
-    init(_ title: String, detail: String? = nil) {
+    init(_ title: String, systemImage: String? = nil, detail: String? = nil) {
         self.title = title
+        self.systemImage = systemImage
         self.detail = detail
     }
 
     // MARK: Internal
 
     var body: some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(Theme.Typography.sectionHeader)
+                    .foregroundStyle(.secondary)
+            }
             Text(title.uppercased())
                 .font(Theme.Typography.sectionHeader)
                 .tracking(0.5)
@@ -43,6 +49,8 @@ struct SectionHeader: View {
     // MARK: Private
 
     private let title: String
+    /// Optional leading glyph — names the section's subject alongside its title.
+    private let systemImage: String?
     /// Optional trailing figure — a count, a total, a span.
     private let detail: String?
 }

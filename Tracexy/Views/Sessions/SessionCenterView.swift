@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - SessionCenterView
@@ -88,35 +89,14 @@ struct SessionCenterView: View {
         }
     }
 
-    /// First-run / no-data landing on the Sessions surface: a purposeful empty
-    /// state (never a blank table) that gets the user to first capture fast.
+    /// First-run / no-data landing on the Sessions surface: a quiet, actionless
+    /// empty state (never a blank table) that points to the toolbar, which
+    /// already owns Start/Stop and the interface picker.
     private var firstRunEmptyState: some View {
         ContentUnavailableView {
-            Label("No Sessions Yet", systemImage: "dot.radiowaves.left.and.right")
+            Label("No Sessions", systemImage: "network.slash")
         } description: {
-            Text("Sessions appear here as traffic is captured.")
-        } actions: {
-            Button {
-                coordinator.toggleCapture()
-            } label: {
-                Label("Start Capture", systemImage: "play.fill")
-            }
-            .buttonStyle(.borderedProminent)
-
-            Text("Capturing on \(coordinator.captureInterface)")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            // TODO: Phase: bundled sample capture. Until one ships, offer the most
-            // recent saved capture as a "try it" path — only when one exists.
-            if let sample = coordinator.savedCaptures.first {
-                Button {
-                    coordinator.openSavedCapture(sample)
-                } label: {
-                    Label("Try a Sample Capture", systemImage: "doc.text.magnifyingglass")
-                }
-                .buttonStyle(.link)
-            }
+            Text("Start a capture from the toolbar to observe network sessions.")
         }
     }
 
@@ -142,15 +122,15 @@ struct SessionCenterView: View {
             }
             .width(72)
             TableColumn("Source") { session in
-                Text(session.sourceEndpoint).font(Theme.Typography.monoSmall).lineLimit(1)
+                Text(session.sourceEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
             TableColumn("Destination") { session in
-                Text(session.destinationEndpoint).font(Theme.Typography.monoSmall).lineLimit(1)
+                Text(session.destinationEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
             TableColumn("Host") { session in
-                Text(session.host).lineLimit(1)
+                Text(session.host).font(Theme.Typography.body).lineLimit(1)
             }
             .width(min: 120, ideal: 180)
             TableColumn("Client") { session in
@@ -176,6 +156,7 @@ struct SessionCenterView: View {
             .width(20)
             TableColumn("Summary") { session in
                 Text(session.infoSummary)
+                    .font(Theme.Typography.body)
                     .lineLimit(1)
                     .foregroundStyle(session.status == .error ? Color.red : Color.primary)
             }
@@ -220,11 +201,11 @@ struct SessionCenterView: View {
             }
             .width(72)
             TableColumn("Source") { (row: SessionRow) in
-                Text(row.sourceEndpoint).font(Theme.Typography.monoSmall).lineLimit(1)
+                Text(row.sourceEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
             TableColumn("Destination") { (row: SessionRow) in
-                Text(row.destinationEndpoint).font(Theme.Typography.monoSmall).lineLimit(1)
+                Text(row.destinationEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
             TableColumn("Host") { (row: SessionRow) in
@@ -232,7 +213,7 @@ struct SessionCenterView: View {
             }
             .width(min: 140, ideal: 220)
             TableColumn("Client") { (row: SessionRow) in
-                Text(row.processName ?? "—").lineLimit(1).foregroundStyle(.secondary)
+                Text(row.processName ?? "—").font(Theme.Typography.body).lineLimit(1).foregroundStyle(.secondary)
             }
             .width(min: 90, ideal: 130)
             TableColumn("Protocol") { (row: SessionRow) in
@@ -256,6 +237,7 @@ struct SessionCenterView: View {
             .width(20)
             TableColumn("Summary") { (row: SessionRow) in
                 Text(row.summary)
+                    .font(Theme.Typography.body)
                     .lineLimit(1)
                     .foregroundStyle(row.status == .error ? Color.red : Color.primary)
             }
@@ -273,6 +255,9 @@ struct SessionCenterView: View {
                 }
             }
         }
+        .contextMenu(forSelectionType: SessionRow.ID.self) { ids in
+            groupedRowContextMenu(ids: ids, rows: rows)
+        }
     }
 
     /// The action's name with its confidence, so an inferred grouping never
@@ -283,7 +268,7 @@ struct SessionCenterView: View {
         case let .action(activity):
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(activity.title).lineLimit(1).truncationMode(.middle)
+                    Text(activity.title).font(Theme.Typography.body).lineLimit(1).truncationMode(.middle)
                     Text("\(activity.sessions.count) sessions")
                         .font(Theme.Typography.badge)
                         .padding(.horizontal, 5)
@@ -320,7 +305,7 @@ struct SessionCenterView: View {
                 Image(systemName: group.kind == .host ? "globe" : "app.badge")
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(.secondary)
-                Text(group.title).lineLimit(1).truncationMode(.middle)
+                Text(group.title).font(Theme.Typography.body).lineLimit(1).truncationMode(.middle)
                 Text("\(group.sessions.count)")
                     .font(Theme.Typography.badge)
                     .padding(.horizontal, 5)
@@ -329,22 +314,140 @@ struct SessionCenterView: View {
                     .foregroundStyle(.secondary)
             }
         case let .session(session):
-            Text(session.host).lineLimit(1)
+            Text(session.host).font(Theme.Typography.body).lineLimit(1)
         }
     }
 
-    /// Right-click menu for one or more session rows: pin the host and save the
-    /// current capture to a `.pcap` file.
+    /// Right-click menu for the flat session table. Acts on the row under the
+    /// cursor — resolved from the ids the context menu hands us, never the stale
+    /// `selectedSessionID` — so a right-click that lands off the current selection
+    /// still operates on what the user actually clicked.
     @ViewBuilder
     private func rowContextMenu(ids: Set<SessionSummary.ID>, sessions: [SessionSummary]) -> some View {
-        if let session = sessions.first(where: { ids.contains($0.id) }) {
-            PinHostButton(host: session.host, coordinator: coordinator)
+        if let session = clickedSession(ids: ids, in: sessions) {
+            sessionMenu(session)
+        }
+    }
+
+    /// Right-click menu for the grouped table. The clicked `SessionRow` is
+    /// resolved from the same ids — including nested child rows — so a session,
+    /// an action, or a group each gets the menu that is honest for its kind.
+    @ViewBuilder
+    private func groupedRowContextMenu(ids: Set<SessionRow.ID>, rows: [SessionRow]) -> some View {
+        if let row = clickedRow(ids: ids, in: rows) {
+            switch row {
+            case let .session(session):
+                sessionMenu(session)
+            case let .action(activity):
+                if let first = activity.sessions.first {
+                    Button("Inspect First Session", systemImage: "sidebar.right") {
+                        coordinator.select(first)
+                    }
+                }
+                // An action spans several conversations, so it has no single
+                // hostname to scope by — only its own summary line to copy.
+                Button("Copy Summary", systemImage: "doc.on.doc") {
+                    copyToPasteboard(row.summary)
+                }
+            case let .group(group):
+                groupMenu(group)
+            }
+        }
+    }
+
+    /// The full menu for one session, shared by both tables.
+    @ViewBuilder
+    private func sessionMenu(_ session: SessionSummary) -> some View {
+        let host = session.host
+        let hostValid = isValidHost(host)
+        let proto = session.primaryProtocol
+
+        Button("Inspect Session", systemImage: "sidebar.right") { coordinator.select(session) }
+
+        Divider()
+
+        Menu {
+            if hostValid {
+                Button("Host") { copyToPasteboard(host) }
+            }
+            Button("Source") { copyToPasteboard(session.sourceEndpoint) }
+            Button("Destination") { copyToPasteboard(session.destinationEndpoint) }
+            Button("Summary") { copyToPasteboard(session.infoSummary) }
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+
+        Divider()
+
+        if hostValid {
+            Button("Show Sessions for \(host)", systemImage: "line.3.horizontal.decrease.circle") {
+                coordinator.selectHost(host)
+            }
+        }
+        if let process = validProcessName(session.processName) {
+            Button("Show Sessions for \(process)", systemImage: "app.badge") {
+                coordinator.selectProcess(process)
+            }
+        }
+
+        if hostValid || validProcessName(session.processName) != nil {
             Divider()
         }
-        Button("Save Capture as .pcap…", systemImage: "square.and.arrow.down") {
-            coordinator.saveCurrentCapture()
+
+        if hostValid {
+            Button(
+                coordinator.isHostPinned(host) ? "Unpin Host" : "Pin Host",
+                systemImage: coordinator.isHostPinned(host) ? "pin.slash" : "pin"
+            ) { coordinator.togglePinHost(host) }
+            Button(
+                coordinator.isHostMuted(host) ? "Unmute Host" : "Mute Host",
+                systemImage: coordinator.isHostMuted(host) ? "speaker.wave.2" : "speaker.slash"
+            ) { coordinator.toggleMuteHost(host) }
         }
-        .disabled(!coordinator.canSaveCapture)
+        Button(
+            coordinator.isProtocolMuted(proto) ? "Unmute \(proto.label)" : "Mute \(proto.label)",
+            systemImage: coordinator.isProtocolMuted(proto) ? "speaker.wave.2" : "speaker.slash"
+        ) { coordinator.toggleMuteProtocol(proto) }
+    }
+
+    /// The menu for an observed group. Scopes by the group's real attribute — a
+    /// host filters by host, a process by process — and never invents an
+    /// aggregate endpoint the group does not carry.
+    @ViewBuilder
+    private func groupMenu(_ group: SessionGroup) -> some View {
+        if let first = group.sessions.first {
+            Button("Inspect First Session", systemImage: "sidebar.right") {
+                coordinator.select(first)
+            }
+        }
+        Button("Copy Group Name", systemImage: "doc.on.doc") {
+            copyToPasteboard(group.key)
+        }
+
+        Divider()
+
+        switch group.kind {
+        case .host:
+            let host = group.key
+            if isValidHost(host) {
+                Button("Show Sessions for \(host)", systemImage: "line.3.horizontal.decrease.circle") {
+                    coordinator.selectHost(host)
+                }
+                Divider()
+                Button(
+                    coordinator.isHostPinned(host) ? "Unpin Host" : "Pin Host",
+                    systemImage: coordinator.isHostPinned(host) ? "pin.slash" : "pin"
+                ) { coordinator.togglePinHost(host) }
+                Button(
+                    coordinator.isHostMuted(host) ? "Unmute Host" : "Mute Host",
+                    systemImage: coordinator.isHostMuted(host) ? "speaker.wave.2" : "speaker.slash"
+                ) { coordinator.toggleMuteHost(host) }
+            }
+        case .process:
+            Button("Show Sessions for \(group.key)", systemImage: "app.badge") {
+                coordinator.selectProcess(group.key)
+            }
+        }
     }
 
     @ViewBuilder
@@ -352,13 +455,13 @@ struct SessionCenterView: View {
         if let process = session.processName {
             HStack(spacing: 5) {
                 AppIconView(name: process, size: 15)
-                Text(process).lineLimit(1)
+                Text(process).font(Theme.Typography.body).lineLimit(1)
             }
         } else {
             HStack(spacing: 5) {
                 Image(systemName: "questionmark.app.dashed")
                     .font(.system(size: Theme.Icon.medium)).foregroundStyle(.tertiary)
-                Text("—").foregroundStyle(.secondary)
+                Text("—").font(Theme.Typography.body).foregroundStyle(.secondary)
             }
         }
     }
@@ -370,6 +473,49 @@ struct SessionCenterView: View {
             .padding(.vertical, 2)
             .background(Theme.color(for: proto).opacity(0.18), in: Capsule())
             .foregroundStyle(Theme.color(for: proto))
+    }
+
+    /// The session under the cursor, matched by id rather than read from the
+    /// current selection, so the menu never acts on a stale row.
+    private func clickedSession(ids: Set<SessionSummary.ID>, in sessions: [SessionSummary]) -> SessionSummary? {
+        sessions.first { ids.contains($0.id) }
+    }
+
+    /// The row under the cursor, searching top-level rows first and then their
+    /// child sessions so a right-click on a disclosed member resolves correctly.
+    private func clickedRow(ids: Set<SessionRow.ID>, in rows: [SessionRow]) -> SessionRow? {
+        for row in rows {
+            if ids.contains(row.id) {
+                return row
+            }
+            if let child = row.childRows.first(where: { ids.contains($0.id) }) {
+                return child
+            }
+        }
+        return nil
+    }
+
+    /// A host is worth acting on only when it is a real name — a blank host or the
+    /// em-dash placeholder must not become a filter, pin, or mute target.
+    private func isValidHost(_ host: String) -> Bool {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != "—"
+    }
+
+    private func validProcessName(_ processName: String?) -> String? {
+        guard let trimmed = processName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty,
+              trimmed != "—" else
+        {
+            return nil
+        }
+        return trimmed
+    }
+
+    /// Copies exactly the chosen value to the general pasteboard.
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     /// The row's grounds in one line: the evidence summaries, or — when the

@@ -34,7 +34,8 @@ struct RootView: View {
             workspaceMinimumWidth: Theme.Metrics.sessionTableMinWidth,
             inspectorMinimumWidth: Theme.Metrics.contextDockMinWidth,
             inspectorIdealWidth: Theme.Metrics.contextDockIdealWidth,
-            inspectorMaximumWidth: Theme.Metrics.contextDockMaxWidth
+            inspectorMaximumWidth: Theme.Metrics.contextDockMaxWidth,
+            toolbarConfiguration: NativeWorkspaceToolbarConfiguration(coordinator: coordinator)
         ) {
             SidebarView(coordinator: coordinator)
         } workspace: {
@@ -48,10 +49,10 @@ struct RootView: View {
         .ignoresSafeArea(.container, edges: .top)
         .navigationTitle(coordinator.activeWorkspace.sidebarSelection.title)
         .navigationSubtitle(TracexyIdentity.tagline)
-        // Keep the toolbar opaque so the inspector split divider doesn't bleed
-        // up through it (hidden title bar makes the chrome otherwise translucent).
-        .toolbarBackground(.visible, for: .windowToolbar)
-        .toolbar { toolbarContent() }
+        // The unified window toolbar — sidebar toggle, interface picker, capture
+        // status, and the capture/inspector actions — is installed natively by
+        // `NativeWorkspaceWindowChrome`, so the sidebar toggle can sit above the
+        // source list with a tracking separator. No SwiftUI `.toolbar` here.
         .task { await launchSetup() }
         .sheet(isPresented: $showHelperInstall) {
             HelperInstallPromptView(coordinator: coordinator)
@@ -79,22 +80,10 @@ struct RootView: View {
 
     @State private var showHelperInstall = false
     /// Sidebar presentation is view-local: the source list is chrome, not workspace
-    /// state, so it is not persisted with the capture/filter/selection model.
+    /// state, so it is not persisted with the capture/filter/selection model. The
+    /// native toolbar toggle and `View ▸ Show Sidebar` both drive the split, which
+    /// resynchronizes this value through the collapse KVO.
     @State private var isSidebarPresented = true
-    @State private var interfaceGroups: [InterfaceGroup] = []
-
-    private var currentInterface: NetworkInterface? {
-        interfaceGroups.flatMap(\.interfaces).first { $0.id == coordinator.captureInterface }
-    }
-
-    private var currentInterfaceSymbol: String {
-        currentInterface?.symbol ?? "network"
-    }
-
-    /// Friendly label for the toolbar button, e.g. "Wi-Fi (en0)".
-    private var currentInterfaceLabel: String {
-        currentInterface?.menuLabel ?? coordinator.captureInterface
-    }
 
     /// Bridges the native inspector split's presentation to workspace state. Routing the
     /// setter through `toggleContextDock()` keeps the existing persistence and animation
@@ -110,111 +99,25 @@ struct RootView: View {
         )
     }
 
-    /// Interface dropdown grouped by family (Wi-Fi, Ethernet, Thunderbolt, …),
-    /// with macOS's friendly names and a checkmark on the active one.
-    private var interfacePicker: some View {
-        Menu {
-            Picker(
-                selection: Binding(
-                    get: { coordinator.captureInterface },
-                    set: { coordinator.captureInterface = $0 }
-                )
-            ) {
-                ForEach(interfaceGroups) { group in
-                    Section(group.category.title) {
-                        ForEach(group.interfaces) { iface in
-                            Text(iface.menuLabel).tag(iface.id)
-                        }
-                    }
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.inline)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: currentInterfaceSymbol)
-                Text(currentInterfaceLabel).lineLimit(1).truncationMode(.tail)
-            }
-            .frame(width: 188, alignment: .leading)
-        }
-        .menuStyle(.button)
-        .help("Capture interface")
-        .onAppear {
-            interfaceGroups = NetworkInterfaces.grouped()
-            // Make sure a real interface is selected by default.
-            if currentInterface == nil, let first = interfaceGroups.flatMap(\.interfaces).first {
-                coordinator.captureInterface = first.id
-            }
-        }
-    }
-
-    /// On launch: in direct-capture dev mode (`scripts/run.sh`), just start
-    /// capturing so `./scripts/run.sh` lands straight on live traffic — no click,
-    /// no helper, no approval. Otherwise, check the helper and offer to install it.
+    /// On launch, direct-capture mode selects the unprivileged libpcap backend but
+    /// does not itself imply consent to start capturing. The persisted Capture
+    /// setting is the single source of truth for auto-start in both development
+    /// and normal launches.
     private func launchSetup() async {
+        let shouldAutoStart = UserDefaults.standard.bool(
+            forKey: SettingsKeys.autoStartCapture
+        )
         if MainContentCoordinator.forceDirectCapture {
-            coordinator.startCapture()
+            if shouldAutoStart {
+                coordinator.startCapture()
+            }
             return
         }
         await coordinator.helper.checkStatus()
         if coordinator.helper.status == .notInstalled {
             showHelperInstall = true
-        }
-    }
-
-    @ToolbarContentBuilder
-    private func toolbarContent() -> some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button {
-                withAnimation(.smooth(duration: 0.18)) {
-                    isSidebarPresented.toggle()
-                }
-            } label: {
-                Label("Sidebar", systemImage: "sidebar.leading")
-            }
-            .help("Show or hide the sidebar")
-        }
-
-        ToolbarItem(placement: .navigation) {
-            interfacePicker
-        }
-
-        ToolbarItem(placement: .principal) {
-            CaptureStatusView(coordinator: coordinator)
-        }
-
-        ToolbarItemGroup {
-            Button {
-                coordinator.toggleCapture()
-            } label: {
-                Label(
-                    coordinator.isCapturing ? "Stop" : "Start",
-                    systemImage: coordinator.isCapturing ? "stop.fill" : "play.fill"
-                )
-            }
-            .tint(coordinator.isCapturing ? .red : .green)
-            .help(coordinator.isCapturing ? "Stop capture" : "Start capture")
-
-            Divider()
-
-            Button {
-                coordinator.toggleInspectorBottom()
-            } label: {
-                Label("Bottom Inspector", systemImage: "rectangle.split.1x2")
-                    .symbolVariant(coordinator.activeWorkspace.inspectorLayout == .bottom ? .fill : .none)
-            }
-            .tint(coordinator.activeWorkspace.inspectorLayout == .bottom ? Color.accentColor : nil)
-            .help("Show or hide the bottom inspector panel")
-
-            Button {
-                coordinator.toggleContextDock()
-            } label: {
-                Label("Inspector", systemImage: "sidebar.trailing")
-                    .symbolVariant(coordinator.isContextDockVisible ? .fill : .none)
-            }
-            .tint(coordinator.isContextDockVisible ? Color.accentColor : nil)
-            .help("Show or hide the inspector (Details · AI Assistant).")
+        } else if shouldAutoStart {
+            coordinator.startCapture()
         }
     }
 }
@@ -235,14 +138,17 @@ struct MainDetailView: View {
 
     var body: some View {
         let workspace = coordinator.activeWorkspace
+        let footerSurface = statusSurface(for: workspace.sidebarSelection)
         // The status bar is a fixed full-width footer below every surface,
-        // pinned across Sessions and Overview alike.
+        // pinned across Sessions and Overview alike. It is presentation-only: this
+        // view derives the pure snapshot/descriptors from the coordinator and
+        // wires the real callbacks, so the footer never touches workspace state.
         VStack(spacing: 0) {
             surface(workspace)
             SessionStatusBar(
-                coordinator: coordinator,
-                visibleCount: coordinator.visibleSessions.count,
-                surface: statusSurface(for: workspace.sidebarSelection)
+                snapshot: footerSnapshot(workspace, surface: footerSurface),
+                descriptors: footerDescriptors(workspace, surface: footerSurface),
+                onAction: { performFooterAction($0, workspace) }
             )
         }
         // Selection is the trigger for revealing the panels, and it has two
@@ -256,9 +162,30 @@ struct MainDetailView: View {
                 coordinator.revealPanelsForSelection()
             }
         }
+        .confirmationDialog(
+            "Clear all capture data?",
+            isPresented: $showsClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Capture Data", role: .destructive) {
+                coordinator.clearSessions()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This removes decoded sessions, retained packets, capture statistics, "
+                    + "and throughput history. Save the capture first if you need it later."
+            )
+        }
     }
 
     // MARK: Private
+
+    /// Opens the Focus Set editor and Noise Control auxiliary windows in response
+    /// to footer launchers. Held here, at the footer's owner, rather than inside
+    /// the presentation-only status bar.
+    @Environment(\.openWindow) private var openWindow
+    @State private var showsClearConfirmation = false
 
     /// Bridges the native evidence split's presentation to the workspace's inspector
     /// layout. Routing the setter through `toggleInspectorBottom()` preserves the
@@ -306,14 +233,92 @@ struct MainDetailView: View {
     }
 
     /// Maps the active sidebar selection to the status-bar surface, so the footer
-    /// mirrors `surface`: the intelligence surfaces get a quiet summary, and
-    /// only the session list surfaces the Clear / Filter / Auto Select controls.
+    /// mirrors `surface`: the intelligence surfaces get a quiet summary, and only
+    /// the session list surfaces the feature launchers and List Options.
     private func statusSurface(for selection: SidebarItem) -> StatusSurface {
         switch selection {
         case .overview: .overview
         case .flow: .flow
         case .security: .security
         default: .sessionList
+        }
+    }
+
+    /// The pure presentation snapshot handed to the footer: the summary string and
+    /// the ordered telemetry. The combined live rate is read directly from the
+    /// latest throughput sample and only while capturing — the coordinator is not
+    /// edited to derive it.
+    private func footerSnapshot(_ workspace: WorkspaceState, surface: StatusSurface) -> FooterSnapshot {
+        let stats = coordinator.captureStatistics
+        // The first sample uses a startup-clamped interval and is intentionally
+        // not presented as a trustworthy live rate. The second sample has a
+        // real preceding timestamp.
+        let liveBytesPerSecond = coordinator.isCapturing && coordinator.throughputSamples.count > 1
+            ? coordinator.throughputSamples.last?.bytesPerSecond
+            : nil
+        let summary = SessionStatusBarModel.statusText(
+            surface: surface,
+            totalSessions: coordinator.sessions.count,
+            visibleCount: coordinator.visibleSessions.count,
+            hasSelection: workspace.selectedSessionID != nil,
+            findingCount: coordinator.findings.count
+        )
+        let telemetry = SessionStatusBarModel.telemetry(
+            isCapturing: coordinator.isCapturing,
+            hasCaptureStatistics: stats != nil,
+            totalDropped: Int(stats?.totalDropped ?? 0),
+            isMaterialLoss: stats?.isLossy ?? false,
+            errorCount: coordinator.errorCount,
+            hasCaptureDuration: coordinator.captureStartedAt != nil,
+            liveBytesPerSecond: liveBytesPerSecond,
+            totalBytes: coordinator.totalBytes,
+            bytesUp: coordinator.totalBytesUp,
+            bytesDown: coordinator.totalBytesDown
+        )
+        return FooterSnapshot(
+            summary: summary,
+            telemetry: telemetry,
+            captureStartedAt: coordinator.captureStartedAt
+        )
+    }
+
+    /// The ordered footer descriptors — feature launchers and List Options — only
+    /// on session-list surfaces. Every other surface shows status/telemetry only.
+    private func footerDescriptors(_ workspace: WorkspaceState, surface: StatusSurface) -> [FooterActionDescriptor] {
+        guard surface.showsSessionControls else {
+            return []
+        }
+        return SessionStatusBarModel.actions(
+            canSaveCapture: coordinator.canSaveCapture,
+            canAddFocusSet: coordinator.canAddFocusSet,
+            isNoiseControlActive: coordinator.isNoiseControlActive,
+            hasSessions: !coordinator.sessions.isEmpty,
+            activeFilterRuleCount: workspace.activeFilterRules.count,
+            isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
+            autoSelectLatest: workspace.autoSelectLatest
+        )
+    }
+
+    /// Maps a footer descriptor's identity to its real effect. These are the
+    /// existing coordinator/workspace callbacks; the footer wires nothing new.
+    private func performFooterAction(_ kind: FooterActionDescriptor.Kind, _ workspace: WorkspaceState) {
+        switch kind {
+        case .saveCapture:
+            coordinator.saveCurrentCapture()
+        case .newFocusSet:
+            coordinator.editingFocusSet = coordinator.draftFocusSet()
+            openWindow(id: TracexyApp.focusSetEditorWindowID)
+        case .noiseControl:
+            openWindow(id: TracexyApp.noiseControlWindowID)
+        case .clearSessions:
+            showsClearConfirmation = true
+        case .advancedFilters:
+            // Keep the category tabs visible and reveal/hide the advanced rule
+            // builder directly beneath them.
+            workspace.isFilterBarVisible = true
+            workspace.isAdvancedFilterVisible.toggle()
+        case .autoSelectLatest:
+            workspace.autoSelectLatest.toggle()
         }
     }
 }
@@ -338,10 +343,10 @@ struct CaptureStatusView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(.quaternary, in: Capsule())
-        .help(statusText)
+        .padding(.horizontal, 14)
+        .frame(height: 32)
+        .contentShape(Capsule(style: .continuous))
+        .help(coordinator.captureStatusLine)
     }
 
     // MARK: Private

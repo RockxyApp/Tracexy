@@ -104,10 +104,7 @@ struct ContextDockView: View {
                 Text(tab.title).tag(tab)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, Theme.Metrics.spacingM)
-        .padding(.vertical, Theme.Metrics.spacingM)
+        .workspaceSegmentedPicker()
     }
 
     // MARK: State D — no selection
@@ -454,7 +451,7 @@ struct ContextDockView: View {
             ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
                 LabeledContent(field.name) {
                     Text(field.value)
-                        .font(Theme.Typography.caption)
+                        .font(Theme.Typography.monoSmall)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)

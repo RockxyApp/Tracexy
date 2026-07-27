@@ -223,7 +223,7 @@ struct SessionFilterBar: View {
                         .monospacedDigit()
                 }
                 Image(systemName: isOn ? "chevron.up" : "chevron.down")
-                    .font(.caption2)
+                    .font(Theme.Typography.micro)
             }
             .foregroundStyle(isOn || count > 0 ? Color.accentColor : Color.secondary)
         }
