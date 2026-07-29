@@ -2,60 +2,140 @@ import SwiftUI
 
 // MARK: - UpdatesSettingsView
 
-/// Software-update preferences. The version is read from the bundle (real); the
-/// updater itself (auto-check / channel / "Check Now") is not yet wired, so those
-/// controls persist intent and the button is a no-op placeholder for now.
+/// Software-update preferences backed directly by Sparkle. Sparkle owns
+/// persistence for these settings; this view never creates duplicate defaults.
 struct UpdatesSettingsView: View {
+    // MARK: Lifecycle
+
+    init(updater: AppUpdater) {
+        self.updater = updater
+    }
+
     // MARK: Internal
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("Software Update")
-            SettingsCard {
+            SettingsSection("Software Update") {
                 SettingsCheckbox(
-                    isOn: $autoCheck,
+                    isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.setAutomaticallyChecksForUpdates($0) }
+                    ),
                     title: "Automatically check for updates",
-                    description: "Check for new Tracexy releases in the background on your chosen channel."
+                    description: "Check the signed Tracexy release feed on a schedule."
                 )
-                SettingsRow(label: "Update channel:") {
-                    Picker("", selection: $channel) {
-                        ForEach(UpdateChannel.allCases) { Text($0.title).tag($0.rawValue) }
+                .disabled(!updater.supportsAutomaticChecks)
+
+                SettingsDivider()
+
+                SettingsCheckbox(
+                    isOn: Binding(
+                        get: { updater.automaticallyDownloadsUpdates },
+                        set: { updater.setAutomaticallyDownloadsUpdates($0) }
+                    ),
+                    title: "Automatically download updates",
+                    description: "Download verified updates in the background so they are ready to install."
+                )
+                .disabled(
+                    !updater.supportsAutomaticChecks
+                        || !updater.automaticallyChecksForUpdates
+                        || !updater.allowsAutomaticUpdates
+                )
+
+                SettingsDivider()
+
+                SettingsRow(label: "Check frequency:") {
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: {
+                                UpdateCheckIntervalOption.closest(
+                                    to: updater.updateCheckInterval
+                                )
+                            },
+                            set: { updater.setUpdateCheckInterval($0.rawValue) }
+                        )
+                    ) {
+                        ForEach(UpdateCheckIntervalOption.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: metrics.menuWidth(160))
                     .frame(minHeight: metrics.controlHeight)
+                    .disabled(
+                        !updater.supportsAutomaticChecks
+                            || !updater.automaticallyChecksForUpdates
+                    )
                 }
+
+                SettingsDivider()
+
                 SettingsRow(label: "Current version:") {
-                    Text(AppInfo.versionString)
+                    Text(updater.currentVersionSummary)
                         .font(metrics.font())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+
+                SettingsDivider()
+
+                SettingsRow(label: "Last checked:") {
+                    Text(updater.lastCheckedDescription)
+                        .font(metrics.font())
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            SettingsSectionTitle("Manual Check")
-            SettingsCard {
-                HStack {
+            SettingsSection("Manual Check") {
+                HStack(spacing: 10) {
                     Button("Check for Updates Now") {
-                        // TODO: wire to the updater when it lands (Sparkle-style feed).
+                        updater.checkForUpdates()
                     }
-                    Spacer(minLength: 0)
+                    .disabled(!updater.canInitiateUpdateCheck)
+
+                    Button("Change Logs…") {
+                        updater.openChangelog()
+                    }
+
+                    if updater.sessionInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
-                Text("Tracexy is up to date.")
+                Text(updater.updateAvailabilitySummary)
                     .font(metrics.secondaryFont())
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SettingsSection("Privacy") {
+                SettingsCheckbox(
+                    isOn: Binding(
+                        get: { updater.sendsSystemProfile },
+                        set: { updater.setSendsSystemProfile($0) }
+                    ),
+                    title: "Send anonymous compatibility profile",
+                    description: """
+                    Share basic macOS and hardware compatibility details with the update feed. Captured traffic is never included.
+                    """
+                )
+                .disabled(!updater.supportsAutomaticChecks)
             }
         }
     }
 
     // MARK: Private
 
-    @AppStorage(SettingsKeys.autoCheckUpdates) private var autoCheck = true
-    @AppStorage(SettingsKeys.updateChannel) private var channel = UpdateChannel.stable.rawValue
+    @ObservedObject private var updater: AppUpdater
 
     private let metrics = SettingsDisplayMetrics.standard
 }
 
 #Preview {
-    UpdatesSettingsView()
+    UpdatesSettingsView(
+        updater: AppUpdater(
+            configuration: TracexyUpdateConfiguration(infoDictionary: [:])
+        )
+    )
 }

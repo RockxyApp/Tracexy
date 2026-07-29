@@ -10,18 +10,23 @@ struct PrivacySettingsView: View {
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("On Export & Share")
-            SettingsCard {
+            SettingsSection("On Export & Share") {
                 SettingsCheckbox(
                     isOn: $redactBodies,
                     title: "Redact payload bodies",
                     description: "Replace request and response bodies with placeholders in exported captures."
                 )
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $stripCredentials,
                     title: "Strip credentials & tokens",
                     description: "Remove Authorization headers, cookies, and API keys before sharing."
                 )
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $maskIPs,
                     title: "Mask IP addresses",
@@ -29,13 +34,15 @@ struct PrivacySettingsView: View {
                 )
             }
 
-            SettingsSectionTitle("Data")
-            SettingsCard {
+            SettingsSection("Data") {
                 SettingsCheckbox(
                     isOn: $localOnly,
                     title: "Keep all data on this Mac (never upload)",
                     description: "Captured traffic stays on this device and is never sent to any server."
                 )
+
+                SettingsDivider()
+
                 SettingsRow(label: "Auto-clear:") {
                     Picker("", selection: $autoClear) {
                         ForEach(AutoClear.allCases) { Text($0.title).tag($0.rawValue) }
@@ -46,8 +53,7 @@ struct PrivacySettingsView: View {
                 }
             }
 
-            SettingsSectionTitle("Diagnostics")
-            SettingsCard {
+            SettingsSection("Diagnostics") {
                 SettingsCheckbox(
                     isOn: $shareAnalytics,
                     title: "Share anonymous usage analytics",

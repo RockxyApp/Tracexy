@@ -58,7 +58,7 @@ struct HelperInstallPromptView: View {
     private var reasons: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Why install it?")
-                .font(.headline)
+                .font(Theme.Typography.surfaceTitle)
             reasonRow("Capture live traffic without running Tracexy as root.")
             reasonRow("Keep /dev/bpf* capture permissions repaired automatically.")
             reasonRow("Stay local: the helper never inspects, stores, or uploads traffic.")

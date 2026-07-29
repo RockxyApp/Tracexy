@@ -18,6 +18,14 @@
 MACOSX_DEPLOYMENT_TARGET = 14.0
 SWIFT_VERSION = 5.0
 
+// Sparkle update defaults. Shipping channels opt in below; local development
+// keeps scheduled checks disabled while retaining a user-initiated check.
+TRACEXY_UPDATES_ENABLED = NO
+TRACEXY_SPARKLE_PUBLIC_ED_KEY = o5waeiqk3+WApma9Z2XPV6Y/ecAAoCzYUEB+NB2TJjY=
+TRACEXY_URL_SLASH = /
+TRACEXY_PUBLIC_APPCAST_FEED_URL = https:$(TRACEXY_URL_SLASH)$(TRACEXY_URL_SLASH)raw.githubusercontent.com/RockxyApp/Tracexy/main/appcast.xml
+TRACEXY_SPARKLE_FEED_URL =
+
 // Family namespace and shared identity
 TRACEXY_FAMILY_NAMESPACE = com.amunx.tracexy
 TRACEXY_SHARED_SUPPORT_DIRECTORY_NAME = $(TRACEXY_FAMILY_NAMESPACE)

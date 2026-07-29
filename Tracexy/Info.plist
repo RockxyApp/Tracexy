@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSHumanReadableCopyright</key>
+	<string></string>
+	<key>TracexyAllowedCallerIdentifiers</key>
+	<string>$(TRACEXY_ALLOWED_CALLER_IDENTIFIERS)</string>
+	<key>TracexyAppSupportDirectoryName</key>
+	<string>$(TRACEXY_APP_SUPPORT_DIRECTORY_NAME)</string>
+	<key>TracexyDefaultsPrefix</key>
+	<string>$(TRACEXY_DEFAULTS_PREFIX)</string>
+	<key>TracexyFamilyNamespace</key>
+	<string>$(TRACEXY_FAMILY_NAMESPACE)</string>
+	<key>TracexyHelperBundleIdentifier</key>
+	<string>$(TRACEXY_HELPER_BUNDLE_ID)</string>
+	<key>TracexyHelperMachServiceName</key>
+	<string>$(TRACEXY_HELPER_MACH_SERVICE_NAME)</string>
+	<key>TracexyHelperPlistName</key>
+	<string>$(TRACEXY_HELPER_PLIST_NAME)</string>
+	<key>TracexyLogSubsystem</key>
+	<string>$(TRACEXY_LOG_SUBSYSTEM)</string>
+	<key>TracexyNotificationPrefix</key>
+	<string>$(TRACEXY_NOTIFICATION_PREFIX)</string>
+	<key>TracexySharedSupportDirectoryName</key>
+	<string>$(TRACEXY_SHARED_SUPPORT_DIRECTORY_NAME)</string>
+	<key>TracexySharedUTTypePrefix</key>
+	<string>$(TRACEXY_SHARED_UTTYPE_PREFIX)</string>
+	<key>TracexyUpdatesEnabled</key>
+	<string>$(TRACEXY_UPDATES_ENABLED)</string>
+	<key>SUFeedURL</key>
+	<string>$(TRACEXY_SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(TRACEXY_SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+</dict>
+</plist>

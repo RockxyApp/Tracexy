@@ -4,9 +4,15 @@ import SwiftUI
 
 /// The app's Settings window (⌘,). A native `TabView` whose `.tabItem`s render as
 /// the standard macOS Settings toolbar — SF Pro type + real SF Symbols throughout.
-/// Each pane is styled after the sibling app's classic System-Preferences look via
-/// `SettingsPane` / `SettingsCard`, sized from `SettingsDisplayMetrics`.
+/// Each pane uses `SettingsPane` / `SettingsCard` and shared
+/// `SettingsDisplayMetrics` for a consistent native layout.
 struct SettingsView: View {
+    // MARK: Lifecycle
+
+    init(updater: AppUpdater) {
+        self.updater = updater
+    }
+
     // MARK: Internal
 
     var body: some View {
@@ -21,7 +27,7 @@ struct SettingsView: View {
                 .tabItem { Label("Privacy", systemImage: "hand.raised") }
             MCPSettingsView()
                 .tabItem { Label("MCP & AI", systemImage: "sparkles") }
-            UpdatesSettingsView()
+            UpdatesSettingsView(updater: updater)
                 .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
         .font(metrics.font())
@@ -30,9 +36,14 @@ struct SettingsView: View {
 
     // MARK: Private
 
+    private let updater: AppUpdater
     private let metrics = SettingsDisplayMetrics.standard
 }
 
 #Preview {
-    SettingsView()
+    SettingsView(
+        updater: AppUpdater(
+            configuration: TracexyUpdateConfiguration(infoDictionary: [:])
+        )
+    )
 }

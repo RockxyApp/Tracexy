@@ -9,6 +9,7 @@ import SwiftUI
 enum SettingsKeys {
     // MARK: Internal
 
+    static let selectedSettingsTab = key("settings.selectedTab")
     static let appearance = key("settings.appearance")
     static let defaultView = key("settings.defaultView")
     static let byteUnits = key("settings.byteUnits")
@@ -36,9 +37,6 @@ enum SettingsKeys {
     static let aiInsights = key("settings.aiInsights")
     static let aiProvider = key("settings.aiProvider")
 
-    static let autoCheckUpdates = key("settings.autoCheckUpdates")
-    static let updateChannel = key("settings.updateChannel")
-
     // MARK: Private
 
     private static func key(_ suffix: String) -> String {
@@ -65,6 +63,22 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         case .system: String(localized: "System")
         case .light: String(localized: "Light")
         case .dark: String(localized: "Dark")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .system: "circle.lefthalf.filled"
+        case .light: "sun.max.fill"
+        case .dark: "moon.fill"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .system: String(localized: "Matches macOS")
+        case .light: String(localized: "Always light")
+        case .dark: String(localized: "Always dark")
         }
     }
 
@@ -174,26 +188,6 @@ enum AutoClear: String, CaseIterable, Identifiable {
         case .minutes15: String(localized: "After 15 minutes")
         case .hour1: String(localized: "After 1 hour")
         case .hours24: String(localized: "After 24 hours")
-        }
-    }
-}
-
-// MARK: - UpdateChannel
-
-enum UpdateChannel: String, CaseIterable, Identifiable {
-    case stable
-    case beta
-
-    // MARK: Internal
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .stable: String(localized: "Stable")
-        case .beta: String(localized: "Beta")
         }
     }
 }

@@ -16,14 +16,29 @@ struct TracexyApp: App {
                     // Force the preference app-wide at the AppKit level (menus,
                     // panels, alerts, any future AppKit window) — not just SwiftUI
                     // scene content. `initial: true` applies the saved preference
-                    // once at launch. Mirrors the sibling app's AppThemeApplier.
+                    // once at launch.
                     AppThemeApplier.apply(AppAppearance(rawValue: newValue) ?? .system)
+                }
+                .task {
+                    updater.startIfConfigured()
                 }
         }
         .defaultSize(width: 1_320, height: 840)
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
+            // responder chain, so the native collapse KVO resynchronizes RootView's
+            // `isSidebarPresented` with the native toolbar toggle.
+            SidebarCommands()
+
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updater.checkForUpdates()
+                }
+                .disabled(!updater.canInitiateUpdateCheck)
+            }
+
             // Grouping belongs in the View menu, not on a tab strip over the
             // table. It is a way of looking at the list, not a place to go — and
             // an always-visible control for a rarely-changed setting is chrome
@@ -58,7 +73,7 @@ struct TracexyApp: App {
         .windowResizability(.contentMinSize)
 
         Settings {
-            SettingsView()
+            SettingsView(updater: updater)
                 .preferredColorScheme(colorScheme)
         }
     }
@@ -72,6 +87,7 @@ struct TracexyApp: App {
     /// once, here, and handed down. No type below this line asks what build it
     /// is running in.
     @State private var coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+    @StateObject private var updater = AppUpdater.shared
 
     /// The user's General → Appearance preference, applied app-wide. `nil` follows
     /// the system.

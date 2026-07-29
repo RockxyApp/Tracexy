@@ -11,8 +11,7 @@ struct CaptureSettingsView: View {
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("Interface")
-            SettingsCard {
+            SettingsSection("Interface") {
                 SettingsRow(label: "Default interface:") {
                     Picker("", selection: $defaultInterface) {
                         Text("Automatic").tag("")
@@ -28,6 +27,9 @@ struct CaptureSettingsView: View {
                     .frame(width: metrics.menuWidth(240))
                     .frame(minHeight: metrics.controlHeight)
                 }
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $autoStart,
                     title: "Auto-start capture on launch",
@@ -35,8 +37,7 @@ struct CaptureSettingsView: View {
                 )
             }
 
-            SettingsSectionTitle("Filter")
-            SettingsCard {
+            SettingsSection("Filter") {
                 SettingsRow(label: "Capture filter:") {
                     Picker("", selection: $filterMode) {
                         ForEach(CaptureFilterMode.allCases) { Text($0.title).tag($0.rawValue) }
@@ -45,18 +46,20 @@ struct CaptureSettingsView: View {
                     .frame(width: metrics.menuWidth(200))
                     .frame(minHeight: metrics.controlHeight)
                 }
+
+                SettingsDivider()
+
                 SettingsRow(label: "BPF expression:") {
                     TextField("tcp port 443 or udp port 53", text: $bpf)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: metrics.bodyFontSize, design: .monospaced))
+                        .font(metrics.monospacedFont())
                         .frame(width: metrics.fieldWidth(280))
                         .frame(minHeight: metrics.controlHeight)
                         .disabled(filterMode != CaptureFilterMode.custom.rawValue)
                 }
             }
 
-            SettingsSectionTitle("Buffer")
-            SettingsCard {
+            SettingsSection("Buffer") {
                 SettingsRow(label: "Snap length:") {
                     Picker("", selection: $snapLength) {
                         Text("Full packet (65 536 bytes)").tag(65_536)
@@ -67,11 +70,17 @@ struct CaptureSettingsView: View {
                     .frame(width: metrics.menuWidth(240))
                     .frame(minHeight: metrics.controlHeight)
                 }
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $promiscuous,
                     title: "Promiscuous mode",
                     description: "Capture all frames on the interface, not only those addressed to this Mac."
                 )
+
+                SettingsDivider()
+
                 SettingsRow(label: "Retain up to:") {
                     Picker("", selection: $retainPackets) {
                         Text("8 000 packets").tag(8_000)

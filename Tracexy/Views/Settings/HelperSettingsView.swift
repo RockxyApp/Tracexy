@@ -4,27 +4,30 @@ import SwiftUI
 // MARK: - HelperSettingsView
 
 /// Install / update / uninstall / recover the privileged capture helper, with
-/// live version + compatibility status. Mirrors the sibling app's helper settings.
+/// live version + compatibility status.
 struct HelperSettingsView: View {
     // MARK: Internal
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("Capture Helper")
-            SettingsCard {
+            SettingsSection("Capture Helper") {
                 SettingsRow(label: "Status:") { statusBadge }
 
                 if let issue = helper.signingIssue {
+                    SettingsDivider()
                     helperNote(signingIssueText(issue))
                 }
 
                 if let info = helper.installedInfo {
+                    SettingsDivider()
                     SettingsRow(label: "Installed:") {
                         versionText(
                             "v\(info.binaryVersion) · build \(info.buildNumber) · protocol \(info.protocolVersion)"
                         )
                     }
                 }
+
+                SettingsDivider()
 
                 SettingsRow(label: "Bundled:") {
                     versionText(
@@ -33,8 +36,7 @@ struct HelperSettingsView: View {
                 }
             }
 
-            SettingsSectionTitle("Actions")
-            SettingsCard {
+            SettingsSection("Actions") {
                 HStack(spacing: 12) {
                     primaryAction
                     Button("Check Status") { Task { await helper.checkStatus() } }
@@ -44,10 +46,12 @@ struct HelperSettingsView: View {
                 }
             }
 
-            SettingsSectionTitle("Recovery")
-            SettingsCard {
+            SettingsSection("Recovery") {
                 Toggle("Also reset macOS Login & Background Items", isOn: $resetBackgroundItems)
                     .toggleStyle(.checkbox)
+
+                SettingsDivider()
+
                 HStack {
                     Button("Force Reset & Reinstall…", role: .destructive) {
                         Task { await forceReset() }
@@ -60,8 +64,7 @@ struct HelperSettingsView: View {
             }
 
             if let message {
-                SettingsSectionTitle("Result")
-                SettingsCard {
+                SettingsSection("Result") {
                     Text(message)
                         .font(metrics.secondaryFont())
                         .textSelection(.enabled)

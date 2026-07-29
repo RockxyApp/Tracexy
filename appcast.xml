@@ -1,0 +1,9 @@
+<?xml version="1.0" standalone="yes"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Tracexy</title>
+    <link>https://raw.githubusercontent.com/RockxyApp/Tracexy/main/appcast.xml</link>
+    <description>Tracexy Community release channel</description>
+    <language>en</language>
+  </channel>
+</rss>

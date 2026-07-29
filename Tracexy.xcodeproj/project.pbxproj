@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A71C01A3000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0A71C01A3000000000000003 /* Sparkle */; };
 		02A37B65186CD80882C9CF4D /* HelperInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F733C1CA84E6904417326EC /* HelperInfo.swift */; };
 		11FE07C54750260133EEEEF1 /* PcapCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */; };
 		13E2CF9CD158831FA4C23219 /* TracexyBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */; };
@@ -109,9 +110,22 @@
 		CF60000000000000000000A9 /* Versions.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Versions.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0A71C01A3000000000000004 /* Exceptions for "Tracexy" folder in "Tracexy" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DCD335832FC5555D003CEC6D /* Tracexy */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DCD335862FC5555D003CEC6D /* Tracexy */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0A71C01A3000000000000004 /* Exceptions for "Tracexy" folder in "Tracexy" target */,
+			);
 			path = Tracexy;
 			sourceTree = "<group>";
 		};
@@ -140,6 +154,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A71C01A3000000000000001 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,6 +281,9 @@
 				DCD335862FC5555D003CEC6D /* Tracexy */,
 			);
 			name = Tracexy;
+			packageProductDependencies = (
+				0A71C01A3000000000000003 /* Sparkle */,
+			);
 			productName = Tracexy;
 			productReference = DCD335842FC5555D003CEC6D /* Tracexy.app */;
 			productType = "com.apple.product-type.application";
@@ -360,6 +378,9 @@
 			);
 			mainGroup = DCD3357B2FC5555D003CEC6D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0A71C01A3000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DCD335852FC5555D003CEC6D /* Products */;
 			projectDirPath = "";
@@ -506,6 +527,7 @@
 		};
 		DCD335A52FC5555F003CEC6D /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A5 /* Developer.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -626,7 +648,7 @@
 		};
 		DCD335A82FC5555F003CEC6D /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
+			baseConfigurationReference = CF60000000000000000000A7 /* LocalDev.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -638,8 +660,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Tracexy/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -671,8 +693,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Tracexy/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -819,6 +841,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0A71C01A3000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0A71C01A3000000000000003 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A71C01A3000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = DCD3357C2FC5555D003CEC6D /* Project object */;
 }

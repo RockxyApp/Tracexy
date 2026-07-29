@@ -10,21 +10,26 @@ struct MCPSettingsView: View {
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("MCP Server")
-            SettingsCard {
+            SettingsSection("MCP Server") {
                 SettingsCheckbox(
                     isOn: $mcpEnabled,
                     title: "Enable in-app MCP server",
                     description: "Run a local MCP server so AI clients can query captured sessions."
                 )
+
+                SettingsDivider()
+
                 SettingsRow(label: "Port:") {
                     TextField("7420", value: $mcpPort, format: .number.grouping(.never))
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: metrics.bodyFontSize, design: .monospaced))
+                        .font(metrics.monospacedFont())
                         .frame(width: metrics.fieldWidth(80))
                         .frame(minHeight: metrics.controlHeight)
                         .disabled(!mcpEnabled)
                 }
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $mcpExposeSessions,
                     title: "Expose sessions to AI clients",
@@ -33,13 +38,15 @@ struct MCPSettingsView: View {
                 .disabled(!mcpEnabled)
             }
 
-            SettingsSectionTitle("AI Insights")
-            SettingsCard {
+            SettingsSection("AI Insights") {
                 SettingsCheckbox(
                     isOn: $aiInsights,
                     title: "Enable AI insights",
                     description: "Summarize latency, errors, and security findings for the active workspace."
                 )
+
+                SettingsDivider()
+
                 SettingsRow(label: "Provider:") {
                     Picker("", selection: $aiProvider) {
                         Text("None").tag("none")

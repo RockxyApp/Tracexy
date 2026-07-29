@@ -9,9 +9,10 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         SettingsPane {
-            SettingsSectionTitle("Appearance")
-            SettingsCard {
+            SettingsSection("Appearance") {
                 SettingsThemeCard(selection: $appearance)
+
+                SettingsDivider()
 
                 SettingsRow(label: "Default view:") {
                     Picker("", selection: $defaultView) {
@@ -23,8 +24,7 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            SettingsSectionTitle("Units")
-            SettingsCard {
+            SettingsSection("Units") {
                 SettingsRow(label: "Byte units:") {
                     Picker("", selection: $byteUnits) {
                         ForEach(ByteUnits.allCases) { Text($0.title).tag($0.rawValue) }
@@ -35,13 +35,15 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            SettingsSectionTitle("Behavior")
-            SettingsCard {
+            SettingsSection("Behavior") {
                 SettingsCheckbox(
                     isOn: $confirmQuit,
                     title: "Confirm before quitting while capturing",
                     description: "Ask for confirmation before quitting while a live capture is running."
                 )
+
+                SettingsDivider()
+
                 SettingsCheckbox(
                     isOn: $restoreWorkspace,
                     title: "Restore last workspace on launch",
