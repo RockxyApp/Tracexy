@@ -16,7 +16,7 @@ struct HelperInfo: Equatable {
 /// the app and the helper (this file is shared). Bump this whenever the
 /// `TracexyHelperProtocol` interface changes in a backward-incompatible way:
 /// the app then reports the installed helper as `installedIncompatible` and
-/// offers an Update. Mirrors the sibling app's helper protocol versioning.
+/// offers an Update.
 enum HelperProtocolVersion {
     static let current = 1
 }

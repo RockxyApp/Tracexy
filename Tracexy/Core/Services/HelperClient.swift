@@ -6,9 +6,9 @@ import ServiceManagement
 
 /// Manages the lifecycle of the Tracexy privileged capture helper via SMAppService.
 ///
-/// Mirrors the sibling app's helper manager: it registers the launch daemon, probes the
-/// installed helper's version over XPC, and classifies it as compatible /
-/// outdated / incompatible so the UI can offer Install / Update / Reinstall.
+/// Registers the launch daemon, probes the installed helper's version over XPC,
+/// and classifies it as compatible / outdated / incompatible so the UI can offer
+/// Install / Update / Reinstall.
 @MainActor
 @Observable
 final class HelperClient {
@@ -183,7 +183,7 @@ final class HelperClient {
     }
 
     /// Hard-remove the helper from launchd and the privileged-helper location,
-    /// then reinstall from the current app bundle (the sibling app's recovery path).
+    /// then reinstall from the current app bundle (the recovery path).
     /// Returns a user-facing summary of the privileged command output.
     @discardableResult
     func forceResetAndReinstall(resetBackgroundItems: Bool) async -> String {
@@ -369,40 +369,54 @@ final class HelperClient {
 
 // MARK: - ResumeOnce
 
-/// Guards a checked continuation so it resumes exactly once, even though the XPC
-/// reply block and the error handler can race on different threads.
-private final class ResumeOnce<T>: @unchecked Sendable {
+/// Guards `fetchHelperInfo`'s checked continuation so it resumes exactly once,
+/// even though the XPC reply block and the error handler can race on different
+/// threads.
+///
+/// Deliberately non-generic (specialized to `HelperInfo`): a generic version
+/// crashed the Swift 6.2 SIL optimizer (EarlyPerfInliner, in the synthesized
+/// deallocating destructor) under Release `-O -whole-module-optimization`. The
+/// concrete layout sidesteps that. The lock only guards the one-shot `claim`;
+/// the continuation is resumed outside the lock so no continuation work runs
+/// while the lock is held.
+private final class ResumeOnce: @unchecked Sendable {
     // MARK: Lifecycle
 
-    init(_ continuation: CheckedContinuation<T, Error>) {
+    init(_ continuation: CheckedContinuation<HelperInfo, Error>) {
         self.continuation = continuation
     }
 
     // MARK: Internal
 
-    func resume(returning value: T) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !done else {
+    func resume(returning value: HelperInfo) {
+        guard claim() else {
             return
         }
-        done = true
         continuation.resume(returning: value)
     }
 
     func resume(throwing error: Error) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !done else {
+        guard claim() else {
             return
         }
-        done = true
         continuation.resume(throwing: error)
     }
 
     // MARK: Private
 
-    private let continuation: CheckedContinuation<T, Error>
+    private let continuation: CheckedContinuation<HelperInfo, Error>
     private let lock = NSLock()
     private var done = false
+
+    /// Wins exactly once for the first caller; every later caller loses. The
+    /// lock is released before the winner resumes the continuation.
+    private func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !done else {
+            return false
+        }
+        done = true
+        return true
+    }
 }

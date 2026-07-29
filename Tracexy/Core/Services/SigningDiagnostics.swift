@@ -3,8 +3,7 @@ import OSLog
 import Security
 
 /// App-side signing diagnostics that detect certificate mismatches between the
-/// running app and the installed helper binary BEFORE attempting XPC. Ported
-/// from the sibling app's `SigningDiagnostics`.
+/// running app and the installed helper binary BEFORE attempting XPC.
 ///
 /// Two layers for testability:
 /// 1. `Environment` abstracts the Security framework calls.

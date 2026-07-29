@@ -1,9 +1,8 @@
 import Foundation
 import ServiceManagement
 
-// Hard-recovery paths for the helper daemon, ported from the sibling app's
-// force-remove path. Used when SMAppService unregister can't get the
-// app back to an observable state (BTM/launchd drift).
+// Hard-recovery paths for the helper daemon. Used when SMAppService unregister
+// can't get the app back to an observable state (BTM/launchd drift).
 
 extension HelperClient {
     // MARK: Internal

@@ -4,8 +4,7 @@ import Foundation
 
 /// Maps a local socket port → the owning app name, by reading the socket table
 /// with `lsof` (the user's own sockets, no root needed). This is how Tracexy
-/// attributes a captured session to an app without pktap — the same technique
-/// the sibling app's `ProcessResolver` uses. Runs `lsof` off the main thread, throttled.
+/// attributes a captured session to an app without pktap. Runs `lsof` off the main thread, throttled.
 @MainActor
 final class ProcessResolver {
     // MARK: Internal
