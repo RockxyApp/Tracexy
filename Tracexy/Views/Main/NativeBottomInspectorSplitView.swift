@@ -1,6 +1,32 @@
 import AppKit
 import SwiftUI
 
+// MARK: - NativeBottomInspectorCoordinator
+
+/// Keeps presentation bookkeeping outside the generic representable.
+///
+/// A concrete coordinator also avoids a Swift 6.3 optimizer crash while
+/// synthesizing the destructor for a class nested in a generic view type.
+final class NativeBottomInspectorCoordinator {
+    // MARK: Internal
+
+    func recordInitialPresentation(_ isPresented: Bool) {
+        lastAppliedPresentation = isPresented
+    }
+
+    func shouldApplyPresentation(_ isPresented: Bool) -> Bool {
+        guard lastAppliedPresentation != isPresented else {
+            return false
+        }
+        lastAppliedPresentation = isPresented
+        return true
+    }
+
+    // MARK: Private
+
+    private var lastAppliedPresentation: Bool?
+}
+
 // MARK: - NativeBottomInspectorSplitView
 
 /// Hosts the session table and its evidence inspector in a native horizontal split-view
@@ -31,31 +57,6 @@ struct NativeBottomInspectorSplitView<Primary: View, Inspector: View>: NSViewCon
 
     // MARK: Internal
 
-    // MARK: - Coordinator
-
-    final class Coordinator {
-        // MARK: Internal
-
-        var primaryController: NSHostingController<NativeBottomDeferredContent<Primary>>?
-        var inspectorController: NSHostingController<NativeBottomDeferredContent<Inspector>>?
-
-        func recordInitialPresentation(_ isPresented: Bool) {
-            lastAppliedPresentation = isPresented
-        }
-
-        func shouldApplyPresentation(_ isPresented: Bool) -> Bool {
-            guard lastAppliedPresentation != isPresented else {
-                return false
-            }
-            lastAppliedPresentation = isPresented
-            return true
-        }
-
-        // MARK: Private
-
-        private var lastAppliedPresentation: Bool?
-    }
-
     @Binding var isInspectorPresented: Bool
 
     let autosaveName: String
@@ -64,8 +65,8 @@ struct NativeBottomInspectorSplitView<Primary: View, Inspector: View>: NSViewCon
     @ViewBuilder let primary: () -> Primary
     @ViewBuilder let inspector: () -> Inspector
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> NativeBottomInspectorCoordinator {
+        NativeBottomInspectorCoordinator()
     }
 
     func makeNSViewController(context: Context) -> NativeBottomInspectorSplitViewController {
@@ -81,8 +82,6 @@ struct NativeBottomInspectorSplitView<Primary: View, Inspector: View>: NSViewCon
         primaryController.sizingOptions = []
         inspectorController.sizingOptions = []
 
-        context.coordinator.primaryController = primaryController
-        context.coordinator.inspectorController = inspectorController
         context.coordinator.recordInitialPresentation(isInspectorPresented)
 
         let controller = NativeBottomInspectorSplitViewController()

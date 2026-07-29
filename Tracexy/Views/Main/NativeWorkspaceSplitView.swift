@@ -1,6 +1,41 @@
 import AppKit
 import SwiftUI
 
+// MARK: - NativeWorkspaceSplitCoordinator
+
+/// Deduplicates SwiftUI-driven presentation updates outside the generic
+/// representable. Keeping this coordinator concrete avoids a Swift 6.3
+/// optimizer crash in the synthesized destructor of nested generic types.
+final class NativeWorkspaceSplitCoordinator {
+    // MARK: Internal
+
+    func recordInitialPresentation(sidebar: Bool, inspector: Bool) {
+        lastAppliedSidebarPresentation = sidebar
+        lastAppliedInspectorPresentation = inspector
+    }
+
+    func shouldApplySidebarPresentation(_ isPresented: Bool) -> Bool {
+        guard lastAppliedSidebarPresentation != isPresented else {
+            return false
+        }
+        lastAppliedSidebarPresentation = isPresented
+        return true
+    }
+
+    func shouldApplyInspectorPresentation(_ isPresented: Bool) -> Bool {
+        guard lastAppliedInspectorPresentation != isPresented else {
+            return false
+        }
+        lastAppliedInspectorPresentation = isPresented
+        return true
+    }
+
+    // MARK: Private
+
+    private var lastAppliedSidebarPresentation: Bool?
+    private var lastAppliedInspectorPresentation: Bool?
+}
+
 // MARK: - NativeWorkspaceSplitView
 
 /// Hosts the sidebar, workspace, and right inspector in one native root split.
@@ -48,40 +83,6 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
 
     // MARK: Internal
 
-    // MARK: - Coordinator
-
-    /// Deduplicates SwiftUI-driven presentation updates so a value that already matches
-    /// the applied state never re-collapses the split item.
-    final class Coordinator {
-        // MARK: Internal
-
-        func recordInitialPresentation(sidebar: Bool, inspector: Bool) {
-            lastAppliedSidebarPresentation = sidebar
-            lastAppliedInspectorPresentation = inspector
-        }
-
-        func shouldApplySidebarPresentation(_ isPresented: Bool) -> Bool {
-            guard lastAppliedSidebarPresentation != isPresented else {
-                return false
-            }
-            lastAppliedSidebarPresentation = isPresented
-            return true
-        }
-
-        func shouldApplyInspectorPresentation(_ isPresented: Bool) -> Bool {
-            guard lastAppliedInspectorPresentation != isPresented else {
-                return false
-            }
-            lastAppliedInspectorPresentation = isPresented
-            return true
-        }
-
-        // MARK: Private
-
-        private var lastAppliedSidebarPresentation: Bool?
-        private var lastAppliedInspectorPresentation: Bool?
-    }
-
     @Binding var isSidebarPresented: Bool
     @Binding var isInspectorPresented: Bool
 
@@ -98,8 +99,8 @@ struct NativeWorkspaceSplitView<Sidebar: View, Workspace: View, Inspector: View>
     @ViewBuilder let workspace: () -> Workspace
     @ViewBuilder let inspector: () -> Inspector
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> NativeWorkspaceSplitCoordinator {
+        NativeWorkspaceSplitCoordinator()
     }
 
     func makeNSViewController(context: Context) -> NativeWorkspaceSplitViewController {
