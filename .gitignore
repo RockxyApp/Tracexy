@@ -47,10 +47,43 @@ Configuration/Developer.xcconfig
 Secrets.xcconfig
 *.pem
 *.p12
+*.p8
+*.cer
+*.der
+*.key
+*.keychain
+*.keychain-db
 *.mobileprovision
+
+# Credentials and environment files. Real secrets never ship; only committed
+# example/template stubs are allowed back in.
+.netrc
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+
+# Packet captures and session/export artifacts — real traffic must never be
+# published. These are product data, not source.
+*.pcap
+*.pcapng
+*.pcap.gz
+*.pcapng.gz
+*.pcap.zst
+*.pcapng.zst
+*.pcap.xz
+*.pcapng.xz
+*.pcap.bz2
+*.pcapng.bz2
+/captures/
+/sessions/
+/exports/
 
 # Maintainer automation — not part of the published source.
 scripts/
+!.github/scripts/
+!.github/scripts/check-public-safety.sh
 RELEASE.md
 
 # Release artifacts
