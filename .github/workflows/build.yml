@@ -27,7 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source with full history
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
       - name: Audit for private material
         run: bash .github/scripts/check-public-safety.sh
 
@@ -36,7 +41,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
       - name: Install SwiftLint
         run: brew install swiftlint
       - name: Lint
@@ -47,7 +57,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
       # CI has no signing identity and needs none: the tests build unsigned.
       # Developer.xcconfig is gitignored, so it has to be written here.
       - name: Prepare CI developer config
@@ -84,14 +99,6 @@ jobs:
             PROVISIONING_PROFILE="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             test
-      - name: Upload test result bundle
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tracexy-test-results
-          path: build/test-results/Tracexy.xcresult
-          if-no-files-found: ignore
-
   build:
     name: Build (Release, unsigned)
     needs:
@@ -100,7 +107,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
       - name: Prepare CI developer config
         run: |
           cat > Configuration/Developer.xcconfig <<'EOF'
