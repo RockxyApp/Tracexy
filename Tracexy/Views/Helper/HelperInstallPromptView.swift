@@ -23,6 +23,7 @@ struct HelperInstallPromptView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isInstalling = false
+    @State private var installError: String?
 
     private var header: some View {
         HStack(alignment: .top, spacing: 18) {
@@ -68,27 +69,54 @@ struct HelperInstallPromptView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .keyboardShortcut(.cancelAction)
-            Spacer()
-            Button {
-                Task {
-                    isInstalling = true
-                    await coordinator.helper.install()
-                    isInstalling = false
-                    dismiss()
-                }
-            } label: {
-                if isInstalling {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("Install Helper Tool", systemImage: "arrow.down.circle.fill")
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            if let installError {
+                Label(installError, systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.Typography.surfaceTitle)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .keyboardShortcut(.defaultAction)
-            .buttonStyle(.borderedProminent)
-            .disabled(isInstalling)
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button {
+                    Task {
+                        isInstalling = true
+                        installError = nil
+                        await coordinator.helper.install()
+                        isInstalling = false
+
+                        switch coordinator.helper.status {
+                        case .installedCompatible,
+                             .installedOutdated,
+                             .requiresApproval:
+                            dismiss()
+                        case let .failed(reason):
+                            installError = reason
+                        case .unreachable:
+                            installError = coordinator.helper.probeFailureDetail
+                                ?? "The helper was registered but did not respond."
+                        case .installedIncompatible:
+                            installError = "The installed helper is incompatible with this app build."
+                        case .signingMismatch:
+                            installError = "The app and helper signing identities do not match."
+                        case .notInstalled:
+                            installError = "The helper could not be installed."
+                        }
+                    }
+                } label: {
+                    if isInstalling {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Install Helper Tool", systemImage: "arrow.down.circle.fill")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(isInstalling)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
