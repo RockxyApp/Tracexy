@@ -16,6 +16,13 @@ are dropped once it is full), so a long capture stays memory-stable but is not a
 the helper is not yet approved, Tracexy tells you to approve it in System Settings → Login Items and
 press Start again.
 
+**Settings → Helper** shows the registration, reachability, bundled version, and installed version.
+From there you can install, update, uninstall, or recheck the helper. If a registered helper stops
+answering, Tracexy times out the request, reports it as unreachable, and ends an affected live capture
+instead of leaving the UI stuck. **Force Reset & Reinstall** is a confirmed recovery action for stale
+launchd/helper state; the broader macOS Background Items reset is offered only as an explicitly
+confirmed last resort after normal recovery fails.
+
 ## Opening saved captures
 
 Open a `.pcap` (classic libpcap) or `.pcapng` file from disk — no helper or admin rights required.

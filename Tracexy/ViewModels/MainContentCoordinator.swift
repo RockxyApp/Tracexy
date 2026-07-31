@@ -46,6 +46,12 @@ final class MainContentCoordinator {
         localIPv4 = NetworkInterfaces.primaryIPv4()
         pinnedHosts = Self.loadPinnedHosts()
         refreshSavedCaptures()
+        // Before any destructive/privileged helper op (force reset), stop active
+        // capture and invalidate polling so nothing keeps touching a helper that
+        // is about to be torn down.
+        helper.willBeginDestructiveReset = { [weak self] in
+            self?.stopCapture()
+        }
     }
 
     // MARK: Internal
@@ -898,8 +904,14 @@ final class MainContentCoordinator {
     }
 
     func startCapture() {
+        // Serialize: ignore a second Start while an attempt is already in flight
+        // so double-clicks can't overlap two capture backends.
+        guard !isStarting else {
+            return
+        }
         captureError = nil
         isStarting = true
+        startGeneration &+= 1
         isViewingSavedCapture = false
         liveFrames = []
         sessions = []
@@ -920,19 +932,37 @@ final class MainContentCoordinator {
             startDirect()
             return
         }
-        // Prefer the signed privileged helper (no sudo). Fall back to direct libpcap.
-        if helper.ensureInstalled() {
-            startViaHelper()
-        } else if helper.status == .requiresApproval {
-            captureError = "Approve “Tracexy” in System Settings → Login Items, then press Start again."
-            isCapturing = false
-            isStarting = false
-        } else {
-            startDirect()
+        // Prefer the signed privileged helper (no sudo). Unlike the old fast path,
+        // this verifies signing + XPC reachability before starting: a broken or
+        // wedged helper surfaces a clear error instead of spinning on "Starting"
+        // or being silently masked by an unprivileged fallback.
+        let token = startGeneration
+        Task { @MainActor in
+            let availability = await self.helper.prepareForCaptureViaHelper()
+            // The user may have stopped or restarted since; honor only the live attempt.
+            guard self.isStarting, self.startGeneration == token else {
+                return
+            }
+            switch availability {
+            case .ready:
+                self.startViaHelper(token: token)
+            case .requiresApproval:
+                self.captureError = "Approve “\(TracexyIdentity.current.displayName)” in System Settings → " +
+                    "Login Items, then press Start again."
+                self.isCapturing = false
+                self.isStarting = false
+                self.startGeneration &+= 1
+            case let .unavailable(detail):
+                self.handleCaptureError("Capture helper unavailable — \(detail)")
+            }
         }
     }
 
     func stopCapture() {
+        // Invalidate any in-flight start attempt so its watchdog/reply is ignored.
+        startGeneration &+= 1
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
         pollTimer?.invalidate()
         pollTimer = nil
         if let proxy = try? helper.proxy() {
@@ -989,6 +1019,16 @@ final class MainContentCoordinator {
     private var pendingChartBytes = 0
     private var liveFrames: [CapturedFrame] = []
     private var pollTimer: Timer?
+    /// Bumped every time a start attempt begins or ends. A late helper reply or a
+    /// start watchdog compares its captured token against this so a stale callback
+    /// from an abandoned attempt can't revive `isCapturing`/`isStarting`.
+    private var startGeneration = 0
+    /// At most one helper frame-drain request may be outstanding. Without this
+    /// guard, a wedged helper would accumulate a new XPC request every 350 ms.
+    private var helperFetchInFlight = false
+    /// Retires late frame replies and timeout watchdogs when capture stops or a
+    /// newer drain request replaces them.
+    private var helperFetchGeneration = 0
 
     private static func loadPinnedHosts() -> [String] {
         UserDefaults.standard.stringArray(forKey: pinnedHostsKey) ?? []
@@ -1123,12 +1163,12 @@ final class MainContentCoordinator {
         UserDefaults.standard.set(mutedProtocols.map(\.rawValue), forKey: Self.mutedProtocolsKey)
     }
 
-    private func startViaHelper() {
+    private func startViaHelper(token: Int) {
         do {
             let proxy = try helper.proxy()
             proxy.startCapture(interface: captureInterface) { [weak self] started, message in
                 Task { @MainActor in
-                    guard let self else {
+                    guard let self, self.startGeneration == token else {
                         return
                     }
                     if started {
@@ -1141,27 +1181,84 @@ final class MainContentCoordinator {
                     }
                 }
             }
+            // Watchdog: even a signed, previously-reachable helper can wedge after
+            // the probe. If no reply lands, don't leave the UI stuck on "Starting".
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard self.isStarting, self.startGeneration == token else {
+                    return
+                }
+                let detail = "The capture helper didn’t confirm the capture started."
+                self.helper.recordRuntimeConnectionFailure(detail)
+                self.handleCaptureError("\(detail) Recover it in Settings → Helper.")
+            }
         } catch {
-            startDirect()
+            let detail = "Couldn’t reach the capture helper: \(error.localizedDescription)"
+            helper.recordRuntimeConnectionFailure(detail)
+            handleCaptureError(detail)
         }
     }
 
     private func startPolling() {
         pollTimer?.invalidate()
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollHelper() }
+            guard let coordinator = self else {
+                return
+            }
+            Task { @MainActor in coordinator.pollHelper() }
         }
     }
 
     private func pollHelper() {
-        guard isCapturing, let proxy = try? helper.proxy() else {
+        guard isCapturing, !helperFetchInFlight else {
             return
         }
+        guard let proxy = try? helper.proxy() else {
+            failActiveHelperCapture("The capture helper connection could not be opened.")
+            return
+        }
+
+        helperFetchInFlight = true
+        helperFetchGeneration &+= 1
+        let fetchToken = helperFetchGeneration
+        let captureToken = startGeneration
+
         proxy.fetchFrames { [weak self] datas, linkType in
             let now = Date()
             let frames = datas.map { CapturedFrame(bytes: Array($0), timestamp: now, originalLength: $0.count) }
-            Task { @MainActor in self?.ingest(frames, linkType: UInt32(truncatingIfNeeded: linkType)) }
+            Task { @MainActor in
+                guard let self,
+                      self.isCapturing,
+                      self.startGeneration == captureToken,
+                      self.helperFetchGeneration == fetchToken else
+                {
+                    return
+                }
+                self.helperFetchInFlight = false
+                self.ingest(frames, linkType: UInt32(truncatingIfNeeded: linkType))
+            }
         }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard self.isCapturing,
+                  self.helperFetchInFlight,
+                  self.startGeneration == captureToken,
+                  self.helperFetchGeneration == fetchToken else
+            {
+                return
+            }
+            self.failActiveHelperCapture("The capture helper stopped responding while capture was active.")
+        }
+    }
+
+    private func failActiveHelperCapture(_ detail: String) {
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
+        helper.recordRuntimeConnectionFailure(detail)
+        handleCaptureError("\(detail) Recover it in Settings → Helper.")
     }
 
     private func startDirect() {
@@ -1237,9 +1334,15 @@ final class MainContentCoordinator {
     }
 
     private func handleCaptureError(_ message: String) {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
         captureError = message
         isCapturing = false
         isStarting = false
+        // Retire this attempt so a late reply/watchdog can't flip state back.
+        startGeneration &+= 1
         captureStartedAt = nil
     }
 

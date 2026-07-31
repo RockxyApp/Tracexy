@@ -18,6 +18,11 @@ struct HelperSettingsView: View {
                     helperNote(signingIssueText(issue))
                 }
 
+                if helper.status == .unreachable, let detail = helper.probeFailureDetail {
+                    SettingsDivider()
+                    helperNote(detail)
+                }
+
                 if let info = helper.installedInfo {
                     SettingsDivider()
                     SettingsRow(label: "Installed:") {
@@ -46,36 +51,15 @@ struct HelperSettingsView: View {
                 }
             }
 
-            SettingsSection("Recovery") {
-                Toggle("Also reset macOS Login & Background Items", isOn: $resetBackgroundItems)
-                    .toggleStyle(.checkbox)
+            recoverySection
 
-                SettingsDivider()
-
-                HStack {
-                    Button("Force Reset & Reinstall…", role: .destructive) {
-                        Task { await forceReset() }
-                    }
-                    Spacer(minLength: 0)
-                }
-                helperNote(
-                    "Use this only if the helper is stuck and Install/Update don't recover it. Requires an administrator password."
-                )
-            }
-
-            if let message {
-                SettingsSection("Result") {
-                    Text(message)
-                        .font(metrics.secondaryFont())
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            if let summary = recovery.summary {
+                resultSection(summary)
             }
         }
-        .disabled(helper.isBusy || isWorking)
+        .disabled(helper.isBusy || recovery.isWorking)
         .overlay(alignment: .topTrailing) {
-            if helper.isBusy || isWorking {
+            if helper.isBusy || recovery.isWorking {
                 ProgressView().controlSize(.small).padding(12)
             }
         }
@@ -85,11 +69,13 @@ struct HelperSettingsView: View {
     // MARK: Private
 
     @State private var helper = HelperClient.shared
-    @State private var resetBackgroundItems = false
-    @State private var isWorking = false
-    @State private var message: String?
+    @State private var recovery = HelperRecoveryPresenter()
+    @State private var showForceResetConfirm = false
+    @State private var showBackgroundItemsConfirm = false
 
     private let metrics = SettingsDisplayMetrics.standard
+
+    // MARK: Status
 
     private var statusAppearance: (String, Color, String) {
         switch helper.status {
@@ -101,6 +87,70 @@ struct HelperSettingsView: View {
         case .unreachable: ("Registered but unreachable", .red, "bolt.horizontal.circle")
         case .signingMismatch: ("Signing mismatch", .red, "xmark.shield.fill")
         case let .failed(reason): (reason, .red, "exclamationmark.triangle.fill")
+        }
+    }
+
+    // MARK: Recovery
+
+    private var recoverySection: some View {
+        SettingsSection("Recovery") {
+            helperNote(
+                "Use this only if the helper is stuck and Install / Update don’t recover it. It stops any active "
+                    + "capture, removes the privileged helper with administrator rights, and reinstalls it from this app. "
+                    + "Requires an administrator password."
+            )
+
+            HStack {
+                Button("Force Reset & Reinstall…", role: .destructive) {
+                    showForceResetConfirm = true
+                }
+                Spacer(minLength: 0)
+            }
+            .confirmationDialog(
+                "Force reset the capture helper?",
+                isPresented: $showForceResetConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Force Reset & Reinstall", role: .destructive) {
+                    Task { await recovery.runNormalReset() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This stops any active capture, removes the privileged helper with administrator rights, and "
+                        + "reinstalls it. You’ll be asked for an administrator password."
+                )
+            }
+
+            if recovery.offersBackgroundItemsReset {
+                SettingsDivider()
+                helperNote(
+                    "Normal recovery didn’t fully clear the helper. As a last resort you can also reset macOS Login & "
+                        + "Background Items. This runs “sfltool resetbtm”, which can affect Background Items for other "
+                        + "apps too — they may need re-approval."
+                )
+                HStack {
+                    Button("Reset Background Items & Reinstall…", role: .destructive) {
+                        showBackgroundItemsConfirm = true
+                    }
+                    Spacer(minLength: 0)
+                }
+                .confirmationDialog(
+                    "Also reset macOS Background Items?",
+                    isPresented: $showBackgroundItemsConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Reset Background Items", role: .destructive) {
+                        Task { await recovery.runBackgroundItemsReset() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(
+                        "This runs “sfltool resetbtm” and can affect Login & Background Items for other apps, which may "
+                            + "need re-approval. Only continue if normal recovery didn’t work."
+                    )
+                }
+            }
         }
     }
 
@@ -135,6 +185,29 @@ struct HelperSettingsView: View {
         }
     }
 
+    private func resultSection(_ summary: ForceResetSummary) -> some View {
+        SettingsSection("Result") {
+            Label(
+                summary.title,
+                systemImage: summary.succeeded ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+            )
+            .font(metrics.font())
+            .foregroundStyle(summary.succeeded ? Color.green : Color.orange)
+
+            Text(summary.details)
+                .font(metrics.secondaryFont())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack {
+                Button("Copy Details") { recovery.copyDetails() }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
     private func versionText(_ text: String) -> some View {
         Text(text)
             .font(metrics.secondaryFont())
@@ -158,11 +231,5 @@ struct HelperSettingsView: View {
         case let .identityMismatch(appSigner, helperSigner):
             "The app is signed by “\(appSigner)” but the installed helper was signed by “\(helperSigner)”. Reinstall the helper from this build."
         }
-    }
-
-    private func forceReset() async {
-        isWorking = true
-        defer { isWorking = false }
-        message = await helper.forceResetAndReinstall(resetBackgroundItems: resetBackgroundItems)
     }
 }
