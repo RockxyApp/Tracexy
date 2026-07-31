@@ -65,6 +65,34 @@ struct OverviewScopeTests {
         #expect(env.coordinator.captureStatistics == nil)
     }
 
+    @Test("Plaintext-HTTP finding states only the decoded fact, never exposure")
+    func plaintextHTTPFindingIsEvidenceHonest() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        // The sample capture carries one plaintext HTTP session (no TLS).
+        let httpSession = try #require(
+            coordinator.sessions.first {
+                $0.protocolStack.contains(.http) && !$0.protocolStack.contains(.tls)
+            },
+            "sample capture must contain a plaintext HTTP session"
+        )
+
+        let finding = try #require(
+            coordinator.findings.first { $0.title == "Plaintext HTTP" },
+            "a plaintext HTTP session must produce a Plaintext HTTP finding"
+        )
+        #expect(finding.severity == .warning)
+        #expect(finding.sessionID == httpSession.id)
+        #expect(finding.subtitle == "Unencrypted HTTP traffic to \(httpSession.host)")
+
+        // The old copy claimed credentials/PII were exposed — evidence we never
+        // gather. It must not reappear in any finding.
+        #expect(coordinator.findings.allSatisfy { !$0.subtitle.contains("credentials") })
+        #expect(coordinator.findings.allSatisfy { !$0.subtitle.contains("PII") })
+    }
+
     // MARK: Private
 
     private struct Environment {

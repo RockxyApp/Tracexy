@@ -269,10 +269,14 @@ final class MainContentCoordinator {
                 break
             }
             if session.protocolStack.contains(.http), !session.protocolStack.contains(.tls) {
+                // State only the decoded fact — the traffic was unencrypted.
+                // We decode the plaintext HTTP; we do not observe that any
+                // credentials or PII were actually present, so the copy must
+                // not claim they were exposed.
                 result.append(Finding(
                     severity: .warning,
                     title: "Plaintext HTTP",
-                    subtitle: "credentials/PII exposed to \(session.host)",
+                    subtitle: "Unencrypted HTTP traffic to \(session.host)",
                     sessionID: session.id
                 ))
             }
