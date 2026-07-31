@@ -6,6 +6,22 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.1.1</title>
+            <pubDate>Fri, 31 Jul 2026 20:15:55 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.1</sparkle:fullReleaseNotesLink>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.1 (build 2)
+
+## Fixed
+
+- Harden lifecycle recovery
+
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.1/Tracexy-0.1.1-2.dmg" length="6081442" type="application/octet-stream" sparkle:edSignature="fO9qjgKFsTYRyXHjEiJDWcrYM2puRCAWgw8UCtNP32WYfj3fIoRHn58dxEo2NtIlg/8fsa8qAdSC8Agd3CugCg=="/>
+        </item>
+        <item>
             <title>0.1.0</title>
             <pubDate>Fri, 31 Jul 2026 10:35:00 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.0</sparkle:fullReleaseNotesLink>
