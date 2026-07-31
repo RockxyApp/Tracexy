@@ -19,4 +19,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Plaintext HTTP findings now report only observed unencrypted traffic and no longer claim that credentials or personal data were exposed without supporting evidence.
+- Improved the description shown for unencrypted HTTP traffic.
