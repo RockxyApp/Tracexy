@@ -1,9 +1,36 @@
 <?xml version="1.0" standalone="yes"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <title>Tracexy</title>
-    <link>https://raw.githubusercontent.com/RockxyApp/Tracexy/main/appcast.xml</link>
-    <description>Tracexy Community release channel</description>
-    <language>en</language>
-  </channel>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Tracexy</title>
+        <link>https://raw.githubusercontent.com/RockxyApp/Tracexy/main/appcast.xml</link>
+        <description>Tracexy Community release channel</description>
+        <language>en</language>
+        <item>
+            <title>0.1.0</title>
+            <pubDate>Fri, 31 Jul 2026 10:35:00 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.0 (build 1)
+
+## Added
+
+- Capture → protocol → session foundation: privileged capture helper, PCAP/PCAPNG IO, direct packet decoding, batch session summaries, and native UI.
+- App-level capacity limits are resolved from an injected `AppPolicy` at launch rather than hardcoded: workspace tabs, saved focus sets, and pinned hosts. Reaching a limit now explains itself instead of doing nothing.
+- Settings now uses native toolbar tabs, consistent grouped cards, semantic Light/Dark surfaces, and tighter field and status layouts across every pane.
+- Sparkle 2 provides signed Community updates through the public appcast, with one app-owned updater shared by the app menu and Settings, automatic-check/download preferences backed directly by Sparkle, and local builds kept manual-only.
+
+## Changed
+
+- Helper compatibility now reads the bundled helper version, build, and protocol from the shared release version configuration instead of assuming they match the app version.
+
+## Fixed
+
+- Improved the description shown for unencrypted HTTP traffic.
+
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.0/Tracexy-0.1.0-1.dmg" length="6020187" type="application/octet-stream" sparkle:edSignature="ojhp4xRyjEIlkTCpxX/TPyCLN1QiMqicalgqOTuz4XFVLiHrOfcfds5y90ltsKSRPKVodRbMJ48E5Ya7rIKICg=="/>
+        </item>
+    </channel>
 </rss>
