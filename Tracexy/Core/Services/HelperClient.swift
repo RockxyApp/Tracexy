@@ -45,18 +45,19 @@ final class HelperClient {
 
     // MARK: Bundled (shipped) versions — what this app build embeds
 
-    /// The build the embedded helper was compiled at. App and helper share the
-    /// project version, so the app's own `CFBundleVersion` is the bundled build.
+    /// The build the embedded helper was compiled at. Read from the
+    /// helper-specific `Info.plist` keys (populated from `Versions.xcconfig`),
+    /// never the app's own `CFBundleVersion`, so the two never get conflated.
     var bundledHelperBuild: Int {
-        Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0") ?? 0
+        BundledHelperMetadata.bundled.build
     }
 
     var bundledHelperVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        BundledHelperMetadata.bundled.version
     }
 
     var expectedProtocolVersion: Int {
-        HelperProtocolVersion.current
+        BundledHelperMetadata.bundled.protocolVersion
     }
 
     /// A short, user-facing action label for the current status (sibling-app parity).

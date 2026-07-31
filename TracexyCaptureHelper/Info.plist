@@ -15,7 +15,7 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>TracexyHelperProtocolVersion</key>
-    <string>1</string>
+    <string>$(TRACEXY_HELPER_PROTOCOL_VERSION)</string>
     <key>TracexyFamilyNamespace</key>
     <string>com.amunx.tracexy</string>
     <key>TracexyHelperBundleIdentifier</key>

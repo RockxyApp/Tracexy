@@ -36,6 +36,12 @@
 	<string>$(TRACEXY_DEFAULTS_PREFIX)</string>
 	<key>TracexyFamilyNamespace</key>
 	<string>$(TRACEXY_FAMILY_NAMESPACE)</string>
+	<key>TracexyBundledHelperVersion</key>
+	<string>$(TRACEXY_HELPER_VERSION)</string>
+	<key>TracexyBundledHelperBuild</key>
+	<string>$(TRACEXY_HELPER_BUILD)</string>
+	<key>TracexyHelperProtocolVersion</key>
+	<string>$(TRACEXY_HELPER_PROTOCOL_VERSION)</string>
 	<key>TracexyHelperBundleIdentifier</key>
 	<string>$(TRACEXY_HELPER_BUNDLE_ID)</string>
 	<key>TracexyHelperMachServiceName</key>
