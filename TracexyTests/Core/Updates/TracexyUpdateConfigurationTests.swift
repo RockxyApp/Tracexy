@@ -37,20 +37,57 @@ struct TracexyUpdateConfigurationTests {
     @Test(
         "Unsafe or incomplete configuration fails closed",
         arguments: [
+            // Non-HTTPS feed URL.
             [
                 "TracexyUpdatesEnabled": "YES",
                 "SUFeedURL": "http://example.com/appcast.xml",
                 "SUPublicEDKey": Data(repeating: 1, count: 32).base64EncodedString(),
             ],
+            // Placeholder public key.
             [
                 "TracexyUpdatesEnabled": "YES",
                 "SUFeedURL": "https://example.com/appcast.xml",
                 "SUPublicEDKey": "__PENDING_TRACEXY_SPARKLE_PUBLIC_ED_KEY__",
             ],
+            // Public key is not valid base64.
             [
                 "TracexyUpdatesEnabled": "YES",
                 "SUFeedURL": "https://example.com/appcast.xml",
                 "SUPublicEDKey": "not-a-public-key",
+            ],
+            // Feed URL absent entirely (valid key present).
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUPublicEDKey": Data(repeating: 7, count: 32).base64EncodedString(),
+            ],
+            // Feed URL present but blank.
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUFeedURL": "   ",
+                "SUPublicEDKey": Data(repeating: 7, count: 32).base64EncodedString(),
+            ],
+            // Public key absent entirely (valid feed present).
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUFeedURL": "https://example.com/appcast.xml",
+            ],
+            // Public key present but blank.
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUFeedURL": "https://example.com/appcast.xml",
+                "SUPublicEDKey": "",
+            ],
+            // Valid base64 but the decoded key is too short (31 bytes, not 32).
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUFeedURL": "https://example.com/appcast.xml",
+                "SUPublicEDKey": Data(repeating: 9, count: 31).base64EncodedString(),
+            ],
+            // Valid base64 but the decoded key is too long (64 bytes, not 32).
+            [
+                "TracexyUpdatesEnabled": "YES",
+                "SUFeedURL": "https://example.com/appcast.xml",
+                "SUPublicEDKey": Data(repeating: 9, count: 64).base64EncodedString(),
             ],
         ]
     )
