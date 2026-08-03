@@ -1325,7 +1325,11 @@ final class MainContentCoordinator {
         Task { @MainActor in
             self.sessions = snapshot
             if self.activeWorkspace.autoSelectLatest,
-               let latest = snapshot.max(by: { $0.startTime < $1.startTime }),
+               // Newest by timestamp, tie-broken by id so the choice never depends
+               // on the array's (now first-seen) order.
+               let latest = snapshot.max(by: {
+                   ($0.startTime, $0.id.uuidString) < ($1.startTime, $1.id.uuidString)
+               }),
                self.activeWorkspace.selectedSessionID != latest.id
             {
                 self.activeWorkspace.selectedSessionID = latest.id

@@ -38,8 +38,13 @@ nonisolated enum SessionBuilder {
             groups[key, default: []].append(packet)
         }
 
+        // Emit in first-seen order. Frames arrive in capture order, so this is
+        // chronological (oldest→newest). Preserving the order already collected in
+        // `order` — rather than re-sorting on every rebuild — keeps existing rows
+        // fixed in place: a rebuild with later packets for known five-tuples leaves
+        // them at their indices, and a genuinely new session appends at the tail
+        // instead of shifting the whole table down.
         return order.compactMap { summary(for: groups[$0] ?? [], key: $0, resolved: resolved) }
-            .sorted { $0.startTime > $1.startTime }
     }
 
     // MARK: Private

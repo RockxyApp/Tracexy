@@ -11,10 +11,13 @@ on launch**, Tracexy starts capture after launch setup completes. Starting a cap
 previous live buffer and switches you to the live session list so traffic is visible as it arrives.
 
 The helper streams raw frames to the app in batches; the app decodes them, groups them into sessions,
-and refreshes the list a few times a second while capturing. The live buffer is bounded (older frames
-are dropped once it is full), so a long capture stays memory-stable but is not a complete archive. If
-the helper is not yet approved, Tracexy tells you to approve it in System Settings → Login Items and
-press Start again.
+and refreshes the list a few times a second while capturing. The list is ordered oldest→newest and stays
+stable as traffic arrives: sessions you are already looking at keep their positions and update in place
+(their byte counts, duration, and status), while a genuinely new session appears at the bottom rather
+than pushing the whole table down. **Auto-select latest** (in the status bar) follows the newest session
+by time regardless of where it sits. The live buffer is bounded (older frames are dropped once it is
+full), so a long capture stays memory-stable but is not a complete archive. If the helper is not yet
+approved, Tracexy tells you to approve it in System Settings → Login Items and press Start again.
 
 **Settings → Helper** shows the registration, reachability, bundled version, and installed version.
 From there you can install, update, uninstall, or recheck the helper. If a registered helper stops
