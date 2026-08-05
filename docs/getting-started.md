@@ -71,4 +71,13 @@ swiftformat . && swiftlint lint --strict
 Changes to the helper (`TracexyCaptureHelper/`) or the shared XPC protocol are **not** picked up by
 rebuilding the app. You must uninstall the helper, rebuild, and reinstall.
 
+Local development builds run under a **separate, isolated identity** from the shipping app: a Debug
+build is `com.amunx.tracexy.dev` with helper `com.amunx.tracexy.dev.helper` (and its own
+`com.amunx.tracexy.dev.helper.plist` launch daemon), while shipping Community builds stay
+`com.amunx.tracexy.community` / `com.amunx.tracexy.helper`. This is deliberate: it prevents a DerivedData
+build from registering under the production helper's launchd/Background-Items label, which otherwise
+mixes the two under one label and makes the installed helper unlaunchable. All identity is resolved at
+runtime from the built `Info.plist`; nothing is hardcoded in Swift. A dev build therefore keeps its own
+Login-Items approval and defaults domain, independent of any installed release.
+
 Next: [Usage](usage.md) · [Architecture](architecture.md)

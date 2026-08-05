@@ -16,7 +16,6 @@
 		2FE34D4B30F56204A4417791 /* ConnectionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */; };
 		31F74C17C27AA7E196B79BDF /* IdleExitMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41EBD37FC023FED06FA5A0CB /* IdleExitMonitor.swift */; };
 		34DF3AC728DA6A7E39C2F270 /* TracexyHelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */; };
-		4CCF21553EC9D3F333DA98AA /* com.amunx.tracexy.helper.plist in Copy LaunchDaemon Plist */ = {isa = PBXBuildFile; fileRef = C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */; };
 		5524C528A8FE1BF6D5CB984E /* HelperInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F733C1CA84E6904417326EC /* HelperInfo.swift */; };
 		60565C582957D61CB3F79879 /* BinaryValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B26CD17054C8F0C53702EE /* BinaryValidator.swift */; };
 		9048387235F516821C29B3A9 /* CallerValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */; };
@@ -67,17 +66,6 @@
 			name = "Embed Helper Tool";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		6743245B35AE4167CE846A3D /* Copy LaunchDaemon Plist */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchDaemons;
-			dstSubfolderSpec = 1;
-			files = (
-				4CCF21553EC9D3F333DA98AA /* com.amunx.tracexy.helper.plist in Copy LaunchDaemon Plist */,
-			);
-			name = "Copy LaunchDaemon Plist";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -92,7 +80,6 @@
 		7EC4FF1B6BC48A8692E136CD /* HelperDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HelperDelegate.swift; sourceTree = "<group>"; };
 		9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyIdentity.swift; sourceTree = "<group>"; };
 		A8B26CD17054C8F0C53702EE /* BinaryValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BinaryValidator.swift; sourceTree = "<group>"; };
-		C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = com.amunx.tracexy.helper.plist; sourceTree = "<group>"; };
 		C853626AE74F0B476E6A1681 /* CaptureService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureService.swift; sourceTree = "<group>"; };
 		DCD335842FC5555D003CEC6D /* Tracexy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tracexy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DCD335932FC5555F003CEC6D /* TracexyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TracexyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -221,7 +208,6 @@
 				41EBD37FC023FED06FA5A0CB /* IdleExitMonitor.swift */,
 				EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */,
 				FE1213CAE9676B88FE7D6069 /* main.swift */,
-				C1C56C52E86A685BC7A107F0 /* com.amunx.tracexy.helper.plist */,
 			);
 			path = TracexyCaptureHelper;
 			sourceTree = "<group>";
@@ -270,7 +256,7 @@
 				DCD335812FC5555D003CEC6D /* Frameworks */,
 				DCD335822FC5555D003CEC6D /* Resources */,
 				4F859D2689E8E705CC81EF18 /* Embed Helper Tool */,
-				6743245B35AE4167CE846A3D /* Copy LaunchDaemon Plist */,
+				6743245C35AE4167CE846A3E /* Generate LaunchDaemon Plist */,
 			);
 			buildRules = (
 			);
@@ -418,6 +404,26 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		6743245C35AE4167CE846A3E /* Generate LaunchDaemon Plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/TracexyCaptureHelper/generate-launchd-plist.sh",
+			);
+			name = "Generate LaunchDaemon Plist";
+			outputPaths = (
+				"$(CODESIGNING_FOLDER_PATH)/Contents/Library/LaunchDaemons/$(TRACEXY_HELPER_PLIST_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "bash \"${SRCROOT}/TracexyCaptureHelper/generate-launchd-plist.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0B63B95D53F6452925CE2ABF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -489,8 +495,10 @@
 /* Begin XCBuildConfiguration section */
 		71B0CA68AC062E8862C891D9 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
+			baseConfigurationReference = CF60000000000000000000A7 /* LocalDev.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TracexyCaptureHelper/TracexyCaptureHelper.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
@@ -498,7 +506,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TracexyCaptureHelper/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.helper;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_HELPER_BUNDLE_ID)";
 				PRODUCT_NAME = TracexyCaptureHelper;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
@@ -510,6 +518,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TracexyCaptureHelper/TracexyCaptureHelper.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
@@ -517,7 +527,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TracexyCaptureHelper/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.helper;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_HELPER_BUNDLE_ID)";
 				PRODUCT_NAME = TracexyCaptureHelper;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
@@ -667,7 +677,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = "$(TRACEXY_APP_VERSION)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.community;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_APP_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -700,7 +710,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = "$(TRACEXY_APP_VERSION)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.amunx.tracexy.community;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_APP_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

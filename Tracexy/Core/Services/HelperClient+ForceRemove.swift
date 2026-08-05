@@ -73,7 +73,10 @@ extension HelperClient {
         ]
 
         if resetBackgroundItems {
-            commands.append("/usr/bin/sfltool resetbtm 2>/dev/null || true")
+            commands.append(
+                "if ! /usr/bin/sfltool resetbtm; then " +
+                    "echo 'macOS Background Items reset failed.' >&2; exit 23; fi"
+            )
         }
 
         commands.append(contentsOf: [
@@ -149,6 +152,10 @@ struct ForceResetSummary: Equatable {
         /// Removal succeeded (script exit 0) and a reinstall was attempted;
         /// `finalStatus` carries the real post-reinstall state.
         case reinstalled
+        /// Removal succeeded and macOS Background Items were reset (`sfltool
+        /// resetbtm`). The helper was intentionally NOT reinstalled: a restart is
+        /// required before re-registering into the freshly-reset BTM store.
+        case restartRequired
     }
 
     let phase: Phase
@@ -159,6 +166,12 @@ struct ForceResetSummary: Equatable {
 
     var didReinstall: Bool {
         phase == .reinstalled
+    }
+
+    /// The BTM reset landed and the user must restart before reinstalling. Not a
+    /// failure and not a success — a required manual step.
+    var requiresRestart: Bool {
+        phase == .restartRequired
     }
 
     /// True only when removal *and* reinstall landed the bundled helper in the
@@ -190,6 +203,10 @@ struct ForceResetSummary: Equatable {
             !succeeded
         case .removalCancelled:
             false
+        case .restartRequired:
+            // BTM was already reset — the heaviest lever we have. Nothing further
+            // to escalate; the user must restart, then install.
+            false
         }
     }
 
@@ -202,6 +219,8 @@ struct ForceResetSummary: Equatable {
             "Force reset cancelled"
         case .removalFailed:
             "Force reset failed"
+        case .restartRequired:
+            "Background Items reset — restart your Mac, then install the helper"
         case .reinstalled:
             switch finalStatus {
             case .installedCompatible?: "Helper reset and reinstalled"

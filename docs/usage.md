@@ -22,9 +22,14 @@ approved, Tracexy tells you to approve it in System Settings → Login Items and
 **Settings → Helper** shows the registration, reachability, bundled version, and installed version.
 From there you can install, update, uninstall, or recheck the helper. If a registered helper stops
 answering, Tracexy times out the request, reports it as unreachable, and ends an affected live capture
-instead of leaving the UI stuck. **Force Reset & Reinstall** is a confirmed recovery action for stale
-launchd/helper state; the broader macOS Background Items reset is offered only as an explicitly
-confirmed last resort after normal recovery fails.
+instead of leaving the UI stuck. When the helper is unreachable, the first-line fix is **Repair
+Registration** — a non-destructive step that re-submits the registration from the current app bundle
+(no admin password) and then re-probes, which clears the launchd/Background-Items drift that can follow
+an in-place update. **Force Reset & Reinstall** is the next, confirmed recovery action for stale
+launchd/helper state, and the broader macOS Background Items reset is offered only as an explicitly
+confirmed last resort after normal recovery fails. Because that reset wipes Background Task Management,
+Tracexy does **not** reinstall immediately afterward: it asks you to restart your Mac, then install the
+helper again from Settings.
 
 ## Opening saved captures
 

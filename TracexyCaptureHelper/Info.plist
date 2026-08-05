@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.amunx.tracexy.helper</string>
+    <string>$(TRACEXY_HELPER_BUNDLE_ID)</string>
     <key>CFBundleName</key>
     <string>TracexyCaptureHelper</string>
     <key>CFBundleExecutable</key>
@@ -17,14 +17,14 @@
     <key>TracexyHelperProtocolVersion</key>
     <string>$(TRACEXY_HELPER_PROTOCOL_VERSION)</string>
     <key>TracexyFamilyNamespace</key>
-    <string>com.amunx.tracexy</string>
+    <string>$(TRACEXY_FAMILY_NAMESPACE)</string>
     <key>TracexyHelperBundleIdentifier</key>
-    <string>com.amunx.tracexy.helper</string>
+    <string>$(TRACEXY_HELPER_BUNDLE_ID)</string>
     <key>TracexyHelperMachServiceName</key>
-    <string>com.amunx.tracexy.helper</string>
+    <string>$(TRACEXY_HELPER_MACH_SERVICE_NAME)</string>
     <key>TracexyAllowedCallerIdentifiers</key>
-    <string>com.amunx.tracexy.community com.amunx.tracexy</string>
+    <string>$(TRACEXY_ALLOWED_CALLER_IDENTIFIERS)</string>
     <key>TracexyLogSubsystem</key>
-    <string>com.amunx.tracexy.helper</string>
+    <string>$(TRACEXY_HELPER_BUNDLE_ID)</string>
 </dict>
 </plist>

@@ -1,9 +1,31 @@
 // LocalDev.xcconfig — Local development configuration.
-// Uses release identity so dev builds can communicate with the helper
-// without full identity isolation.
+//
+// Local-dev builds get a FULLY ISOLATED identity (app + helper) so a DerivedData
+// build can never register under the production Community helper's BTM label /
+// Mach-service identity. The affected-machine failure was exactly this collision:
+// launchd mixed `/Applications/Tracexy.app` and an Xcode DerivedData build under
+// one helper label, producing a Launch Constraint Violation after an update.
+//
+// Identity stays bundle-driven at runtime (TracexyIdentity reads the built
+// Info.plist); this file only changes what the build settings resolve to.
 
 #include "CommunityBase.xcconfig"
 
 TRACEXY_RELEASE_CHANNEL = local-dev
 TRACEXY_UPDATES_ENABLED = NO
 TRACEXY_SPARKLE_FEED_URL = $(TRACEXY_PUBLIC_APPCAST_FEED_URL)
+
+// Isolated local-dev app identity.
+TRACEXY_APP_BUNDLE_ID = $(TRACEXY_FAMILY_NAMESPACE).dev
+TRACEXY_APP_NAMESPACE = $(TRACEXY_APP_BUNDLE_ID)
+TRACEXY_LOG_SUBSYSTEM = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_DEFAULTS_PREFIX = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_NOTIFICATION_PREFIX = $(TRACEXY_APP_NAMESPACE)
+TRACEXY_APP_SUPPORT_DIRECTORY_NAME = $(TRACEXY_APP_NAMESPACE)
+
+// Isolated local-dev helper identity → com.amunx.tracexy.dev.helper (label,
+// Mach service, and com.amunx.tracexy.dev.helper.plist all follow).
+TRACEXY_HELPER_NAMESPACE = $(TRACEXY_FAMILY_NAMESPACE).dev
+
+// Only the local-dev app may talk to the local-dev helper.
+TRACEXY_ALLOWED_CALLER_IDENTIFIERS = $(TRACEXY_APP_BUNDLE_ID)

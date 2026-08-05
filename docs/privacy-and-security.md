@@ -37,7 +37,9 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   match with a certificate-chain fallback, plus a bundle-identity allowlist checked against the
   connection's audit token to resist PID races) before accepting it. Independently, the app validates
   the installed helper's signature before trusting it, so a signing mismatch surfaces as a diagnostic
-  rather than being silently "fixed."
+  rather than being silently "fixed." That comparison targets the helper launchd actually executes — the
+  binary embedded in the app bundle (`Contents/Library/HelperTools`) that SMAppService runs in place —
+  not a legacy `/Library/PrivilegedHelperTools` artifact, which Tracexy never installs.
 - **Bounded behavior.** The helper only captures and buffers frames. Its frame buffer is capped, and it
   stops capturing when the owning app disconnects — it does not run unbounded or unattended.
 

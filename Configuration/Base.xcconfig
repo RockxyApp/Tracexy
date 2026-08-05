@@ -31,8 +31,16 @@ TRACEXY_FAMILY_NAMESPACE = com.amunx.tracexy
 TRACEXY_SHARED_SUPPORT_DIRECTORY_NAME = $(TRACEXY_FAMILY_NAMESPACE)
 TRACEXY_SHARED_UTTYPE_PREFIX = $(TRACEXY_FAMILY_NAMESPACE)
 
-// Helper identity and service names (explicit, not derived from app bundle ID)
-TRACEXY_HELPER_BUNDLE_ID = $(TRACEXY_FAMILY_NAMESPACE).helper
+// Helper identity and service names (explicit, not derived from app bundle ID).
+//
+// TRACEXY_HELPER_NAMESPACE is the root the helper identity is built from. It
+// defaults to the family namespace (shipping Community: com.amunx.tracexy.helper)
+// but local-dev overrides it so DerivedData builds register under a DISTINCT
+// BTM label / Mach service and can never collide with an installed production
+// helper. Everything below derives from it, so a single override isolates the
+// whole helper identity.
+TRACEXY_HELPER_NAMESPACE = $(TRACEXY_FAMILY_NAMESPACE)
+TRACEXY_HELPER_BUNDLE_ID = $(TRACEXY_HELPER_NAMESPACE).helper
 TRACEXY_HELPER_MACH_SERVICE_NAME = $(TRACEXY_HELPER_BUNDLE_ID)
 TRACEXY_HELPER_PLIST_NAME = $(TRACEXY_HELPER_BUNDLE_ID).plist
 TRACEXY_HELPER_BINARY_NAME = TracexyCaptureHelper
