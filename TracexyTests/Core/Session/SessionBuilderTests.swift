@@ -74,7 +74,106 @@ struct SessionBuilderTests {
         #expect(first.map(\.id) == second.map(\.id))
     }
 
+    @Test
+    func outputIsChronologicalOldestFirst() {
+        // Frames arrive in capture order; the session list must read oldest→newest
+        // so the live table appends at the tail instead of shifting downward.
+        let result = SessionBuilder.build(from: TwoSessions.batchOne, linkType: LinkType.ethernet)
+        #expect(result.count == 2)
+        let starts = result.map(\.startTime)
+        #expect(starts == starts.sorted())
+        #expect(result.first?.sni == "one.example")
+        #expect(result.last?.sni == "two.example")
+    }
+
+    @Test
+    func rebuildKeepsPriorIDsAsPrefixAndAppendsNew() {
+        // A later batch that extends an existing five-tuple and introduces a new
+        // one must keep the prior ids in the same relative order (a prefix) and
+        // place the genuinely new session at the tail.
+        let first = SessionBuilder.build(from: TwoSessions.batchOne, linkType: LinkType.ethernet)
+        let second = SessionBuilder.build(from: TwoSessions.batchTwo, linkType: LinkType.ethernet)
+
+        let priorIDs = first.map(\.id)
+        #expect(priorIDs.count == 2)
+        #expect(second.count == 3)
+        // Prior ids are an exact prefix of the rebuilt result…
+        #expect(Array(second.map(\.id).prefix(2)) == priorIDs)
+        // …and the new session lands at the last index.
+        #expect(second.last?.sni == "three.example")
+        #expect(!priorIDs.contains(second[2].id))
+    }
+
+    @Test
+    func existingSessionSummaryUpdatesOnRebuild() {
+        // Extending an existing five-tuple with a later packet must update its
+        // mutable summary in place rather than freezing the first-seen values.
+        let first = SessionBuilder.build(from: TwoSessions.batchOne, linkType: LinkType.ethernet)
+        let second = SessionBuilder.build(from: TwoSessions.batchTwo, linkType: LinkType.ethernet)
+
+        guard let before = first.first(where: { $0.sni == "one.example" }),
+              let after = second.first(where: { $0.sni == "one.example" }) else
+        {
+            Issue.record("missing one.example session")
+            return
+        }
+        #expect(before.id == after.id)
+        // A second packet joined the session: more bytes and a real duration.
+        #expect(after.totalBytes > before.totalBytes)
+        #expect(before.duration == 0)
+        #expect(after.duration > 0)
+    }
+
     // MARK: Private
+
+    /// Two live five-tuples with controlled timestamps, plus a second batch that
+    /// extends the first session and introduces a third — enough to prove
+    /// chronological ordering and incremental prefix/append stability.
+    private enum TwoSessions {
+        // MARK: Internal
+
+        static let client = "10.0.0.5"
+        static let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        /// Session one (oldest) then session two.
+        static let batchOne: [CapturedFrame] = [
+            frame(
+                PacketBuilder.tlsClientHelloFrame(
+                    sni: "one.example", src: client, dst: "203.0.113.1", srcPort: 40_001
+                ),
+                at: base
+            ),
+            frame(
+                PacketBuilder.tlsClientHelloFrame(
+                    sni: "two.example", src: client, dst: "203.0.113.2", srcPort: 40_002
+                ),
+                at: base.addingTimeInterval(1)
+            ),
+        ]
+
+        /// The same two frames, then a later packet for session one (same
+        /// five-tuple) and a brand-new session three at the tail.
+        static let batchTwo: [CapturedFrame] = batchOne + [
+            frame(
+                PacketBuilder.tlsClientHelloFrame(
+                    sni: "one.example", src: client, dst: "203.0.113.1", srcPort: 40_001
+                ),
+                at: base.addingTimeInterval(2)
+            ),
+            frame(
+                PacketBuilder.tlsClientHelloFrame(
+                    sni: "three.example", src: client, dst: "203.0.113.3", srcPort: 40_003
+                ),
+                at: base.addingTimeInterval(3)
+            ),
+        ]
+
+        // MARK: Private
+
+        private static func frame(_ bytes: [UInt8], at timestamp: Date) -> CapturedFrame {
+            CapturedFrame(bytes: bytes, timestamp: timestamp, originalLength: bytes.count)
+        }
+    }
 
     private func sessions() -> [SessionSummary] {
         SessionBuilder.build(from: SampleCapture.frames(now: Date()), linkType: LinkType.ethernet)

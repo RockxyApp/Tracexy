@@ -154,6 +154,91 @@ struct ActivityBuilderTests {
         #expect(abs(activity.duration - 0.29) < 0.005)
     }
 
+    @Test("Rebuilding from the same sessions yields the same activity id")
+    func activityIdIsStableAcrossRebuilds() throws {
+        let base = Date()
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        let tcp = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.02), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        // Same session values (crucially the same ids, as the store hands back on
+        // every capture tick) must produce the identical action row identity.
+        let first = try #require(ActivityBuilder.build(from: [dns, tcp]).activities.first)
+        let second = try #require(ActivityBuilder.build(from: [dns, tcp]).activities.first)
+
+        #expect(first.id == second.id)
+    }
+
+    @Test("Adding a later member preserves the activity id while the anchor remains")
+    func activityIdSurvivesLaterMember() throws {
+        let base = Date()
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        let tcp = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.02), process: "MyApp",
+            stack: [.tcp], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+        let tls = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.05), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        let before = try #require(ActivityBuilder.build(from: [dns, tcp]).activities.first)
+        // The oldest member (the DNS lookup) is unchanged, so the action keeps its
+        // row identity even though a third session joined it.
+        let after = try #require(ActivityBuilder.build(from: [dns, tcp, tls]).activities.first)
+
+        #expect(after.sessions.count == 3)
+        #expect(before.id == after.id)
+    }
+
+    @Test("An activity id never collides with one of its child session ids")
+    func activityIdDoesNotCollideWithChildren() throws {
+        let base = Date()
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        let tcp = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.02), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        let activity = try #require(ActivityBuilder.build(from: [dns, tcp]).activities.first)
+
+        // Action roots and disclosure children coexist in one Table hierarchy, so
+        // the root id must differ from every member — including the anchor it is
+        // derived from.
+        #expect(!activity.sessions.contains { $0.id == activity.id })
+    }
+
+    @Test("An explicitly supplied id is preserved, not recomputed")
+    func explicitIdIsPreserved() {
+        let base = Date()
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        let tcp = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.02), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443"
+        )
+        let pinned = UUID()
+
+        // The coordinator recreates filtered survivor activities with the original
+        // id; that override must win over the derived identity.
+        let activity = Activity(id: pinned, sessions: [dns, tcp], evidence: [])
+
+        #expect(activity.id == pinned)
+    }
+
     // MARK: Private
 
     private static func session(

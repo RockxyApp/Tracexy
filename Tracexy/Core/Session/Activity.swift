@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: - ConfidenceTier
@@ -86,11 +87,15 @@ enum ActivityEvidence: Hashable, Sendable {
 struct Activity: Identifiable, Hashable, Sendable {
     // MARK: Lifecycle
 
-    init(id: UUID = UUID(), sessions: [SessionSummary], evidence: [ActivityEvidence], competingNames: [String] = []) {
-        self.id = id
-        self.sessions = sessions.sorted { $0.startTime < $1.startTime }
+    init(id: UUID? = nil, sessions: [SessionSummary], evidence: [ActivityEvidence], competingNames: [String] = []) {
+        let ordered = sessions.sorted { $0.startTime < $1.startTime }
+        self.sessions = ordered
         self.evidence = evidence
         self.competingNames = competingNames
+        // A caller-supplied id wins (the coordinator recreates filtered survivor
+        // activities with the original id); otherwise derive a stable one from
+        // the oldest member so the same action keeps the same row across rebuilds.
+        self.id = id ?? Self.identifier(anchor: ordered.first?.id)
     }
 
     // MARK: Internal
@@ -171,5 +176,34 @@ struct Activity: Identifiable, Hashable, Sendable {
             }
         }
         return path
+    }
+
+    // MARK: Private
+
+    /// A stable identity derived from the oldest member rather than a fresh
+    /// `UUID()`.
+    ///
+    /// The activity list is rebuilt on every capture tick, so a random id would
+    /// hand `Table` a brand-new action row each second: disclosure and selection
+    /// state would drop, and the grouped rows would churn while traffic was live.
+    /// Anchoring on the oldest session keeps an action the *same* row for as long
+    /// as its first step persists, and adding a later member leaves it unchanged.
+    ///
+    /// The `activity:` namespace is deliberate: action roots and their disclosure
+    /// children share one `Table` hierarchy, so this must never collide with a
+    /// child session id — hashing a namespaced anchor guarantees it cannot.
+    private static func identifier(anchor: UUID?) -> UUID {
+        let seed = anchor?.uuidString ?? "—"
+        let digest = SHA256.hash(data: Data("activity:\(seed)".utf8))
+        var bytes = Array(digest.prefix(16))
+        // Stamp RFC 4122 version 4 / variant bits so this is a well-formed UUID.
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 }
