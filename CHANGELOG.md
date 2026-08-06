@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+## [0.1.3] - 2026-08-06
+
+### Changed
+
+- Recover service registration after app updates
+
 ## [0.1.2] - 2026-08-05
 
 ### Fixed
