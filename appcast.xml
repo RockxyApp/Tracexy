@@ -6,6 +6,22 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.1.4</title>
+            <pubDate>Thu, 06 Aug 2026 11:51:31 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.4</sparkle:fullReleaseNotesLink>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.1.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.4 (build 5)
+
+## Changed
+
+- Make force reset authorization-safe
+
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.4/Tracexy-0.1.4-5.dmg" length="6091361" type="application/octet-stream" sparkle:edSignature="xObuEnctKD/hmF/yaaNZSEAZSetnorh0OY/Z4UMXU9kJCa4yqNKYPHZyceaVlNn+WB+ctJ6j5ea/tVFdA4ZLBg=="/>
+        </item>
+        <item>
             <title>0.1.3</title>
             <pubDate>Thu, 06 Aug 2026 08:45:28 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.3</sparkle:fullReleaseNotesLink>
@@ -36,22 +52,6 @@
 
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.2/Tracexy-0.1.2-3.dmg" length="6083458" type="application/octet-stream" sparkle:edSignature="eEbTrzghFIyXfbt0qMLKf0XezDIh6ZeAxEuAdvlmkaeTfhnE7C/ca8GuAVmZ5HUIpZX93Z6IDlvrm6j8fG/hDQ=="/>
-        </item>
-        <item>
-            <title>0.1.1</title>
-            <pubDate>Fri, 31 Jul 2026 20:15:55 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.1</sparkle:fullReleaseNotesLink>
-            <sparkle:version>2</sparkle:version>
-            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.1 (build 2)
-
-## Fixed
-
-- Harden lifecycle recovery
-
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.1/Tracexy-0.1.1-2.dmg" length="6081442" type="application/octet-stream" sparkle:edSignature="fO9qjgKFsTYRyXHjEiJDWcrYM2puRCAWgw8UCtNP32WYfj3fIoRHn58dxEo2NtIlg/8fsa8qAdSC8Agd3CugCg=="/>
         </item>
     </channel>
 </rss>
