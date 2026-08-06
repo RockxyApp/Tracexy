@@ -54,38 +54,32 @@ extension HelperClient {
 
     // MARK: Shell scripting (osascript "with administrator privileges")
 
-    nonisolated static func forceRemoveShellScript(
-        identity: TracexyIdentity,
-        resetBackgroundItems: Bool
-    )
-        -> String
-    {
+    /// The privileged, **app-specific** cleanup script: terminate this helper's
+    /// launchd job by its exact service label, bootout that same job, remove only
+    /// this app's legacy helper binary and launch-daemon plist, then verify with
+    /// exit guards.
+    ///
+    /// The job is killed by its exact `system/<label>` service target — never a
+    /// broad `pkill` on the shared executable name, which a debug build and a
+    /// production build both carry and which could terminate a different app's
+    /// helper. It never touches global Background Items — that is manual guidance
+    /// the user runs themselves, never something Tracexy elevates.
+    nonisolated static func forceRemoveShellScript(identity: TracexyIdentity) -> String {
         let label = shellQuote(identity.helperMachServiceName)
         let helperPath = shellQuote("/Library/PrivilegedHelperTools/\(identity.helperBundleIdentifier)")
         let launchDaemonPath = shellQuote("/Library/LaunchDaemons/\(identity.helperPlistName)")
-        let processPattern = shellQuote("[T]racexyCaptureHelper")
 
-        var commands = [
+        let commands = [
+            "/bin/launchctl kill SIGTERM system/\(label) 2>/dev/null || true",
             "/bin/launchctl bootout system/\(label) 2>/dev/null || true",
-            "/usr/bin/pkill -f \(processPattern) 2>/dev/null || true",
             "/bin/rm -f \(helperPath)",
             "/bin/rm -f \(launchDaemonPath)",
-        ]
-
-        if resetBackgroundItems {
-            commands.append(
-                "if ! /usr/bin/sfltool resetbtm; then " +
-                    "echo 'macOS Background Items reset failed.' >&2; exit 23; fi"
-            )
-        }
-
-        commands.append(contentsOf: [
             "if /bin/launchctl print system/\(label) >/dev/null 2>&1; then " +
                 "echo 'Tracexy helper launchd job is still loaded.' >&2; exit 20; fi",
             "if [ -e \(helperPath) ]; then echo 'Tracexy helper binary still exists.' >&2; exit 21; fi",
             "if [ -e \(launchDaemonPath) ]; then echo 'Tracexy launch daemon plist still exists.' >&2; exit 22; fi",
-            "echo 'Tracexy helper registration files were removed.'",
-        ])
+            "echo 'Tracexy helper launchd job and legacy files were cleared.'",
+        ]
 
         return commands.joined(separator: "; ")
     }
@@ -144,18 +138,19 @@ struct ForceResetSummary: Equatable {
     enum Phase: Equatable {
         /// A lifecycle action was already running, so no reset was attempted.
         case operationInProgress
-        /// The administrator prompt was cancelled; nothing was removed or reinstalled.
+        /// The administrator prompt was cancelled before the privileged cleanup
+        /// ran, so nothing was removed, the SMAppService registration was left
+        /// untouched, and no reinstall was attempted.
         case removalCancelled
-        /// The privileged removal failed (nonzero exit / exit-guard tripped);
-        /// state was left untouched and no reinstall was attempted.
+        /// The privileged removal failed (nonzero exit / exit-guard tripped), or it
+        /// succeeded but the follow-up SMAppService unregister then failed. Either
+        /// way state may be partially changed — the re-probed `finalStatus` is
+        /// authoritative — and no reinstall was attempted.
         case removalFailed
-        /// Removal succeeded (script exit 0) and a reinstall was attempted;
-        /// `finalStatus` carries the real post-reinstall state.
+        /// Removal succeeded (script exit 0, then SMAppService unregister) and a
+        /// reinstall was attempted; `finalStatus` carries the real post-reinstall
+        /// state.
         case reinstalled
-        /// Removal succeeded and macOS Background Items were reset (`sfltool
-        /// resetbtm`). The helper was intentionally NOT reinstalled: a restart is
-        /// required before re-registering into the freshly-reset BTM store.
-        case restartRequired
     }
 
     let phase: Phase
@@ -166,12 +161,6 @@ struct ForceResetSummary: Equatable {
 
     var didReinstall: Bool {
         phase == .reinstalled
-    }
-
-    /// The BTM reset landed and the user must restart before reinstalling. Not a
-    /// failure and not a success — a required manual step.
-    var requiresRestart: Bool {
-        phase == .restartRequired
     }
 
     /// True only when removal *and* reinstall landed the bundled helper in the
@@ -190,10 +179,11 @@ struct ForceResetSummary: Equatable {
         }
     }
 
-    /// Whether to offer the heavier `sfltool resetbtm` escalation next. Only after
-    /// a normal (non-BTM) attempt failed to recover — never after a user-initiated
-    /// cancel.
-    var suggestsBackgroundItemsReset: Bool {
+    /// Whether to surface the manual, last-resort Background Items guidance next —
+    /// a copyable Terminal command the user runs themselves, never an action
+    /// Tracexy elevates. Only after a normal reset failed to recover the helper;
+    /// never after a user-initiated cancel.
+    var suggestsManualBackgroundItemsGuidance: Bool {
         switch phase {
         case .operationInProgress:
             false
@@ -202,10 +192,6 @@ struct ForceResetSummary: Equatable {
         case .reinstalled:
             !succeeded
         case .removalCancelled:
-            false
-        case .restartRequired:
-            // BTM was already reset — the heaviest lever we have. Nothing further
-            // to escalate; the user must restart, then install.
             false
         }
     }
@@ -219,8 +205,6 @@ struct ForceResetSummary: Equatable {
             "Force reset cancelled"
         case .removalFailed:
             "Force reset failed"
-        case .restartRequired:
-            "Background Items reset — restart your Mac, then install the helper"
         case .reinstalled:
             switch finalStatus {
             case .installedCompatible?: "Helper reset and reinstalled"
