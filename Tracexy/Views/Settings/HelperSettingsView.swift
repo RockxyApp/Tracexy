@@ -71,7 +71,6 @@ struct HelperSettingsView: View {
     @State private var helper = HelperClient.shared
     @State private var recovery = HelperRecoveryPresenter()
     @State private var showForceResetConfirm = false
-    @State private var showBackgroundItemsConfirm = false
 
     private let metrics = SettingsDisplayMetrics.standard
 
@@ -122,37 +121,31 @@ struct HelperSettingsView: View {
                 )
             }
 
-            if recovery.offersBackgroundItemsReset {
+            if recovery.offersManualBackgroundItemsGuidance {
                 SettingsDivider()
-                helperNote(
-                    "Normal recovery didn’t fully clear the helper. As a last resort you can also reset macOS Login & "
-                        + "Background Items. This runs “sfltool resetbtm”, which can affect Background Items for other "
-                        + "apps too — they may need re-approval. You must restart your Mac before installing the helper "
-                        + "again."
-                )
-                HStack {
-                    Button("Reset Background Items…", role: .destructive) {
-                        showBackgroundItemsConfirm = true
-                    }
-                    Spacer(minLength: 0)
-                }
-                .confirmationDialog(
-                    "Also reset macOS Background Items?",
-                    isPresented: $showBackgroundItemsConfirm,
-                    titleVisibility: .visible
-                ) {
-                    Button("Reset Background Items", role: .destructive) {
-                        Task { await recovery.runBackgroundItemsReset() }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text(
-                        "This runs “sfltool resetbtm” and can affect Login & Background Items for other apps, which may "
-                            + "need re-approval. Tracexy will remove the helper but will not reinstall it immediately; "
-                            + "restart your Mac, then install it from Settings. Only continue if normal recovery didn’t work."
-                    )
-                }
+                manualBackgroundItemsGuidance
             }
+        }
+    }
+
+    /// Last-resort *manual* guidance shown only after a normal reset fails. This is
+    /// pure instruction plus a Copy Command action: Tracexy never runs the global
+    /// Background Items reset (nesting it in an elevated shell was the v0.1.3
+    /// regression). The user runs it themselves in Terminal, restarts, and returns.
+    @ViewBuilder private var manualBackgroundItemsGuidance: some View {
+        helperNote(
+            "Normal recovery didn’t fully clear the helper. As a last resort you can reset macOS Login & Background "
+                + "Items yourself. This affects Background Items for other apps too — they may need re-approval — so "
+                + "Tracexy won’t run it for you. Open Terminal and run the command below with sudo, restart your Mac, "
+                + "then return here and choose Install Helper."
+        )
+        HStack(spacing: 12) {
+            Text(recovery.manualBackgroundItemsCommand)
+                .font(metrics.secondaryFont().monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Button("Copy Command") { recovery.copyManualBackgroundItemsCommand() }
+            Spacer(minLength: 0)
         }
     }
 
@@ -168,16 +161,7 @@ struct HelperSettingsView: View {
         case .installedCompatible:
             Label("No action needed", systemImage: "checkmark").foregroundStyle(.secondary)
         case .notInstalled:
-            // After a Background Items reset the helper is removed but a restart is
-            // required before it can be installed again. Suppress the Install button
-            // while that summary is active so the user restarts first instead of
-            // hitting an install that cannot succeed yet.
-            if recovery.summary?.requiresRestart == true {
-                Label("Restart your Mac before installing", systemImage: "arrow.clockwise.circle.fill")
-                    .foregroundStyle(.secondary)
-            } else {
-                Button("Install Helper") { Task { await helper.install() } }
-            }
+            Button("Install Helper") { Task { await helper.install() } }
         case .requiresApproval:
             Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
         case .installedOutdated,
@@ -207,8 +191,6 @@ struct HelperSettingsView: View {
     private func resultSection(_ summary: ForceResetSummary) -> some View {
         let (symbol, tint): (String, Color) = if summary.succeeded {
             ("checkmark.seal.fill", .green)
-        } else if summary.requiresRestart {
-            ("arrow.clockwise.circle.fill", .blue)
         } else {
             ("exclamationmark.triangle.fill", .orange)
         }

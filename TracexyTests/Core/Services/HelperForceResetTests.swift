@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import Testing
 @testable import Tracexy
 
@@ -12,39 +13,76 @@ import Testing
 struct ForceRemoveScriptTests {
     // MARK: Internal
 
-    @Test("Removes the launchd job, process, helper binary, and launch daemon plist")
+    @Test("Boots out the launchd job and removes the helper binary and launch daemon plist")
     func removesEverything() {
-        let script = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: false)
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
 
         #expect(script.contains("/bin/launchctl bootout system/'com.example.helper'"))
         #expect(script.contains("/bin/rm -f '/Library/PrivilegedHelperTools/com.example.helper'"))
         #expect(script.contains("/bin/rm -f '/Library/LaunchDaemons/com.example.helper.plist'"))
     }
 
-    @Test("pkill uses the bracket form so it cannot match itself")
-    func bracketedPkill() {
-        let script = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: false)
-        #expect(script.contains("/usr/bin/pkill -f '[T]racexyCaptureHelper'"))
-        // The naive, self-matching form must not appear.
-        #expect(!script.contains("pkill -f 'TracexyCaptureHelper'"))
+    @Test("Terminates the job by its exact service label, ordered before bootout, with no broad pkill")
+    func killsByExactServiceLabel() {
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
+
+        // The job is killed by its exact `system/<label>` service target.
+        #expect(script.contains("/bin/launchctl kill SIGTERM system/'com.example.helper'"))
+
+        // The kill must run before the bootout so the process is signalled while its
+        // launchd job still exists.
+        let killRange = script.range(of: "launchctl kill SIGTERM system/'com.example.helper'")
+        let bootoutRange = script.range(of: "launchctl bootout system/'com.example.helper'")
+        #expect(killRange != nil)
+        #expect(bootoutRange != nil)
+        if let killRange, let bootoutRange {
+            #expect(killRange.lowerBound < bootoutRange.lowerBound)
+        }
+
+        // The broad, executable-name pkill — which a debug and a production helper
+        // share and which could kill a different app's helper — must be gone entirely.
+        #expect(!script.contains("pkill"))
+        #expect(!script.contains("TracexyCaptureHelper"))
     }
 
     @Test("Exit guards fail loudly if the job or files remain")
     func exitGuards() {
-        let script = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: false)
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
         #expect(script.contains("exit 20"))
         #expect(script.contains("exit 21"))
         #expect(script.contains("exit 22"))
     }
 
-    @Test("sfltool resetbtm is gated behind the flag")
-    func sfltoolGated() {
-        let without = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: false)
-        let with = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: true)
-        #expect(!without.contains("sfltool resetbtm"))
-        #expect(with.contains("/usr/bin/sfltool resetbtm"))
-        #expect(with.contains("exit 23"))
-        #expect(!with.contains("sfltool resetbtm 2>/dev/null || true"))
+    @Test("The privileged script never touches global Background Items")
+    func neverResetsBackgroundItems() {
+        // The v0.1.3 regression nested `sfltool resetbtm` inside an already-elevated
+        // osascript shell (exit 23 guard) after the helper was unregistered. The
+        // app-specific cleanup must never contain any of that machinery.
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
+        #expect(!script.contains("sfltool"))
+        #expect(!script.contains("resetbtm"))
+        #expect(!script.contains("exit 23"))
+    }
+
+    @Test("The completion message describes only what the script verified, not registration removal")
+    func completionMessageIsTruthful() {
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
+        // The script verifies the launchd job and legacy files are gone; it does NOT
+        // remove the SMAppService registration (that happens later, in Swift). Its
+        // completion echo must not claim registration files were removed.
+        #expect(script.contains("Tracexy helper launchd job and legacy files were cleared."))
+        #expect(!script.contains("registration files were removed"))
+    }
+
+    @Test("The manual Background Items command lives in the presenter, not Core/Services")
+    func manualCommandLivesInPresenter() {
+        // Presentation-only: this string is displayed/copied, never executed. It now
+        // lives on the presenter — the one place `sfltool resetbtm` may appear, and
+        // only as guidance text — never beside the privileged executor.
+        #expect(HelperRecoveryPresenter.manualBackgroundItemsResetCommand == "sudo /usr/bin/sfltool resetbtm")
+        // It must not be wired into the privileged script or any || true swallowing.
+        let script = HelperClient.forceRemoveShellScript(identity: Self.identity)
+        #expect(!script.contains(HelperRecoveryPresenter.manualBackgroundItemsResetCommand))
     }
 
     // MARK: Private
@@ -86,6 +124,30 @@ struct ForceRemoveErrorTests {
     }
 }
 
+// MARK: - PostCleanupRegistrationActionTests
+
+// The decision the reset takes for this app's SMAppService registration *after* the
+// privileged cleanup has removed the launchd job and files. Exercised as a pure
+// mapping from a real `SMAppService.Status`, so absent-registration semantics are
+// covered without registering or unregistering anything live.
+
+@Suite("Post-cleanup SMAppService registration decision")
+struct PostCleanupRegistrationActionTests {
+    @Test("A live registration is unregistered")
+    func liveRegistrationUnregisters() {
+        #expect(HelperClient.postCleanupRegistrationAction(for: .enabled) == .unregister)
+        #expect(HelperClient.postCleanupRegistrationAction(for: .requiresApproval) == .unregister)
+    }
+
+    @Test("An absent registration proceeds to reinstall without unregistering")
+    func absentRegistrationProceeds() {
+        // The crux: a missing registration is an acceptable end state and must not
+        // block the reinstall, so no unregister is attempted.
+        #expect(HelperClient.postCleanupRegistrationAction(for: .notRegistered) == .alreadyAbsent)
+        #expect(HelperClient.postCleanupRegistrationAction(for: .notFound) == .alreadyAbsent)
+    }
+}
+
 // MARK: - ForceResetSummaryTests
 
 @Suite("Force-reset result summary")
@@ -99,7 +161,7 @@ struct ForceResetSummaryTests {
         )
         #expect(summary.didReinstall)
         #expect(summary.succeeded)
-        #expect(!summary.suggestsBackgroundItemsReset)
+        #expect(!summary.suggestsManualBackgroundItemsGuidance)
         #expect(summary.details.contains("removed"))
         #expect(summary.details.localizedCaseInsensitiveContains("up to date"))
     }
@@ -110,58 +172,47 @@ struct ForceResetSummaryTests {
         #expect(summary.succeeded)
     }
 
-    @Test("Reinstall that lands unreachable is not success and suggests escalation")
+    @Test("Reinstall that lands unreachable is not success and suggests manual guidance")
     func reinstalledUnreachable() {
         let summary = ForceResetSummary(phase: .reinstalled, removalOutput: "", finalStatus: .unreachable)
         #expect(!summary.succeeded)
-        #expect(summary.suggestsBackgroundItemsReset)
+        #expect(summary.suggestsManualBackgroundItemsGuidance)
     }
 
     @Test("Reinstall that still reports an outdated helper is not success")
     func reinstalledOutdated() {
         let summary = ForceResetSummary(phase: .reinstalled, removalOutput: "", finalStatus: .installedOutdated)
         #expect(!summary.succeeded)
-        #expect(summary.suggestsBackgroundItemsReset)
+        #expect(summary.suggestsManualBackgroundItemsGuidance)
     }
 
-    @Test("A failed removal keeps escalation available and never reads as success")
+    @Test("A failed removal surfaces the re-probed final status and never reads as success")
     func removalFailed() {
+        // The re-probed status is authoritative. Because cleanup may have already
+        // removed files before a later step failed, the summary must NOT claim the
+        // state was left untouched — it reports what the re-probe actually found.
         let summary = ForceResetSummary(
             phase: .removalFailed,
-            removalOutput: "job still loaded",
-            finalStatus: .installedCompatible
+            removalOutput: "Removed the helper files, but couldn’t unregister the launchd service: boom",
+            finalStatus: .unreachable
         )
         #expect(!summary.didReinstall)
         #expect(!summary.succeeded)
-        #expect(summary.suggestsBackgroundItemsReset)
+        #expect(summary.suggestsManualBackgroundItemsGuidance)
         #expect(summary.title == "Force reset failed")
+        #expect(summary.details.localizedCaseInsensitiveContains("registered but unreachable"))
+        #expect(!summary.details.localizedCaseInsensitiveContains("untouched"))
     }
 
-    @Test("A cancelled removal is not a success and does not push escalation")
+    @Test("A cancelled removal is not a success and does not push manual guidance")
     func removalCancelled() {
         let summary = ForceResetSummary(phase: .removalCancelled, removalOutput: "cancelled", finalStatus: nil)
         #expect(!summary.succeeded)
-        #expect(!summary.suggestsBackgroundItemsReset)
+        #expect(!summary.suggestsManualBackgroundItemsGuidance)
         #expect(summary.title == "Force reset cancelled")
     }
 
-    @Test("A BTM reset requires a restart — never a success and never a reinstall")
-    func restartRequired() {
-        let summary = ForceResetSummary(
-            phase: .restartRequired,
-            removalOutput: "Removed the helper and reset macOS Background Items.",
-            finalStatus: .notInstalled
-        )
-        #expect(summary.requiresRestart)
-        #expect(!summary.didReinstall)
-        #expect(!summary.succeeded)
-        // Already the heaviest lever — do not loop back into another BTM reset.
-        #expect(!summary.suggestsBackgroundItemsReset)
-        #expect(summary.title.localizedCaseInsensitiveContains("restart"))
-        #expect(summary.details.localizedCaseInsensitiveContains("not installed"))
-    }
-
-    @Test("An overlapping lifecycle action does not trigger destructive escalation")
+    @Test("An overlapping lifecycle action does not trigger manual guidance")
     func operationInProgress() {
         let summary = ForceResetSummary(
             phase: .operationInProgress,
@@ -170,6 +221,6 @@ struct ForceResetSummaryTests {
         )
         #expect(!summary.didReinstall)
         #expect(!summary.succeeded)
-        #expect(!summary.suggestsBackgroundItemsReset)
+        #expect(!summary.suggestsManualBackgroundItemsGuidance)
     }
 }
