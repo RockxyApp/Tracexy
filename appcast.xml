@@ -6,6 +6,22 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.1.3</title>
+            <pubDate>Thu, 06 Aug 2026 08:45:28 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.3</sparkle:fullReleaseNotesLink>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.1.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.3 (build 4)
+
+## Changed
+
+- Recover service registration after app updates
+
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.3/Tracexy-0.1.3-4.dmg" length="6089895" type="application/octet-stream" sparkle:edSignature="iXgL05EDzbfLYYuLHmVdC+a1MLPoYI9Tw61Br2FAESMDXMrlTDgWPAnAiChvB47XdkZ1Cuhvtwk/601cFjCjBA=="/>
+        </item>
+        <item>
             <title>0.1.2</title>
             <pubDate>Wed, 05 Aug 2026 11:03:31 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.2</sparkle:fullReleaseNotesLink>
@@ -36,33 +52,6 @@
 
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.1/Tracexy-0.1.1-2.dmg" length="6081442" type="application/octet-stream" sparkle:edSignature="fO9qjgKFsTYRyXHjEiJDWcrYM2puRCAWgw8UCtNP32WYfj3fIoRHn58dxEo2NtIlg/8fsa8qAdSC8Agd3CugCg=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Fri, 31 Jul 2026 10:35:00 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.0 (build 1)
-
-## Added
-
-- Capture → protocol → session foundation: privileged capture helper, PCAP/PCAPNG IO, direct packet decoding, batch session summaries, and native UI.
-- App-level capacity limits are resolved from an injected `AppPolicy` at launch rather than hardcoded: workspace tabs, saved focus sets, and pinned hosts. Reaching a limit now explains itself instead of doing nothing.
-- Settings now uses native toolbar tabs, consistent grouped cards, semantic Light/Dark surfaces, and tighter field and status layouts across every pane.
-- Sparkle 2 provides signed Community updates through the public appcast, with one app-owned updater shared by the app menu and Settings, automatic-check/download preferences backed directly by Sparkle, and local builds kept manual-only.
-
-## Changed
-
-- Helper compatibility now reads the bundled helper version, build, and protocol from the shared release version configuration instead of assuming they match the app version.
-
-## Fixed
-
-- Improved the description shown for unencrypted HTTP traffic.
-
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.0/Tracexy-0.1.0-1.dmg" length="6020187" type="application/octet-stream" sparkle:edSignature="ojhp4xRyjEIlkTCpxX/TPyCLN1QiMqicalgqOTuz4XFVLiHrOfcfds5y90ltsKSRPKVodRbMJ48E5Ya7rIKICg=="/>
         </item>
     </channel>
 </rss>
