@@ -145,6 +145,31 @@ struct CaptureAvailabilityTests {
     }
 }
 
+// MARK: - HelperRegistrationRepairTests
+
+@Suite("Registration-repair availability")
+struct HelperRegistrationRepairTests {
+    @Test("Only a registered-but-unreachable helper offers registration repair")
+    func onlyUnreachable() {
+        #expect(HelperClient.offersRegistrationRepair(for: .unreachable))
+    }
+
+    @Test("Every other status routes to its own specific action, not repair")
+    func everythingElseDoesNot() {
+        for status in [
+            HelperClient.Status.notInstalled,
+            .requiresApproval,
+            .installedCompatible,
+            .installedOutdated,
+            .installedIncompatible,
+            .signingMismatch,
+            .failed("boom"),
+        ] {
+            #expect(!HelperClient.offersRegistrationRepair(for: status))
+        }
+    }
+}
+
 // MARK: - HelperApprovalClassificationTests
 
 @Suite("Helper approval-error classification")

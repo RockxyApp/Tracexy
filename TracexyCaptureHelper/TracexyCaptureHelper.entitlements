@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Explicit, minimal entitlements for the privileged capture helper.
+
+  Intentionally EMPTY. The command-line helper ships no provisioning profile, so
+  it must not carry a restricted `com.apple.application-identifier` entitlement:
+  launchd rejects a daemon that declares application-identifier without an
+  eligible profile with OS_REASON_CODESIGNING / "Launch Constraint Violation"
+  ("no eligible provisioning profiles found"), which is exactly the post-update
+  failure this file guards against. Declaring entitlements explicitly here keeps
+  the signed Release artifact from silently acquiring one; the release pipeline's
+  verify step (scripts/tracexy-release.sh) fails publication if it regresses.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

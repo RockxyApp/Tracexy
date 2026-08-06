@@ -127,10 +127,11 @@ struct HelperSettingsView: View {
                 helperNote(
                     "Normal recovery didn’t fully clear the helper. As a last resort you can also reset macOS Login & "
                         + "Background Items. This runs “sfltool resetbtm”, which can affect Background Items for other "
-                        + "apps too — they may need re-approval."
+                        + "apps too — they may need re-approval. You must restart your Mac before installing the helper "
+                        + "again."
                 )
                 HStack {
-                    Button("Reset Background Items & Reinstall…", role: .destructive) {
+                    Button("Reset Background Items…", role: .destructive) {
                         showBackgroundItemsConfirm = true
                     }
                     Spacer(minLength: 0)
@@ -147,7 +148,8 @@ struct HelperSettingsView: View {
                 } message: {
                     Text(
                         "This runs “sfltool resetbtm” and can affect Login & Background Items for other apps, which may "
-                            + "need re-approval. Only continue if normal recovery didn’t work."
+                            + "need re-approval. Tracexy will remove the helper but will not reinstall it immediately; "
+                            + "restart your Mac, then install it from Settings. Only continue if normal recovery didn’t work."
                     )
                 }
             }
@@ -166,14 +168,31 @@ struct HelperSettingsView: View {
         case .installedCompatible:
             Label("No action needed", systemImage: "checkmark").foregroundStyle(.secondary)
         case .notInstalled:
-            Button("Install Helper") { Task { await helper.install() } }
+            // After a Background Items reset the helper is removed but a restart is
+            // required before it can be installed again. Suppress the Install button
+            // while that summary is active so the user restarts first instead of
+            // hitting an install that cannot succeed yet.
+            if recovery.summary?.requiresRestart == true {
+                Label("Restart your Mac before installing", systemImage: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Install Helper") { Task { await helper.install() } }
+            }
         case .requiresApproval:
             Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
         case .installedOutdated,
              .installedIncompatible:
             Button("Update Helper") { Task { await helper.update() } }
         case .unreachable:
-            Button("Retry") { Task { await helper.checkStatus() } }
+            // First-line, non-destructive repair for a registered-but-unreachable
+            // helper (BTM/launchd drift after an in-place update): re-submit the
+            // registration from this bundle and re-probe, before the privileged
+            // hard reset in the Recovery section below.
+            if HelperClient.offersRegistrationRepair(for: helper.status) {
+                Button("Repair Registration") { Task { await helper.repairRegistration() } }
+            } else {
+                Button("Retry") { Task { await helper.checkStatus() } }
+            }
         case .signingMismatch:
             if case .appSignatureInvalid = helper.signingIssue {
                 Label("Clean build & rebuild the app", systemImage: "hammer").foregroundStyle(.secondary)
@@ -186,13 +205,17 @@ struct HelperSettingsView: View {
     }
 
     private func resultSection(_ summary: ForceResetSummary) -> some View {
-        SettingsSection("Result") {
-            Label(
-                summary.title,
-                systemImage: summary.succeeded ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
-            )
-            .font(metrics.font())
-            .foregroundStyle(summary.succeeded ? Color.green : Color.orange)
+        let (symbol, tint): (String, Color) = if summary.succeeded {
+            ("checkmark.seal.fill", .green)
+        } else if summary.requiresRestart {
+            ("arrow.clockwise.circle.fill", .blue)
+        } else {
+            ("exclamationmark.triangle.fill", .orange)
+        }
+        return SettingsSection("Result") {
+            Label(summary.title, systemImage: symbol)
+                .font(metrics.font())
+                .foregroundStyle(tint)
 
             Text(summary.details)
                 .font(metrics.secondaryFont())

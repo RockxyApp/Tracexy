@@ -55,6 +55,12 @@ final class HelperClient {
     /// Where the embedded helper binary lives inside the app bundle.
     nonisolated static let bundledHelperBinaryRelativePath = "Contents/Library/HelperTools/TracexyCaptureHelper"
 
+    /// How long to wait after unregistering a launch daemon before re-registering,
+    /// so Background Task Management / launchd can settle the removal. Shared by the
+    /// registration-repair and update paths, and long enough (~3s) that a fresh
+    /// registration isn't racing a still-teardown BTM record.
+    nonisolated static let btmSettleNanoseconds: UInt64 = 3_000_000_000
+
     private(set) var status: Status = .notInstalled
     private(set) var signingIssue: SigningIssue?
     /// Version/build/protocol reported by the installed helper, when reachable.
@@ -95,7 +101,7 @@ final class HelperClient {
              .installedIncompatible: "Update"
         case .notInstalled: "Install"
         case .requiresApproval: "Open Settings"
-        case .unreachable: "Retry"
+        case .unreachable: "Repair"
         case .signingMismatch:
             // An invalid app signature can't be fixed by reinstalling the helper.
             if case .appSignatureInvalid = signingIssue {
@@ -136,6 +142,17 @@ final class HelperClient {
         case let .failed(reason):
             .unavailable(reason)
         }
+    }
+
+    /// Whether the first-line **registration repair** should be offered for a
+    /// status. Only a registered-but-unreachable helper — enabled in launchd yet
+    /// not answering XPC — is a candidate: repair re-submits the registration from
+    /// the current bundle, which is the fix for BTM/launchd drift after an in-place
+    /// update. Every other status has a more specific action (Install / Update /
+    /// Open Login Items / hard reset), so repair is not offered there. Kept pure so
+    /// the Settings gating is unit-testable without SMAppService.
+    nonisolated static func offersRegistrationRepair(for status: Status) -> Bool {
+        status == .unreachable
     }
 
     /// Pure compatibility decision, testable without a live bundle. Protocol
@@ -304,11 +321,29 @@ final class HelperClient {
                     )
                     return
                 }
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
             }
 
             await self.performInstall()
         }
+    }
+
+    /// First-line repair for a **registered-but-unreachable** helper: the launchd
+    /// job is enabled but XPC doesn't answer (the BTM/launchd drift seen after an
+    /// in-place update). Ordering: stop any capture best-effort,
+    /// invalidate the XPC connection, unregister, wait the shared BTM settle
+    /// interval, then re-register from the *current* app bundle and verify. The
+    /// final `performInstall` ends in a real status/XPC probe, so this never
+    /// reports success without confirming the helper actually answers.
+    ///
+    /// Non-destructive: it touches only this app's own SMAppService registration —
+    /// no administrator prompt, no `sfltool`, no file removal. It is offered before
+    /// the privileged hard reset, which stays the last resort.
+    func repairRegistration() async {
+        guard !isBusy else {
+            return
+        }
+        await runBusy { await self.performRegistrationRepair() }
     }
 
     /// Probe the installed helper and classify its compatibility.
@@ -328,16 +363,19 @@ final class HelperClient {
         status = .unreachable
     }
 
-    /// Hard-remove the helper from launchd and the privileged-helper location,
-    /// then reinstall from the current app bundle (the recovery path).
+    /// Hard-remove the helper from launchd and the privileged-helper location.
+    /// A normal reset then reinstalls from the current app bundle; a Background
+    /// Items reset deliberately stops after removal and requires a Mac restart
+    /// before the user installs again.
     ///
     /// Returns a structured, verified summary. Removal is authoritative: if the
     /// administrator prompt is cancelled, the privileged script exits nonzero, or
     /// its exit guards detect a still-loaded launchd job / leftover files, the
     /// method aborts **without clearing state and without reinstalling**, then
-    /// re-probes so `finalStatus` reflects reality. Only a clean removal (script
-    /// exit 0) proceeds to reinstall, after which the summary carries the actual
-    /// post-reinstall status.
+    /// re-probes so `finalStatus` reflects reality. A clean normal removal proceeds
+    /// to reinstall and reports the probed state. A clean Background Items reset
+    /// reports `.restartRequired` without racing a new registration into the reset
+    /// BTM database.
     @discardableResult
     func forceResetAndReinstall(resetBackgroundItems: Bool) async -> ForceResetSummary {
         guard !isBusy else {
@@ -387,11 +425,30 @@ final class HelperClient {
                 return
             }
 
-            // Removal verified by the script's exit guards (exit 0). Reinstall.
+            // Removal verified by the script's exit guards (exit 0).
             self.status = .notInstalled
             self.installedInfo = nil
             self.probeFailureDetail = nil
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+
+            if resetBackgroundItems {
+                // `sfltool resetbtm` wiped Background Task Management. Re-registering
+                // now would race a freshly-reset BTM store and re-enter the drift we
+                // just cleared — macOS requires a restart before the reset fully
+                // takes effect. Do NOT reinstall; tell the user to restart, then
+                // install from Settings (status is .notInstalled, so Install is offered).
+                summary = ForceResetSummary(
+                    phase: .restartRequired,
+                    removalOutput: removalOutput.isEmpty
+                        ? "Removed the helper and reset macOS Background Items."
+                        : removalOutput,
+                    finalStatus: .notInstalled
+                )
+                Self.logger.info("force reset with BTM reset complete — restart required before reinstall")
+                return
+            }
+
+            // Normal (non-BTM) reset: reinstall from the current bundle and verify.
+            try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
             await self.performInstall()
             summary = ForceResetSummary(
                 phase: .reinstalled,
@@ -465,6 +522,38 @@ final class HelperClient {
     private func resetConnection() {
         connection?.invalidate()
         connection = nil
+    }
+
+    private func performRegistrationRepair() async {
+        Self.logger.info("registration repair: re-submitting helper from the current bundle")
+        // Stop any capture and drop the (wedged) XPC connection before touching
+        // the registration.
+        if let proxy = try? self.proxy() {
+            proxy.stopCapture {}
+        }
+        disconnect()
+
+        // A not-registered/notFound state is fine. If an existing registration
+        // cannot be removed, abort instead of pretending a re-submission happened.
+        let service = SMAppService.daemon(plistName: Self.plistName)
+        if service.status == .enabled || service.status == .requiresApproval {
+            do {
+                try await service.unregister()
+            } catch {
+                let detail = "Couldn’t reset the existing helper registration: \(error.localizedDescription)"
+                status = .failed(detail)
+                installedInfo = nil
+                probeFailureDetail = detail
+                Self.logger.error("registration repair aborted — unregister failed: \(detail, privacy: .public)")
+                return
+            }
+        }
+        // Let BTM/launchd settle so the re-registration isn't racing teardown.
+        try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
+
+        // Re-register from the current bundle and verify. performInstall ends in a
+        // real status/XPC probe, so there is no success without a post-register probe.
+        await performInstall()
     }
 
     private func performInstall() async {

@@ -43,6 +43,8 @@ struct ForceRemoveScriptTests {
         let with = HelperClient.forceRemoveShellScript(identity: Self.identity, resetBackgroundItems: true)
         #expect(!without.contains("sfltool resetbtm"))
         #expect(with.contains("/usr/bin/sfltool resetbtm"))
+        #expect(with.contains("exit 23"))
+        #expect(!with.contains("sfltool resetbtm 2>/dev/null || true"))
     }
 
     // MARK: Private
@@ -141,6 +143,22 @@ struct ForceResetSummaryTests {
         #expect(!summary.succeeded)
         #expect(!summary.suggestsBackgroundItemsReset)
         #expect(summary.title == "Force reset cancelled")
+    }
+
+    @Test("A BTM reset requires a restart — never a success and never a reinstall")
+    func restartRequired() {
+        let summary = ForceResetSummary(
+            phase: .restartRequired,
+            removalOutput: "Removed the helper and reset macOS Background Items.",
+            finalStatus: .notInstalled
+        )
+        #expect(summary.requiresRestart)
+        #expect(!summary.didReinstall)
+        #expect(!summary.succeeded)
+        // Already the heaviest lever — do not loop back into another BTM reset.
+        #expect(!summary.suggestsBackgroundItemsReset)
+        #expect(summary.title.localizedCaseInsensitiveContains("restart"))
+        #expect(summary.details.localizedCaseInsensitiveContains("not installed"))
     }
 
     @Test("An overlapping lifecycle action does not trigger destructive escalation")

@@ -145,19 +145,21 @@ enum SigningDiagnostics {
         }
     }
 
+    /// The helper binary launchd actually executes for an SMAppService daemon:
+    /// the one embedded in the app bundle at `Contents/Library/HelperTools`.
+    ///
+    /// Deliberately does NOT consider `/Library/PrivilegedHelperTools/…`. That
+    /// legacy `SMJobBless` location is never written by Tracexy — SMAppService
+    /// runs the bundled binary in place — so comparing the app against a stale
+    /// artifact there would diagnose a helper we never launch and mask (or
+    /// invent) a signing mismatch against the real one.
     static func helperExecutableCandidates(
         bundledHelperURL: URL = Bundle.main.bundleURL
-            .appendingPathComponent(HelperClient.bundledHelperBinaryRelativePath, isDirectory: false),
-        legacyInstalledHelperURL: URL = URL(
-            fileURLWithPath: "/Library/PrivilegedHelperTools/\(TracexyIdentity.current.helperBundleIdentifier)"
-        )
+            .appendingPathComponent(HelperClient.bundledHelperBinaryRelativePath, isDirectory: false)
     )
         -> [URL]
     {
-        if bundledHelperURL == legacyInstalledHelperURL {
-            return [legacyInstalledHelperURL]
-        }
-        return [legacyInstalledHelperURL, bundledHelperURL]
+        [bundledHelperURL]
     }
 
     // MARK: - Classification
