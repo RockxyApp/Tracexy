@@ -50,6 +50,28 @@ final class HelperClient {
         case unavailable(String)
     }
 
+    /// What to do with this app's SMAppService registration *after* the privileged,
+    /// app-specific cleanup has already removed the launchd job and legacy files.
+    ///
+    /// The registration record is separate from those files: the script's exit
+    /// guards prove the job and files are gone, but the SMAppService registration
+    /// may still be live, already absent, or in a status this SDK doesn't model. An
+    /// absent registration is a valid end state that must not block reinstall; a
+    /// live one must be unregistered; an unknown one must be reported truthfully
+    /// rather than guessed away. Kept pure so the decision is unit-testable without
+    /// mutating a live registration.
+    nonisolated enum PostCleanupRegistrationAction: Equatable {
+        /// The registration is live (`.enabled`/`.requiresApproval`): unregister it,
+        /// aborting the reinstall if that unregister fails.
+        case unregister
+        /// The registration is already absent (`.notRegistered`/`.notFound`):
+        /// proceed straight to settle + reinstall without unregistering.
+        case alreadyAbsent
+        /// The status is unknown to this SDK: abort and re-probe with a truthful
+        /// removal-incomplete result rather than assuming it is gone.
+        case abortUnknown
+    }
+
     static let shared = HelperClient()
 
     /// Where the embedded helper binary lives inside the app bundle.
@@ -169,6 +191,23 @@ final class HelperClient {
             return .installedIncompatible
         }
         return info.buildNumber >= bundledBuild ? .installedCompatible : .installedOutdated
+    }
+
+    nonisolated static func postCleanupRegistrationAction(
+        for status: SMAppService.Status
+    )
+        -> PostCleanupRegistrationAction
+    {
+        switch status {
+        case .enabled,
+             .requiresApproval:
+            .unregister
+        case .notRegistered,
+             .notFound:
+            .alreadyAbsent
+        @unknown default:
+            .abortUnknown
+        }
     }
 
     /// Whether a registration error means the user must approve the helper in
@@ -337,8 +376,8 @@ final class HelperClient {
     /// reports success without confirming the helper actually answers.
     ///
     /// Non-destructive: it touches only this app's own SMAppService registration —
-    /// no administrator prompt, no `sfltool`, no file removal. It is offered before
-    /// the privileged hard reset, which stays the last resort.
+    /// no administrator prompt, no global Background Items reset, no file removal. It
+    /// is offered before the privileged hard reset, which stays the last resort.
     func repairRegistration() async {
         guard !isBusy else {
             return
@@ -363,21 +402,31 @@ final class HelperClient {
         status = .unreachable
     }
 
-    /// Hard-remove the helper from launchd and the privileged-helper location.
-    /// A normal reset then reinstalls from the current app bundle; a Background
-    /// Items reset deliberately stops after removal and requires a Mac restart
-    /// before the user installs again.
+    /// Hard-remove the helper from launchd and the privileged-helper location, then
+    /// reinstall it from the current app bundle and verify over XPC. Never resets
+    /// global macOS Background Items — that stays manual, presentation-only guidance
+    /// the user runs themselves from the Settings recovery UI, never something the
+    /// app elevates.
     ///
-    /// Returns a structured, verified summary. Removal is authoritative: if the
-    /// administrator prompt is cancelled, the privileged script exits nonzero, or
-    /// its exit guards detect a still-loaded launchd job / leftover files, the
-    /// method aborts **without clearing state and without reinstalling**, then
-    /// re-probes so `finalStatus` reflects reality. A clean normal removal proceeds
-    /// to reinstall and reports the probed state. A clean Background Items reset
-    /// reports `.restartRequired` without racing a new registration into the reset
-    /// BTM database.
+    /// Ordering is load-bearing for both safety and honesty:
+    /// 1. Stop active capture and drop the XPC connection (app-level).
+    /// 2. Run the **app-specific** privileged cleanup (launchd bootout + this app's
+    ///    file removal). Its exit guards are the authority that the job and files
+    ///    are gone.
+    /// 3. **Only after** that cleanup returns success, unregister this app's
+    ///    SMAppService registration. The administrator prompt therefore always
+    ///    precedes any registration mutation — a cancelled prompt leaves the
+    ///    registration untouched and reinstalls nothing.
+    /// 4. Settle, re-register the bundled helper, and run the real status/XPC probe.
+    ///
+    /// Returns a structured, verified summary. If the administrator prompt is
+    /// cancelled, the privileged script exits nonzero, an exit guard trips, or the
+    /// post-cleanup unregister fails, the method aborts **without reinstalling** and
+    /// re-probes so `finalStatus` reflects reality. Because the cleanup may have
+    /// already removed files before a later step failed, a failure never claims the
+    /// state was left untouched; the re-probed status is authoritative.
     @discardableResult
-    func forceResetAndReinstall(resetBackgroundItems: Bool) async -> ForceResetSummary {
+    func forceResetAndReinstall() async -> ForceResetSummary {
         guard !isBusy else {
             return ForceResetSummary(
                 phase: .operationInProgress,
@@ -395,18 +444,17 @@ final class HelperClient {
                 proxy.stopCapture {}
             }
             self.disconnect()
-            // Best-effort de-registration; the privileged script is the authority.
-            try? await SMAppService.daemon(plistName: Self.plistName).unregister()
 
-            let script = Self.forceRemoveShellScript(
-                identity: TracexyIdentity.current,
-                resetBackgroundItems: resetBackgroundItems
-            )
+            // Privileged, app-specific cleanup FIRST. The administrator prompt must
+            // precede any SMAppService mutation, so the registration is unregistered
+            // only after this returns success — a cancelled prompt touches nothing.
+            let script = Self.forceRemoveShellScript(identity: TracexyIdentity.current)
             let removalOutput: String
             do {
                 removalOutput = try await Self.runPrivilegedShellScript(script)
             } catch let error as ForceRemoveError {
-                // Abort: do not clear state, do not reinstall. Re-probe for truth.
+                // Cancelled prompt or failed removal: do not unregister, do not
+                // reinstall. Re-probe for truth.
                 await self.performCheckStatus()
                 summary = ForceResetSummary(
                     phase: error.isAuthorizationCancelled ? .removalCancelled : .removalFailed,
@@ -425,29 +473,59 @@ final class HelperClient {
                 return
             }
 
-            // Removal verified by the script's exit guards (exit 0).
+            // Privileged cleanup verified by the script's exit guards (exit 0). The
+            // launchd job and legacy files are gone; this app's SMAppService
+            // registration record is a *separate* thing. Inspect its current status
+            // and act truthfully: unregister only a live registration, treat an
+            // already-absent one as a valid end state that must not block reinstall,
+            // and refuse to guess an unknown one away.
+            let service = SMAppService.daemon(plistName: Self.plistName)
+            switch Self.postCleanupRegistrationAction(for: service.status) {
+            case .unregister:
+                // A failed unregister aborts the reinstall and is reported truthfully:
+                // the files are already gone, so state is NOT untouched — the
+                // re-probed status is authoritative.
+                do {
+                    try await service.unregister()
+                } catch {
+                    await self.performCheckStatus()
+                    let base = removalOutput.isEmpty ? "" : removalOutput + "\n"
+                    summary = ForceResetSummary(
+                        phase: .removalFailed,
+                        removalOutput: base
+                            + "Removed the helper files, but couldn’t unregister the launchd service: "
+                            + error.localizedDescription,
+                        finalStatus: self.status
+                    )
+                    Self.logger.error(
+                        "force reset aborted — unregister failed after cleanup: \(error.localizedDescription, privacy: .public)"
+                    )
+                    return
+                }
+            case .alreadyAbsent:
+                // No registration to remove — proceed straight to settle + reinstall.
+                Self.logger.info(
+                    "force reset: SMAppService registration already absent after cleanup; proceeding to reinstall"
+                )
+            case .abortUnknown:
+                await self.performCheckStatus()
+                let base = removalOutput.isEmpty ? "" : removalOutput + "\n"
+                summary = ForceResetSummary(
+                    phase: .removalFailed,
+                    removalOutput: base
+                        + "Removed the helper files, but the launchd service registration is in an "
+                        + "unknown state, so the reinstall was not attempted.",
+                    finalStatus: self.status
+                )
+                Self.logger.error("force reset aborted — unknown SMAppService status after cleanup")
+                return
+            }
+
+            // Removal fully verified. Reinstall from the current bundle and verify.
             self.status = .notInstalled
             self.installedInfo = nil
             self.probeFailureDetail = nil
 
-            if resetBackgroundItems {
-                // `sfltool resetbtm` wiped Background Task Management. Re-registering
-                // now would race a freshly-reset BTM store and re-enter the drift we
-                // just cleared — macOS requires a restart before the reset fully
-                // takes effect. Do NOT reinstall; tell the user to restart, then
-                // install from Settings (status is .notInstalled, so Install is offered).
-                summary = ForceResetSummary(
-                    phase: .restartRequired,
-                    removalOutput: removalOutput.isEmpty
-                        ? "Removed the helper and reset macOS Background Items."
-                        : removalOutput,
-                    finalStatus: .notInstalled
-                )
-                Self.logger.info("force reset with BTM reset complete — restart required before reinstall")
-                return
-            }
-
-            // Normal (non-BTM) reset: reinstall from the current bundle and verify.
             try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
             await self.performInstall()
             summary = ForceResetSummary(

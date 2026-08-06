@@ -26,10 +26,14 @@ instead of leaving the UI stuck. When the helper is unreachable, the first-line 
 Registration** — a non-destructive step that re-submits the registration from the current app bundle
 (no admin password) and then re-probes, which clears the launchd/Background-Items drift that can follow
 an in-place update. **Force Reset & Reinstall** is the next, confirmed recovery action for stale
-launchd/helper state, and the broader macOS Background Items reset is offered only as an explicitly
-confirmed last resort after normal recovery fails. Because that reset wipes Background Task Management,
-Tracexy does **not** reinstall immediately afterward: it asks you to restart your Mac, then install the
-helper again from Settings.
+launchd/helper state: it asks for an administrator password, removes only Tracexy's own privileged
+helper and launch daemon, and — only after that succeeds — unregisters and reinstalls the bundled
+helper before re-probing it, so the result always reflects the real final status. If the administrator
+prompt is cancelled, nothing is removed and no reinstall is attempted. If normal recovery still can't
+clear the helper, Tracexy shows last-resort guidance to reset macOS Login & Background Items yourself.
+Because that global reset affects Background Items for other apps too, Tracexy never runs it for you:
+it displays the exact command (`sudo /usr/bin/sfltool resetbtm`) with a Copy Command action, and you
+run it in Terminal, restart your Mac, then install the helper again from Settings.
 
 ## Opening saved captures
 
