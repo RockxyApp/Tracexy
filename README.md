@@ -38,6 +38,42 @@ bytes are the answer, but they do not dominate the workspace.
 > and tested. Stateful reassembly, persistent storage, deeper analysis, enforced export redaction,
 > and AI/MCP integration remain future work.
 
+## See Tracexy in action
+
+<p align="center">
+  <a href="https://rockxy.io/tracexy#demo">
+    <img src="docs/media/tracexy-demo/overview.webp" alt="Tracexy live capture workspace with session list, traffic graph, decoded packet fields, and raw bytes" width="100%" />
+  </a>
+</p>
+
+<p align="center">
+  <em>From live capture to explainable sessions and packet-level evidence.</em>
+</p>
+
+<p align="center">
+  <img src="docs/media/tracexy-demo/interface-picker.webp" alt="Tracexy interface picker showing Wi-Fi, Ethernet, Thunderbolt, tunnel, VPN, and loopback sources" width="100%" />
+</p>
+<p align="center"><em>Choose the interface and start from the traffic surface that matters.</em></p>
+
+<p align="center">
+  <img src="docs/media/tracexy-demo/capture-settings.webp" alt="Tracexy capture settings for interface selection, BPF filters, snap length, and packet retention" width="100%" />
+</p>
+<p align="center"><em>Control capture scope, filters, packet detail, and retention before traffic leaves the wire.</em></p>
+
+<p align="center">
+  <img src="docs/media/tracexy-demo/source-tree.webp" alt="Tracexy source tree grouping captured sessions by application and address" width="496" />
+</p>
+<p align="center"><em>Navigate from applications to domains and IP addresses without losing the session context.</em></p>
+
+<p align="center">
+  <img src="docs/media/tracexy-demo/packet-inspector.webp" alt="Tracexy packet inspector showing decoded protocol fields beside raw hexadecimal bytes" width="100%" />
+</p>
+<p align="center"><em>Inspect decoded protocol fields alongside the raw bytes that support them.</em></p>
+
+<p align="center">
+  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second walkthrough on Rockxy Web →</a>
+</p>
+
 ## Why Tracexy
 
 - **Sessions before packets.** Bidirectional traffic is grouped by canonical five-tuple so one
