@@ -100,6 +100,19 @@ protocol **layers** and fields for the representative packet, and a **hex** pane
 up with those fields — click a field to highlight the bytes it came from. When a session carries an
 application-layer exchange (HTTP, DNS), a requests facet is offered.
 
+The right-hand **Details** dock uses compact two-column tables for assessment, decoded layer facts,
+host baseline, related actions, findings, and grouping evidence. Technical values are selectable and
+monospaced; related-action rows remain clickable so an investigation can move between sessions without
+leaving the dock.
+
+## Software updates
+
+When the signed appcast reports a newer release, the center toolbar status shows a gray **New Updates**
+capsule beside the capture state. The count represents newer appcast releases when that history is
+available. Click the capsule to open the standard Sparkle update experience. The capsule stays visible
+until the feed no longer reports a newer compatible release; closing the update window does not dismiss
+it as though the update had disappeared.
+
 ## Process attribution
 
 Where macOS reports it, a session carries the **owning app's name**. Tracexy reads this from the

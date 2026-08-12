@@ -38,9 +38,9 @@ struct ContextDockView: View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            // Details reads as one native inset list with a summary footer; the
-            // AI Assistant owns its own layout so its composer can pin below a
-            // scrolling transcript.
+            // Details reads as stacked native diagnostics tables with a summary
+            // footer; the AI Assistant owns its own layout so its composer can
+            // pin below a scrolling transcript.
             switch coordinator.activeWorkspace.contextDockTab {
             case .details:
                 VStack(spacing: 0) {
@@ -132,11 +132,11 @@ struct ContextDockView: View {
 
     // MARK: Details
 
-    /// Everything the app can *say* about the selection, in one native inset list:
+    /// Everything the app can *say* about the selection, in compact diagnostics tables:
     /// identity, verdict, layer facts, host baseline, related actions, security
     /// findings and grouping evidence. Identity stays mounted as the selection
-    /// header while native `Section` containers own the diagnostic groups below.
-    /// The derivations are unchanged; only their presentation hierarchy moved.
+    /// header while rounded, two-column tables own the diagnostic groups below.
+    /// The derivations and actions are unchanged; only their presentation moved.
     @ViewBuilder private var detailsList: some View {
         if let session = coordinator.selectedSession {
             let activity = coordinator.activity(containing: session)
@@ -148,53 +148,68 @@ struct ContextDockView: View {
 
                 Divider()
 
-                List {
-                    Section("Assessment") {
-                        verdict(for: session)
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Metrics.contextTableGroupSpacing) {
+                        ContextInspectorTable(title: "Assessment") {
+                            ContextInspectorFullRow {
+                                verdict(for: session)
+                            }
+                        }
 
-                    // State B leads with how the action spent its time; state A has
-                    // a single span, so its own layer's facts lead instead.
-                    if let activity, activity.sessions.count > 1 {
-                        Section("Where the Time Went") {
-                            whereTheTimeWent(activity)
+                        // State B leads with how the action spent its time; state A
+                        // has a single span, so its own layer's facts lead instead.
+                        if let activity, activity.sessions.count > 1 {
+                            ContextInspectorTable(title: "Where the Time Went") {
+                                ContextInspectorFullRow {
+                                    whereTheTimeWent(activity)
+                                }
+                            }
+                        } else if !topLayerFields(session).isEmpty {
+                            ContextInspectorFieldTable(
+                                title: "Layer Details",
+                                fields: topLayerFields(session).map {
+                                    ContextTableField(label: $0.name, value: $0.value)
+                                }
+                            )
                         }
-                    } else if !topLayerFields(session).isEmpty {
-                        Section("Layer Details") {
-                            thisLayer(session)
-                        }
-                    }
 
-                    if baselineHistory(for: session).count >= 3 {
-                        Section("Host Baseline · Last 60 Min") {
-                            hostBaseline(for: session)
+                        if baselineHistory(for: session).count >= 3 {
+                            ContextInspectorTable(title: "Host Baseline · Last 60 Min") {
+                                ContextInspectorFullRow {
+                                    hostBaseline(for: session)
+                                }
+                            }
                         }
-                    }
 
-                    if !relatedSessions(for: session).isEmpty {
-                        Section("Related Actions") {
-                            relatedActions(for: session)
+                        if !relatedSessions(for: session).isEmpty {
+                            ContextInspectorTable(title: "Related Actions") {
+                                relatedActions(for: session)
+                            }
                         }
-                    }
 
-                    if !findings(for: session).isEmpty {
-                        Section("Flagged Here") {
-                            securityFindings(for: session)
+                        if !findings(for: session).isEmpty {
+                            ContextInspectorTable(title: "Flagged Here") {
+                                securityFindings(for: session)
+                            }
                         }
-                    }
 
-                    if let activity, activity.sessions.count > 1 {
-                        Section("Grouping Evidence") {
-                            whyGrouped(activity)
-                        }
-                    } else if let activity {
-                        Section("Part of an Action") {
-                            partOfAnAction(activity, selected: session)
+                        if let activity, activity.sessions.count > 1 {
+                            ContextInspectorTable(title: "Grouping Evidence") {
+                                ContextInspectorFullRow {
+                                    whyGrouped(activity)
+                                }
+                            }
+                        } else if let activity {
+                            ContextInspectorTable(title: "Part of an Action") {
+                                ContextInspectorFullRow {
+                                    partOfAnAction(activity, selected: session)
+                                }
+                            }
                         }
                     }
+                    .padding(Theme.Metrics.contextTableOuterPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
             }
         } else {
             noSelection
@@ -332,20 +347,16 @@ struct ContextDockView: View {
     private func securityFindings(for session: SessionSummary) -> some View {
         let items = findings(for: session)
         if !items.isEmpty {
-            ForEach(items) { finding in
-                HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-                    Image(systemName: finding.severity.systemImage)
-                        .foregroundStyle(finding.severity.tint)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(finding.title)
-                            .font(Theme.Typography.bodyMedium)
-                        Text(finding.subtitle)
-                            .font(Theme.Typography.micro)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, finding in
+                if index > 0 {
+                    Divider()
                 }
+                ContextInspectorInsightRow(
+                    systemImage: finding.severity.systemImage,
+                    title: finding.title,
+                    detail: finding.subtitle,
+                    color: finding.severity.tint
+                )
             }
         }
     }
@@ -441,26 +452,6 @@ struct ContextDockView: View {
         }
     }
 
-    /// State A's counterpart to "where the time went": the facts of the layer the
-    /// selected session actually terminated in, read off its own decode rather
-    /// than compared with anything.
-    @ViewBuilder
-    private func thisLayer(_ session: SessionSummary) -> some View {
-        let fields = topLayerFields(session)
-        if !fields.isEmpty {
-            ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
-                LabeledContent(field.name) {
-                    Text(field.value)
-                        .font(Theme.Typography.monoSmall)
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .font(Theme.Typography.caption)
-            }
-        }
-    }
-
     // MARK: Host baseline
 
     /// The host's recent latency history as a sparkline, with the selected
@@ -508,8 +499,13 @@ struct ContextDockView: View {
     private func relatedActions(for session: SessionSummary) -> some View {
         let peers = relatedSessions(for: session)
         if !peers.isEmpty {
-            ForEach(peers.prefix(4)) { peer in
-                relatedCard(peer, to: session)
+            ForEach(Array(peers.prefix(4).enumerated()), id: \.element.id) { index, peer in
+                if index > 0 {
+                    Divider()
+                }
+                ContextInspectorFullRow {
+                    relatedCard(peer, to: session)
+                }
             }
         }
     }

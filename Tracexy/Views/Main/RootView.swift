@@ -338,26 +338,76 @@ struct CaptureStatusView: View {
     var coordinator: MainContentCoordinator
 
     var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-                .shadow(color: statusShadowColor, radius: 4)
-            Text(statusText)
-                .font(Theme.Typography.bodyMedium)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        HStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: statusShadowColor, radius: 4)
+                Text(statusText)
+                    .font(Theme.Typography.bodyMedium)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if updater.updateStatusSummary != nil {
+                    Text("|")
+                        .font(Theme.Typography.badge)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, updater.updateStatusSummary == nil ? 14 : 7)
+            .frame(height: Theme.Metrics.toolbarControlHeight)
+
+            if let summary = updater.updateStatusSummary {
+                Button {
+                    updater.showUpdatesFromStatusBadge()
+                } label: {
+                    ViewThatFits(in: .horizontal) {
+                        updateBadge(summary.badgeTitle)
+                        updateBadge("Update")
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(updateHelp(summary))
+                .accessibilityLabel(summary.badgeTitle)
+                .accessibilityHint("Open software update")
+                .padding(.trailing, 14)
+                .frame(height: Theme.Metrics.toolbarControlHeight)
+            }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 32)
-        .contentShape(Capsule(style: .continuous))
-        .help(coordinator.captureStatusLine)
+        .frame(height: Theme.Metrics.toolbarControlHeight)
+        .help(statusHelp)
     }
 
     // MARK: Private
 
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var updater = AppUpdater.shared
+
     private var statusText: String {
         "\(TracexyIdentity.productName) | \(coordinator.captureInterface) | \(coordinator.captureDisplayState.title)"
+    }
+
+    private var statusHelp: String {
+        guard let summary = updater.updateStatusSummary else {
+            return coordinator.captureStatusLine
+        }
+        return [
+            coordinator.captureStatusLine,
+            summary.title,
+            summary.versionLine,
+            summary.countLine,
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
+    }
+
+    private var updateBadgeBackground: Color {
+        Color(nsColor: .systemGray).opacity(colorScheme == .dark ? 0.62 : 0.82)
+    }
+
+    private var updateBadgeStroke: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06)
     }
 
     private var statusColor: Color {
@@ -375,6 +425,29 @@ struct CaptureStatusView: View {
         case .starting: Color.accentColor.opacity(0.35)
         default: Color.clear
         }
+    }
+
+    private func updateBadge(_ title: String) -> some View {
+        Text(title)
+            .font(Theme.Typography.toolbarBadge)
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(.horizontal, Theme.Metrics.updateBadgeHorizontalPadding)
+            .frame(height: Theme.Metrics.updateBadgeHeight)
+            .background {
+                Capsule(style: .continuous).fill(updateBadgeBackground)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(updateBadgeStroke, lineWidth: Theme.Metrics.updateBadgeStrokeWidth)
+            }
+            .contentShape(Capsule(style: .continuous))
+    }
+
+    private func updateHelp(_ summary: AppUpdater.UpdateStatusSummary) -> String {
+        [summary.title, summary.versionLine, summary.countLine]
+            .compactMap { $0 }
+            .joined(separator: "\n")
     }
 }
 

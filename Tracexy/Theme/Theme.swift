@@ -60,6 +60,24 @@ enum Theme {
         // Chrome pills/chips
         static let pillCornerRadius: CGFloat = 6
         static let chipCornerRadius: CGFloat = 4
+
+        // Center toolbar status + software-update badge: one 32pt native control
+        // with a 24pt continuous capsule inset.
+        static let toolbarControlHeight: CGFloat = 32
+        static let updateBadgeHeight: CGFloat = 24
+        static let updateBadgeHorizontalPadding: CGFloat = 9
+        static let updateBadgeStrokeWidth: CGFloat = 0.75
+
+        // Right Details inspector tables. Named tokens keep every diagnostics
+        // group on the same two-column grid in both compact and expanded docks.
+        static let contextTableGroupSpacing: CGFloat = 10
+        static let contextTableOuterPadding: CGFloat = 12
+        static let contextTableColumnPadding: CGFloat = 10
+        static let contextTableHeaderVerticalPadding: CGFloat = 7
+        static let contextTableRowVerticalPadding: CGFloat = 6
+        static let contextTableCornerRadius: CGFloat = 6
+        static let contextTableLabelWidth: CGFloat = 90
+        static let contextTableInsightLabelWidth: CGFloat = 110
     }
 
     // MARK: Typography
@@ -128,6 +146,7 @@ enum Theme {
         static let chrome = Font.callout
         static let chromeAction = Font.callout.weight(.medium)
         static let chromeSecondary = Font.subheadline
+        static let toolbarBadge = Font.body.weight(.semibold)
 
         // Monospaced — for values read digit-by-digit (addresses, hex, bytes).
         // Styles track the proportional scale so a mono value sits on the same
