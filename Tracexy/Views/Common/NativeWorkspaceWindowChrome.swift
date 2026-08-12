@@ -85,8 +85,14 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     static let captureStatusIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.captureStatus"
     )
+    static let captureActionIdentifier = NSToolbarItem.Identifier(
+        "\(TracexyIdentity.current.logSubsystem).toolbar.captureAction"
+    )
+    static let sessionExportIdentifier = NSToolbarItem.Identifier(
+        "\(TracexyIdentity.current.logSubsystem).toolbar.sessionExport"
+    )
     static let actionsIdentifier = NSToolbarItem.Identifier(
-        "\(TracexyIdentity.current.logSubsystem).toolbar.actions"
+        "\(TracexyIdentity.current.logSubsystem).toolbar.inspectors"
     )
 
     let managedToolbar: NSToolbar
@@ -96,7 +102,10 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// installed; the weak captures mean neither the toolbar nor the coordinator is
     /// retained by the long-lived observation task.
     func startObservingState() {
-        syncActionItems(isCapturing: coordinator.isCapturing)
+        syncActionItems(
+            isCapturing: coordinator.isCapturing,
+            canExportSession: coordinator.canExportSelectedSession
+        )
         observationTask?.cancel()
         observationTask = Task { [weak self, weak coordinator] in
             guard let coordinator else {
@@ -111,7 +120,11 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
                         // rendering together prevents that state from being
                         // missed until the next capture transition.
                         let isCapturing = coordinator.isCapturing
-                        self?.syncActionItems(isCapturing: isCapturing)
+                        let canExportSession = coordinator.canExportSelectedSession
+                        self?.syncActionItems(
+                            isCapturing: isCapturing,
+                            canExportSession: canExportSession
+                        )
                     } onChange: {
                         continuation.resume()
                     }
@@ -140,6 +153,9 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             .flexibleSpace,
             Self.captureStatusIdentifier,
             .flexibleSpace,
+            Self.captureActionIdentifier,
+            .space,
+            Self.sessionExportIdentifier,
             Self.actionsIdentifier,
         ]
     }
@@ -180,8 +196,12 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView: AnyView(CaptureStatusView(coordinator: coordinator))
             )
+        case Self.captureActionIdentifier:
+            makeCaptureItem()
+        case Self.sessionExportIdentifier:
+            makeSessionExportItem()
         case Self.actionsIdentifier:
-            makeActionGroup()
+            makeInspectorGroup()
         default:
             nil
         }
@@ -196,6 +216,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     ] = [:]
     private var observationTask: Task<Void, Never>?
     private weak var captureToggleItem: NSToolbarItem?
+    private weak var sessionExportItem: NSMenuToolbarItem?
 
     private func makeSidebarToggleItem() -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: Self.sidebarToggleIdentifier)
@@ -213,27 +234,62 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
-    /// The trailing capture/inspector cluster as a real `NSToolbarItemGroup` of
-    /// three plain native icon items — Start/Stop capture, bottom inspector, and
-    /// the right context inspector — matching the Mac's own toolbar styling. The
-    /// items carry no custom background, tint or divider; state is reflected only
-    /// through the Start/Stop icon, which `syncActionItems` keeps current.
-    private func makeActionGroup() -> NSToolbarItemGroup {
-        let captureItem = imageItem(
-            identifier: NSToolbarItem.Identifier(
-                "\(Self.actionsIdentifier.rawValue).capture"
-            ),
+    /// Capture stays independent from export/inspection, preserving a clear
+    /// primary Start/Stop action without adding divider chrome to its border.
+    private func makeCaptureItem() -> NSToolbarItem {
+        let item = imageItem(
+            identifier: Self.captureActionIdentifier,
             label: coordinator.isCapturing
                 ? String(localized: "Stop")
                 : String(localized: "Start"),
             systemImage: coordinator.isCapturing ? "stop.fill" : "play.fill",
             action: #selector(toggleCapture(_:))
         )
-        captureItem.toolTip = coordinator.isCapturing
+        item.toolTip = coordinator.isCapturing
             ? String(localized: "Stop capture")
             : String(localized: "Start capture")
-        captureToggleItem = captureItem
+        captureToggleItem = item
+        return item
+    }
 
+    /// AppKit supplies the menu indicator, focus ring, hover state, and native
+    /// menu placement for the compact share control shown in the reference.
+    private func makeSessionExportItem() -> NSMenuToolbarItem {
+        let label = String(localized: "Export Session")
+        let item = NSMenuToolbarItem(itemIdentifier: Self.sessionExportIdentifier)
+        item.label = label
+        item.paletteLabel = label
+        item.toolTip = String(localized: "Export the selected session")
+        item.image = NSImage(
+            systemSymbolName: "square.and.arrow.up",
+            accessibilityDescription: label
+        )
+        item.isBordered = true
+        item.showsIndicator = true
+        item.menu = sessionExportMenu()
+        item.isEnabled = coordinator.canExportSelectedSession
+        sessionExportItem = item
+        return item
+    }
+
+    private func sessionExportMenu() -> NSMenu {
+        let menu = NSMenu(title: String(localized: "Export Session"))
+        for format in SessionExportFormat.allCases {
+            let menuItem = NSMenuItem(
+                title: format.title,
+                action: #selector(exportSelectedSession(_:)),
+                keyEquivalent: ""
+            )
+            menuItem.target = self
+            menuItem.representedObject = format.rawValue
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    /// Bottom and right inspectors remain one compact native action group after
+    /// the export menu, preserving their existing geometry and semantics.
+    private func makeInspectorGroup() -> NSToolbarItemGroup {
         let bottomInspectorItem = imageItem(
             identifier: NSToolbarItem.Identifier(
                 "\(Self.actionsIdentifier.rawValue).bottomInspector"
@@ -258,7 +314,6 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         group.label = String(localized: "Workspace Actions")
         group.paletteLabel = group.label
         group.subitems = [
-            captureItem,
             bottomInspectorItem,
             contextDockItem,
         ]
@@ -302,7 +357,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
-    private func syncActionItems(isCapturing: Bool) {
+    private func syncActionItems(isCapturing: Bool, canExportSession: Bool) {
         let label = isCapturing ? String(localized: "Stop") : String(localized: "Start")
         captureToggleItem?.label = label
         captureToggleItem?.paletteLabel = label
@@ -313,11 +368,22 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemSymbolName: isCapturing ? "stop.fill" : "play.fill",
             accessibilityDescription: label
         )
+        sessionExportItem?.isEnabled = canExportSession
     }
 
     @objc
     private func toggleCapture(_ sender: Any?) {
         coordinator.toggleCapture()
+    }
+
+    @objc
+    private func exportSelectedSession(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let format = SessionExportFormat(rawValue: rawValue) else
+        {
+            return
+        }
+        coordinator.exportSelectedSession(as: format)
     }
 
     @objc

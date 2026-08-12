@@ -19,6 +19,13 @@ nonisolated enum SessionBuilder {
         return accumulator.summaries()
     }
 
+    /// Stable identity shared by session accumulation and explicit session export.
+    /// Keeping the derivation here prevents an export from widening to frames
+    /// belonging to another five-tuple.
+    static func sessionID(for key: FiveTuple) -> UUID {
+        stableID("\(key.proto.rawValue)|\(key.a.display)|\(key.b.display)")
+    }
+
     /// Decode one frame into a `DecodedPacket`, carrying its raw bytes and process
     /// name through. The frame's own link type wins when present (live helper
     /// frames each carry their DLT); otherwise the batch/file link type is used.

@@ -367,6 +367,19 @@ struct SessionCenterView: View {
         Divider()
 
         Menu {
+            ForEach(SessionExportFormat.allCases) { format in
+                Button(format.title) {
+                    coordinator.exportSession(session, as: format)
+                }
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .disabled(!coordinator.canExport(session))
+
+        Divider()
+
+        Menu {
             if hostValid {
                 Button("Host") { copyToPasteboard(host) }
             }

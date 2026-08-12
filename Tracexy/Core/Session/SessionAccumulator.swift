@@ -126,7 +126,7 @@ private extension SessionAccumulator {
 
             let stack = rich.protocolStack.filter { $0 != .ipv4 && $0 != .ipv6 }
             let protocolStack: [ProtocolKind] = stack.isEmpty ? [rich.transport ?? .other] : stack
-            let id = SessionBuilder.stableID("\(key.proto.rawValue)|\(key.a.display)|\(key.b.display)")
+            let id = SessionBuilder.sessionID(for: key)
             let duration = max(0, latestTime.timeIntervalSince(earliest.timestamp))
 
             return SessionSummary(

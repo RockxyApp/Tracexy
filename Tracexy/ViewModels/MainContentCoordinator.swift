@@ -120,6 +120,10 @@ final class MainContentCoordinator {
     var isStarting = false
     var captureInterface = "en0"
     var captureError: String?
+    /// Prevents overlapping export panels while a selected session is being
+    /// scoped and serialized away from the main actor.
+    private(set) var isExportingSession = false
+
     /// When the current capture started (drives the status-bar timer).
     var captureStartedAt: Date?
 
@@ -545,6 +549,12 @@ final class MainContentCoordinator {
         focusGate.canInsertFocusSet(into: focusSets)
     }
 
+    /// Read-only copy used by the session-export extension before it leaves the
+    /// main actor to scope and serialize packet data.
+    var retainedFrameSnapshotForExport: [CapturedFrame] {
+        retainedFrames.frames
+    }
+
     /// Whether a session matches a single quick-filter chip: a protocol chip
     /// matches anywhere in the decoded stack; `Errors` matches *exactly* an
     /// error session (a warning is not an error and must not be swept in).
@@ -581,6 +591,10 @@ final class MainContentCoordinator {
             return false
         }
         return true
+    }
+
+    func setSessionExporting(_ isExporting: Bool) {
+        isExportingSession = isExporting
     }
 
     // MARK: Correlation
@@ -1072,6 +1086,7 @@ final class MainContentCoordinator {
     /// session accumulation — evicting here never drops a session — and its
     /// cumulative eviction count is surfaced only as retention truncation.
     private var retainedFrames = RetainedFrameBuffer(capacity: MainContentCoordinator.retainedFrameLimit)
+
     private var pollTimer: Timer?
     /// Bumped every time a start attempt begins or ends. A late helper reply or a
     /// start watchdog compares its captured token against this so a stale callback

@@ -56,6 +56,13 @@ normalized) so both directions of a conversation land in one session. Each sessi
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
 
+Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
+controls. The same menu is available from the session row's **Export** submenu. **Export Session**
+writes a versioned `.tracexysession` document containing the session summary and its locally retained
+packet frames. **Export as pcap** writes a classic capture when all matching frames share one link type;
+**Export as pcapng** preserves mixed per-frame link types. Export is always an explicit local save-panel
+action and is limited to frames still present in the bounded raw-retention window.
+
 ## Correlation into actions
 
 Related sessions are correlated into a higher-level **action** — for example a DNS lookup, the TCP
