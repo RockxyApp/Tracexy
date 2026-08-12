@@ -76,11 +76,11 @@ warning is not swept in.
 
 The **search row** below has an on/off checkbox, a field-scope menu (**All Fields**, Host, Client,
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an
-**Add Filter** button, and the **Group By** menu. All Fields searches the host, client process, protocol
+**Add Field** button, and the **Group By** menu. All Fields searches the host, client process, protocol
 labels, both endpoints, the info summary, and DNS answers. Turning the search off keeps the typed text
 but stops it constraining the list.
 
-For finer control, **Add Filter** opens the advanced rule builder: rows of *field · operator · value*,
+For finer control, **Add Field** opens the advanced rule builder: rows of *field · operator · value*,
 each independently on/off and joined to the previous row by AND or OR. Connectors evaluate strictly
 left-to-right (no operator precedence), so a saved set always filters the same way. Operators are
 Contains, Is, Starts With, Ends With, Does Not Contain, Is Not, and Regex; an invalid regex safely
@@ -104,6 +104,11 @@ The right-hand **Details** dock uses compact two-column tables for assessment, d
 host baseline, related actions, findings, and grouping evidence. Technical values are selectable and
 monospaced; related-action rows remain clickable so an investigation can move between sessions without
 leaving the dock.
+
+The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
+an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant
+backend: history, new-conversation, prompt, and send controls remain unavailable, and the Read-only control
+explains that no capture data or model request leaves the Mac.
 
 ## Software updates
 

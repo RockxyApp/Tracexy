@@ -48,7 +48,7 @@ struct ContextDockView: View {
                     detailsFooter
                 }
             case .aiAssistant:
-                aiAssistant
+                AIAssistantDockView(coordinator: coordinator)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -234,108 +234,6 @@ struct ContextDockView: View {
             }
             .padding(.horizontal, Theme.Metrics.spacingL)
         }
-    }
-
-    // MARK: AI Assistant
-
-    /// An honest presentation shell for a future assistant. It shows what the
-    /// selection *would* be handed to an assistant (attached context), an empty
-    /// transcript, and a composer that is disabled because nothing is connected.
-    ///
-    /// It deliberately does nothing: no send, no storage, no simulated reply, no
-    /// settings call. The point is to make the assistant's place in the panel
-    /// learnable and to be truthful that it is not wired up yet.
-    private var aiAssistant: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                    attachedContext
-                    transcriptEmptyState
-                }
-                .padding(.horizontal, Theme.Metrics.spacingL)
-                .padding(.vertical, Theme.Metrics.spacingL)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Divider()
-            composer
-        }
-    }
-
-    /// The selection the assistant would reason over, summarised from values the
-    /// session already carries — nothing derived, nothing fetched.
-    private var attachedContext: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("ATTACHED CONTEXT")
-            if let session = coordinator.selectedSession {
-                attachedCard(session, activity: coordinator.activity(containing: session))
-            } else {
-                facetEmpty("Select a session and it is attached here for the assistant to reference.")
-            }
-        }
-    }
-
-    /// No transcript exists because nothing has run. Said plainly rather than
-    /// faked with sample messages.
-    private var transcriptEmptyState: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("CONVERSATION")
-            VStack(spacing: Theme.Metrics.spacingM) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: Theme.Icon.hero))
-                    .foregroundStyle(.tertiary)
-                Text("No messages yet")
-                    .font(Theme.Typography.bodyMedium)
-                Text("Once an assistant is connected, your questions and its answers "
-                    + "about this capture will appear here.")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Theme.Metrics.spacingL)
-        }
-    }
-
-    /// The prompt/send affordance, disabled with a plain "not connected" note.
-    /// The text field binds to a constant so there is nowhere for input to be
-    /// stored, and the button does nothing — the shell cannot send by accident.
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: Theme.Icon.small))
-                    .foregroundStyle(.secondary)
-                Text("Captured data stays on this Mac. Nothing is sent until you connect "
-                    + "an assistant and explicitly ask.")
-                    .font(Theme.Typography.micro)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: Theme.Metrics.spacingM) {
-                TextField("Ask about this selection…", text: .constant(""))
-                    .textFieldStyle(.roundedBorder)
-                    .font(Theme.Typography.body)
-                    .disabled(true)
-                    .accessibilityLabel("Message the assistant")
-                Button {
-                    // Intentionally inert: there is no assistant backend to send to.
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: Theme.Icon.large))
-                }
-                .buttonStyle(.plain)
-                .disabled(true)
-                .foregroundStyle(.tertiary)
-                .accessibilityLabel("Send message")
-                .help("The assistant is not connected yet.")
-            }
-            Text("Assistant not connected yet.")
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingM)
     }
 
     // MARK: Security findings
@@ -625,15 +523,6 @@ struct ContextDockView: View {
 
     // MARK: Shared chrome
 
-    /// A facet with nothing to say says so, rather than removing its own tab —
-    /// a strip whose width changes per selection cannot be learned.
-    private func facetEmpty(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Typography.caption)
-            .foregroundStyle(.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
     private func confidencePill(_ tier: ConfidenceTier) -> some View {
         Text(tier.title)
             .font(Theme.Typography.badge)
@@ -641,63 +530,6 @@ struct ContextDockView: View {
             .padding(.vertical, 1)
             .background(Capsule().fill(Self.tint(for: tier).opacity(0.15)))
             .foregroundStyle(Self.tint(for: tier))
-    }
-
-    private func attachedCard(_ session: SessionSummary, activity: Activity?) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            Text(activity?.title ?? session.host)
-                .font(Theme.Typography.bodyEmphasis)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if !session.protocolStack.isEmpty {
-                HStack(spacing: Theme.Metrics.spacingS) {
-                    ForEach(session.protocolStack, id: \.self) { proto in
-                        Text(proto.label)
-                            .font(Theme.Typography.badge)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Theme.color(for: proto).opacity(0.18), in: Capsule())
-                            .foregroundStyle(Theme.color(for: proto))
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                attachedFact("Process", session.processName ?? "—")
-                attachedFact("Status", session.status.label)
-                if let latency = session.latencyMilliseconds {
-                    attachedFact("Latency", Self.ms(latency))
-                }
-                attachedFact("Bytes", Int64(session.totalBytes).formatted(.byteCount(style: .memory)))
-                if let activity, activity.sessions.count > 1 {
-                    attachedFact("Action", "\(activity.sessions.count) sessions")
-                }
-            }
-        }
-        .padding(Theme.Metrics.spacingM)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        )
-    }
-
-    private func attachedFact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-            Text(label)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
-            Text(value)
-                .font(Theme.Typography.caption)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
     }
 
     /// A glyph per tier, so confidence is legible without relying on colour —

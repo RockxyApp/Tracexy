@@ -33,6 +33,36 @@ struct WorkspacePresentationContractTests {
         #expect(table.contains("struct ContextInspectorFullRow"))
     }
 
+    @Test("Session search keeps the Rockxy control rhythm with Tracexy field semantics")
+    func sessionSearchUsesResponsiveNativeControls() throws {
+        let source = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+
+        #expect(source.contains("ViewThatFits(in: .horizontal)"))
+        #expect(source.contains("pickerWidth: 130, showsAddFieldTitle: true"))
+        #expect(source.contains("pickerWidth: 100, showsAddFieldTitle: false"))
+        #expect(source.contains(".frame(minWidth: 220, maxWidth: .infinity)"))
+        #expect(source.contains("Label(\"Add Field\", systemImage: \"plus\")"))
+        #expect(source.contains(".accessibilityLabel(\"Search field\")"))
+        #expect(source.contains(".accessibilityLabel(\"Add field\")"))
+    }
+
+    @Test("AI Assistant uses a truthful conversation shell")
+    func assistantUsesConversationShell() throws {
+        let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")
+
+        #expect(source.contains("conversationHeader"))
+        #expect(source.contains("attachedContextHeader"))
+        #expect(source.contains("conversationTranscript"))
+        #expect(source.contains("promptComposer"))
+        #expect(source.contains("New Conversation"))
+        #expect(source.contains("Select a session to add context"))
+        #expect(source.contains("Ask Tracexy AI Assistant…"))
+        #expect(source.contains("Label(\"Not connected\", systemImage: \"cpu\")"))
+        #expect(source.contains("Label(\"Read-only\", systemImage: \"lock.shield\")"))
+        #expect(!source.contains("sampleMessages"))
+        #expect(!source.contains("streamingText"))
+    }
+
     // MARK: Private
 
     private enum ResolveError: Error {

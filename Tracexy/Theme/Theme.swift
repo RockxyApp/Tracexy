@@ -78,6 +78,15 @@ enum Theme {
         static let contextTableCornerRadius: CGFloat = 6
         static let contextTableLabelWidth: CGFloat = 90
         static let contextTableInsightLabelWidth: CGFloat = 110
+
+        // AI Assistant dock shell. These mirror the compact native hierarchy
+        // used by the Details dock: chrome rows stay fixed while the transcript
+        // owns the remaining height.
+        static let assistantHeaderHeight: CGFloat = 36
+        static let assistantContextHeight: CGFloat = 32
+        static let assistantContentPadding: CGFloat = 10
+        static let assistantComposerCornerRadius: CGFloat = 10
+        static let assistantPopoverWidth: CGFloat = 320
     }
 
     // MARK: Typography

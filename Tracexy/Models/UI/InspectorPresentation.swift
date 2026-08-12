@@ -110,9 +110,10 @@ enum InspectorLayout: String, CaseIterable, Identifiable, Hashable {
 /// - **Details** gathers everything the app can *say* about the selection:
 ///   identity, verdict, layer facts, host baseline, related actions, grouping
 ///   evidence and security findings, in one vertically scrollable read.
-/// - **AI Assistant** is a presentation shell for a future assistant. It carries
-///   the current selection as attached context and a disabled composer; it is
-///   not connected to any backend and neither sends nor stores anything.
+/// - **AI Assistant** is a production-shaped conversation shell for a future
+///   assistant. It carries the current selection as compact attached context and
+///   pins a disabled composer below an empty transcript; it is not connected to
+///   any backend and neither sends nor stores anything.
 enum ContextDockTab: String, CaseIterable, Identifiable, Hashable {
     case details
     case aiAssistant
