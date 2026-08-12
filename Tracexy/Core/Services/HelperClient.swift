@@ -315,7 +315,7 @@ final class HelperClient {
         }
         await runBusy {
             if let proxy = try? self.proxy() {
-                proxy.stopCapture {}
+                proxy.stopCapture { _ in }
             }
             self.disconnect()
             do {
@@ -345,7 +345,7 @@ final class HelperClient {
         }
         await runBusy {
             if let proxy = try? self.proxy() {
-                proxy.stopCapture {}
+                proxy.stopCapture { _ in }
             }
             self.disconnect()
 
@@ -441,7 +441,7 @@ final class HelperClient {
             self.willBeginDestructiveReset?()
 
             if let proxy = try? self.proxy() {
-                proxy.stopCapture {}
+                proxy.stopCapture { _ in }
             }
             self.disconnect()
 
@@ -574,7 +574,7 @@ final class HelperClient {
             machServiceName: TracexyIdentity.current.helperMachServiceName,
             options: .privileged
         )
-        new.remoteObjectInterface = NSXPCInterface(with: TracexyHelperProtocol.self)
+        new.remoteObjectInterface = TracexyHelperInterface.make()
         new.invalidationHandler = { [weak self] in Task { @MainActor in self?.connection = nil } }
         new.interruptionHandler = { [weak self] in Task { @MainActor in self?.connection = nil } }
         new.resume()
@@ -607,7 +607,7 @@ final class HelperClient {
         // Stop any capture and drop the (wedged) XPC connection before touching
         // the registration.
         if let proxy = try? self.proxy() {
-            proxy.stopCapture {}
+            proxy.stopCapture { _ in }
         }
         disconnect()
 

@@ -28,6 +28,12 @@
 		CF7D8469E919D20EA77D3311 /* ConnectionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */; };
 		DE693E218EEFA535EF66011C /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1213CAE9676B88FE7D6069 /* main.swift */; };
 		E6F73811F50920809ECD92D4 /* TracexyHelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */; };
+		CF61000000000000000000C1 /* CaptureFrameTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B1 /* CaptureFrameTransport.swift */; };
+		CF61000000000000000000C2 /* BoundedFrameBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B2 /* BoundedFrameBuffer.swift */; };
+		CF61000000000000000000C3 /* CaptureWorkerLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B3 /* CaptureWorkerLifecycle.swift */; };
+		CF61000000000000000000D1 /* CaptureFrameTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B1 /* CaptureFrameTransport.swift */; };
+		CF61000000000000000000D2 /* BoundedFrameBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B2 /* BoundedFrameBuffer.swift */; };
+		CF61000000000000000000D3 /* CaptureWorkerLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B3 /* CaptureWorkerLifecycle.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +92,9 @@
 		DCD3359D2FC5555F003CEC6D /* TracexyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TracexyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA5BF961C88CDEEB39ADE0C9 /* PcapCapture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PcapCapture.swift; sourceTree = "<group>"; };
 		FE1213CAE9676B88FE7D6069 /* main.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		CF61000000000000000000B1 /* CaptureFrameTransport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureFrameTransport.swift; sourceTree = "<group>"; };
+		CF61000000000000000000B2 /* BoundedFrameBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BoundedFrameBuffer.swift; sourceTree = "<group>"; };
+		CF61000000000000000000B3 /* CaptureWorkerLifecycle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureWorkerLifecycle.swift; sourceTree = "<group>"; };
 		CF60000000000000000000A1 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		CF60000000000000000000A2 /* CommunityBase.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CommunityBase.xcconfig; sourceTree = "<group>"; };
 		CF60000000000000000000A3 /* CommunityProduction.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CommunityProduction.xcconfig; sourceTree = "<group>"; };
@@ -189,7 +198,10 @@
 		20A9F1445B0F470950BFD2DB /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				CF61000000000000000000B2 /* BoundedFrameBuffer.swift */,
 				5B401A9ACB20BC303CB91B2C /* CallerValidation.swift */,
+				CF61000000000000000000B1 /* CaptureFrameTransport.swift */,
+				CF61000000000000000000B3 /* CaptureWorkerLifecycle.swift */,
 				3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */,
 				3F733C1CA84E6904417326EC /* HelperInfo.swift */,
 				09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */,
@@ -441,6 +453,9 @@
 				A8FBD1156475B2F99998E12E /* TracexyBrand.swift in Sources */,
 				34DF3AC728DA6A7E39C2F270 /* TracexyHelperProtocol.swift in Sources */,
 				A08548034A631A028668479D /* TracexyIdentity.swift in Sources */,
+				CF61000000000000000000D1 /* CaptureFrameTransport.swift in Sources */,
+				CF61000000000000000000D2 /* BoundedFrameBuffer.swift in Sources */,
+				CF61000000000000000000D3 /* CaptureWorkerLifecycle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -454,6 +469,9 @@
 				13E2CF9CD158831FA4C23219 /* TracexyBrand.swift in Sources */,
 				E6F73811F50920809ECD92D4 /* TracexyHelperProtocol.swift in Sources */,
 				1CEFE5E60B291EBDCA6641F0 /* TracexyIdentity.swift in Sources */,
+				CF61000000000000000000C1 /* CaptureFrameTransport.swift in Sources */,
+				CF61000000000000000000C2 /* BoundedFrameBuffer.swift in Sources */,
+				CF61000000000000000000C3 /* CaptureWorkerLifecycle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

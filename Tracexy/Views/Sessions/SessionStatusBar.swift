@@ -78,12 +78,14 @@ nonisolated struct FooterActionDescriptor: Identifiable, Equatable {
 nonisolated struct FooterTelemetry: Identifiable, Equatable {
     enum Kind {
         case packetDrops
+        case helperDrops
         case sessionErrors
         case captureDuration
         case liveRate
         case totalBytes
         case bytesUp
         case bytesDown
+        case retentionTruncation
     }
 
     enum Role {
@@ -117,6 +119,26 @@ nonisolated struct FooterSnapshot: Equatable {
     /// Present only while a capture is running, so the view can drive the live
     /// duration timer without owning capture state.
     let captureStartedAt: Date?
+}
+
+// MARK: - CaptureLoss
+
+/// The three independent loss figures a capture can accrue, grouped so the footer
+/// derivation stays under a sane parameter count and — more importantly — so the
+/// three stages are named and kept distinct at the call site:
+///
+/// - kernel/interface loss (`hasStatistics` + `totalDropped` + `isMaterialLoss`),
+///   from `pcap_stats`; unknown when no statistics are available;
+/// - `helperDropCount`, frames the privileged helper evicted before the app drained
+///   them — capture-source loss that is *not* part of the kernel figure;
+/// - `retentionEvictionCount`, frames trimmed from the local save/export window —
+///   a memory bound, never captured-packet loss.
+nonisolated struct CaptureLoss: Equatable {
+    let hasStatistics: Bool
+    let totalDropped: UInt64
+    let isMaterialLoss: Bool
+    let helperDropCount: UInt64
+    let retentionEvictionCount: UInt64
 }
 
 // MARK: - SessionStatusBarModel
@@ -221,13 +243,19 @@ nonisolated enum SessionStatusBarModel {
     }
 
     /// The right-hand telemetry chips, ordered by importance and emitted only when
-    /// their data exists: packet drops → session errors → capture duration →
-    /// combined live rate → session-attributed total → directional totals.
+    /// their data exists: kernel/interface drops → helper-stage drops → session
+    /// errors → capture duration → combined live rate → session-attributed total →
+    /// directional totals → retention truncation.
+    ///
+    /// The three loss figures are deliberately distinct chips for three distinct
+    /// stages. Kernel/interface loss (`totalDropped`) and helper-stage loss
+    /// (`helperBufferDropCount`) are both capture-source loss and warn; retention
+    /// truncation (`retainedFrameEvictionCount`) is a save/export memory bound and
+    /// is never dressed up as captured-packet loss. Folding any of them into
+    /// another would misstate where fidelity was lost.
     static func telemetry(
         isCapturing: Bool,
-        hasCaptureStatistics: Bool,
-        totalDropped: Int,
-        isMaterialLoss: Bool,
+        loss: CaptureLoss,
         errorCount: Int,
         hasCaptureDuration: Bool,
         liveBytesPerSecond: Double?,
@@ -243,15 +271,31 @@ nonisolated enum SessionStatusBarModel {
         // actually lost. Material loss warns (orange); anything below the
         // threshold is shown neutrally rather than dressed up as an alarm. With no
         // statistics at all the chip is omitted, never faked as "none dropped".
-        if hasCaptureStatistics, totalDropped > 0 {
+        if loss.hasStatistics, loss.totalDropped > 0 {
             items.append(FooterTelemetry(
                 kind: .packetDrops,
-                text: "\(totalDropped.formatted()) dropped",
-                help: isMaterialLoss
+                text: "\(loss.totalDropped.formatted()) dropped",
+                help: loss.isMaterialLoss
                     ? "Material packet loss — the derived numbers may understate the real traffic."
                     : "Some packets were dropped, but below the level that skews the numbers.",
                 systemImage: "exclamationmark.triangle.fill",
-                role: isMaterialLoss ? .warning : .neutral
+                role: loss.isMaterialLoss ? .warning : .neutral
+            ))
+        }
+
+        // Helper-stage drops — frames the privileged helper's staging buffer had
+        // to evict before the app drained them. This is real capture-source loss,
+        // separate from kernel/interface loss above: it can be non-zero even while
+        // `pcap_stats` reports a perfect kernel capture, so it always warns rather
+        // than hiding behind a green fidelity figure.
+        if loss.helperDropCount > 0 {
+            items.append(FooterTelemetry(
+                kind: .helperDrops,
+                text: "\(loss.helperDropCount.formatted()) helper drops",
+                help: "Frames the capture helper dropped before reaching the app — "
+                    + "capture-stage loss, not counted in the kernel fidelity figure.",
+                systemImage: "exclamationmark.triangle.fill",
+                role: .warning
             ))
         }
 
@@ -319,6 +363,22 @@ nonisolated enum SessionStatusBarModel {
                 text: "↓ \(formatBytes(bytesDown))",
                 help: "Reverse direction — cumulative bytes.",
                 systemImage: nil,
+                role: .neutral
+            ))
+        }
+
+        // Retention truncation — the local save/export window trimmed its oldest
+        // frames to stay bounded. This is emphatically *not* capture loss: every
+        // session is still accounted for, only the tail of raw frames a `.pcap`
+        // save could write was shortened. Neutral and last, so it never reads as
+        // an alarm about missed traffic.
+        if loss.retentionEvictionCount > 0 {
+            items.append(FooterTelemetry(
+                kind: .retentionTruncation,
+                text: "\(loss.retentionEvictionCount.formatted()) not retained",
+                help: "Older raw frames were dropped from the save/export window to bound memory — "
+                    + "sessions are unaffected; a saved .pcap contains only the retained recent tail.",
+                systemImage: "tray.full",
                 role: .neutral
             ))
         }

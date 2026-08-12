@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - DecodedField
 
-nonisolated struct DecodedField: Hashable {
+nonisolated struct DecodedField: Hashable, Sendable {
     // MARK: Lifecycle
 
     init(name: String, value: String, byteRange: Range<Int>? = nil) {
@@ -34,7 +34,7 @@ nonisolated struct DecodedField: Hashable {
 // MARK: - DecodedLayer
 
 /// One protocol layer in the decode tree (Eth → IP → TCP → TLS …).
-nonisolated struct DecodedLayer: Hashable, Identifiable {
+nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
     // MARK: Lifecycle
 
     init(
@@ -63,6 +63,27 @@ nonisolated struct DecodedLayer: Hashable, Identifiable {
     var children: [DecodedLayer]
     /// Absolute byte range of this whole layer within the frame's `rawBytes`.
     var byteRange: Range<Int>?
+
+    /// Identity is the decoded content, not the per-instance `id`. Two decodes of
+    /// the same bytes produce structurally equal layers with *different* random
+    /// ids; excluding `id` here keeps golden-fixture and session-equivalence
+    /// comparisons stable (the same reasoning `DecodedField` applies to
+    /// `byteRange`). `id` remains for SwiftUI `Identifiable` diffing.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.proto == rhs.proto
+            && lhs.title == rhs.title
+            && lhs.summary == rhs.summary
+            && lhs.fields == rhs.fields
+            && lhs.children == rhs.children
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(proto)
+        hasher.combine(title)
+        hasher.combine(summary)
+        hasher.combine(fields)
+        hasher.combine(children)
+    }
 }
 
 // MARK: - DecodedPacket

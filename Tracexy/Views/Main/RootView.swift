@@ -263,11 +263,16 @@ struct MainDetailView: View {
             hasSelection: workspace.selectedSessionID != nil,
             findingCount: coordinator.findings.count
         )
+        let loss = CaptureLoss(
+            hasStatistics: stats != nil,
+            totalDropped: stats?.totalDropped ?? 0,
+            isMaterialLoss: stats?.isLossy ?? false,
+            helperDropCount: coordinator.helperBufferDropCount,
+            retentionEvictionCount: coordinator.retainedFrameEvictionCount
+        )
         let telemetry = SessionStatusBarModel.telemetry(
             isCapturing: coordinator.isCapturing,
-            hasCaptureStatistics: stats != nil,
-            totalDropped: Int(stats?.totalDropped ?? 0),
-            isMaterialLoss: stats?.isLossy ?? false,
+            loss: loss,
             errorCount: coordinator.errorCount,
             hasCaptureDuration: coordinator.captureStartedAt != nil,
             liveBytesPerSecond: liveBytesPerSecond,

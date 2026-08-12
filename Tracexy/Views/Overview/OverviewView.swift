@@ -128,15 +128,21 @@ struct OverviewView: View {
 
     @ViewBuilder private var fidelitySummary: some View {
         let stats = coordinator.captureStatistics
+        // Helper-stage loss is a separate figure from the kernel `pcap_stats`
+        // fidelity below. It can be non-zero even when the kernel reports a
+        // perfect capture, so it must pull the presentation off green and warn
+        // rather than being folded into (or hidden behind) the percent.
+        let helperDrops = coordinator.helperBufferDropCount
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             Text("Fidelity")
                 .font(Theme.Typography.captionMedium)
                 .foregroundStyle(.secondary)
             if let stats, let fidelity = stats.fidelity {
+                let incomplete = stats.isLossy || helperDrops > 0
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
                     Text(Self.percent.string(from: fidelity as NSNumber) ?? "—")
                         .font(Theme.Typography.metric)
-                        .foregroundStyle(stats.isLossy ? Color.orange : Color.green)
+                        .foregroundStyle(incomplete ? Color.orange : Color.green)
                         .monospacedDigit()
                     Text("captured")
                         .font(Theme.Typography.body)
@@ -151,6 +157,7 @@ struct OverviewView: View {
                         .font(Theme.Typography.caption)
                         .foregroundStyle(.orange)
                 }
+                helperDropNotice(helperDrops)
             } else {
                 Text("Not measured")
                     .font(Theme.Typography.surfaceTitle)
@@ -161,6 +168,9 @@ struct OverviewView: View {
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // Even with no kernel figure, known helper-stage loss is reported
+                // truthfully rather than left implied by "Not measured".
+                helperDropNotice(helperDrops)
             }
         }
     }
@@ -308,6 +318,19 @@ struct OverviewView: View {
                 .frame(height: CGFloat(entries.count) * 26 + 8)
                 .animation(.smooth, value: entries.map(\.hits))
             }
+        }
+    }
+
+    /// A compact warning that the capture helper dropped frames before they
+    /// reached the app — shown whenever the count is non-zero, so a green kernel
+    /// fidelity never implies a complete capture when the helper stage lost data.
+    @ViewBuilder
+    private func helperDropNotice(_ helperDrops: UInt64) -> some View {
+        if helperDrops > 0 {
+            Text("\(helperDrops.formatted()) frames were dropped by the capture helper before reaching the app.")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
