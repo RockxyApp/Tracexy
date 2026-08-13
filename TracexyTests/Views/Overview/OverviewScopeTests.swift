@@ -93,6 +93,21 @@ struct OverviewScopeTests {
         #expect(coordinator.findings.allSatisfy { !$0.subtitle.contains("PII") })
     }
 
+    @Test("Security quick filter covers the same sessions as findings")
+    func securityQuickFilterMatchesFindingSessions() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        let findingSessionIDs = Set(coordinator.findings.compactMap(\.sessionID))
+        let matchingSessionIDs = Set(coordinator.sessions.filter {
+            MainContentCoordinator.securityCategoryMatches($0)
+        }.map(\.id))
+
+        #expect(!findingSessionIDs.isEmpty)
+        #expect(matchingSessionIDs == findingSessionIDs)
+    }
+
     // MARK: Private
 
     private struct Environment {

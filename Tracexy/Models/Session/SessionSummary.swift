@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - SessionStatus
 
-/// Health classification for a session, driving color + the Security view.
-enum SessionStatus: String, CaseIterable, Hashable {
+/// Health classification for a session, driving color + Security filtering.
+nonisolated enum SessionStatus: String, CaseIterable, Hashable {
     case ok
     case warning
     case error
@@ -32,7 +32,7 @@ enum SessionStatus: String, CaseIterable, Hashable {
 // MARK: - SessionSummary
 
 /// One network conversation as shown in the timeline / session list.
-struct SessionSummary: Identifiable, Hashable {
+nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     let id: UUID
     var startTime: Date
     var duration: TimeInterval

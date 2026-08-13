@@ -98,6 +98,32 @@ struct HelperCompatibilityTests {
         )
         #expect(older == .installedIncompatible)
     }
+
+    @Test("A v1 helper is incompatible against the current v2 protocol; v2 is fine")
+    func protocolV2AgainstV1() {
+        // The typed-drain migration bumped the protocol to 2. A previously
+        // installed v1 helper — even a newer build — must be classified
+        // incompatible so Start stays gated (no unsafe legacy-frame fallback),
+        // while a matching v2 helper at the shipped build is compatible.
+        let legacyV1 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "0.1.1", buildNumber: 99, protocolVersion: 1),
+            expectedProtocolVersion: 2,
+            bundledBuild: 3
+        )
+        let currentV2 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "0.1.2", buildNumber: 3, protocolVersion: 2),
+            expectedProtocolVersion: 2,
+            bundledBuild: 3
+        )
+
+        #expect(legacyV1 == .installedIncompatible)
+        #expect(currentV2 == .installedCompatible)
+        // An incompatible helper maps Start to a clear, gated message, not ready.
+        #expect(
+            HelperClient.captureAvailability(for: legacyV1, unreachableDetail: nil)
+                == .unavailable("the installed helper uses an incompatible protocol. Update it in Settings → Helper.")
+        )
+    }
 }
 
 // MARK: - CaptureAvailabilityTests

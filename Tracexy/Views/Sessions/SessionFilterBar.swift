@@ -6,10 +6,10 @@ import SwiftUI
 /// interaction architecture used across the app's sibling products:
 ///
 ///   1. a horizontally-scrolling **protocol/category pill row** ("All" + the
-///      protocol group + the independent status group), with a trailing
+///      protocol group + the independent investigation group), with a trailing
 ///      "Reset Filters" action when anything is active;
 ///   2. a **search row** — an enable checkbox, a field-scope dropdown, a rounded
-///      search field with a clear button, an "Add Filter" button that drives the
+///      search field with a clear button, an "Add Field" button that drives the
 ///      advanced rule builder, a disclosure showing the active rule count, and
 ///      the Group By menu.
 ///
@@ -47,9 +47,9 @@ struct SessionFilterBar: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isStatusFilter }
+                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isInvestigationFilter }
                     FilterPillButton(title: "All", isActive: !hasProtocolFilter) {
-                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isStatusFilter)
+                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isInvestigationFilter)
                     }
                     .accessibilityLabel("All protocols")
                     .accessibilityAddTraits(!hasProtocolFilter ? [.isSelected] : [])
@@ -68,9 +68,14 @@ struct SessionFilterBar: View {
                         .frame(height: 16)
                         .padding(.horizontal, 4)
 
-                    ForEach(SessionFilterCategory.statusFilters) { category in
+                    ForEach(SessionFilterCategory.investigationFilters) { category in
                         let isActive = workspace.categoryFilters.contains(category)
-                        FilterPillButton(title: category.title, isActive: isActive) {
+                        FilterPillButton(
+                            title: category.title,
+                            systemImage: category == .security ? "exclamationmark.shield" : nil,
+                            tint: category == .security ? .red : .accentColor,
+                            isActive: isActive
+                        ) {
                             toggle(category, in: workspace)
                         }
                         .accessibilityLabel(category.title)
@@ -100,6 +105,23 @@ struct SessionFilterBar: View {
     // MARK: Search row
 
     private func searchRow(_ workspace: WorkspaceState) -> some View {
+        ViewThatFits(in: .horizontal) {
+            searchRowContent(workspace, pickerWidth: 130, showsAddFieldTitle: true)
+            searchRowContent(workspace, pickerWidth: 100, showsAddFieldTitle: false)
+        }
+        .padding(.horizontal, 8)
+    }
+
+    /// The whole search row participates in the responsive decision. This keeps
+    /// the field selector and the Add Field title at their comfortable native
+    /// sizes until the center pane genuinely cannot fit them.
+    private func searchRowContent(
+        _ workspace: WorkspaceState,
+        pickerWidth: CGFloat,
+        showsAddFieldTitle: Bool
+    )
+        -> some View
+    {
         HStack(spacing: 8) {
             Toggle("", isOn: Binding(
                 get: { workspace.isSearchEnabled },
@@ -111,7 +133,7 @@ struct SessionFilterBar: View {
             .help(workspace.isSearchEnabled ? "Search is on — uncheck to ignore it" : "Search is off")
             .accessibilityLabel("Enable search")
 
-            searchFieldPicker(workspace)
+            searchFieldPicker(workspace, width: pickerWidth)
 
             searchField(workspace)
                 .layoutPriority(1)
@@ -119,16 +141,12 @@ struct SessionFilterBar: View {
             Divider()
                 .frame(height: 18)
 
-            ViewThatFits(in: .horizontal) {
-                actionCluster(workspace, compact: false)
-                actionCluster(workspace, compact: true)
-            }
+            actionCluster(workspace, showsAddFieldTitle: showsAddFieldTitle)
         }
-        .padding(.horizontal, 8)
     }
 
     /// The field-scope dropdown: which session attribute(s) the query matches.
-    private func searchFieldPicker(_ workspace: WorkspaceState) -> some View {
+    private func searchFieldPicker(_ workspace: WorkspaceState, width: CGFloat) -> some View {
         Picker("", selection: Binding(
             get: { workspace.searchField },
             set: { workspace.searchField = $0 }
@@ -138,8 +156,7 @@ struct SessionFilterBar: View {
             }
         }
         .labelsHidden()
-        .controlSize(.small)
-        .frame(width: 130)
+        .frame(width: width)
         .help("Choose which session fields the search matches")
         .accessibilityLabel("Search field")
     }
@@ -172,52 +189,49 @@ struct SessionFilterBar: View {
                 .accessibilityLabel("Clear session search")
             }
         }
-        .frame(minWidth: 140)
-        .opacity(workspace.isSearchEnabled ? 1.0 : 0.5)
+        .frame(minWidth: 220, maxWidth: .infinity)
     }
 
-    /// The trailing controls: Add Filter, the active-rule disclosure, and Group
-    /// By. `compact` drops the text labels to icons for a narrow center pane,
-    /// keeping every action visible and accessibility-labelled.
-    private func actionCluster(_ workspace: WorkspaceState, compact: Bool) -> some View {
+    /// The trailing controls: Add Field, the active-rule disclosure, and Group
+    /// By. The outer responsive row decides whether Add Field keeps its title.
+    private func actionCluster(_ workspace: WorkspaceState, showsAddFieldTitle: Bool) -> some View {
         HStack(spacing: 6) {
-            addFilterButton(workspace, compact: compact)
-            advancedDisclosure(workspace, compact: compact)
+            addFieldButton(workspace, showsTitle: showsAddFieldTitle)
+            advancedDisclosure(workspace)
             groupByMenu(workspace)
         }
         .fixedSize()
     }
 
-    private func addFilterButton(_ workspace: WorkspaceState, compact: Bool) -> some View {
+    private func addFieldButton(_ workspace: WorkspaceState, showsTitle: Bool) -> some View {
         let disabled = isAddFilterDisabled(workspace)
         return Button {
             addFilter(workspace)
         } label: {
-            if compact {
-                Image(systemName: "plus")
+            if showsTitle {
+                Label("Add Field", systemImage: "plus")
             } else {
-                Label("Add Filter", systemImage: "plus")
+                Image(systemName: "plus")
             }
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .font(Theme.Typography.body)
         .disabled(disabled)
         .help(disabled
             ? "Filter limit reached — this build allows \(maxRules) rules"
-            : "Add an advanced filter rule")
-        .accessibilityLabel("Add filter")
+            : "Add a field to the advanced filter")
+        .accessibilityLabel("Add field")
     }
 
-    private func advancedDisclosure(_ workspace: WorkspaceState, compact: Bool) -> some View {
+    private func advancedDisclosure(_ workspace: WorkspaceState) -> some View {
         let count = workspace.activeFilterRules.count
         let isOn = workspace.isAdvancedFilterVisible
         return Button {
             workspace.isAdvancedFilterVisible.toggle()
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                if !compact || count > 0 {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease")
+                if count > 0 {
                     Text("\(count)")
                         .font(Theme.Typography.body)
                         .monospacedDigit()
@@ -225,7 +239,6 @@ struct SessionFilterBar: View {
                 Image(systemName: isOn ? "chevron.up" : "chevron.down")
                     .font(Theme.Typography.micro)
             }
-            .foregroundStyle(isOn || count > 0 ? Color.accentColor : Color.secondary)
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
@@ -267,7 +280,7 @@ struct SessionFilterBar: View {
         .accessibilityValue(isGrouped ? workspace.sessionGrouping.title : "None")
     }
 
-    /// "Add Filter": if the advanced editor is hidden, reveal it *without* adding
+    /// "Add Field": if the advanced editor is hidden, reveal it *without* adding
     /// a duplicate blank row; if it is already visible, append a blank row up to
     /// the capacity cap.
     private func addFilter(_ workspace: WorkspaceState) {
@@ -312,19 +325,45 @@ struct SessionFilterBar: View {
 /// Compact flat toggle button used in the filter bar: accent-tinted background + text
 /// when active, plain secondary when not.
 struct FilterPillButton: View {
+    // MARK: Lifecycle
+
+    init(
+        title: String,
+        systemImage: String? = nil,
+        tint: Color = .accentColor,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.isActive = isActive
+        self.action = action
+    }
+
+    // MARK: Internal
+
     let title: String
+    let systemImage: String?
+    let tint: Color
     let isActive: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
-                .cornerRadius(4)
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+            }
+            .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
+            .foregroundStyle(isActive ? tint : Color.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(isActive ? tint.opacity(0.15) : Color.clear)
+            .cornerRadius(4)
         }
         .buttonStyle(.borderless)
     }

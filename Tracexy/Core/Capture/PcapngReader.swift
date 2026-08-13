@@ -70,10 +70,13 @@ nonisolated enum PcapngReader {
                 let ticks = (tsHigh << 32) | tsLow
                 let perSecond = interfaces.indices.contains(interfaceID)
                     ? interfaces[interfaceID].ticksPerSecond : 1_000_000
+                let interfaceLinkType = interfaces.indices.contains(interfaceID)
+                    ? interfaces[interfaceID].linkType : interfaces.first?.linkType
                 frames.append(CapturedFrame(
                     bytes: payload,
                     timestamp: Date(timeIntervalSince1970: Double(ticks) / Double(perSecond)),
-                    originalLength: max(originalLength, capturedLength)
+                    originalLength: max(originalLength, capturedLength),
+                    linkType: interfaceLinkType
                 ))
 
             case 0x00000003: // Simple Packet Block (no per-packet timestamp)

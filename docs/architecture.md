@@ -53,21 +53,48 @@ TracexyTests/             unit and fuzz-style coverage
 ## Boundaries and the trust boundary
 
 - **Capture, decode, and session computation belong off the main actor.** The UI should receive
-  bounded batches. The ingestion exception documented below is transitional debt, not a pattern to
-  copy.
+  bounded batches. Live decode/grouping runs in the `LiveSessionEngine` actor (below); the main actor
+  only enriches and publishes coalesced snapshots.
 - **`Core/` knows nothing about the UI.** It produces values; presentation and policy live above it.
 - **The privileged helper is the trust boundary.** It is a separate signed binary that talks to the app
   over a narrow, typed XPC protocol (start/stop capture, fetch frames, report info — nothing else). The
   app and helper validate each other's code signatures in both directions before trusting a connection.
   See [privacy & security](privacy-and-security.md).
 
-## Transitional debt
+## The live session path
 
-`MainContentCoordinator.ingest` currently rebuilds sessions by calling `SessionBuilder.build` over all
-retained live frames while isolated to `@MainActor`. The capture callback is batched and the list
-refresh is coalesced (~once per second), but decoding and rebuilding the retained frames is still
-main-actor work. This is known debt — the computation should move off-main; treat it as a spot to fix,
-not a pattern to copy.
+Both paths fold decoded packets through one shared `SessionAccumulator`. For opened savefiles,
+`SessionBuilder.build` folds every frame and emits summaries in a single pass. For a **live** capture,
+`MainContentCoordinator.ingest` no longer rebuilds every session on the main actor; it feeds each batch
+to `LiveSessionEngine`, an **actor** that decodes each frame **exactly once** as it arrives, folds it
+into the same accumulator, and produces a snapshot on demand — never by re-decoding or retaining
+history. The accumulator keeps only the running state needed for each published summary (representative
+packets, byte tallies, a few "firsts", and reported DNS answer values), rather than a decoded-packet
+history. Because both paths run the identical fold, a live snapshot equals `SessionBuilder.build` over
+the same frames in the same order.
+
+The main actor keeps only two cheap jobs: a bounded raw-frame window for save/export
+(`RetainedFrameBuffer`, capacity `retainedFrameLimit`, independent of session accumulation — evicting a
+raw frame never drops a session), and app-side process attribution applied to the snapshot before it is
+published on the next runloop turn. A capture-generation token guards every snapshot so a late result
+from a superseded capture cannot overwrite newer UI state.
+
+### Capture fidelity is reported in distinct stages
+
+Loss is never a single blurred number, and the three stages are surfaced as three distinct UI figures —
+never folded into one another:
+
+- **Kernel/interface drops** from `pcap_stats` (`CaptureStatistics`, `nil` when unavailable — shown as
+  *unknown*, never a fabricated clean figure), driving the Overview capture-health fidelity percent.
+- **Helper staging-buffer eviction**, a separate cumulative count carried in each drain batch. It is
+  real capture-source loss the kernel figure never sees, so it is shown as its own footer chip and, in
+  the Overview capture-health card, warns even when the kernel reports 100% — a green fidelity must
+  never imply a complete capture when the helper stage lost frames. Stop returns the worker's final
+  flushed frames and final accounting in one typed reply, so teardown does not silently lose the tail
+  or race a separate fetch against the next capture generation.
+- **Local raw-retention eviction** (`RetainedFrameBuffer`), a save/export memory bound. It is reported
+  separately as retention truncation and is never presented as captured-packet loss, since every
+  session is still accounted for — a `.pcap` save contains only the retained recent tail.
 
 ## Planned / not yet implemented
 
@@ -75,8 +102,8 @@ These are design intent — do not write code, or read these docs, as if they ex
 
 - a **decoder registry** with dispatch-table handoff between protocols (replacing the current monolithic
   decoder);
-- a **stateful connection table** with TCP **reassembly** (today's grouping is a batch rebuild, not a
-  live stream tracker);
+- a **stateful connection table** with TCP **reassembly** (today's grouping folds packets into
+  per-tuple summaries, incrementally on the live path, but tracks no connection state or byte streams);
 - an **analysis / security** engine deriving latency, errors, and findings;
 - **persistent storage** (a SQLite session store with large-payload offload);
 - an **MCP / AI** integration.

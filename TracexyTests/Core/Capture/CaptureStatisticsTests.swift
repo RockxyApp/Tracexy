@@ -50,4 +50,18 @@ struct CaptureStatisticsTests {
         #expect(stats.fidelity == 0.99)
         #expect(stats.isLossy)
     }
+
+    @Test("Combined 32-bit pcap counters widen instead of wrapping")
+    func combinedCountersDoNotWrap() {
+        let stats = CaptureStatistics(
+            received: UInt32.max,
+            droppedByKernel: UInt32.max,
+            droppedByInterface: UInt32.max
+        )
+
+        #expect(stats.totalDropped == UInt64(UInt32.max) * 2)
+        #expect(stats.totalOffered == UInt64(UInt32.max) * 3)
+        #expect((stats.fidelity ?? 0) > 0.333)
+        #expect((stats.fidelity ?? 1) < 0.334)
+    }
 }
