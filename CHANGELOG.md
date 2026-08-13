@@ -12,6 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+## [0.2.0] - 2026-08-13
+
+### Added
+
+- Add Tracexy demo captures
+- Add update badge and inspector detail tables
+- Add session export actions
+
+### Fixed
+
+- Harden live frame ingestion
+
+### Changed
+
+- Refine session search and assistant dock
+- Streamline security investigation
+
 ## [0.1.4] - 2026-08-06
 
 ### Changed

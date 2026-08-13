@@ -7,11 +7,11 @@
 // Do NOT duplicate these values in Swift constants. All runtime code reads
 // from Bundle.main.infoDictionary.
 
-TRACEXY_APP_VERSION = 0.1.4
-TRACEXY_APP_BUILD = 5
+TRACEXY_APP_VERSION = 0.2.0
+TRACEXY_APP_BUILD = 6
 
-TRACEXY_HELPER_VERSION = 0.1.2
-TRACEXY_HELPER_BUILD = 3
+TRACEXY_HELPER_VERSION = 1.0.0
+TRACEXY_HELPER_BUILD = 4
 // Protocol v2: typed NSSecureCoding frame/batch drain surface (was v1's [Data]).
 // A v1 helper is classified installedIncompatible and Start is gated — no fallback.
-TRACEXY_HELPER_PROTOCOL_VERSION = 2
+TRACEXY_HELPER_PROTOCOL_VERSION = 3
