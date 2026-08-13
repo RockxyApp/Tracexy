@@ -84,6 +84,12 @@ struct SessionCenterView: View {
             } else {
                 firstRunEmptyState
             }
+        } else if coordinator.activeWorkspace.categoryFilters.contains(.security) {
+            ContentUnavailableView {
+                Label("No Security Findings", systemImage: "checkmark.shield")
+            } description: {
+                Text("No sessions match the active Security filter and the other filters above.")
+            }
         } else {
             ContentUnavailableView.search
         }

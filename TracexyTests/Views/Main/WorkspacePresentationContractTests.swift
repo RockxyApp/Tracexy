@@ -46,6 +46,20 @@ struct WorkspacePresentationContractTests {
         #expect(source.contains(".accessibilityLabel(\"Add field\")"))
     }
 
+    @Test("Security is a toolbar-only quick filter over the scalable session workflow")
+    func securityUsesSessionQuickFilter() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let sidebarItems = try readProjectFile("Tracexy/Models/UI/SidebarItem.swift")
+        let filters = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+
+        #expect(!root.contains("SecurityFindingsView(coordinator:"))
+        #expect(!sidebar.contains("securityQuickFilterRow"))
+        #expect(!sidebarItems.contains("case security"))
+        #expect(!sidebarItems.contains(".security]"))
+        #expect(filters.contains("systemImage: category == .security ? \"exclamationmark.shield\" : nil"))
+    }
+
     @Test("AI Assistant uses a truthful conversation shell")
     func assistantUsesConversationShell() throws {
         let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")

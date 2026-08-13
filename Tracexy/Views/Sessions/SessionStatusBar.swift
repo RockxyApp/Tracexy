@@ -5,13 +5,13 @@ import SwiftUI
 
 /// Which central surface the status bar sits under. Only the session list owns
 /// the feature launchers and List Options — those act on the session stream, so
-/// on Overview / Flow / Security they would be dead affordances. The intelligence
-/// surfaces get a quiet summary of the same real capture instead.
+/// on Overview / Flow they would be dead affordances. Those intelligence
+/// surfaces get a quiet summary of the same real capture instead; Security now
+/// runs inside the session list as a quick filter.
 nonisolated enum StatusSurface {
     case sessionList
     case overview
     case flow
-    case security
 
     // MARK: Internal
 
@@ -392,16 +392,11 @@ nonisolated enum SessionStatusBarModel {
         surface: StatusSurface,
         totalSessions: Int,
         visibleCount: Int,
-        hasSelection: Bool,
-        findingCount: Int
+        hasSelection: Bool
     )
         -> String
     {
         switch surface {
-        case .security:
-            return findingCount == 0
-                ? "No findings"
-                : "\(findingCount) \(findingCount == 1 ? "finding" : "findings")"
         case .overview:
             return totalSessions == 0 ? "Capture overview · No sessions" : "Capture overview · \(totalSessions) sessions"
         case .flow:

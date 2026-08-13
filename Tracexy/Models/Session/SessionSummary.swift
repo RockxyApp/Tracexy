@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - SessionStatus
 
-/// Health classification for a session, driving color + the Security view.
+/// Health classification for a session, driving color + Security filtering.
 nonisolated enum SessionStatus: String, CaseIterable, Hashable {
     case ok
     case warning

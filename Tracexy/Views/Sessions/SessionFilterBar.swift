@@ -6,7 +6,7 @@ import SwiftUI
 /// interaction architecture used across the app's sibling products:
 ///
 ///   1. a horizontally-scrolling **protocol/category pill row** ("All" + the
-///      protocol group + the independent status group), with a trailing
+///      protocol group + the independent investigation group), with a trailing
 ///      "Reset Filters" action when anything is active;
 ///   2. a **search row** — an enable checkbox, a field-scope dropdown, a rounded
 ///      search field with a clear button, an "Add Field" button that drives the
@@ -47,9 +47,9 @@ struct SessionFilterBar: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isStatusFilter }
+                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isInvestigationFilter }
                     FilterPillButton(title: "All", isActive: !hasProtocolFilter) {
-                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isStatusFilter)
+                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isInvestigationFilter)
                     }
                     .accessibilityLabel("All protocols")
                     .accessibilityAddTraits(!hasProtocolFilter ? [.isSelected] : [])
@@ -68,9 +68,14 @@ struct SessionFilterBar: View {
                         .frame(height: 16)
                         .padding(.horizontal, 4)
 
-                    ForEach(SessionFilterCategory.statusFilters) { category in
+                    ForEach(SessionFilterCategory.investigationFilters) { category in
                         let isActive = workspace.categoryFilters.contains(category)
-                        FilterPillButton(title: category.title, isActive: isActive) {
+                        FilterPillButton(
+                            title: category.title,
+                            systemImage: category == .security ? "exclamationmark.shield" : nil,
+                            tint: category == .security ? .red : .accentColor,
+                            isActive: isActive
+                        ) {
                             toggle(category, in: workspace)
                         }
                         .accessibilityLabel(category.title)
@@ -320,19 +325,45 @@ struct SessionFilterBar: View {
 /// Compact flat toggle button used in the filter bar: accent-tinted background + text
 /// when active, plain secondary when not.
 struct FilterPillButton: View {
+    // MARK: Lifecycle
+
+    init(
+        title: String,
+        systemImage: String? = nil,
+        tint: Color = .accentColor,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.isActive = isActive
+        self.action = action
+    }
+
+    // MARK: Internal
+
     let title: String
+    let systemImage: String?
+    let tint: Color
     let isActive: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
-                .cornerRadius(4)
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+            }
+            .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
+            .foregroundStyle(isActive ? tint : Color.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(isActive ? tint.opacity(0.15) : Color.clear)
+            .cornerRadius(4)
         }
         .buttonStyle(.borderless)
     }

@@ -126,28 +126,16 @@ struct WorkspaceFooterModelTests {
     @Test("Intelligence surfaces keep their own quiet summaries")
     func statusTextIntelligenceSurfaces() {
         #expect(SessionStatusBarModel.statusText(
-            surface: .overview, totalSessions: 0, visibleCount: 0, hasSelection: false, findingCount: 0
+            surface: .overview, totalSessions: 0, visibleCount: 0, hasSelection: false
         ) == "Capture overview · No sessions")
 
         #expect(SessionStatusBarModel.statusText(
-            surface: .overview, totalSessions: 4, visibleCount: 4, hasSelection: false, findingCount: 0
+            surface: .overview, totalSessions: 4, visibleCount: 4, hasSelection: false
         ) == "Capture overview · 4 sessions")
 
         #expect(SessionStatusBarModel.statusText(
-            surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false, findingCount: 0
+            surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false
         ) == "Flow map · 2 sessions")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 0
-        ) == "No findings")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 1
-        ) == "1 finding")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 3
-        ) == "3 findings")
     }
 
     @Test("Non-session surfaces expose no controls but retain their summaries")
@@ -157,7 +145,6 @@ struct WorkspaceFooterModelTests {
         #expect(StatusSurface.sessionList.showsSessionControls)
         #expect(!StatusSurface.overview.showsSessionControls)
         #expect(!StatusSurface.flow.showsSessionControls)
-        #expect(!StatusSurface.security.showsSessionControls)
     }
 
     // MARK: - Telemetry chips
@@ -450,8 +437,7 @@ struct WorkspaceFooterModelTests {
             surface: .sessionList,
             totalSessions: total,
             visibleCount: visible,
-            hasSelection: selected,
-            findingCount: 0
+            hasSelection: selected
         )
     }
 }

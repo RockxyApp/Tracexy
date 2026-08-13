@@ -76,10 +76,16 @@ lowers the confidence and shows the competing names rather than silently guessin
 ## Focus sets and filtering
 
 The filter area above the session list has two rows. The **protocol/category pills** narrow by
-protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket) and by status (**Errors**). Selected
-protocol pills combine with OR, selected status pills combine with OR, and the two groups combine with
-AND — so choosing *TCP* and *Errors* shows TCP sessions that failed. *Errors* means exactly an error; a
-warning is not swept in.
+protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket), by evidence-backed **Security**
+findings, and by exact status (**Errors**). Selected protocol pills combine with OR, selected
+investigation pills combine with OR, and the two groups combine with AND — so choosing *TCP* and
+*Errors* shows TCP sessions that failed. *Errors* means exactly an error; a warning is not swept in.
+*Security* includes sessions that produce a decoded finding: warning/error status, plaintext HTTP, an
+unanswered DNS query, or measured latency above the finding threshold.
+
+**Security** lives only in this filter bar; it is not a separate sidebar destination. The table keeps
+all of its columns, search, advanced rules, grouping, row context actions, selection, and inspector,
+so large finding sets can be narrowed and investigated rather than opened one row at a time.
 
 The **search row** below has an on/off checkbox, a field-scope menu (**All Fields**, Host, Client,
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an

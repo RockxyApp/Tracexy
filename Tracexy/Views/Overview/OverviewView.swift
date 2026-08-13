@@ -46,8 +46,7 @@ struct OverviewView: View {
         GridItem(.adaptive(minimum: 260), spacing: Theme.Metrics.spacingL),
     ]
 
-    /// Scoped like every other rollup here. The sidebar badge and Security
-    /// surface remain capture-wide on purpose; this preview describes the same
+    /// Scoped like every other rollup here. This preview describes the same
     /// filtered session set as the surrounding charts.
     private var scopedFindings: [Finding] {
         let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
@@ -200,12 +199,12 @@ struct OverviewView: View {
                     .font(Theme.Typography.monoSmall)
                     .foregroundStyle(.secondary)
                 if !all.isEmpty {
-                    Button("Open Security") {
-                        coordinator.selectSidebarItem(.security)
+                    Button("Filter Security") {
+                        coordinator.showSecuritySessions()
                     }
                     .buttonStyle(.link)
                     .font(Theme.Typography.captionMedium)
-                    .help("Show the capture-wide Security findings list")
+                    .help("Show sessions with security findings in the full session table")
                 }
             }
             if all.isEmpty {
@@ -384,7 +383,7 @@ struct OverviewView: View {
             {
                 return
             }
-            coordinator.selectSidebarItem(.sessions)
+            coordinator.showSecuritySessions()
             coordinator.select(session)
         } label: {
             HStack(spacing: Theme.Metrics.spacingM) {

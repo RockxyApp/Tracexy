@@ -225,9 +225,6 @@ struct MainDetailView: View {
         case .overview: OverviewView(coordinator: coordinator)
         // Where traffic is going, geographically.
         case .flow: FlowMapView(coordinator: coordinator)
-        // The cross-cutting findings lens (Wireshark "Expert Information") — a
-        // severity-ranked problem list, distinct from the raw session stream.
-        case .security: SecurityFindingsView(coordinator: coordinator)
         default: sessionArea
         }
     }
@@ -239,7 +236,6 @@ struct MainDetailView: View {
         switch selection {
         case .overview: .overview
         case .flow: .flow
-        case .security: .security
         default: .sessionList
         }
     }
@@ -260,8 +256,7 @@ struct MainDetailView: View {
             surface: surface,
             totalSessions: coordinator.sessions.count,
             visibleCount: coordinator.visibleSessions.count,
-            hasSelection: workspace.selectedSessionID != nil,
-            findingCount: coordinator.findings.count
+            hasSelection: workspace.selectedSessionID != nil
         )
         let loss = CaptureLoss(
             hasStatistics: stats != nil,

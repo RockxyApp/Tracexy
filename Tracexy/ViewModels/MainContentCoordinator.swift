@@ -67,8 +67,8 @@ final class MainContentCoordinator {
     /// Severity-ranked findings for the Overview panel, derived only from real
     /// decoded signals (status, plaintext-HTTP, empty DNS answers, high latency) —
     /// never a fabricated anomaly. Sorted error→warning→note; stable within a rank.
-    /// Cap on findings built per pass — bounds both the array size and the
-    /// Security/Overview list length under a huge (100k+) capture.
+    /// Cap on findings built per pass — bounds the Overview findings array under
+    /// a huge (100k+) capture.
     static let maxFindings = 1_000
 
     /// Most recent sessions considered for correlation. Keeps grouping cost
@@ -553,44 +553,6 @@ final class MainContentCoordinator {
     /// main actor to scope and serialize packet data.
     var retainedFrameSnapshotForExport: [CapturedFrame] {
         retainedFrames.frames
-    }
-
-    /// Whether a session matches a single quick-filter chip: a protocol chip
-    /// matches anywhere in the decoded stack; `Errors` matches *exactly* an
-    /// error session (a warning is not an error and must not be swept in).
-    nonisolated static func categoryMatches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        if category == .errors {
-            return session.status == .error
-        }
-        if let kind = category.protocolKind {
-            return session.protocolStack.contains(kind)
-        }
-        return true
-    }
-
-    /// Quick-category group semantics, in one testable place: selected protocol
-    /// chips are OR-ed within their group, selected status chips are OR-ed within
-    /// theirs, and the two groups combine with AND. An empty set ("All") is no
-    /// constraint.
-    nonisolated static func categoryFilterMatches(
-        _ session: SessionSummary,
-        categories: Set<SessionFilterCategory>
-    )
-        -> Bool
-    {
-        let protocolCategories = categories.filter { !$0.isStatusFilter }
-        let statusCategories = categories.filter(\.isStatusFilter)
-        if !protocolCategories.isEmpty,
-           !protocolCategories.contains(where: { categoryMatches(session, category: $0) })
-        {
-            return false
-        }
-        if !statusCategories.isEmpty,
-           !statusCategories.contains(where: { categoryMatches(session, category: $0) })
-        {
-            return false
-        }
-        return true
     }
 
     func setSessionExporting(_ isExporting: Bool) {

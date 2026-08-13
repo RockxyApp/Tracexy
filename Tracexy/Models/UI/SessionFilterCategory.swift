@@ -4,7 +4,8 @@ import Foundation
 
 /// A category tab in the session filter bar:
 /// protocol categories form one group (a session matches if it matches *any*
-/// active protocol), and status categories (Errors) form an independent group.
+/// active protocol), and investigation categories (Security / Errors) form an
+/// independent group.
 enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
     case dns
     case tcp
@@ -14,6 +15,7 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
     case http2
     case quic
     case websocket
+    case security
     case errors
 
     // MARK: Internal
@@ -23,8 +25,8 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         .dns, .tcp, .udp, .tls, .http, .http2, .quic, .websocket,
     ]
 
-    /// Status categories, applied independently of the protocol group.
-    static let statusFilters: [SessionFilterCategory] = [.errors]
+    /// Investigation categories, applied independently of the protocol group.
+    static let investigationFilters: [SessionFilterCategory] = [.security, .errors]
 
     nonisolated var id: String {
         rawValue
@@ -40,15 +42,16 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         case .http2: "HTTP/2"
         case .quic: "QUIC"
         case .websocket: "WebSocket"
+        case .security: "Security"
         case .errors: "Errors"
         }
     }
 
-    nonisolated var isStatusFilter: Bool {
-        self == .errors
+    nonisolated var isInvestigationFilter: Bool {
+        self == .security || self == .errors
     }
 
-    /// The protocol this category filters to (nil for status categories).
+    /// The protocol this category filters to (nil for investigation categories).
     nonisolated var protocolKind: ProtocolKind? {
         switch self {
         case .dns: .dns
@@ -59,7 +62,8 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         case .http2: .http2
         case .quic: .quic
         case .websocket: .websocket
-        case .errors: nil
+        case .security,
+             .errors: nil
         }
     }
 }

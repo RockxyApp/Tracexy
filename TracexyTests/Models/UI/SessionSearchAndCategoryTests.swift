@@ -12,7 +12,8 @@ private func makeSession(
     protocols: [ProtocolKind] = [.tcp, .tls],
     status: SessionStatus = .ok,
     dnsQuery: String? = nil,
-    dnsAnswers: [String] = []
+    dnsAnswers: [String] = [],
+    latencyMilliseconds: Double? = nil
 )
     -> SessionSummary
 {
@@ -26,7 +27,7 @@ private func makeSession(
         destinationEndpoint: destination,
         protocolStack: protocols,
         status: status,
-        latencyMilliseconds: nil,
+        latencyMilliseconds: latencyMilliseconds,
         bytesUp: 1,
         bytesDown: 1,
         sni: nil,
@@ -129,7 +130,10 @@ struct SessionCategoryFilterTests {
         let tcpOk = makeSession(protocols: [.tcp], status: .ok)
         let udpError = makeSession(protocols: [.udp], status: .error)
         #expect(MainContentCoordinator.categoryFilterMatches(tcpError, categories: categories))
-        #expect(!MainContentCoordinator.categoryFilterMatches(tcpOk, categories: categories)) // status group fails
+        #expect(!MainContentCoordinator.categoryFilterMatches(
+            tcpOk,
+            categories: categories
+        )) // investigation group fails
         #expect(!MainContentCoordinator.categoryFilterMatches(udpError, categories: categories)) // protocol group fails
     }
 
@@ -139,5 +143,43 @@ struct SessionCategoryFilterTests {
         #expect(MainContentCoordinator.categoryFilterMatches(makeSession(status: .error), categories: categories))
         #expect(!MainContentCoordinator.categoryFilterMatches(makeSession(status: .warning), categories: categories))
         #expect(!MainContentCoordinator.categoryFilterMatches(makeSession(status: .ok), categories: categories))
+    }
+
+    @Test("Security includes every evidence-backed finding source")
+    func securityIncludesFindingSources() {
+        let categories: Set<SessionFilterCategory> = [.security]
+        #expect(MainContentCoordinator.categoryFilterMatches(makeSession(status: .error), categories: categories))
+        #expect(MainContentCoordinator.categoryFilterMatches(makeSession(status: .warning), categories: categories))
+        #expect(MainContentCoordinator.categoryFilterMatches(
+            makeSession(protocols: [.tcp, .http]),
+            categories: categories
+        ))
+        #expect(MainContentCoordinator.categoryFilterMatches(
+            makeSession(protocols: [.udp, .dns], dnsQuery: "missing.example"),
+            categories: categories
+        ))
+        #expect(MainContentCoordinator.categoryFilterMatches(
+            makeSession(latencyMilliseconds: 401),
+            categories: categories
+        ))
+        #expect(!MainContentCoordinator.categoryFilterMatches(makeSession(), categories: categories))
+    }
+
+    @MainActor
+    @Test("Security quick-filter routing preserves complementary filters")
+    func securityFilterUsesSessionWorkflow() {
+        let coordinator = MainContentCoordinator()
+        let workspace = coordinator.activeWorkspace
+        workspace.sidebarSelection = .overview
+        workspace.categoryFilters = [.tcp]
+        workspace.hostFilter = "api.example.com"
+        workspace.isFilterBarVisible = false
+
+        coordinator.showSecuritySessions()
+
+        #expect(workspace.sidebarSelection == .sessions)
+        #expect(workspace.categoryFilters == [.tcp, .security])
+        #expect(workspace.hostFilter == nil)
+        #expect(workspace.isFilterBarVisible)
     }
 }
