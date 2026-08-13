@@ -6,6 +6,33 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.2.0</title>
+            <pubDate>Thu, 13 Aug 2026 09:01:44 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.2.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.2.0 (build 6)
+
+## Added
+
+- Add Tracexy demo captures
+- Add update badge and inspector detail tables
+- Add session export actions
+
+## Changed
+
+- Refine session search and assistant dock
+- Streamline security investigation
+
+## Fixed
+
+- Harden live frame ingestion
+
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.2.0/Tracexy-0.2.0-6.dmg" length="6265484" type="application/octet-stream" sparkle:edSignature="ROzr+Jc8f334w9H9v/P8IEJrX8oGogLmacWJS+wk8QORdovb6ocMYRdi2ePHOlKzBJSfIlBDJoWxxpwnzaH3Cw=="/>
+        </item>
+        <item>
             <title>0.1.4</title>
             <pubDate>Thu, 06 Aug 2026 11:51:31 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.4</sparkle:fullReleaseNotesLink>
@@ -36,22 +63,6 @@
 
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.3/Tracexy-0.1.3-4.dmg" length="6089895" type="application/octet-stream" sparkle:edSignature="iXgL05EDzbfLYYuLHmVdC+a1MLPoYI9Tw61Br2FAESMDXMrlTDgWPAnAiChvB47XdkZ1Cuhvtwk/601cFjCjBA=="/>
-        </item>
-        <item>
-            <title>0.1.2</title>
-            <pubDate>Wed, 05 Aug 2026 11:03:31 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.2</sparkle:fullReleaseNotesLink>
-            <sparkle:version>3</sparkle:version>
-            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.2 (build 3)
-
-## Fixed
-
-- Stabilize live session table updates
-
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.2/Tracexy-0.1.2-3.dmg" length="6083458" type="application/octet-stream" sparkle:edSignature="eEbTrzghFIyXfbt0qMLKf0XezDIh6ZeAxEuAdvlmkaeTfhnE7C/ca8GuAVmZ5HUIpZX93Z6IDlvrm6j8fG/hDQ=="/>
         </item>
     </channel>
 </rss>
