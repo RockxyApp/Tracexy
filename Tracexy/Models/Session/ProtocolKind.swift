@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
+nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
     case ethernet
     case ipv4
     case ipv6

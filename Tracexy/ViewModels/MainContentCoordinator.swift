@@ -67,13 +67,23 @@ final class MainContentCoordinator {
     /// Severity-ranked findings for the Overview panel, derived only from real
     /// decoded signals (status, plaintext-HTTP, empty DNS answers, high latency) —
     /// never a fabricated anomaly. Sorted error→warning→note; stable within a rank.
-    /// Cap on findings built per pass — bounds both the array size and the
-    /// Security/Overview list length under a huge (100k+) capture.
+    /// Cap on findings built per pass — bounds the Overview findings array under
+    /// a huge (100k+) capture.
     static let maxFindings = 1_000
 
     /// Most recent sessions considered for correlation. Keeps grouping cost
     /// bounded on a long-running capture.
     static let maxCorrelatedSessions = 5_000
+
+    /// How many raw frames are retained for save/export.
+    ///
+    /// This is a bound on *memory*, not on capture fidelity. Sessions accumulate
+    /// incrementally in `LiveSessionEngine` and do not depend on this window, so
+    /// evicting an old raw frame here never drops a session or forces a re-decode
+    /// of history — it leaves only the recent tail available to a `.pcap` save. Every
+    /// eviction is counted in `retainedFrameEvictionCount`, and that count is a
+    /// UI-side figure that must never be presented as kernel/interface loss.
+    static let retainedFrameLimit = 8_000
 
     /// The capacity limits this build runs under. Held so the views that need
     /// to *show* a limit can read it; nothing reads it to decide behaviour —
@@ -110,6 +120,10 @@ final class MainContentCoordinator {
     var isStarting = false
     var captureInterface = "en0"
     var captureError: String?
+    /// Prevents overlapping export panels while a selected session is being
+    /// scoped and serialized away from the main actor.
+    private(set) var isExportingSession = false
+
     /// When the current capture started (drives the status-bar timer).
     var captureStartedAt: Date?
 
@@ -119,6 +133,14 @@ final class MainContentCoordinator {
     /// conditional on this, so the UI must show its absence rather than assume
     /// a clean capture.
     var captureStatistics: CaptureStatistics?
+
+    /// Cumulative frames the *helper's* staging buffer evicted this capture
+    /// because the app drained too slowly. Capture-source loss at the helper
+    /// stage — reported separately from kernel/interface loss (`captureStatistics`)
+    /// and from local retention eviction below, because they are different stages
+    /// and conflating them would misstate where fidelity was lost.
+    private(set) var helperBufferDropCount: UInt64 = 0
+
     /// This Mac's primary IPv4, discovered once at launch (no hardcoded IP).
     let localIPv4: String?
 
@@ -154,6 +176,15 @@ final class MainContentCoordinator {
     private(set) var mutedHosts: Set<String> = MainContentCoordinator.loadMutedHosts()
     /// Protocols muted from the session list.
     private(set) var mutedProtocols: Set<ProtocolKind> = MainContentCoordinator.loadMutedProtocols()
+
+    /// Cumulative frames dropped from the *local* raw-retention window (kept only
+    /// for save/export; see ``retainedFrameLimit``). This is a UI-side memory
+    /// bound, never kernel/interface loss, and must never be surfaced as capture
+    /// fidelity. Sessions are unaffected by it. Read straight off the retention
+    /// buffer so there is a single source of truth for the count.
+    var retainedFrameEvictionCount: UInt64 {
+        retainedFrames.evictionCount
+    }
 
     /// All sessions decoded from the current capture's real frames.
     private(set) var sessions: [SessionSummary] = [] {
@@ -406,7 +437,7 @@ final class MainContentCoordinator {
 
     /// Whether there is anything to save (frames retained from a live or open capture).
     var canSaveCapture: Bool {
-        !liveFrames.isEmpty
+        !retainedFrames.isEmpty
     }
 
     var isNoiseControlActive: Bool {
@@ -518,42 +549,14 @@ final class MainContentCoordinator {
         focusGate.canInsertFocusSet(into: focusSets)
     }
 
-    /// Whether a session matches a single quick-filter chip: a protocol chip
-    /// matches anywhere in the decoded stack; `Errors` matches *exactly* an
-    /// error session (a warning is not an error and must not be swept in).
-    nonisolated static func categoryMatches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        if category == .errors {
-            return session.status == .error
-        }
-        if let kind = category.protocolKind {
-            return session.protocolStack.contains(kind)
-        }
-        return true
+    /// Read-only copy used by the session-export extension before it leaves the
+    /// main actor to scope and serialize packet data.
+    var retainedFrameSnapshotForExport: [CapturedFrame] {
+        retainedFrames.frames
     }
 
-    /// Quick-category group semantics, in one testable place: selected protocol
-    /// chips are OR-ed within their group, selected status chips are OR-ed within
-    /// theirs, and the two groups combine with AND. An empty set ("All") is no
-    /// constraint.
-    nonisolated static func categoryFilterMatches(
-        _ session: SessionSummary,
-        categories: Set<SessionFilterCategory>
-    )
-        -> Bool
-    {
-        let protocolCategories = categories.filter { !$0.isStatusFilter }
-        let statusCategories = categories.filter(\.isStatusFilter)
-        if !protocolCategories.isEmpty,
-           !protocolCategories.contains(where: { categoryMatches(session, category: $0) })
-        {
-            return false
-        }
-        if !statusCategories.isEmpty,
-           !statusCategories.contains(where: { categoryMatches(session, category: $0) })
-        {
-            return false
-        }
-        return true
+    func setSessionExporting(_ isExporting: Bool) {
+        isExportingSession = isExporting
     }
 
     // MARK: Correlation
@@ -652,13 +655,13 @@ final class MainContentCoordinator {
     /// then refreshes the saved list. Returns the new file (nil if nothing to save).
     @discardableResult
     func saveCurrentCapture() -> SavedCapture? {
-        guard !liveFrames.isEmpty, let directory = Self.capturesDirectory() else {
+        guard !retainedFrames.isEmpty, let directory = Self.capturesDirectory() else {
             return nil
         }
         let stamp = Self.fileStampFormatter.string(from: Date())
         let url = directory.appendingPathComponent("Capture \(stamp).pcap")
         do {
-            try PcapWriter.write(linkType: currentLinkType, frames: liveFrames, to: url)
+            try PcapWriter.write(linkType: currentLinkType, frames: retainedFrames.frames, to: url)
         } catch {
             captureError = "Couldn’t save capture: \(error.localizedDescription)"
             return nil
@@ -674,12 +677,20 @@ final class MainContentCoordinator {
             if isCapturing {
                 stopCapture()
             }
+            // Supersede any in-flight live engine work and clear its state so a
+            // late snapshot can't overwrite the file being opened.
+            startGeneration &+= 1
+            resetSessionEngine(token: startGeneration)
             currentLinkType = parsed.linkType
             // A savefile carries no kernel accounting: whatever loss happened
             // during the original capture is not recoverable from the file, so
-            // the fidelity figure must read as unknown rather than perfect.
+            // the fidelity figure must read as unknown rather than perfect. The
+            // helper-buffer and local-retention counters are live-only, so they
+            // reset to zero for a static file too. The file is shown in full —
+            // `replace` bypasses the live retention bound and zeroes its count.
             captureStatistics = nil
-            liveFrames = parsed.frames
+            helperBufferDropCount = 0
+            retainedFrames.replace(with: parsed.frames)
             sessions = SessionBuilder.build(from: parsed.frames, linkType: parsed.linkType)
             isViewingSavedCapture = true
             captureError = nil
@@ -799,9 +810,14 @@ final class MainContentCoordinator {
 
     /// Clears all captured sessions (status-bar "Clear").
     func clearSessions() {
+        // Supersede any in-flight engine work so a late snapshot can't repopulate
+        // the list after a clear, and zero the accounting counters.
+        startGeneration &+= 1
+        resetSessionEngine(token: startGeneration)
         captureStatistics = nil
+        helperBufferDropCount = 0
+        retainedFrames.reset()
         sessions = []
-        liveFrames = []
         throughputSamples = []
         pendingChartBytes = 0
         isViewingSavedCapture = false
@@ -913,11 +929,16 @@ final class MainContentCoordinator {
         isStarting = true
         startGeneration &+= 1
         isViewingSavedCapture = false
-        liveFrames = []
+        retainedFrames.reset()
         sessions = []
         throughputSamples = []
         pendingChartBytes = 0
         lastSessionsUpdate = .distantPast
+        // Capture boundary: clear engine state + all drop/eviction counters so a
+        // new capture starts from a clean, zeroed accounting.
+        resetSessionEngine(token: startGeneration)
+        helperBufferDropCount = 0
+        captureStatistics = nil
         // Surface the live session table so captured traffic is actually visible
         // (a non-session surface may be selected when capture starts).
         if [.overview, .saved].contains(activeWorkspace.sidebarSelection) {
@@ -959,19 +980,18 @@ final class MainContentCoordinator {
     }
 
     func stopCapture() {
-        // Invalidate any in-flight start attempt so its watchdog/reply is ignored.
-        startGeneration &+= 1
-        helperFetchGeneration &+= 1
-        helperFetchInFlight = false
         pollTimer?.invalidate()
         pollTimer = nil
-        if let proxy = try? helper.proxy() {
-            proxy.stopCapture {}
+        // A fetch destructively drains the helper buffer. Let the one outstanding
+        // request return and enqueue its frames before sending Stop; invalidating
+        // it now would discard an already-drained batch in transit. The normal
+        // reply path calls `performStopCapture()` immediately afterward.
+        if !Self.forceDirectCapture, helperFetchInFlight {
+            helperStopRequested = true
+            isStarting = false
+            return
         }
-        live?.stop()
-        isCapturing = false
-        isStarting = false
-        captureStartedAt = nil
+        performStopCapture()
     }
 
     /// Top talkers by total bytes, for the dashboard.
@@ -1015,9 +1035,20 @@ final class MainContentCoordinator {
     private let layoutPreferences: WorkspaceLayoutPreferences
 
     private let live = try? LiveCapture()
+    /// Off-main incremental session engine: decodes and groups each captured frame
+    /// exactly once, so the main actor never re-decodes retained history.
+    private let sessionEngine = LiveSessionEngine()
+    /// Serializes engine access so batches fold in arrival order even though each
+    /// call hops onto the engine actor, and so a boundary reset is ordered ahead
+    /// of the ingests that follow it.
+    private var ingestChain: Task<Void, Never>?
     private var lastSessionsUpdate = Date.distantPast
     private var pendingChartBytes = 0
-    private var liveFrames: [CapturedFrame] = []
+    /// Bounded FIFO window of raw frames kept only for save/export. Independent of
+    /// session accumulation — evicting here never drops a session — and its
+    /// cumulative eviction count is surfaced only as retention truncation.
+    private var retainedFrames = RetainedFrameBuffer(capacity: MainContentCoordinator.retainedFrameLimit)
+
     private var pollTimer: Timer?
     /// Bumped every time a start attempt begins or ends. A late helper reply or a
     /// start watchdog compares its captured token against this so a stale callback
@@ -1026,6 +1057,9 @@ final class MainContentCoordinator {
     /// At most one helper frame-drain request may be outstanding. Without this
     /// guard, a wedged helper would accumulate a new XPC request every 350 ms.
     private var helperFetchInFlight = false
+    /// Stop waits behind the single destructive helper drain already in flight,
+    /// so frames removed from the helper buffer are never invalidated in transit.
+    private var helperStopRequested = false
     /// Retires late frame replies and timeout watchdogs when capture stops or a
     /// newer drain request replaces them.
     private var helperFetchGeneration = 0
@@ -1086,6 +1120,54 @@ final class MainContentCoordinator {
             return endpoint
         }
         return comps.dropLast().joined(separator: ":")
+    }
+
+    private func performStopCapture() {
+        helperStopRequested = false
+        let captureToken = startGeneration
+        // Invalidate any in-flight start attempt so its watchdog/reply is ignored.
+        startGeneration &+= 1
+        let stoppedToken = startGeneration
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
+        if !Self.forceDirectCapture, let proxy = try? helper.proxy() {
+            proxy.stopCapture { [weak self] batch in
+                // The helper worker has now finished its read loop, sampled final
+                // pcap_stats, flushed its last frames, and closed its own handle.
+                // The same typed reply carries the bounded final tail atomically,
+                // so a rapid next Start cannot make a separate fetch drain the
+                // wrong capture generation.
+                let frames = batch.frames.compactMap(CapturedFrame.init(message:))
+                let rejectedFrameCount = batch.frames.count - frames.count
+                let statistics = batch.stats.map(CaptureStatistics.init(helperStats:))
+                Task { @MainActor in
+                    guard let self,
+                          self.startGeneration == stoppedToken,
+                          !self.isCapturing else
+                    {
+                        return
+                    }
+                    guard rejectedFrameCount == 0 else {
+                        let detail = "The capture helper returned \(rejectedFrameCount) frame(s) with invalid metadata."
+                        self.helper.recordRuntimeConnectionFailure(detail)
+                        self.captureError = detail
+                        return
+                    }
+                    self.helperBufferDropCount = batch.bufferDroppedCount
+                    self.captureStatistics = statistics
+                    self.ingestFinalHelperBatch(
+                        frames,
+                        linkType: batch.captureLinkType,
+                        captureToken: captureToken,
+                        stoppedToken: stoppedToken
+                    )
+                }
+            }
+        }
+        live?.stop()
+        isCapturing = false
+        isStarting = false
+        captureStartedAt = nil
     }
 
     /// Groups sessions by an attribute read straight off them, in first-seen
@@ -1162,8 +1244,12 @@ final class MainContentCoordinator {
         UserDefaults.standard.set(Array(mutedHosts), forKey: Self.mutedHostsKey)
         UserDefaults.standard.set(mutedProtocols.map(\.rawValue), forKey: Self.mutedProtocolsKey)
     }
+}
 
-    private func startViaHelper(token: Int) {
+// MARK: - Live capture pipeline
+
+private extension MainContentCoordinator {
+    func startViaHelper(token: Int) {
         do {
             let proxy = try helper.proxy()
             proxy.startCapture(interface: captureInterface) { [weak self] started, message in
@@ -1203,6 +1289,7 @@ final class MainContentCoordinator {
         pollTimer?.invalidate()
         helperFetchGeneration &+= 1
         helperFetchInFlight = false
+        helperStopRequested = false
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
             guard let coordinator = self else {
                 return
@@ -1225,9 +1312,16 @@ final class MainContentCoordinator {
         let fetchToken = helperFetchGeneration
         let captureToken = startGeneration
 
-        proxy.fetchFrames { [weak self] datas, linkType in
-            let now = Date()
-            let frames = datas.map { CapturedFrame(bytes: Array($0), timestamp: now, originalLength: $0.count) }
+        proxy.fetchFrames { [weak self] batch in
+            // Each frame carries its own libpcap timestamp, captured length,
+            // original on-wire length, and link type — no shared batch `Date`,
+            // no length inferred from `bytes.count`. Malformed metadata fails the
+            // active capture clearly rather than being silently omitted.
+            let frames = batch.frames.compactMap(CapturedFrame.init(message:))
+            let rejectedFrameCount = batch.frames.count - frames.count
+            let bufferDrops = batch.bufferDroppedCount
+            let statistics = batch.stats.map(CaptureStatistics.init(helperStats:))
+            let batchLinkType = batch.captureLinkType
             Task { @MainActor in
                 guard let self,
                       self.isCapturing,
@@ -1237,7 +1331,24 @@ final class MainContentCoordinator {
                     return
                 }
                 self.helperFetchInFlight = false
-                self.ingest(frames, linkType: UInt32(truncatingIfNeeded: linkType))
+                guard rejectedFrameCount == 0 else {
+                    self.failActiveHelperCapture(
+                        "The capture helper returned \(rejectedFrameCount) frame(s) with invalid metadata."
+                    )
+                    return
+                }
+                // Capture-source loss and kernel/interface accounting, surfaced
+                // as their own figures (never folded into UI-retention eviction).
+                self.helperBufferDropCount = bufferDrops
+                // Always assign — including `nil`. When `pcap_stats` becomes
+                // unavailable, clearing stale accounting keeps the UI honest
+                // (unknown, not a lingering clean figure) rather than freezing
+                // the last sample.
+                self.captureStatistics = statistics
+                self.ingest(frames, linkType: batchLinkType)
+                if self.helperStopRequested {
+                    self.performStopCapture()
+                }
             }
         }
 
@@ -1250,13 +1361,34 @@ final class MainContentCoordinator {
             {
                 return
             }
+            if self.helperStopRequested {
+                // The outstanding drain did not reply within its normal bound.
+                // Continue teardown instead of leaving Stop stuck indefinitely;
+                // the helper's atomic stop reply still returns everything that
+                // remains in its bounded buffer. The timed-out request may have
+                // destructively drained frames before its reply was lost, though,
+                // so surface that uncertainty instead of retaining a misleading
+                // zero-loss state from the last pcap_stats sample.
+                let detail = "Capture stopped, but one in-flight helper batch did not return; final completeness is unknown."
+                self.captureError = detail
+                self.helper.recordRuntimeConnectionFailure(detail)
+                self.helperFetchInFlight = false
+                self.performStopCapture()
+                return
+            }
             self.failActiveHelperCapture("The capture helper stopped responding while capture was active.")
         }
     }
 
     private func failActiveHelperCapture(_ detail: String) {
+        // A failed drain/validation path must not leave the privileged helper
+        // capturing unattended after the app has moved to an error state.
+        if let proxy = try? helper.proxy() {
+            proxy.stopCapture { _ in }
+        }
         helperFetchGeneration &+= 1
         helperFetchInFlight = false
+        helperStopRequested = false
         helper.recordRuntimeConnectionFailure(detail)
         handleCaptureError("\(detail) Recover it in Settings → Helper.")
     }
@@ -1274,41 +1406,119 @@ final class MainContentCoordinator {
         live.start(
             interface: captureInterface,
             onBatch: { [weak self] frames, linkType in
-                Task { @MainActor in self?.ingest(frames, linkType: linkType) }
+                guard let coordinator = self else {
+                    return
+                }
+                Task { @MainActor in coordinator.ingest(frames, linkType: linkType) }
             },
             onError: { [weak self] message in
-                Task { @MainActor in self?.handleCaptureError(message) }
+                guard let coordinator = self else {
+                    return
+                }
+                Task { @MainActor in coordinator.handleCaptureError(message) }
             },
             onStatistics: { [weak self] sample in
-                Task { @MainActor in self?.captureStatistics = sample }
+                guard let coordinator = self else {
+                    return
+                }
+                Task { @MainActor in coordinator.captureStatistics = sample }
             }
         )
     }
 
     private func ingest(_ frames: [CapturedFrame], linkType: UInt32) {
         currentLinkType = linkType
-        liveFrames.append(contentsOf: frames)
-        if liveFrames.count > 8_000 {
-            liveFrames.removeFirst(liveFrames.count - 8_000)
-        }
+        appendRetainedFrames(frames)
         pendingChartBytes += frames.reduce(0) { $0 + $1.originalLength }
-        // Coalesce UI updates: rebuilding every session from all frames is heavy,
-        // so refresh the published list at most ~1.2×/sec while capturing.
+
+        // Coalesce UI refreshes to ~1.2×/sec, but decode/group *every* batch off
+        // the main actor so each frame is folded exactly once.
         let now = Date()
-        guard now.timeIntervalSince(lastSessionsUpdate) > 0.8 else {
-            return
+        let shouldSnapshot = now.timeIntervalSince(lastSessionsUpdate) > 0.8
+        if shouldSnapshot {
+            // Append a real-time throughput sample (bytes/sec over the interval).
+            let interval = min(max(now.timeIntervalSince(lastSessionsUpdate), 0.1), 5)
+            throughputSamples.append(ThroughputSample(bytesPerSecond: Double(pendingChartBytes) / interval))
+            if throughputSamples.count > 60 {
+                throughputSamples.removeFirst(throughputSamples.count - 60)
+            }
+            pendingChartBytes = 0
+            lastSessionsUpdate = now
         }
-        // Append a real-time throughput sample (bytes/sec over the interval).
-        let interval = min(max(now.timeIntervalSince(lastSessionsUpdate), 0.1), 5)
-        throughputSamples.append(ThroughputSample(bytesPerSecond: Double(pendingChartBytes) / interval))
-        if throughputSamples.count > 60 {
-            throughputSamples.removeFirst(throughputSamples.count - 60)
+
+        // Hand decode/group to the engine actor (off-main), chained so batches
+        // fold in arrival order. Snapshots are guarded by the capture generation
+        // so a late result from a superseded capture can never overwrite newer
+        // UI state.
+        let token = startGeneration
+        let previous = ingestChain
+        ingestChain = Task { @MainActor in
+            await previous?.value
+            await self.sessionEngine.ingest(frames, linkType: linkType, epoch: token)
+            guard shouldSnapshot,
+                  self.startGeneration == token,
+                  self.isCapturing,
+                  let snapshot = await self.sessionEngine.snapshot(epoch: token) else
+            {
+                return
+            }
+            self.publishLiveSessions(snapshot, expectedGeneration: token, isCapturing: true)
         }
-        pendingChartBytes = 0
-        lastSessionsUpdate = now
-        // Refresh the socket → app map, then attribute each session to its app.
+    }
+
+    /// Fold the helper worker's final post-stop drain after all previously queued
+    /// ingests, then publish one stopped snapshot. The capture token addresses the
+    /// engine epoch that just ended; the stopped token prevents a late reply from
+    /// overwriting a capture or savefile opened in the meantime.
+    private func ingestFinalHelperBatch(
+        _ frames: [CapturedFrame],
+        linkType: UInt32,
+        captureToken: Int,
+        stoppedToken: Int
+    ) {
+        currentLinkType = linkType
+        appendRetainedFrames(frames)
+        let previous = ingestChain
+        ingestChain = Task { @MainActor in
+            await previous?.value
+            await self.sessionEngine.ingest(frames, linkType: linkType, epoch: captureToken)
+            guard self.startGeneration == stoppedToken,
+                  !self.isCapturing,
+                  let snapshot = await self.sessionEngine.snapshot(epoch: captureToken) else
+            {
+                return
+            }
+            self.publishLiveSessions(
+                snapshot,
+                expectedGeneration: stoppedToken,
+                isCapturing: false
+            )
+        }
+    }
+
+    /// Stage raw frames for save/export within a bounded window. The window and
+    /// its saturating eviction count live in ``RetainedFrameBuffer``; this is a
+    /// thin hop so the ingest path reads clearly. Independent of session
+    /// accumulation — see ``retainedFrameLimit``.
+    private func appendRetainedFrames(_ frames: [CapturedFrame]) {
+        retainedFrames.append(contentsOf: frames)
+    }
+
+    /// Enrich an engine snapshot with app-side process attribution and publish it
+    /// to `sessions` on the next runloop turn.
+    ///
+    /// Process attribution stays here (main actor, off the decode/group path):
+    /// it reads the local socket table, which is an app concern, not the engine's.
+    /// The assignment hops one runloop turn so it can't reload an `NSTableView`
+    /// reentrantly from inside a click currently being handled, and it re-checks
+    /// the capture generation so a stale enrichment can't revive old state.
+    private func publishLiveSessions(
+        _ snapshot: [SessionSummary],
+        expectedGeneration: Int,
+        isCapturing expectedCaptureState: Bool
+    ) {
         ProcessResolver.shared.refresh()
-        var built = SessionBuilder.build(from: liveFrames, linkType: linkType)
+        var built = snapshot
         for index in built.indices where built[index].processName == nil {
             if let app = ProcessResolver.shared.appName(
                 forEndpoints: built[index].sourceEndpoint, built[index].destinationEndpoint
@@ -1316,24 +1526,34 @@ final class MainContentCoordinator {
                 built[index].processName = app
             }
         }
-        // Apply the rebuilt list on the next runloop turn rather than inline.
-        // If a user click is being handled by NSTableView at this instant,
-        // assigning `sessions` synchronously reloads the table from inside that
-        // delegate callback — a reentrant NSTableView operation. Hopping to the
-        // next turn guarantees the reload runs in its own clean transaction.
-        let snapshot = built
+        let applied = built
         Task { @MainActor in
-            self.sessions = snapshot
+            guard self.startGeneration == expectedGeneration,
+                  self.isCapturing == expectedCaptureState else
+            {
+                return
+            }
+            self.sessions = applied
             if self.activeWorkspace.autoSelectLatest,
                // Newest by timestamp, tie-broken by id so the choice never depends
-               // on the array's (now first-seen) order.
-               let latest = snapshot.max(by: {
+               // on the array's (first-seen) order.
+               let latest = applied.max(by: {
                    ($0.startTime, $0.id.uuidString) < ($1.startTime, $1.id.uuidString)
                }),
                self.activeWorkspace.selectedSessionID != latest.id
             {
                 self.activeWorkspace.selectedSessionID = latest.id
             }
+        }
+    }
+
+    /// Clears the engine and adopts a new capture generation. Enqueued on the
+    /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
+    /// work carries the previous token and is dropped by the engine's epoch guard.
+    private func resetSessionEngine(token: Int) {
+        let engine = sessionEngine
+        ingestChain = Task { @MainActor in
+            await engine.reset(epoch: token)
         }
     }
 

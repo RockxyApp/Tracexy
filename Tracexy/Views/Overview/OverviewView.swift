@@ -46,8 +46,7 @@ struct OverviewView: View {
         GridItem(.adaptive(minimum: 260), spacing: Theme.Metrics.spacingL),
     ]
 
-    /// Scoped like every other rollup here. The sidebar badge and Security
-    /// surface remain capture-wide on purpose; this preview describes the same
+    /// Scoped like every other rollup here. This preview describes the same
     /// filtered session set as the surrounding charts.
     private var scopedFindings: [Finding] {
         let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
@@ -128,15 +127,21 @@ struct OverviewView: View {
 
     @ViewBuilder private var fidelitySummary: some View {
         let stats = coordinator.captureStatistics
+        // Helper-stage loss is a separate figure from the kernel `pcap_stats`
+        // fidelity below. It can be non-zero even when the kernel reports a
+        // perfect capture, so it must pull the presentation off green and warn
+        // rather than being folded into (or hidden behind) the percent.
+        let helperDrops = coordinator.helperBufferDropCount
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             Text("Fidelity")
                 .font(Theme.Typography.captionMedium)
                 .foregroundStyle(.secondary)
             if let stats, let fidelity = stats.fidelity {
+                let incomplete = stats.isLossy || helperDrops > 0
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
                     Text(Self.percent.string(from: fidelity as NSNumber) ?? "—")
                         .font(Theme.Typography.metric)
-                        .foregroundStyle(stats.isLossy ? Color.orange : Color.green)
+                        .foregroundStyle(incomplete ? Color.orange : Color.green)
                         .monospacedDigit()
                     Text("captured")
                         .font(Theme.Typography.body)
@@ -151,6 +156,7 @@ struct OverviewView: View {
                         .font(Theme.Typography.caption)
                         .foregroundStyle(.orange)
                 }
+                helperDropNotice(helperDrops)
             } else {
                 Text("Not measured")
                     .font(Theme.Typography.surfaceTitle)
@@ -161,6 +167,9 @@ struct OverviewView: View {
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // Even with no kernel figure, known helper-stage loss is reported
+                // truthfully rather than left implied by "Not measured".
+                helperDropNotice(helperDrops)
             }
         }
     }
@@ -190,12 +199,12 @@ struct OverviewView: View {
                     .font(Theme.Typography.monoSmall)
                     .foregroundStyle(.secondary)
                 if !all.isEmpty {
-                    Button("Open Security") {
-                        coordinator.selectSidebarItem(.security)
+                    Button("Filter Security") {
+                        coordinator.showSecuritySessions()
                     }
                     .buttonStyle(.link)
                     .font(Theme.Typography.captionMedium)
-                    .help("Show the capture-wide Security findings list")
+                    .help("Show sessions with security findings in the full session table")
                 }
             }
             if all.isEmpty {
@@ -311,6 +320,19 @@ struct OverviewView: View {
         }
     }
 
+    /// A compact warning that the capture helper dropped frames before they
+    /// reached the app — shown whenever the count is non-zero, so a green kernel
+    /// fidelity never implies a complete capture when the helper stage lost data.
+    @ViewBuilder
+    private func helperDropNotice(_ helperDrops: UInt64) -> some View {
+        if helperDrops > 0 {
+            Text("\(helperDrops.formatted()) frames were dropped by the capture helper before reaching the app.")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func findingSeveritySummary(_ findings: [Finding]) -> some View {
         HStack(spacing: Theme.Metrics.spacingS) {
             ForEach(Finding.Severity.allCases, id: \.self) { severity in
@@ -361,7 +383,7 @@ struct OverviewView: View {
             {
                 return
             }
-            coordinator.selectSidebarItem(.sessions)
+            coordinator.showSecuritySessions()
             coordinator.select(session)
         } label: {
             HStack(spacing: Theme.Metrics.spacingM) {

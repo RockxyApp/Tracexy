@@ -10,13 +10,21 @@ protocol TracexyHelperProtocol {
     /// Begin capturing on `interface`. Reply: (started, errorMessage).
     func startCapture(interface: String, withReply reply: @escaping (Bool, String) -> Void)
 
-    /// Stop the active capture.
-    func stopCapture(withReply reply: @escaping () -> Void)
+    /// Stop the active capture and return the worker's final flushed batch plus
+    /// final accounting. Returning this atomically avoids a stop→fetch race with
+    /// the next capture generation.
+    func stopCapture(withReply reply: @escaping (FrameBatchMessage) -> Void)
 
-    /// Drain buffered frames. Reply: (frames, linkType). Each Data is one frame.
-    /// Process attribution is done app-side (see `ProcessResolver`), so the XPC
-    /// surface stays compatible with the originally-installed helper.
-    func fetchFrames(withReply reply: @escaping ([Data], Int) -> Void)
+    /// Drain buffered frames as a typed, `NSSecureCoding` batch.
+    ///
+    /// Replaces the legacy `([Data], Int)` surface: every frame now carries its
+    /// own libpcap timestamp, captured length, original on-wire length, and link
+    /// type, and the batch carries the helper's cumulative buffer-drop count and
+    /// `pcap_stats` accounting (see `FrameBatchMessage`). This is a protocol-v2
+    /// change — the app fails closed against a v1 helper (`getHelperInfo` still
+    /// classifies the mismatch) rather than falling back to an untyped drain.
+    /// Process attribution stays an app-side enrichment (see `ProcessResolver`).
+    func fetchFrames(withReply reply: @escaping (FrameBatchMessage) -> Void)
 }
 
 // MARK: - PktapHeader

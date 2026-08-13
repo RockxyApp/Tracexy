@@ -56,6 +56,13 @@ normalized) so both directions of a conversation land in one session. Each sessi
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
 
+Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
+controls. The same menu is available from the session row's **Export** submenu. **Export Session**
+writes a versioned `.tracexysession` document containing the session summary and its locally retained
+packet frames. **Export as pcap** writes a classic capture when all matching frames share one link type;
+**Export as pcapng** preserves mixed per-frame link types. Export is always an explicit local save-panel
+action and is limited to frames still present in the bounded raw-retention window.
+
 ## Correlation into actions
 
 Related sessions are correlated into a higher-level **action** — for example a DNS lookup, the TCP
@@ -69,18 +76,24 @@ lowers the confidence and shows the competing names rather than silently guessin
 ## Focus sets and filtering
 
 The filter area above the session list has two rows. The **protocol/category pills** narrow by
-protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket) and by status (**Errors**). Selected
-protocol pills combine with OR, selected status pills combine with OR, and the two groups combine with
-AND — so choosing *TCP* and *Errors* shows TCP sessions that failed. *Errors* means exactly an error; a
-warning is not swept in.
+protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket), by evidence-backed **Security**
+findings, and by exact status (**Errors**). Selected protocol pills combine with OR, selected
+investigation pills combine with OR, and the two groups combine with AND — so choosing *TCP* and
+*Errors* shows TCP sessions that failed. *Errors* means exactly an error; a warning is not swept in.
+*Security* includes sessions that produce a decoded finding: warning/error status, plaintext HTTP, an
+unanswered DNS query, or measured latency above the finding threshold.
+
+**Security** lives only in this filter bar; it is not a separate sidebar destination. The table keeps
+all of its columns, search, advanced rules, grouping, row context actions, selection, and inspector,
+so large finding sets can be narrowed and investigated rather than opened one row at a time.
 
 The **search row** below has an on/off checkbox, a field-scope menu (**All Fields**, Host, Client,
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an
-**Add Filter** button, and the **Group By** menu. All Fields searches the host, client process, protocol
+**Add Field** button, and the **Group By** menu. All Fields searches the host, client process, protocol
 labels, both endpoints, the info summary, and DNS answers. Turning the search off keeps the typed text
 but stops it constraining the list.
 
-For finer control, **Add Filter** opens the advanced rule builder: rows of *field · operator · value*,
+For finer control, **Add Field** opens the advanced rule builder: rows of *field · operator · value*,
 each independently on/off and joined to the previous row by AND or OR. Connectors evaluate strictly
 left-to-right (no operator precedence), so a saved set always filters the same way. Operators are
 Contains, Is, Starts With, Ends With, Does Not Contain, Is Not, and Regex; an invalid regex safely
@@ -99,6 +112,24 @@ Selecting a session opens the inspector, in a right-hand or bottom layout. It sh
 protocol **layers** and fields for the representative packet, and a **hex** pane whose byte ranges line
 up with those fields — click a field to highlight the bytes it came from. When a session carries an
 application-layer exchange (HTTP, DNS), a requests facet is offered.
+
+The right-hand **Details** dock uses compact two-column tables for assessment, decoded layer facts,
+host baseline, related actions, findings, and grouping evidence. Technical values are selectable and
+monospaced; related-action rows remain clickable so an investigation can move between sessions without
+leaving the dock.
+
+The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
+an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant
+backend: history, new-conversation, prompt, and send controls remain unavailable, and the Read-only control
+explains that no capture data or model request leaves the Mac.
+
+## Software updates
+
+When the signed appcast reports a newer release, the center toolbar status shows a gray **New Updates**
+capsule beside the capture state. The count represents newer appcast releases when that history is
+available. Click the capsule to open the standard Sparkle update experience. The capsule stays visible
+until the feed no longer reports a newer compatible release; closing the update window does not dismiss
+it as though the update had disappeared.
 
 ## Process attribution
 

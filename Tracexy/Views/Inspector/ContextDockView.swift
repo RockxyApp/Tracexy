@@ -38,9 +38,9 @@ struct ContextDockView: View {
         VStack(spacing: 0) {
             tabStrip
             Divider()
-            // Details reads as one native inset list with a summary footer; the
-            // AI Assistant owns its own layout so its composer can pin below a
-            // scrolling transcript.
+            // Details reads as stacked native diagnostics tables with a summary
+            // footer; the AI Assistant owns its own layout so its composer can
+            // pin below a scrolling transcript.
             switch coordinator.activeWorkspace.contextDockTab {
             case .details:
                 VStack(spacing: 0) {
@@ -48,7 +48,7 @@ struct ContextDockView: View {
                     detailsFooter
                 }
             case .aiAssistant:
-                aiAssistant
+                AIAssistantDockView(coordinator: coordinator)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -132,11 +132,11 @@ struct ContextDockView: View {
 
     // MARK: Details
 
-    /// Everything the app can *say* about the selection, in one native inset list:
+    /// Everything the app can *say* about the selection, in compact diagnostics tables:
     /// identity, verdict, layer facts, host baseline, related actions, security
     /// findings and grouping evidence. Identity stays mounted as the selection
-    /// header while native `Section` containers own the diagnostic groups below.
-    /// The derivations are unchanged; only their presentation hierarchy moved.
+    /// header while rounded, two-column tables own the diagnostic groups below.
+    /// The derivations and actions are unchanged; only their presentation moved.
     @ViewBuilder private var detailsList: some View {
         if let session = coordinator.selectedSession {
             let activity = coordinator.activity(containing: session)
@@ -148,53 +148,68 @@ struct ContextDockView: View {
 
                 Divider()
 
-                List {
-                    Section("Assessment") {
-                        verdict(for: session)
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Metrics.contextTableGroupSpacing) {
+                        ContextInspectorTable(title: "Assessment") {
+                            ContextInspectorFullRow {
+                                verdict(for: session)
+                            }
+                        }
 
-                    // State B leads with how the action spent its time; state A has
-                    // a single span, so its own layer's facts lead instead.
-                    if let activity, activity.sessions.count > 1 {
-                        Section("Where the Time Went") {
-                            whereTheTimeWent(activity)
+                        // State B leads with how the action spent its time; state A
+                        // has a single span, so its own layer's facts lead instead.
+                        if let activity, activity.sessions.count > 1 {
+                            ContextInspectorTable(title: "Where the Time Went") {
+                                ContextInspectorFullRow {
+                                    whereTheTimeWent(activity)
+                                }
+                            }
+                        } else if !topLayerFields(session).isEmpty {
+                            ContextInspectorFieldTable(
+                                title: "Layer Details",
+                                fields: topLayerFields(session).map {
+                                    ContextTableField(label: $0.name, value: $0.value)
+                                }
+                            )
                         }
-                    } else if !topLayerFields(session).isEmpty {
-                        Section("Layer Details") {
-                            thisLayer(session)
-                        }
-                    }
 
-                    if baselineHistory(for: session).count >= 3 {
-                        Section("Host Baseline · Last 60 Min") {
-                            hostBaseline(for: session)
+                        if baselineHistory(for: session).count >= 3 {
+                            ContextInspectorTable(title: "Host Baseline · Last 60 Min") {
+                                ContextInspectorFullRow {
+                                    hostBaseline(for: session)
+                                }
+                            }
                         }
-                    }
 
-                    if !relatedSessions(for: session).isEmpty {
-                        Section("Related Actions") {
-                            relatedActions(for: session)
+                        if !relatedSessions(for: session).isEmpty {
+                            ContextInspectorTable(title: "Related Actions") {
+                                relatedActions(for: session)
+                            }
                         }
-                    }
 
-                    if !findings(for: session).isEmpty {
-                        Section("Flagged Here") {
-                            securityFindings(for: session)
+                        if !findings(for: session).isEmpty {
+                            ContextInspectorTable(title: "Flagged Here") {
+                                securityFindings(for: session)
+                            }
                         }
-                    }
 
-                    if let activity, activity.sessions.count > 1 {
-                        Section("Grouping Evidence") {
-                            whyGrouped(activity)
-                        }
-                    } else if let activity {
-                        Section("Part of an Action") {
-                            partOfAnAction(activity, selected: session)
+                        if let activity, activity.sessions.count > 1 {
+                            ContextInspectorTable(title: "Grouping Evidence") {
+                                ContextInspectorFullRow {
+                                    whyGrouped(activity)
+                                }
+                            }
+                        } else if let activity {
+                            ContextInspectorTable(title: "Part of an Action") {
+                                ContextInspectorFullRow {
+                                    partOfAnAction(activity, selected: session)
+                                }
+                            }
                         }
                     }
+                    .padding(Theme.Metrics.contextTableOuterPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
             }
         } else {
             noSelection
@@ -221,108 +236,6 @@ struct ContextDockView: View {
         }
     }
 
-    // MARK: AI Assistant
-
-    /// An honest presentation shell for a future assistant. It shows what the
-    /// selection *would* be handed to an assistant (attached context), an empty
-    /// transcript, and a composer that is disabled because nothing is connected.
-    ///
-    /// It deliberately does nothing: no send, no storage, no simulated reply, no
-    /// settings call. The point is to make the assistant's place in the panel
-    /// learnable and to be truthful that it is not wired up yet.
-    private var aiAssistant: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                    attachedContext
-                    transcriptEmptyState
-                }
-                .padding(.horizontal, Theme.Metrics.spacingL)
-                .padding(.vertical, Theme.Metrics.spacingL)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Divider()
-            composer
-        }
-    }
-
-    /// The selection the assistant would reason over, summarised from values the
-    /// session already carries — nothing derived, nothing fetched.
-    private var attachedContext: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("ATTACHED CONTEXT")
-            if let session = coordinator.selectedSession {
-                attachedCard(session, activity: coordinator.activity(containing: session))
-            } else {
-                facetEmpty("Select a session and it is attached here for the assistant to reference.")
-            }
-        }
-    }
-
-    /// No transcript exists because nothing has run. Said plainly rather than
-    /// faked with sample messages.
-    private var transcriptEmptyState: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            SectionHeader("CONVERSATION")
-            VStack(spacing: Theme.Metrics.spacingM) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: Theme.Icon.hero))
-                    .foregroundStyle(.tertiary)
-                Text("No messages yet")
-                    .font(Theme.Typography.bodyMedium)
-                Text("Once an assistant is connected, your questions and its answers "
-                    + "about this capture will appear here.")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Theme.Metrics.spacingL)
-        }
-    }
-
-    /// The prompt/send affordance, disabled with a plain "not connected" note.
-    /// The text field binds to a constant so there is nowhere for input to be
-    /// stored, and the button does nothing — the shell cannot send by accident.
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: Theme.Icon.small))
-                    .foregroundStyle(.secondary)
-                Text("Captured data stays on this Mac. Nothing is sent until you connect "
-                    + "an assistant and explicitly ask.")
-                    .font(Theme.Typography.micro)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: Theme.Metrics.spacingM) {
-                TextField("Ask about this selection…", text: .constant(""))
-                    .textFieldStyle(.roundedBorder)
-                    .font(Theme.Typography.body)
-                    .disabled(true)
-                    .accessibilityLabel("Message the assistant")
-                Button {
-                    // Intentionally inert: there is no assistant backend to send to.
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: Theme.Icon.large))
-                }
-                .buttonStyle(.plain)
-                .disabled(true)
-                .foregroundStyle(.tertiary)
-                .accessibilityLabel("Send message")
-                .help("The assistant is not connected yet.")
-            }
-            Text("Assistant not connected yet.")
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingM)
-    }
-
     // MARK: Security findings
 
     /// What was flagged on this selection, folded into Details rather than living
@@ -332,20 +245,16 @@ struct ContextDockView: View {
     private func securityFindings(for session: SessionSummary) -> some View {
         let items = findings(for: session)
         if !items.isEmpty {
-            ForEach(items) { finding in
-                HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-                    Image(systemName: finding.severity.systemImage)
-                        .foregroundStyle(finding.severity.tint)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(finding.title)
-                            .font(Theme.Typography.bodyMedium)
-                        Text(finding.subtitle)
-                            .font(Theme.Typography.micro)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, finding in
+                if index > 0 {
+                    Divider()
                 }
+                ContextInspectorInsightRow(
+                    systemImage: finding.severity.systemImage,
+                    title: finding.title,
+                    detail: finding.subtitle,
+                    color: finding.severity.tint
+                )
             }
         }
     }
@@ -441,26 +350,6 @@ struct ContextDockView: View {
         }
     }
 
-    /// State A's counterpart to "where the time went": the facts of the layer the
-    /// selected session actually terminated in, read off its own decode rather
-    /// than compared with anything.
-    @ViewBuilder
-    private func thisLayer(_ session: SessionSummary) -> some View {
-        let fields = topLayerFields(session)
-        if !fields.isEmpty {
-            ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
-                LabeledContent(field.name) {
-                    Text(field.value)
-                        .font(Theme.Typography.monoSmall)
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .font(Theme.Typography.caption)
-            }
-        }
-    }
-
     // MARK: Host baseline
 
     /// The host's recent latency history as a sparkline, with the selected
@@ -508,8 +397,13 @@ struct ContextDockView: View {
     private func relatedActions(for session: SessionSummary) -> some View {
         let peers = relatedSessions(for: session)
         if !peers.isEmpty {
-            ForEach(peers.prefix(4)) { peer in
-                relatedCard(peer, to: session)
+            ForEach(Array(peers.prefix(4).enumerated()), id: \.element.id) { index, peer in
+                if index > 0 {
+                    Divider()
+                }
+                ContextInspectorFullRow {
+                    relatedCard(peer, to: session)
+                }
             }
         }
     }
@@ -629,15 +523,6 @@ struct ContextDockView: View {
 
     // MARK: Shared chrome
 
-    /// A facet with nothing to say says so, rather than removing its own tab —
-    /// a strip whose width changes per selection cannot be learned.
-    private func facetEmpty(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Typography.caption)
-            .foregroundStyle(.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
     private func confidencePill(_ tier: ConfidenceTier) -> some View {
         Text(tier.title)
             .font(Theme.Typography.badge)
@@ -645,63 +530,6 @@ struct ContextDockView: View {
             .padding(.vertical, 1)
             .background(Capsule().fill(Self.tint(for: tier).opacity(0.15)))
             .foregroundStyle(Self.tint(for: tier))
-    }
-
-    private func attachedCard(_ session: SessionSummary, activity: Activity?) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            Text(activity?.title ?? session.host)
-                .font(Theme.Typography.bodyEmphasis)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if !session.protocolStack.isEmpty {
-                HStack(spacing: Theme.Metrics.spacingS) {
-                    ForEach(session.protocolStack, id: \.self) { proto in
-                        Text(proto.label)
-                            .font(Theme.Typography.badge)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Theme.color(for: proto).opacity(0.18), in: Capsule())
-                            .foregroundStyle(Theme.color(for: proto))
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                attachedFact("Process", session.processName ?? "—")
-                attachedFact("Status", session.status.label)
-                if let latency = session.latencyMilliseconds {
-                    attachedFact("Latency", Self.ms(latency))
-                }
-                attachedFact("Bytes", Int64(session.totalBytes).formatted(.byteCount(style: .memory)))
-                if let activity, activity.sessions.count > 1 {
-                    attachedFact("Action", "\(activity.sessions.count) sessions")
-                }
-            }
-        }
-        .padding(Theme.Metrics.spacingM)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        )
-    }
-
-    private func attachedFact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-            Text(label)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
-            Text(value)
-                .font(Theme.Typography.caption)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
     }
 
     /// A glyph per tier, so confidence is legible without relying on colour —

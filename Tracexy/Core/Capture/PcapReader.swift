@@ -2,24 +2,100 @@ import Foundation
 
 // MARK: - CapturedFrame
 
-/// One captured packet read from a `.pcap` file: the captured bytes, its
-/// timestamp, and the original on-wire length (which may exceed the captured
-/// length when a snaplen truncated the packet).
-nonisolated struct CapturedFrame {
+/// One captured packet: the captured bytes, its timestamp, and the original
+/// on-wire length (which may exceed the captured length when a snaplen truncated
+/// the packet). Read from a `.pcap` file, or converted from a live helper frame.
+nonisolated struct CapturedFrame: Sendable {
     // MARK: Lifecycle
 
-    init(bytes: [UInt8], timestamp: Date, originalLength: Int, processName: String? = nil) {
+    init(
+        bytes: [UInt8],
+        timestamp: Date,
+        originalLength: Int,
+        capturedLength: Int? = nil,
+        linkType: UInt32? = nil,
+        processName: String? = nil
+    ) {
         self.bytes = bytes
         self.timestamp = timestamp
         self.originalLength = originalLength
+        // The captured length is the number of bytes we actually hold. File and
+        // programmatic frames don't report it separately, so it defaults to the
+        // bytes present; a live helper frame passes its validated `caplen`.
+        self.capturedLength = capturedLength ?? bytes.count
+        self.linkType = linkType
         self.processName = processName
+    }
+
+    /// Builds a `CapturedFrame` from a helper's `NSSecureCoding` DTO, validating
+    /// defensively: impossible, negative, or overflowing metadata is rejected
+    /// truthfully (returns `nil`). A captured-length that disagrees with the bytes
+    /// actually present is corrupt metadata and is likewise rejected — not
+    /// normalized — because a frame whose header and payload disagree cannot be
+    /// trusted. Never traps on malformed input.
+    init?(message: CapturedFrameMessage) {
+        let byteArray = [UInt8](message.bytes)
+        // Timestamp must be a real instant: non-negative seconds and a
+        // microsecond fraction within one second. A bad clock value is rejected
+        // rather than folded into a nonsense `Date`.
+        guard message.timestampSeconds >= 0,
+              message.timestampMicroseconds >= 0,
+              message.timestampMicroseconds < 1_000_000 else
+        {
+            return nil
+        }
+        // Captured length is the helper's `pcap_pkthdr.caplen`. It must be
+        // non-negative, representable, bounded well below any real frame (so a
+        // huge value can't be trusted into an overflow), and — because the bytes
+        // *are* the captured payload — exactly equal to the bytes present. Any
+        // disagreement is corrupt metadata and the frame is rejected truthfully.
+        let reportedCaptured = message.capturedLength
+        guard reportedCaptured >= 0,
+              reportedCaptured <= Int64(CapturedFrame.maxReasonableLength),
+              Int(reportedCaptured) == byteArray.count else
+        {
+            return nil
+        }
+        // On-wire length must be non-negative and sane. It may legitimately
+        // exceed the captured bytes (snaplen truncation), but never fall below
+        // them. Reject an impossible value instead of inferring a replacement
+        // from the captured payload size.
+        let reportedOriginal = message.originalLength
+        guard reportedOriginal >= 0,
+              reportedOriginal <= Int64(CapturedFrame.maxReasonableLength),
+              reportedOriginal >= reportedCaptured else
+        {
+            return nil
+        }
+        let interval = Double(message.timestampSeconds)
+            + Double(message.timestampMicroseconds) / 1_000_000
+        self.init(
+            bytes: byteArray,
+            timestamp: Date(timeIntervalSince1970: interval),
+            originalLength: Int(reportedOriginal),
+            capturedLength: byteArray.count,
+            linkType: message.linkType
+        )
     }
 
     // MARK: Internal
 
+    /// Maximum on-wire length the app will accept from a helper frame. Well above
+    /// any real frame (jumbo/LRO segments stay under ~64 KiB), so a larger value
+    /// is corrupt metadata to be rejected rather than trusted into overflow.
+    static let maxReasonableLength = 1_000_000
+
     let bytes: [UInt8]
     let timestamp: Date
     let originalLength: Int
+    /// Bytes actually captured for this frame (`pcap_pkthdr.caplen` for a live
+    /// helper frame; the bytes present for a file frame). Kept distinct from
+    /// `originalLength`, which may be larger when a snaplen truncated the packet.
+    let capturedLength: Int
+    /// The frame's own link type when it came from a live helper batch (each
+    /// frame carries its own DLT); `nil` for file frames, which decode under the
+    /// file's single link type.
+    var linkType: UInt32?
     /// Originating process name from pktap, when capturing live (nil = unknown).
     var processName: String?
 }

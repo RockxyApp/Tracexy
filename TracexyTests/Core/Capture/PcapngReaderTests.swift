@@ -36,6 +36,7 @@ struct PcapngReaderTests {
         #expect(result.linkType == LinkType.ethernet)
         #expect(result.frames.count == 1)
         #expect(result.frames[0].bytes == payload)
+        #expect(result.frames[0].linkType == LinkType.ethernet)
         #expect(abs(result.frames[0].timestamp.timeIntervalSince1970 - 1_700_000_000.5) < 0.0001)
     }
 

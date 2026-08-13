@@ -84,6 +84,12 @@ struct SessionCenterView: View {
             } else {
                 firstRunEmptyState
             }
+        } else if coordinator.activeWorkspace.categoryFilters.contains(.security) {
+            ContentUnavailableView {
+                Label("No Security Findings", systemImage: "checkmark.shield")
+            } description: {
+                Text("No sessions match the active Security filter and the other filters above.")
+            }
         } else {
             ContentUnavailableView.search
         }
@@ -363,6 +369,19 @@ struct SessionCenterView: View {
         let proto = session.primaryProtocol
 
         Button("Inspect Session", systemImage: "sidebar.right") { coordinator.select(session) }
+
+        Divider()
+
+        Menu {
+            ForEach(SessionExportFormat.allCases) { format in
+                Button(format.title) {
+                    coordinator.exportSession(session, as: format)
+                }
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .disabled(!coordinator.canExport(session))
 
         Divider()
 

@@ -32,7 +32,11 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
 
 - **Typed, narrow XPC surface.** The helper exposes only a small, typed protocol: report helper info,
   start capture on an interface, stop capture, and fetch buffered frames. It does not expose arbitrary
-  command execution, shell, or file access.
+  command execution, shell, or file access. Frames are drained as typed `NSSecureCoding` objects
+  (`FrameBatchMessage`/`CapturedFrameMessage`) with the secure-coding class allow-list configured on
+  both endpoints; the app validates every field defensively and rejects malformed metadata rather than
+  trusting it. This is protocol **v2** — an older v1 helper is classified incompatible and Start is
+  gated with an update prompt, never silently downgraded to an untyped drain.
 - **Bidirectional code-sign validation.** The helper validates every connecting caller (signing-team
   match with a certificate-chain fallback, plus a bundle-identity allowlist checked against the
   connection's audit token to resist PID races) before accepting it. Independently, the app validates
@@ -40,8 +44,14 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   rather than being silently "fixed." That comparison targets the helper launchd actually executes — the
   binary embedded in the app bundle (`Contents/Library/HelperTools`) that SMAppService runs in place —
   not a legacy `/Library/PrivilegedHelperTools` artifact, which Tracexy never installs.
-- **Bounded behavior.** The helper only captures and buffers frames. Its frame buffer is capped, and it
-  stops capturing when the owning app disconnects — it does not run unbounded or unattended.
+- **Bounded behavior.** The helper only captures and buffers frames. Its frame buffer is capped by a
+  named bounded-buffer policy that counts every eviction, so a drop is reported (in the drain batch and,
+  in the UI, as its own capture-stage figure — distinct from `pcap_stats` kernel/interface drops, and
+  never folded into them) rather than hidden. Capture teardown is
+  race-free: the caller requests stop and waits while the worker thread alone closes the pcap handle.
+  The typed stop reply atomically returns the worker's final flush and final accounting, avoiding both
+  silent tail loss and a stop→fetch race with the next capture generation.
+  The helper stops capturing when the owning app disconnects — it does not run unbounded or unattended.
 
 ## Reporting a vulnerability
 

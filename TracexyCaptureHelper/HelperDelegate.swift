@@ -19,7 +19,7 @@ final class HelperDelegate: NSObject, NSXPCListenerDelegate {
         Self.logger.info("Accepted XPC connection from pid \(connection.processIdentifier)")
         IdleExitMonitor.resetIdleTimer()
 
-        connection.exportedInterface = NSXPCInterface(with: TracexyHelperProtocol.self)
+        connection.exportedInterface = TracexyHelperInterface.make()
         connection.exportedObject = CaptureService.shared
 
         connection.invalidationHandler = {

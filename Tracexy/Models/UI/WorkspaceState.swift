@@ -66,7 +66,7 @@ final class WorkspaceState: Identifiable {
     /// text. Turning it off keeps the typed query but stops it constraining the
     /// list — and a disabled search does not count as an active filter.
     var isSearchEnabled: Bool = true
-    /// Active category tabs (protocol group + status group). Empty = "All".
+    /// Active category tabs (protocol group + investigation group). Empty = "All".
     var categoryFilters: Set<SessionFilterCategory> = []
     /// Sidebar drill-down scopes (a single host / process / IP selected in the sidebar).
     var hostFilter: String?

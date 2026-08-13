@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Tracexy
 
@@ -125,28 +126,16 @@ struct WorkspaceFooterModelTests {
     @Test("Intelligence surfaces keep their own quiet summaries")
     func statusTextIntelligenceSurfaces() {
         #expect(SessionStatusBarModel.statusText(
-            surface: .overview, totalSessions: 0, visibleCount: 0, hasSelection: false, findingCount: 0
+            surface: .overview, totalSessions: 0, visibleCount: 0, hasSelection: false
         ) == "Capture overview · No sessions")
 
         #expect(SessionStatusBarModel.statusText(
-            surface: .overview, totalSessions: 4, visibleCount: 4, hasSelection: false, findingCount: 0
+            surface: .overview, totalSessions: 4, visibleCount: 4, hasSelection: false
         ) == "Capture overview · 4 sessions")
 
         #expect(SessionStatusBarModel.statusText(
-            surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false, findingCount: 0
+            surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false
         ) == "Flow map · 2 sessions")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 0
-        ) == "No findings")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 1
-        ) == "1 finding")
-
-        #expect(SessionStatusBarModel.statusText(
-            surface: .security, totalSessions: 9, visibleCount: 9, hasSelection: false, findingCount: 3
-        ) == "3 findings")
     }
 
     @Test("Non-session surfaces expose no controls but retain their summaries")
@@ -156,7 +145,6 @@ struct WorkspaceFooterModelTests {
         #expect(StatusSurface.sessionList.showsSessionControls)
         #expect(!StatusSurface.overview.showsSessionControls)
         #expect(!StatusSurface.flow.showsSessionControls)
-        #expect(!StatusSurface.security.showsSessionControls)
     }
 
     // MARK: - Telemetry chips
@@ -243,6 +231,8 @@ struct WorkspaceFooterModelTests {
             hasCaptureStatistics: true,
             totalDropped: 5,
             isMaterialLoss: true,
+            helperBufferDropCount: 7,
+            retainedFrameEvictionCount: 9,
             errorCount: 2,
             hasCaptureDuration: true,
             liveBytesPerSecond: 4_096,
@@ -250,9 +240,67 @@ struct WorkspaceFooterModelTests {
             bytesUp: 60,
             bytesDown: 40
         )
+        // Capture-stage loss (kernel then helper) leads; retention truncation —
+        // a save/export bound, not capture loss — trails everything.
         #expect(items.map(\.kind) == [
-            .packetDrops, .sessionErrors, .captureDuration, .liveRate, .totalBytes, .bytesUp, .bytesDown,
+            .packetDrops, .helperDrops, .sessionErrors, .captureDuration, .liveRate,
+            .totalBytes, .bytesUp, .bytesDown, .retentionTruncation,
         ])
+    }
+
+    // MARK: - Helper-stage drops (distinct from kernel loss)
+
+    @Test("Helper drops appear whenever the count is non-zero, independent of pcap_stats")
+    func helperDropsPresence() {
+        // Absent when nothing was dropped, with or without kernel statistics.
+        #expect(telemetry(hasCaptureStatistics: false, helperBufferDropCount: 0, kind: .helperDrops) == nil)
+        #expect(telemetry(hasCaptureStatistics: true, helperBufferDropCount: 0, kind: .helperDrops) == nil)
+
+        // Present and warning even when pcap_stats is unavailable — helper-stage
+        // loss is real capture loss the kernel figure never sees.
+        let noStats = telemetry(hasCaptureStatistics: false, helperBufferDropCount: 12, kind: .helperDrops)
+        #expect(noStats?.role == .warning)
+        #expect(noStats?.text.contains("helper") == true)
+
+        // Present and warning even when the kernel reports a perfect capture: a
+        // green fidelity must never imply the helper stage lost nothing.
+        let perfectKernel = telemetry(
+            hasCaptureStatistics: true, totalDropped: 0, isMaterialLoss: false,
+            helperBufferDropCount: 3, kind: .helperDrops
+        )
+        #expect(perfectKernel?.role == .warning)
+        // The kernel packet-drops chip stays absent — the two stages never merge.
+        #expect(telemetry(
+            hasCaptureStatistics: true, totalDropped: 0, helperBufferDropCount: 3, kind: .packetDrops
+        ) == nil)
+    }
+
+    // MARK: - Retention truncation (save/export bound, never capture loss)
+
+    @Test("Retention truncation is a neutral notice, never a capture-loss alarm")
+    func retentionTruncationPresence() {
+        #expect(telemetry(retainedFrameEvictionCount: 0, kind: .retentionTruncation) == nil)
+
+        let truncated = telemetry(retainedFrameEvictionCount: 5_000, kind: .retentionTruncation)
+        // Neutral, not warning/error — sessions are intact; only the save tail was trimmed.
+        #expect(truncated?.role == .neutral)
+        #expect(truncated?.text.contains("not retained") == true)
+        // It never masquerades as kernel packet loss.
+        #expect(truncated?.kind != .packetDrops)
+        // A pure retention eviction produces no packet-drop or helper-drop chip.
+        let items = makeTelemetry(retainedFrameEvictionCount: 5_000)
+        #expect(!items.contains { $0.kind == .packetDrops || $0.kind == .helperDrops })
+    }
+
+    @Test("Large UInt64 loss counts format without lossy narrowing")
+    func lossCountsAvoidLossyNarrowing() {
+        // Counts wider than Int32 must survive to the display text intact — the
+        // model takes UInt64 end-to-end rather than narrowing to Int.
+        let big: UInt64 = 5_000_000_000
+        let helper = telemetry(helperBufferDropCount: big, kind: .helperDrops)
+        #expect(helper?.text.contains(big.formatted()) == true)
+        let retention = telemetry(retainedFrameEvictionCount: big, kind: .retentionTruncation)
+        #expect(retention?.text.contains(big.formatted()) == true)
     }
 
     // MARK: - Details footer summary
@@ -319,8 +367,10 @@ struct WorkspaceFooterModelTests {
     private func makeTelemetry(
         isCapturing: Bool = false,
         hasCaptureStatistics: Bool = false,
-        totalDropped: Int = 0,
+        totalDropped: UInt64 = 0,
         isMaterialLoss: Bool = false,
+        helperBufferDropCount: UInt64 = 0,
+        retainedFrameEvictionCount: UInt64 = 0,
         errorCount: Int = 0,
         hasCaptureDuration: Bool = false,
         liveBytesPerSecond: Double? = nil,
@@ -332,9 +382,13 @@ struct WorkspaceFooterModelTests {
     {
         SessionStatusBarModel.telemetry(
             isCapturing: isCapturing,
-            hasCaptureStatistics: hasCaptureStatistics,
-            totalDropped: totalDropped,
-            isMaterialLoss: isMaterialLoss,
+            loss: CaptureLoss(
+                hasStatistics: hasCaptureStatistics,
+                totalDropped: totalDropped,
+                isMaterialLoss: isMaterialLoss,
+                helperDropCount: helperBufferDropCount,
+                retentionEvictionCount: retainedFrameEvictionCount
+            ),
             errorCount: errorCount,
             hasCaptureDuration: hasCaptureDuration,
             liveBytesPerSecond: liveBytesPerSecond,
@@ -348,8 +402,10 @@ struct WorkspaceFooterModelTests {
     private func telemetry(
         isCapturing: Bool = false,
         hasCaptureStatistics: Bool = false,
-        totalDropped: Int = 0,
+        totalDropped: UInt64 = 0,
         isMaterialLoss: Bool = false,
+        helperBufferDropCount: UInt64 = 0,
+        retainedFrameEvictionCount: UInt64 = 0,
         errorCount: Int = 0,
         hasCaptureDuration: Bool = false,
         liveBytesPerSecond: Double? = nil,
@@ -365,6 +421,8 @@ struct WorkspaceFooterModelTests {
             hasCaptureStatistics: hasCaptureStatistics,
             totalDropped: totalDropped,
             isMaterialLoss: isMaterialLoss,
+            helperBufferDropCount: helperBufferDropCount,
+            retainedFrameEvictionCount: retainedFrameEvictionCount,
             errorCount: errorCount,
             hasCaptureDuration: hasCaptureDuration,
             liveBytesPerSecond: liveBytesPerSecond,
@@ -379,8 +437,7 @@ struct WorkspaceFooterModelTests {
             surface: .sessionList,
             totalSessions: total,
             visibleCount: visible,
-            hasSelection: selected,
-            findingCount: 0
+            hasSelection: selected
         )
     }
 }

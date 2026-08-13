@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - CaptureStatistics
+
 /// Kernel-side capture accounting, read from `pcap_stats`.
 ///
 /// This is the figure every other number in the app is conditional on. Session
@@ -9,7 +11,7 @@ import Foundation
 /// much it missed is asking to be trusted rather than checked.
 ///
 /// `CLAUDE.md` §3 requires drop-counting on the capture path; this is it.
-struct CaptureStatistics: Sendable, Equatable {
+nonisolated struct CaptureStatistics: Sendable, Equatable {
     /// Packets delivered to us by the kernel filter.
     var received: UInt32 = 0
     /// Packets the kernel buffer dropped because we did not drain it fast enough.
@@ -17,13 +19,13 @@ struct CaptureStatistics: Sendable, Equatable {
     /// Packets the interface itself dropped before the filter saw them.
     var droppedByInterface: UInt32 = 0
 
-    var totalDropped: UInt32 {
-        droppedByKernel &+ droppedByInterface
+    var totalDropped: UInt64 {
+        UInt64(droppedByKernel) + UInt64(droppedByInterface)
     }
 
     /// Everything the capture could have seen.
-    var totalOffered: UInt32 {
-        received &+ totalDropped
+    var totalOffered: UInt64 {
+        UInt64(received) + totalDropped
     }
 
     /// Fraction of offered packets actually captured, `0...1`.
@@ -46,5 +48,21 @@ struct CaptureStatistics: Sendable, Equatable {
             return false
         }
         return fidelity < 0.995
+    }
+}
+
+// MARK: - CaptureStatistics + HelperCaptureStats
+
+extension CaptureStatistics {
+    /// Maps the helper's raw `pcap_stats` carrier onto the richer app figure. An
+    /// explicit conversion in an extension (so the struct keeps its memberwise
+    /// initializer) — the helper stays free of the app's fidelity/threshold
+    /// policy and only reports the three counters it actually has.
+    nonisolated init(helperStats: HelperCaptureStats) {
+        self.init(
+            received: helperStats.received,
+            droppedByKernel: helperStats.droppedByKernel,
+            droppedByInterface: helperStats.droppedByInterface
+        )
     }
 }
