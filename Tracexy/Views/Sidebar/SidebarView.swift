@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// swaps the whole body so each kind of work stands alone, instead of stacking
 /// Monitor + Protocols + Sources + Favorites into one crowded list.
 ///
-/// - Browse  — Monitor destinations (Sessions/Overview/Flow Map), the Protocols
+/// - Browse  — Monitor destinations (Overview/Sessions/Flow Map), the Protocols
 ///             lens group, and Sources (Apps/Domains/IPs). Protocols is a single
 ///             disclosure group, collapsed by default: those rows filter the same
 ///             list rather than navigating anywhere, so they stay secondary to the

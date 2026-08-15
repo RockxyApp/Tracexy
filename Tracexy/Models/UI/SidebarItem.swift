@@ -93,7 +93,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
 
     nonisolated var items: [SidebarItem] {
         switch self {
-        case .monitor: [.sessions, .overview, .flow]
+        case .monitor: [.overview, .sessions, .flow]
         case .protocols: [.dns, .tcp, .tls, .http, .quic]
         }
     }

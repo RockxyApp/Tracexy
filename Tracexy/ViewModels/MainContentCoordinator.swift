@@ -156,6 +156,20 @@ final class MainContentCoordinator {
     /// live one (so the UI can label it and Start replaces it).
     var isViewingSavedCapture = false
 
+    /// The saved file currently open in this workspace, or `nil` during a live
+    /// capture or an idle session. Held so the Overview can label the file
+    /// truthfully (name, format, size, provenance) instead of guessing. Cleared at
+    /// every live/new/clear boundary so a stale file identity can never outlive the
+    /// capture it described.
+    private(set) var activeSavedCapture: SavedCapture?
+
+    /// Bounded, deterministic frames-over-time aggregation for the open saved
+    /// capture, computed once at open/import and cached here. `nil` for live and
+    /// idle captures. Derived from real frame timestamps/lengths behind this seam,
+    /// so the Overview chart draws from per-bucket totals and never re-scans frames
+    /// or receives packet bytes.
+    private(set) var savedCaptureActivity: CaptureActivity?
+
     /// Link type of the current capture, needed to write a faithful `.pcap`.
     var currentLinkType: UInt32 = LinkType.ethernet
 
@@ -184,6 +198,26 @@ final class MainContentCoordinator {
     /// buffer so there is a single source of truth for the count.
     var retainedFrameEvictionCount: UInt64 {
         retainedFrames.evictionCount
+    }
+
+    /// Raw frames currently held for save/export. Distinct from the session count:
+    /// this is only the recent tail kept in memory, bounded by
+    /// ``retainedFrameLimit``. Surfaced as retention state, never as capture loss.
+    var retainedFrameCount: Int {
+        retainedFrames.count
+    }
+
+    /// The retention window's capacity — the denominator in the Overview's
+    /// "N / capacity frames" retention readout.
+    var retainedFrameCapacity: Int {
+        Self.retainedFrameLimit
+    }
+
+    /// Sum of the captured lengths of the retained frames — the payload bytes a
+    /// `.pcap` save would write. Used only to estimate a save size; it is neither
+    /// capture fidelity nor total captured traffic.
+    var retainedCapturedByteCount: Int {
+        retainedFrames.capturedByteCount
     }
 
     /// All sessions decoded from the current capture's real frames.
@@ -264,29 +298,10 @@ final class MainContentCoordinator {
         sessions.filter { $0.status == .warning }.count
     }
 
-    /// Rollups below describe **what the user is currently looking at**, so they
-    /// are computed over `visibleSessions` rather than every decoded session.
-    /// Reporting capture-wide totals beside a filtered list is a contradiction
-    /// the user cannot resolve: the list says 40 rows, the summary says 1,284,
-    /// and nothing on screen explains the gap.
-    var medianLatencyMilliseconds: Double? {
-        let values = visibleSessions.compactMap(\.latencyMilliseconds).sorted()
-        guard !values.isEmpty else {
-            return nil
-        }
-        return values[values.count / 2]
-    }
-
-    /// 95th-percentile latency — the slow tail Overview reports next to the median.
-    var p95LatencyMilliseconds: Double? {
-        let values = visibleSessions.compactMap(\.latencyMilliseconds).sorted()
-        guard !values.isEmpty else {
-            return nil
-        }
-        let index = min(values.count - 1, Int((Double(values.count) * 0.95).rounded(.down)))
-        return values[index]
-    }
-
+    /// Severity-ranked findings across the whole capture, derived only from real
+    /// decoded signals (status, plaintext HTTP, empty DNS answers, high DNS
+    /// response time). The Overview scopes these to the active filter before
+    /// display, so a filtered list and its findings summary never disagree.
     var findings: [Finding] {
         var result: [Finding] = []
         for session in sessions {
@@ -323,10 +338,14 @@ final class MainContentCoordinator {
                 ))
             }
             if let latency = session.latencyMilliseconds, latency > 400 {
+                // `latencyMilliseconds` is the DNS query→response time only (see
+                // `SessionAccumulator`), so the finding names that specifically
+                // rather than claiming a general network-latency figure we do not
+                // measure.
                 result.append(Finding(
                     severity: .note,
-                    title: "High latency (\(Int(latency)) ms)",
-                    subtitle: session.host,
+                    title: "High DNS response time",
+                    subtitle: "\(Int(latency)) ms to resolve \(session.host)",
                     sessionID: session.id
                 ))
             }
@@ -693,6 +712,12 @@ final class MainContentCoordinator {
             retainedFrames.replace(with: parsed.frames)
             sessions = SessionBuilder.build(from: parsed.frames, linkType: parsed.linkType)
             isViewingSavedCapture = true
+            // Remember which file this is and aggregate its activity once, here at
+            // the open boundary, so the Overview can label the file truthfully and
+            // draw its frames-over-time chart without re-scanning frames on every
+            // body update.
+            activeSavedCapture = capture
+            savedCaptureActivity = CaptureActivityBuilder.build(frames: parsed.frames)
             captureError = nil
             activeWorkspace.selectedSessionID = nil
             selectSidebarItem(.sessions)
@@ -821,6 +846,8 @@ final class MainContentCoordinator {
         throughputSamples = []
         pendingChartBytes = 0
         isViewingSavedCapture = false
+        activeSavedCapture = nil
+        savedCaptureActivity = nil
         activeWorkspace.selectedSessionID = nil
     }
 
@@ -929,6 +956,8 @@ final class MainContentCoordinator {
         isStarting = true
         startGeneration &+= 1
         isViewingSavedCapture = false
+        activeSavedCapture = nil
+        savedCaptureActivity = nil
         retainedFrames.reset()
         sessions = []
         throughputSamples = []

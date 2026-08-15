@@ -65,6 +65,48 @@ struct OverviewScopeTests {
         #expect(env.coordinator.captureStatistics == nil)
     }
 
+    @Test("Opening a saved file records truthful provenance and a real activity aggregation")
+    func savedCaptureExposesProvenance() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        // The Overview labels the exact file it opened rather than guessing.
+        #expect(coordinator.isViewingSavedCapture)
+        #expect(coordinator.activeSavedCapture?.name == "sample")
+
+        // Frame count and duration come from the real file, not a fabricated total.
+        let activity = try #require(coordinator.savedCaptureActivity)
+        #expect(activity.totalFrames == coordinator.retainedFrameCount)
+        #expect(activity.totalFrames > 0)
+        #expect(activity.duration >= 0)
+        // A frames-over-time aggregation exists — the saved surface draws this, not
+        // the live "waiting for traffic" throughput state.
+        #expect(!activity.isEmpty)
+
+        // A file is shown in full: no fidelity, and neither capture-source loss nor
+        // local retention eviction is reported for it.
+        #expect(coordinator.captureStatistics == nil)
+        #expect(coordinator.helperBufferDropCount == 0)
+        #expect(coordinator.retainedFrameEvictionCount == 0)
+    }
+
+    @Test("Live/new/clear boundaries drop the saved-file identity so it never outlives the capture")
+    func clearingDropsSavedProvenance() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        try #require(coordinator.activeSavedCapture != nil)
+        try #require(coordinator.savedCaptureActivity != nil)
+
+        coordinator.clearSessions()
+
+        #expect(coordinator.activeSavedCapture == nil)
+        #expect(coordinator.savedCaptureActivity == nil)
+        #expect(!coordinator.isViewingSavedCapture)
+    }
+
     @Test("Plaintext-HTTP finding states only the decoded fact, never exposure")
     func plaintextHTTPFindingIsEvidenceHonest() throws {
         let env = try makeLoadedCoordinator()

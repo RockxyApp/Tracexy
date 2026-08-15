@@ -6,12 +6,37 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
+    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, in that order")
+    func monitorOrder() {
+        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow])
+    }
+
     @Test("Toolbar update badge keeps the approved capsule geometry")
     func updateBadgeMetrics() {
         #expect(Theme.Metrics.toolbarControlHeight == 32)
         #expect(Theme.Metrics.updateBadgeHeight == 24)
         #expect(Theme.Metrics.updateBadgeHorizontalPadding == 9)
         #expect(Theme.Metrics.updateBadgeStrokeWidth == 0.75)
+    }
+
+    @Test("Overview stays inside the workspace when the native sidebar is open")
+    func overviewUsesTheWorkspaceViewport() throws {
+        let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
+
+        #expect(source.contains("GeometryReader { proxy in"))
+        #expect(source.contains("proxy.size.width >= Self.wideDashboardMinimumWidth"))
+        #expect(source.contains("proxy.size.width - Theme.Metrics.spacingL * 2"))
+    }
+
+    @Test("Overview summarizes findings and leaves evidence to Sessions")
+    func overviewDoesNotDuplicateTheFindingList() throws {
+        let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
+
+        #expect(source.contains("findingSummaryBar"))
+        #expect(source.contains("Review \\(all.count.formatted()) in Sessions"))
+        #expect(!source.contains("findingPreviewLimit"))
+        #expect(!source.contains("findingRow("))
+        #expect(!source.contains("Open evidence"))
     }
 
     @Test("Details uses stacked inspector tables instead of List sections")

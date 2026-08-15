@@ -41,6 +41,21 @@ Open a `.pcap` (classic libpcap) or `.pcapng` file from disk — no helper or ad
 Tracexy sniffs the file format, reads its frames, and runs them through the same decode → session
 pipeline as live capture. This is the most predictable way to exercise the full pipeline.
 
+## Overview
+
+**Overview** is the first destination under **Monitor**, followed by **Sessions** and **Flow Map**. It
+summarizes the current capture without replacing the session workflow: capture identity, frames,
+sessions, traffic, duration, activity, storage, top talkers, protocol mix, observed sources, and a
+compact findings severity summary are kept in one native dashboard. Overview never duplicates the
+finding evidence list; its security summary links to the existing filtered Sessions workflow.
+
+For a live capture, the activity chart shows measured throughput and the storage card distinguishes
+kernel/interface loss, helper-buffer drops, and trimming of the local save/export retention window.
+Retention trimming does not remove accumulated sessions and is never reported as capture-source loss.
+For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
+capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
+what was missed when it was recorded.
+
 ## Sessions
 
 Frames are grouped by their canonical **five-tuple** (protocol + the two endpoints, direction-
