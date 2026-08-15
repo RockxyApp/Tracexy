@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - InspectorView
@@ -738,7 +739,14 @@ private struct DecodedLayerTree: View {
         .padding(.vertical, 1).padding(.horizontal, 4)
         .background(rowBackground(layer.byteRange), in: RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
+        // Tap still selects the byte range for the hex pane; the context menu is
+        // an additive right-click affordance and leaves that behavior untouched.
         .onTapGesture { onSelect(layer.byteRange) }
+        .contextMenu {
+            Button("Copy Layer Summary", systemImage: "doc.on.doc") {
+                copy(DecodedClipboardText.layerSummary(layer))
+            }
+        }
     }
 
     private func fieldRow(_ field: DecodedField) -> some View {
@@ -752,6 +760,17 @@ private struct DecodedLayerTree: View {
         .background(rowBackground(field.byteRange), in: RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
         .onTapGesture { onSelect(field.byteRange) }
+        .contextMenu {
+            Button("Copy Value", systemImage: "doc.on.doc") {
+                copy(DecodedClipboardText.value(field))
+            }
+            Button("Copy Field Name", systemImage: "textformat") {
+                copy(DecodedClipboardText.name(field))
+            }
+            Button("Copy \u{201C}Name: Value\u{201D}", systemImage: "text.append") {
+                copy(DecodedClipboardText.nameValue(field))
+            }
+        }
     }
 
     private func rowBackground(_ range: Range<Int>?) -> Color {
@@ -759,6 +778,13 @@ private struct DecodedLayerTree: View {
             return .clear
         }
         return Color.accentColor.opacity(0.18)
+    }
+
+    /// The only side effect of the copy actions: the text formatting itself lives
+    /// in the pure ``DecodedClipboardText`` so it stays independently testable.
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

@@ -71,6 +71,19 @@ struct WorkspacePresentationContractTests {
         #expect(source.contains(".accessibilityLabel(\"Add field\")"))
     }
 
+    @Test("Command-F focuses the existing Sessions search without adding a new search surface")
+    func sessionSearchUsesNativeFindCommand() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let filterBar = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+
+        #expect(app.contains("coordinator.beginSessionSearch()"))
+        #expect(app.contains(".keyboardShortcut(\"f\", modifiers: .command)"))
+        #expect(filterBar.contains("@FocusState private var isSearchFieldFocused"))
+        #expect(filterBar.contains(".task(id: workspace.searchFocusRequest)"))
+        #expect(filterBar.contains(".focused($isSearchFieldFocused)"))
+        #expect(!filterBar.contains(".searchable"))
+    }
+
     @Test("Security is a toolbar-only quick filter over the scalable session workflow")
     func securityUsesSessionQuickFilter() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")

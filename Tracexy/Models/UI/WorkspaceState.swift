@@ -82,6 +82,13 @@ final class WorkspaceState: Identifiable {
     var isFilterBarVisible: Bool = true
     var autoSelectLatest: Bool = false
 
+    /// Fresh identity issued every time something asks the session search field
+    /// to take focus (⌘F). `SessionFilterBar` observes it via `.task(id:)`, so a
+    /// repeat request re-focuses even when the command has just mounted the bar or
+    /// switched between workspaces. `nil` keeps a fresh workspace from stealing
+    /// focus unprompted.
+    var searchFocusRequest: UUID?
+
     /// The advanced rule rows that are enabled and carry a value (i.e. actually filter).
     var activeFilterRules: [SessionFilterRule] {
         SessionFilterRuleEvaluator.activeRules(in: filterRules)

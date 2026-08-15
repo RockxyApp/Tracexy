@@ -606,6 +606,24 @@ final class MainContentCoordinator {
         revealPanelsForSelection()
     }
 
+    // MARK: Search
+
+    /// ⌘F: bring the user to the session search box and put the cursor in it.
+    ///
+    /// Routes to the Sessions surface if they are elsewhere, reveals the filter
+    /// bar, and switches the search on — the three states the box needs to be
+    /// usable — then bumps a focus token the existing field observes. It does
+    /// *not* touch the query text or any active filter (host/process/IP drill-down,
+    /// category chips, advanced rules), so an in-progress investigation is
+    /// preserved; ⌘F only reveals and focuses the box that is already there.
+    func beginSessionSearch() {
+        let ws = activeWorkspace
+        ws.sidebarSelection = .sessions
+        ws.isFilterBarVisible = true
+        ws.isSearchEnabled = true
+        ws.searchFocusRequest = UUID()
+    }
+
     // MARK: Sidebar selection
 
     /// Selects a top-level sidebar item, clearing any host/process/IP drill-down.

@@ -106,7 +106,8 @@ The **search row** below has an on/off checkbox, a field-scope menu (**All Field
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an
 **Add Field** button, and the **Group By** menu. All Fields searches the host, client process, protocol
 labels, both endpoints, the info summary, and DNS answers. Turning the search off keeps the typed text
-but stops it constraining the list.
+but stops it constraining the list. Press **Command-F** from any main surface to return to Sessions,
+reveal this filter area if needed, enable search, and place the cursor in the existing search box.
 
 For finer control, **Add Field** opens the advanced rule builder: rows of *field · operator · value*,
 each independently on/off and joined to the previous row by AND or OR. Connectors evaluate strictly
@@ -123,10 +124,11 @@ investigation with its own filter, selection, and inspector layout.
 
 ## Inspector
 
-Selecting a session opens the inspector, in a right-hand or bottom layout. It shows the decoded
+Selecting a session opens the bottom evidence inspector. It shows the decoded
 protocol **layers** and fields for the representative packet, and a **hex** pane whose byte ranges line
-up with those fields — click a field to highlight the bytes it came from. When a session carries an
-application-layer exchange (HTTP, DNS), a requests facet is offered.
+up with those fields — click a field to highlight the bytes it came from. Right-click a layer or field
+to copy its visible summary, name, value, or combined name/value text without retyping it. When a
+session carries an application-layer exchange (HTTP, DNS), a requests facet is offered.
 
 The right-hand **Details** dock uses compact two-column tables for assessment, decoded layer facts,
 host baseline, related actions, findings, and grouping evidence. Technical values are selectable and

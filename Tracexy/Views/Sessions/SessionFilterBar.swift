@@ -33,9 +33,24 @@ struct SessionFilterBar: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .fixedSize(horizontal: false, vertical: true)
+        // ⌘F focus. `.task(id:)` fires both on first appear and on every token
+        // change, so a press that *mounts* this bar (coming from Overview/Flow)
+        // and a press while it is already visible both land the cursor in the
+        // field. The nil guard keeps a freshly-created workspace from stealing
+        // focus before the user has ever asked for it.
+        .task(id: workspace.searchFocusRequest) {
+            guard workspace.searchFocusRequest != nil else {
+                return
+            }
+            isSearchFieldFocused = true
+        }
     }
 
     // MARK: Private
+
+    /// Drives the native cursor for the existing search field; set by the ⌘F
+    /// focus token above. No layout or styling changes hang off this.
+    @FocusState private var isSearchFieldFocused: Bool
 
     private var maxRules: Int {
         coordinator.policy.maxSessionFilterRules
@@ -175,6 +190,7 @@ struct SessionFilterBar: View {
             )
             .textFieldStyle(.roundedBorder)
             .font(Theme.Typography.body)
+            .focused($isSearchFieldFocused)
             .accessibilityLabel("Search sessions")
             if !workspace.filterText.isEmpty {
                 Button {
