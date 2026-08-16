@@ -132,7 +132,7 @@ struct OverviewView: View {
 
     /// The span of the currently accumulated live sessions, for a stopped capture.
     private var sessionsSpanLabel: String {
-        let sessions = coordinator.sessions
+        let sessions = coordinator.presentedSessions
         guard let earliest = sessions.map(\.startTime).min() else {
             return "—"
         }
@@ -220,7 +220,7 @@ struct OverviewView: View {
         if coordinator.activeWorkspace.hasActiveFilters {
             Label(
                 "Showing \(coordinator.visibleSessions.count.formatted()) of "
-                    + "\(coordinator.sessions.count.formatted()) sessions — a filter is active.",
+                    + "\(coordinator.presentedSessions.count.formatted()) sessions — a filter is active.",
                 systemImage: "line.3.horizontal.decrease.circle"
             )
             .font(Theme.Typography.caption)
@@ -274,7 +274,7 @@ struct OverviewView: View {
     private var kpiRow: some View {
         HStack(alignment: .top, spacing: Theme.Metrics.spacingL) {
             kpi("Frames", value: frameCount.formatted())
-            kpi("Sessions", value: coordinator.sessions.count.formatted())
+            kpi("Sessions", value: coordinator.presentedSessions.count.formatted())
             kpi("Traffic", value: byteString(coordinator.totalBytes))
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 kpi("Duration", value: durationValue(at: context.date))
@@ -294,7 +294,11 @@ struct OverviewView: View {
             HStack(spacing: Theme.Metrics.spacingM) {
                 sectionLabel("Capture Activity", systemImage: "waveform.path.ecg")
                 Spacer()
-                Button(isSaved ? "Open all \(coordinator.sessions.count.formatted()) sessions" : "Open live sessions") {
+                Button(
+                    isSaved
+                        ? "Open all \(coordinator.presentedSessions.count.formatted()) sessions"
+                        : "Open live sessions"
+                ) {
                     coordinator.selectSidebarItem(.sessions)
                 }
                 .buttonStyle(.link)

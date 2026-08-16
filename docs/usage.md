@@ -88,6 +88,13 @@ packet frames. **Export as pcap** writes a classic capture when all matching fra
 action. Live export reads the complete local pcapng spool; saved-capture export re-reads the source file,
 so the bounded in-memory inspection window does not silently truncate an export.
 
+Secondary-click any flat session row, disclosed action member, inferred action, host group, or process
+group to **Remove from View**. Removing a row hides its session identity and derived values from
+Sessions, Overview, Flow Map, Sources, Findings, related-session cards, and UI totals for the current
+capture. It is intentionally reversible and does not rewrite packet evidence or silently redact a
+saved/exported capture. Use **List Options → Restore Removed Sessions** to bring every removed row back;
+starting, opening, or clearing a capture also resets this presentation state.
+
 ## Correlation into actions
 
 The session list opens **flat by default** — one row per session, exactly as decoded, so a busy

@@ -207,6 +207,13 @@ final class MainContentCoordinator {
     var hiddenSourceDomains = SourceVisibilityPreferences.loadDomains()
     var hiddenSourceIPs = SourceVisibilityPreferences.loadIPs()
 
+    /// Session rows removed from the current capture's presentation. This is
+    /// deliberately capture-scoped and reversible: packet evidence and the
+    /// save/export source stay intact, while every UI-derived surface reads
+    /// ``presentedSessions`` so a removed sensitive row cannot reappear in an
+    /// Overview rollup, Flow Map, Sources, finding, or related-session card.
+    var removedSessionIDs: Set<UUID> = []
+
     /// Complete local raw-frame retention for save/export. The in-memory frame
     /// window remains bounded independently for responsive UI.
     let liveCaptureSpool = LiveCaptureSpool(
@@ -272,7 +279,7 @@ final class MainContentCoordinator {
         // not once per session.
         let preparedRules = SessionFilterRuleEvaluator.prepared(advancedRules)
 
-        return sessions.filter { session in
+        return presentedSessions.filter { session in
             // Noise Control (sidebar Focus) hides muted hosts/protocols everywhere.
             if mutedHosts.contains(session.host) {
                 return false
@@ -313,17 +320,17 @@ final class MainContentCoordinator {
         guard let id = activeWorkspace.selectedSessionID else {
             return nil
         }
-        return sessions.first { $0.id == id }
+        return presentedSessions.first { $0.id == id }
     }
 
     // MARK: Dashboard rollups
 
     var errorCount: Int {
-        sessions.filter { $0.status == .error }.count
+        presentedSessions.filter { $0.status == .error }.count
     }
 
     var warningCount: Int {
-        sessions.filter { $0.status == .warning }.count
+        presentedSessions.filter { $0.status == .warning }.count
     }
 
     /// Severity-ranked findings across the whole capture, derived only from real
@@ -332,7 +339,7 @@ final class MainContentCoordinator {
     /// display, so a filtered list and its findings summary never disagree.
     var findings: [Finding] {
         var result: [Finding] = []
-        for session in sessions {
+        for session in presentedSessions {
             if result.count >= Self.maxFindings {
                 break
             }
@@ -402,7 +409,7 @@ final class MainContentCoordinator {
     /// to (the "sub-IPs"), for the sidebar "Domains" tree — sibling-app-style.
     var domainGroups: [DomainGroup] {
         var byDomain: [String: (ips: Set<String>, count: Int)] = [:]
-        for session in sessions where Self.isDomainName(session.host) {
+        for session in presentedSessions where Self.isDomainName(session.host) {
             var entry = byDomain[session.host] ?? (ips: [], count: 0)
             entry.count += 1
             for answer in session.dnsAnswers where !answer.hasPrefix("CNAME") {
@@ -427,7 +434,7 @@ final class MainContentCoordinator {
     /// (the "sub-links"), for an expandable sidebar "Apps" tree — sibling-app-style.
     var appGroups: [AppGroup] {
         var byApp: [String: (hosts: Set<String>, count: Int)] = [:]
-        for session in sessions {
+        for session in presentedSessions {
             let app = session.processName ?? "—"
             var entry = byApp[app] ?? (hosts: [], count: 0)
             entry.count += 1
@@ -458,26 +465,26 @@ final class MainContentCoordinator {
             return "capture error — \(captureError)"
         }
         if isCapturing {
-            return "\(captureInterface) · live · \(sessions.count.formatted()) sessions"
+            return "\(captureInterface) · live · \(presentedSessions.count.formatted()) sessions"
         }
         if sessions.isEmpty {
             return "idle — press Start to capture"
         }
-        return "\(sessions.count.formatted()) sessions"
+        return "\(presentedSessions.count.formatted()) sessions"
     }
 
     // MARK: Aggregate rollups (status bar)
 
     var totalBytes: Int {
-        sessions.reduce(0) { $0 + $1.totalBytes }
+        presentedSessions.reduce(0) { $0 + $1.totalBytes }
     }
 
     var totalBytesUp: Int {
-        sessions.reduce(0) { $0 + $1.bytesUp }
+        presentedSessions.reduce(0) { $0 + $1.bytesUp }
     }
 
     var totalBytesDown: Int {
-        sessions.reduce(0) { $0 + $1.bytesDown }
+        presentedSessions.reduce(0) { $0 + $1.bytesDown }
     }
 
     // MARK: Saved captures
@@ -499,7 +506,7 @@ final class MainContentCoordinator {
     var presentProtocols: [ProtocolKind] {
         var seen = Set<ProtocolKind>()
         var ordered: [ProtocolKind] = []
-        for session in sessions {
+        for session in presentedSessions {
             let proto = session.primaryProtocol
             if seen.insert(proto).inserted {
                 ordered.append(proto)
@@ -636,7 +643,7 @@ final class MainContentCoordinator {
     /// this slice anyway, so the narrower input costs no accuracy.
     func activity(containing session: SessionSummary) -> Activity? {
         let window = ActivityBuilder.dnsCausalWindow
-        let slice = sessions.filter {
+        let slice = presentedSessions.filter {
             abs($0.startTime.timeIntervalSince(session.startTime)) <= window
         }
         guard slice.count > 1 else {
@@ -755,6 +762,7 @@ final class MainContentCoordinator {
             captureStatistics = nil
             helperBufferDropCount = 0
             retainedFrames.replace(with: parsed.frames)
+            removedSessionIDs.removeAll()
             sessions = SessionBuilder.build(from: parsed.frames, linkType: parsed.linkType)
             isViewingSavedCapture = true
             // Remember which file this is and aggregate its activity once, here at
@@ -885,6 +893,7 @@ final class MainContentCoordinator {
         captureStatistics = nil
         helperBufferDropCount = 0
         retainedFrames.reset()
+        removedSessionIDs.removeAll()
         sessions = []
         throughputSamples = []
         pendingChartBytes = 0
@@ -1021,6 +1030,7 @@ final class MainContentCoordinator {
         // bounds memory only — sessions accumulate independently (see
         // ``retainedFrameLimit``).
         retainedFrames = RetainedFrameBuffer(capacity: CaptureSettingsResolver.retainCapacity())
+        removedSessionIDs.removeAll()
         sessions = []
         throughputSamples = []
         pendingChartBytes = 0
@@ -1623,7 +1633,7 @@ private extension MainContentCoordinator {
             if self.activeWorkspace.autoSelectLatest,
                // Newest by timestamp, tie-broken by id so the choice never depends
                // on the array's (first-seen) order.
-               let latest = applied.max(by: {
+               let latest = applied.lazy.filter({ !self.removedSessionIDs.contains($0.id) }).max(by: {
                    ($0.startTime, $0.id.uuidString) < ($1.startTime, $1.id.uuidString)
                }),
                self.activeWorkspace.selectedSessionID != latest.id
@@ -1666,7 +1676,7 @@ private extension MainContentCoordinator {
 
     private func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
         var totals: [String: Int] = [:]
-        for session in sessions {
+        for session in presentedSessions {
             totals[key(session), default: 0] += 1
         }
         return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }

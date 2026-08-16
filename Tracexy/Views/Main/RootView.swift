@@ -254,7 +254,7 @@ struct MainDetailView: View {
             : nil
         let summary = SessionStatusBarModel.statusText(
             surface: surface,
-            totalSessions: coordinator.sessions.count,
+            totalSessions: coordinator.presentedSessions.count,
             visibleCount: coordinator.visibleSessions.count,
             hasSelection: workspace.selectedSessionID != nil
         )
@@ -293,6 +293,7 @@ struct MainDetailView: View {
             canAddFocusSet: coordinator.canAddFocusSet,
             isNoiseControlActive: coordinator.isNoiseControlActive,
             hasSessions: !coordinator.sessions.isEmpty,
+            removedSessionCount: coordinator.removedSessionCount,
             activeFilterRuleCount: workspace.activeFilterRules.count,
             isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
             autoSelectLatest: workspace.autoSelectLatest
@@ -312,6 +313,8 @@ struct MainDetailView: View {
             openWindow(id: TracexyApp.noiseControlWindowID)
         case .clearSessions:
             showsClearConfirmation = true
+        case .restoreRemovedSessions:
+            coordinator.restoreRemovedSessions()
         case .advancedFilters:
             // Keep the category tabs visible and reveal/hide the advanced rule
             // builder directly beneath them.

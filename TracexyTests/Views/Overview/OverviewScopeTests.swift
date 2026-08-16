@@ -150,6 +150,58 @@ struct OverviewScopeTests {
         #expect(matchingSessionIDs == findingSessionIDs)
     }
 
+    @Test("Removing sessions hides them across presentation surfaces and remains reversible")
+    func removedSessionsStayOutOfPresentation() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        let target = try #require(coordinator.sessions.first)
+        let rawCount = coordinator.sessions.count
+        let rawBytes = coordinator.totalBytes
+        let targetHostCount = coordinator.sessions.filter { $0.host == target.host }.count
+
+        coordinator.select(target)
+        coordinator.removeSessionsFromView(Set([target.id]))
+
+        // Removal is a reversible presentation operation, never evidence loss.
+        #expect(coordinator.sessions.count == rawCount)
+        #expect(coordinator.sessions.contains { $0.id == target.id })
+        #expect(coordinator.removedSessionCount == 1)
+
+        // Every UI-facing seam excludes the removed identity and its rollups.
+        #expect(!coordinator.presentedSessions.contains { $0.id == target.id })
+        #expect(!coordinator.visibleSessions.contains { $0.id == target.id })
+        #expect(!coordinator.sessionRows.contains { $0.id == target.id })
+        #expect(coordinator.selectedSession == nil)
+        #expect(coordinator.activeWorkspace.selectedSessionID == nil)
+        #expect(coordinator.totalBytes == rawBytes - target.totalBytes)
+        #expect(coordinator.findings.allSatisfy { $0.sessionID != target.id })
+        #expect((coordinator.hosts.first { $0.name == target.host }?.count ?? 0) == targetHostCount - 1)
+
+        coordinator.restoreRemovedSessions()
+
+        #expect(coordinator.removedSessionCount == 0)
+        #expect(coordinator.presentedSessions.count == rawCount)
+        #expect(coordinator.visibleSessions.contains { $0.id == target.id })
+        #expect(coordinator.totalBytes == rawBytes)
+    }
+
+    @Test("Capture boundaries discard removed-session presentation state")
+    func clearDiscardsRemovedSessions() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        let target = try #require(coordinator.sessions.first)
+
+        coordinator.removeSessionsFromView(Set([target.id]))
+        try #require(coordinator.removedSessionCount == 1)
+
+        coordinator.clearSessions()
+
+        #expect(coordinator.removedSessionCount == 0)
+        #expect(coordinator.removedSessionIDs.isEmpty)
+    }
+
     // MARK: Private
 
     private struct Environment {
