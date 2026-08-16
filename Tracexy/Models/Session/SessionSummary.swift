@@ -93,7 +93,7 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// exchange worth listing on its own — the condition for offering the
     /// Inspector's Requests facet.
     nonisolated var hasApplicationExchange: Bool {
-        let applicationProtocols: Set<ProtocolKind> = [.http, .http2, .dns, .websocket]
+        let applicationProtocols: Set<ProtocolKind> = [.http, .http2, .dns, .websocket, .stun]
         return protocolStack.contains(where: applicationProtocols.contains)
     }
 }

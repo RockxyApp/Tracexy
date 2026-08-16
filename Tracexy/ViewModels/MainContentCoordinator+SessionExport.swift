@@ -12,7 +12,7 @@ extension MainContentCoordinator {
     }
 
     /// Cheap presentation gate for row menus. Packet matching is deliberately
-    /// deferred until activation because decoding the retention window belongs
+    /// deferred until activation because reading and decoding the complete capture belongs
     /// off the main actor.
     func canExport(_: SessionSummary) -> Bool {
         canSaveCapture && !isExportingSession
@@ -33,28 +33,27 @@ extension MainContentCoordinator {
             return
         }
         setSessionExporting(true)
-        let retainedFrameSnapshot = retainedFrameSnapshotForExport
-        let defaultLinkType = currentLinkType
 
         Task { [weak self] in
             defer { self?.setSessionExporting(false) }
             do {
+                guard let self else {
+                    return
+                }
+                let capture = try await self.completeCaptureForExport()
                 let artifact = try await Task.detached(priority: .userInitiated) {
                     let sessionFrames = SessionExporter.frames(
                         matching: session.id,
-                        in: retainedFrameSnapshot,
-                        defaultLinkType: defaultLinkType
+                        in: capture.frames,
+                        defaultLinkType: capture.linkType
                     )
                     return try SessionExporter.artifact(
                         for: session,
                         frames: sessionFrames,
-                        defaultLinkType: defaultLinkType,
+                        defaultLinkType: capture.linkType,
                         format: format
                     )
                 }.value
-                guard let self else {
-                    return
-                }
                 let panel = NSSavePanel()
                 panel.title = format.title
                 // Supply a basename and let the selected UTType append exactly
@@ -73,7 +72,12 @@ extension MainContentCoordinator {
                 try await Task.detached(priority: .userInitiated) {
                     try artifact.data.write(to: url, options: .atomic)
                 }.value
-                self.captureError = nil
+                if let warning = capture.incompletenessReason {
+                    self.captureError = "Exported the recoverable session prefix. Later frames are missing because "
+                        + "the local spool failed — \(warning)"
+                } else {
+                    self.captureError = nil
+                }
             } catch {
                 self?.captureError = "Couldn’t export session: \(error.localizedDescription)"
             }

@@ -168,6 +168,67 @@ enum CaptureFilterMode: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - CaptureSettingsResolver
+
+/// Turns persisted Capture-Settings preferences into validated, bounded capture
+/// inputs, read fresh at each capture start. Pure and deterministic so the
+/// mapping (and the clamping of invalid persisted values to a safe default) is
+/// unit-testable without a live capture or `UserDefaults`.
+enum CaptureSettingsResolver {
+    /// The retention-window sizes the UI offers, and the safe fallback used when a
+    /// persisted value is none of them. These make the existing 8k/20k/50k picker
+    /// behavioral: the chosen value becomes the in-memory save/export capacity.
+    static let retainPacketsChoices = [8_000, 20_000, 50_000]
+    static let defaultRetainPackets = 8_000
+
+    /// Clamp a persisted snap length into the supported range (delegating to the
+    /// shared bound), so a corrupt or out-of-range value can never open an
+    /// oversized or too-small capture buffer.
+    static func resolvedSnapLength(_ raw: Int) -> Int {
+        CaptureConfiguration.clampedSnapLength(raw)
+    }
+
+    /// Map a persisted retention choice to an allowed capacity; anything not in the
+    /// offered set clamps to the safe default rather than sizing the window blindly.
+    static func resolvedRetainPackets(_ raw: Int) -> Int {
+        retainPacketsChoices.contains(raw) ? raw : defaultRetainPackets
+    }
+
+    /// Map the persisted filter mode + expression to a BPF string: `.all` → no
+    /// filter (`nil`); `.custom` → the trimmed expression, or `nil` when it is
+    /// blank so an empty custom filter is never sent as a (meaningless) expression.
+    static func resolvedBPF(filterMode: String, expression: String) -> String? {
+        guard filterMode == CaptureFilterMode.custom.rawValue else {
+            return nil
+        }
+        let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Assemble a capture configuration from the current preferences. Reads the
+    /// snap length, promiscuous flag, filter mode, and BPF expression fresh, so a
+    /// settings change since the last capture takes effect at the next start.
+    /// `defaults` is injectable so the whole mapping is testable without touching
+    /// the shared store.
+    static func configuration(interface: String, defaults: UserDefaults = .standard) -> CaptureConfiguration {
+        CaptureConfiguration(
+            interface: interface,
+            snapLength: resolvedSnapLength(defaults.integer(forKey: SettingsKeys.snapLength)),
+            promiscuous: defaults.bool(forKey: SettingsKeys.promiscuous),
+            bpf: resolvedBPF(
+                filterMode: defaults.string(forKey: SettingsKeys.captureFilterMode) ?? CaptureFilterMode.all.rawValue,
+                expression: defaults.string(forKey: SettingsKeys.bpfExpression) ?? ""
+            )
+        )
+    }
+
+    /// Resolve the configured retention-window capacity from the current
+    /// preferences, clamping an invalid persisted value to the safe default.
+    static func retainCapacity(defaults: UserDefaults = .standard) -> Int {
+        resolvedRetainPackets(defaults.integer(forKey: SettingsKeys.retainPackets))
+    }
+}
+
 // MARK: - AutoClear
 
 enum AutoClear: String, CaseIterable, Identifiable {

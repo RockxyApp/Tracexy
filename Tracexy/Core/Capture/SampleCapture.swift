@@ -91,11 +91,17 @@ nonisolated enum SampleCapture {
             payload: PacketBuilder.udp(
                 srcPort: 54_321,
                 dstPort: 443,
-                payload: [0xC3, 0x00, 0x00, 0x00, 0x01, 0x08]
+                payload: [
+                    0xC0, 0x00, 0x00, 0x00, 0x01,
+                    0x08, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                    0x04, 0xAA, 0xBB, 0xCC, 0xDD, 0x00,
+                ]
             )
         ))
 
-        // Incomplete handshake — SYN with no response (warning).
+        // A bare SYN with no response. It stays a visible, ordinary session:
+        // an unanswered handshake is not observed evidence of a problem, so no
+        // warning is fabricated from the absence of later packets.
         push(PacketBuilder.tcpSynFrame(src: client, dst: "203.0.113.9", srcPort: 51_000, dstPort: 443))
 
         return frames

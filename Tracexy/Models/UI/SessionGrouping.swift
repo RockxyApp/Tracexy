@@ -2,6 +2,10 @@ import Foundation
 
 /// How the session list is grouped.
 ///
+/// `none` — the raw observed sessions — is the default: a real high-volume
+/// capture collapses into a handful of guessed rows under `action`, so the
+/// honest starting point is every session, flat. The grouped modes are opt-in.
+///
 /// Grouping is inference, so it must be switchable off. Correlation can be
 /// wrong — a shared CDN address, a resolver cache older than the causal window —
 /// and a user who suspects it needs the raw sessions back without hunting for a

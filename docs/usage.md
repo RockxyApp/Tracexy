@@ -41,6 +41,30 @@ Open a `.pcap` (classic libpcap) or `.pcapng` file from disk — no helper or ad
 Tracexy sniffs the file format, reads its frames, and runs them through the same decode → session
 pipeline as live capture. This is the most predictable way to exercise the full pipeline.
 
+## Sidebar sources
+
+The **Sources** groups in Browse are derived from the current capture. Secondary-click an app,
+domain, or IP row to open its sessions, copy its identity, pin an address, or **Remove from Sources**.
+Removing a source hides only that sidebar row and persists the presentation preference; it never
+deletes captured sessions or packet evidence. Secondary-click the Apps, Domains, or IP Addresses
+category to restore every hidden row in that category.
+
+## Overview
+
+**Overview** is the first destination under **Monitor**, followed by **Sessions** and **Flow Map**. It
+summarizes the current capture without replacing the session workflow: capture identity, frames,
+sessions, traffic, duration, activity, storage, top talkers, protocol mix, observed sources, and a
+compact findings severity summary are kept in one native dashboard. Overview never duplicates the
+finding evidence list; its security summary links to the existing filtered Sessions workflow.
+
+For a live capture, the activity chart shows measured throughput and the storage card distinguishes
+kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
+Window trimming does not remove accumulated sessions or frames from the disk-backed live spool, and is
+never reported as capture-source loss.
+For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
+capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
+what was missed when it was recorded.
+
 ## Sessions
 
 Frames are grouped by their canonical **five-tuple** (protocol + the two endpoints, direction-
@@ -58,25 +82,44 @@ session rather than disappearing.
 
 Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
 controls. The same menu is available from the session row's **Export** submenu. **Export Session**
-writes a versioned `.tracexysession` document containing the session summary and its locally retained
+writes a versioned `.tracexysession` document containing the session summary and its captured
 packet frames. **Export as pcap** writes a classic capture when all matching frames share one link type;
 **Export as pcapng** preserves mixed per-frame link types. Export is always an explicit local save-panel
-action and is limited to frames still present in the bounded raw-retention window.
+action. Live export reads the complete local pcapng spool; saved-capture export re-reads the source file,
+so the bounded in-memory inspection window does not silently truncate an export.
+
+Secondary-click any flat session row, disclosed action member, inferred action, host group, or process
+group to **Remove from View**. Removing a row hides its session identity and derived values from
+Sessions, Overview, Flow Map, Sources, Findings, related-session cards, and UI totals for the current
+capture. It is intentionally reversible and does not rewrite packet evidence or silently redact a
+saved/exported capture. Use **List Options → Restore Removed Sessions** to bring every removed row back;
+starting, opening, or clearing a capture also resets this presentation state.
 
 ## Correlation into actions
 
-Related sessions are correlated into a higher-level **action** — for example a DNS lookup, the TCP
-connect to the address it returned, and the TLS handshake carrying that hostname. Grouping is an
-*inference*, so every action reports the strength of the evidence behind it: **causal** (a DNS answer
-named the very address the next connection dialed, or one process owned every session), **strong** (the
-DNS name, TLS SNI, and host all agree), or **weak** (sessions merely began close together). When two
+The session list opens **flat by default** — one row per session, exactly as decoded, so a busy
+capture shows every observed conversation rather than a handful of collapsed rows. Grouping into
+higher-level actions is *inference layered on top of the raw sessions*, so it is **opt-in**: choose
+**Action** from the **Group By** menu when you want the interpretation, and switch back to **None
+(flat)** — always one click away — whenever the grouping looks wrong. **Host** and **Process**
+grouping are also available; unlike Action they group on a recorded session attribute rather than
+inferring a causal relationship.
+
+When Action grouping is on, related sessions are correlated into a higher-level **action** — for
+example a DNS lookup, the TCP connect to the address it returned, and the TLS handshake carrying that
+hostname. Every action reports the strength of the evidence behind it: **causal** (a DNS answer named
+the very address the next connection dialed within a 30-second window), **strong** (the same observed
+process owns the sessions, or DNS name, TLS SNI, and host agree), or **weak** (sessions merely began
+close together). Correlation on identifiers alone — the same process talking to the same name with no
+observed causal step — is held to a tight bar: it needs a real observed process **and** an agreed
+name, and only groups sessions that began within a couple of seconds of each other. When two
 hostnames resolve to the same address (a shared CDN IP), the attribution is **contested**: Tracexy
 lowers the confidence and shows the competing names rather than silently guessing.
 
 ## Focus sets and filtering
 
 The filter area above the session list has two rows. The **protocol/category pills** narrow by
-protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket), by evidence-backed **Security**
+protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN), by evidence-backed **Security**
 findings, and by exact status (**Errors**). Selected protocol pills combine with OR, selected
 investigation pills combine with OR, and the two groups combine with AND — so choosing *TCP* and
 *Errors* shows TCP sessions that failed. *Errors* means exactly an error; a warning is not swept in.
@@ -91,7 +134,8 @@ The **search row** below has an on/off checkbox, a field-scope menu (**All Field
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an
 **Add Field** button, and the **Group By** menu. All Fields searches the host, client process, protocol
 labels, both endpoints, the info summary, and DNS answers. Turning the search off keeps the typed text
-but stops it constraining the list.
+but stops it constraining the list. Press **Command-F** from any main surface to return to Sessions,
+reveal this filter area if needed, enable search, and place the cursor in the existing search box.
 
 For finer control, **Add Field** opens the advanced rule builder: rows of *field · operator · value*,
 each independently on/off and joined to the previous row by AND or OR. Connectors evaluate strictly
@@ -108,10 +152,29 @@ investigation with its own filter, selection, and inspector layout.
 
 ## Inspector
 
-Selecting a session opens the inspector, in a right-hand or bottom layout. It shows the decoded
+Selecting a session opens the bottom evidence inspector. It shows the decoded
 protocol **layers** and fields for the representative packet, and a **hex** pane whose byte ranges line
-up with those fields — click a field to highlight the bytes it came from. When a session carries an
-application-layer exchange (HTTP, DNS), a requests facet is offered.
+up with those fields — click a field to highlight the bytes it came from. Right-click a layer or field
+to copy its visible summary, name, value, or combined name/value text without retyping it. When a
+session carries an application-layer exchange (HTTP, DNS, STUN), a requests facet is offered.
+
+**STUN** is recognized by its RFC 5389 magic cookie on any port (it rides on ephemeral ICE ports, not
+a well-known one), so the traffic a capture would otherwise show as bare UDP is surfaced with its
+message type — Binding Request/Indication/Success/Error, or an honest hex value for other types —
+along with the declared length, magic cookie, and transaction ID. This is header **metadata only**:
+Tracexy does not track ICE state, follow TURN allocation state, or decrypt any payload.
+
+**TLS** is recognized by its record header on any TCP port, so an encrypted connection captured
+mid-stream is surfaced as TCP · TLS instead of bare TCP. Each recognized record reports its actual
+content type — Handshake, Application Data, Alert, Change Cipher Spec, or Heartbeat — with the
+record-layer version and record length. A ClientHello or ServerHello is enriched further with SNI,
+ALPN, negotiated version, and cipher suite. A bounded 16 KiB, per-direction TCP prefix reassembler in
+the session layer recovers this metadata when a first TLS record, HTTP header, or DNS-over-TCP message
+is split across nearby segments; it handles gaps, overlap, retransmission, and sequence wrap without
+retaining an unbounded stream. Tracexy still does **not** decrypt payloads, parse certificates, or offer
+a general connection/reassembly engine. When a record remains incomplete, its captured and declared
+lengths are labelled honestly, for example "4096 declared, 40 captured (fragment)". Encrypted TLS
+records carry no plaintext exchange, so a TLS-only session offers no requests facet.
 
 The right-hand **Details** dock uses compact two-column tables for assessment, decoded layer facts,
 host baseline, related actions, findings, and grouping evidence. Technical values are selectable and

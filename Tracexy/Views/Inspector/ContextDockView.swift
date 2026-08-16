@@ -611,7 +611,7 @@ struct ContextDockView: View {
     /// selected session marked so the sparkline can call it out.
     private func baselineHistory(for session: SessionSummary) -> [BaselinePoint] {
         let cutoff = session.startTime.addingTimeInterval(-3_600)
-        return coordinator.sessions
+        return coordinator.presentedSessions
             .filter { $0.host == session.host && $0.startTime >= cutoff }
             .sorted { $0.startTime < $1.startTime }
             .compactMap { peer in
@@ -649,8 +649,8 @@ struct ContextDockView: View {
     /// Peers worth offering: the same host first, then the same process. Capped —
     /// this is a navigation aid, not a second session list.
     private func relatedSessions(for session: SessionSummary) -> [SessionSummary] {
-        let sameHost = coordinator.sessions.filter { $0.id != session.id && $0.host == session.host }
-        let sameProcess = coordinator.sessions.filter {
+        let sameHost = coordinator.presentedSessions.filter { $0.id != session.id && $0.host == session.host }
+        let sameProcess = coordinator.presentedSessions.filter {
             $0.id != session.id
                 && $0.host != session.host
                 && $0.processName != nil
@@ -664,7 +664,7 @@ struct ContextDockView: View {
     }
 
     private func peerLatencies(for session: SessionSummary) -> [Double] {
-        coordinator.sessions
+        coordinator.presentedSessions
             .filter { $0.host == session.host }
             .compactMap(\.latencyMilliseconds)
     }

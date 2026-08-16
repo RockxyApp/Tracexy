@@ -32,6 +32,13 @@ nonisolated struct RetainedFrameBuffer {
     /// never make the truncation *look smaller* than it was.
     private(set) var evictionCount: UInt64 = 0
 
+    /// Sum of the captured (on-disk) lengths of the frames currently retained.
+    /// Maintained incrementally on append/evict/replace so the Overview can show a
+    /// truthful "estimated save size" without re-summing the window on every UI
+    /// refresh. Tracks captured length — the bytes a `.pcap`/`.pcapng` save writes
+    /// — not the original on-wire length.
+    private(set) var capturedByteCount: Int = 0
+
     /// The most frames retained at once.
     let capacity: Int
 
@@ -50,8 +57,10 @@ nonisolated struct RetainedFrameBuffer {
             return
         }
         frames.append(contentsOf: newFrames)
+        capturedByteCount += newFrames.reduce(0) { $0 + $1.capturedLength }
         if frames.count > capacity {
             let overflow = frames.count - capacity
+            capturedByteCount -= frames.prefix(overflow).reduce(0) { $0 + $1.capturedLength }
             frames.removeFirst(overflow)
             let (sum, overflowed) = evictionCount.addingReportingOverflow(UInt64(overflow))
             evictionCount = overflowed ? UInt64.max : sum
@@ -65,6 +74,7 @@ nonisolated struct RetainedFrameBuffer {
     mutating func replace(with newFrames: [CapturedFrame]) {
         frames = newFrames
         evictionCount = 0
+        capturedByteCount = newFrames.reduce(0) { $0 + $1.capturedLength }
     }
 
     /// Clears both retained frames and the cumulative eviction count. Called at
@@ -72,5 +82,6 @@ nonisolated struct RetainedFrameBuffer {
     mutating func reset() {
         frames.removeAll(keepingCapacity: false)
         evictionCount = 0
+        capturedByteCount = 0
     }
 }

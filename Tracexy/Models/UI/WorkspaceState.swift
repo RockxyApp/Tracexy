@@ -49,10 +49,12 @@ final class WorkspaceState: Identifiable {
     /// reveal stops for good — a panel the user dismissed must not reappear.
     var allowsAutomaticInspectorReveal: Bool?
 
-    /// How the session list groups rows. Defaults to correlated actions —
-    /// that is the point of the product — with a one-click way back to raw
-    /// sessions when the grouping looks wrong.
-    var sessionGrouping: SessionGrouping = .action
+    /// How the session list groups rows. Defaults to the raw observed sessions
+    /// exactly as decoded. Action grouping is inference layered on top and is
+    /// opt-in — a real high-volume capture collapses into a handful of guessed
+    /// rows, so the honest default is to show every session and let the user
+    /// switch to Action/Host/Process when they want the interpretation.
+    var sessionGrouping: SessionGrouping = .none
 
     /// Selection
     var selectedSessionID: UUID?
@@ -81,6 +83,13 @@ final class WorkspaceState: Identifiable {
     /// Status-bar toggles.
     var isFilterBarVisible: Bool = true
     var autoSelectLatest: Bool = false
+
+    /// Fresh identity issued every time something asks the session search field
+    /// to take focus (⌘F). `SessionFilterBar` observes it via `.task(id:)`, so a
+    /// repeat request re-focuses even when the command has just mounted the bar or
+    /// switched between workspaces. `nil` keeps a fresh workspace from stealing
+    /// focus unprompted.
+    var searchFocusRequest: UUID?
 
     /// The advanced rule rows that are enabled and carry a value (i.e. actually filter).
     var activeFilterRules: [SessionFilterRule] {

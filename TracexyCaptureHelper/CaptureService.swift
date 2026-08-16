@@ -26,7 +26,7 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
         reply(version, build, HelperProtocolVersion.current)
     }
 
-    func startCapture(interface: String, withReply reply: @escaping (Bool, String) -> Void) {
+    func startCapture(configuration: CaptureConfiguration, withReply reply: @escaping (Bool, String) -> Void) {
         // Serialize the whole start/stop lifecycle on a *separate* operation lock,
         // so a start can't interleave with a stop (e.g. assigning `capture` after
         // a concurrent stop cleared it). This lock is only ever held by lifecycle
@@ -57,11 +57,13 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
             statsAvailable = false
             lock.unlock()
 
-            // `start` opens the handle synchronously: it throws if the interface
-            // can't be opened (so we never report a started capture that isn't
-            // running) and otherwise returns the real link type before the first
-            // frame — reported immediately so a savefile is faithful from frame 0.
-            let linkType = try session.start(interface: interface, onBatch: { [weak self] frames in
+            // `start` validates the configuration, opens the handle, and compiles
+            // any BPF synchronously: it throws on an out-of-bounds value, an
+            // interface that can't be opened, or a bad filter (so we never report a
+            // started capture that isn't running or silently ignored its filter),
+            // and otherwise returns the real link type before the first frame —
+            // reported immediately so a savefile is faithful from frame 0.
+            let linkType = try session.start(configuration: configuration, onBatch: { [weak self] frames in
                 guard let self else {
                     return
                 }
@@ -85,10 +87,12 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
             capture = session
             captureLinkType = linkType
             lock.unlock()
-            Self.logger.info("started capture on \(interface, privacy: .public)")
+            Self.logger.info("started capture on \(configuration.interface, privacy: .public)")
             reply(true, "")
+        } catch let error as PcapCapture.Failure {
+            reply(false, error.message)
         } catch {
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 

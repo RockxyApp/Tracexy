@@ -15,6 +15,7 @@ nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
     case http2
     case quic
     case websocket
+    case stun
     case other
 
     // MARK: Internal
@@ -40,6 +41,7 @@ nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
         case .http2: "HTTP/2"
         case .quic: "QUIC"
         case .websocket: "WS"
+        case .stun: "STUN"
         case .other: "—"
         }
     }

@@ -6,12 +6,37 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
+    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, in that order")
+    func monitorOrder() {
+        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow])
+    }
+
     @Test("Toolbar update badge keeps the approved capsule geometry")
     func updateBadgeMetrics() {
         #expect(Theme.Metrics.toolbarControlHeight == 32)
         #expect(Theme.Metrics.updateBadgeHeight == 24)
         #expect(Theme.Metrics.updateBadgeHorizontalPadding == 9)
         #expect(Theme.Metrics.updateBadgeStrokeWidth == 0.75)
+    }
+
+    @Test("Overview stays inside the workspace when the native sidebar is open")
+    func overviewUsesTheWorkspaceViewport() throws {
+        let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
+
+        #expect(source.contains("GeometryReader { proxy in"))
+        #expect(source.contains("proxy.size.width >= Self.wideDashboardMinimumWidth"))
+        #expect(source.contains("proxy.size.width - Theme.Metrics.spacingL * 2"))
+    }
+
+    @Test("Overview summarizes findings and leaves evidence to Sessions")
+    func overviewDoesNotDuplicateTheFindingList() throws {
+        let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
+
+        #expect(source.contains("findingSummaryBar"))
+        #expect(source.contains("Review \\(all.count.formatted()) in Sessions"))
+        #expect(!source.contains("findingPreviewLimit"))
+        #expect(!source.contains("findingRow("))
+        #expect(!source.contains("Open evidence"))
     }
 
     @Test("Details uses stacked inspector tables instead of List sections")
@@ -46,6 +71,19 @@ struct WorkspacePresentationContractTests {
         #expect(source.contains(".accessibilityLabel(\"Add field\")"))
     }
 
+    @Test("Command-F focuses the existing Sessions search without adding a new search surface")
+    func sessionSearchUsesNativeFindCommand() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let filterBar = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+
+        #expect(app.contains("coordinator.beginSessionSearch()"))
+        #expect(app.contains(".keyboardShortcut(\"f\", modifiers: .command)"))
+        #expect(filterBar.contains("@FocusState private var isSearchFieldFocused"))
+        #expect(filterBar.contains(".task(id: workspace.searchFocusRequest)"))
+        #expect(filterBar.contains(".focused($isSearchFieldFocused)"))
+        #expect(!filterBar.contains(".searchable"))
+    }
+
     @Test("Security is a toolbar-only quick filter over the scalable session workflow")
     func securityUsesSessionQuickFilter() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
@@ -58,6 +96,46 @@ struct WorkspacePresentationContractTests {
         #expect(!sidebarItems.contains("case security"))
         #expect(!sidebarItems.contains(".security]"))
         #expect(filters.contains("systemImage: category == .security ? \"exclamationmark.shield\" : nil"))
+    }
+
+    @Test("Saved captures expose native context actions and recoverable removal")
+    func savedCaptureRemovalUsesTrash() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let persistence = try readProjectFile(
+            "Tracexy/ViewModels/MainContentCoordinator+CapturePersistence.swift"
+        )
+
+        #expect(sidebar.contains("Button(\"Open\", systemImage: \"eye\")"))
+        #expect(sidebar.contains("Button(\"Reveal in Finder\", systemImage: \"folder\")"))
+        #expect(sidebar.contains("Button(\"Copy Path\", systemImage: \"doc.on.doc\")"))
+        #expect(sidebar.contains("Button(\"Move to Trash…\", systemImage: \"trash\", role: .destructive)"))
+        #expect(sidebar.contains(".confirmationDialog("))
+        #expect(persistence.contains("FileManager.default.trashItem(at: capture.url"))
+        #expect(!persistence.contains("removeItem(at: capture.url)"))
+    }
+
+    @Test("Sources category rows expose full-width context actions")
+    func sourceCategoryRowsHaveContextMenus() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let visibility = try readProjectFile(
+            "Tracexy/ViewModels/MainContentCoordinator+SourceVisibility.swift"
+        )
+
+        #expect(sidebar.contains("sourceCategoryLabel("))
+        #expect(sidebar.contains("copyLabel: \"Copy App Names\""))
+        #expect(sidebar.contains("copyLabel: \"Copy Domains\""))
+        #expect(sidebar.contains("copyLabel: \"Copy IP Addresses\""))
+        #expect(sidebar.contains("Button(\"Show All Sessions\", systemImage: \"rectangle.stack\")"))
+        #expect(sidebar.contains("Button(\"Remove from Sources\", systemImage: \"trash\", role: .destructive)"))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden Apps\""))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden Domains\""))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden IP Addresses\""))
+        #expect(sidebar.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(visibility.contains("sources.hiddenApps"))
+        #expect(visibility.contains("sources.hiddenDomains"))
+        #expect(visibility.contains("sources.hiddenIPs"))
+        #expect(visibility.contains("persistHiddenSources()"))
+        #expect(!visibility.contains("sessions.removeAll"))
     }
 
     @Test("AI Assistant uses a truthful conversation shell")

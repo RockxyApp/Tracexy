@@ -196,6 +196,153 @@ nonisolated struct HelperCaptureStats: Sendable, Equatable {
     var droppedByInterface: UInt32
 }
 
+// MARK: - CaptureConfigurationError
+
+/// Why an immutable capture configuration was rejected. Carries a user-facing
+/// `message` so the app can surface *why* a capture never started, and the helper
+/// can fail the start reply with the same explanation.
+nonisolated enum CaptureConfigurationError: Error, Equatable {
+    case emptyInterface
+    case interfaceTooLong
+    case bpfTooLong
+
+    // MARK: Internal
+
+    var message: String {
+        switch self {
+        case .emptyInterface:
+            "no capture interface was specified."
+        case .interfaceTooLong:
+            "the capture interface name is too long."
+        case .bpfTooLong:
+            "the BPF filter expression is too long."
+        }
+    }
+}
+
+// MARK: - CaptureConfiguration
+
+/// The immutable capture parameters ferried across the app↔helper XPC boundary as
+/// a typed, `NSSecureCoding` object: the interface to open, the snap length, the
+/// promiscuous flag, and an optional BPF filter expression.
+///
+/// This is the *only* privileged command surface — a fixed, validated description
+/// of a capture, never an arbitrary command. Both the app (before it asks the
+/// helper to start) and the helper (before it opens libpcap) run the same
+/// ``validated()`` so bounds are enforced on both sides: the snap length is
+/// clamped into a supported range, the interface must be present and reasonable,
+/// and an over-long BPF expression is rejected with a clear message. Syntactic BPF
+/// validation happens against libpcap at open time — a bad expression fails the
+/// start *before* any capture is reported running.
+///
+/// Decoding is deliberately total: `init(coder:)` never traps. Whatever crosses
+/// the wire is validated by ``validated()`` on receipt, so a malformed message is
+/// rejected truthfully rather than trusted.
+@objc(TracexyCaptureConfiguration)
+nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @unchecked Sendable {
+    // MARK: Lifecycle
+
+    init(interface: String, snapLength: Int, promiscuous: Bool, bpf: String?) {
+        self.interface = interface
+        self.snapLength = snapLength
+        self.promiscuous = promiscuous
+        self.bpf = bpf
+    }
+
+    required init?(coder: NSCoder) {
+        interface = (coder.decodeObject(of: NSString.self, forKey: Key.interface) as String?) ?? ""
+        // A snap length written as Int64; a nonsensical value is caught by `validated()`.
+        snapLength = Int(coder.decodeInt64(forKey: Key.snapLength))
+        promiscuous = coder.decodeBool(forKey: Key.promiscuous)
+        // A missing/empty BPF string decodes to `nil` — no filter.
+        let decodedBPF = coder.decodeObject(of: NSString.self, forKey: Key.bpf) as String?
+        bpf = (decodedBPF?.isEmpty ?? true) ? nil : decodedBPF
+    }
+
+    // MARK: Internal
+
+    /// Supported snap-length range. The floor keeps enough of a frame for L2–L4
+    /// headers; the ceiling matches the largest preset the UI offers and is well
+    /// above any real frame, so a larger persisted value is clamped rather than
+    /// trusted into an oversized buffer.
+    static let snapLengthRange: ClosedRange<Int> = 64 ... 262_144
+    /// Full-frame default used when a persisted snap length is missing or unusable.
+    static let defaultSnapLength = 65_536
+    /// Upper bound on a BPF expression's length. A real filter is short; anything
+    /// longer is rejected rather than handed to `pcap_compile`.
+    static let maxBPFLength = 1_024
+    /// Upper bound on an interface name's length (BSD names are a handful of chars).
+    static let maxInterfaceLength = 128
+
+    static var supportsSecureCoding: Bool {
+        true
+    }
+
+    let interface: String
+    let snapLength: Int
+    let promiscuous: Bool
+    /// Trimmed BPF expression, or `nil` for "capture everything". Never an empty
+    /// string — an empty filter is normalized to `nil` so it is unambiguous.
+    let bpf: String?
+
+    /// Clamp a raw snap length into the supported range. A non-positive value is
+    /// treated as unset and becomes the full-frame default; anything else is
+    /// clamped to the nearest supported bound.
+    static func clampedSnapLength(_ raw: Int) -> Int {
+        guard raw > 0 else {
+            return defaultSnapLength
+        }
+        return min(max(raw, snapLengthRange.lowerBound), snapLengthRange.upperBound)
+    }
+
+    /// Validate and normalize. Returns a copy with a clamped snap length and a
+    /// trimmed/normalized BPF, or the reason it was rejected. Never traps.
+    func validated() -> Result<CaptureConfiguration, CaptureConfigurationError> {
+        let trimmedInterface = interface.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInterface.isEmpty else {
+            return .failure(.emptyInterface)
+        }
+        guard trimmedInterface.count <= Self.maxInterfaceLength else {
+            return .failure(.interfaceTooLong)
+        }
+        var normalizedBPF: String?
+        if let bpf {
+            let trimmed = bpf.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                normalizedBPF = nil
+            } else if trimmed.count > Self.maxBPFLength {
+                return .failure(.bpfTooLong)
+            } else {
+                normalizedBPF = trimmed
+            }
+        }
+        return .success(CaptureConfiguration(
+            interface: trimmedInterface,
+            snapLength: Self.clampedSnapLength(snapLength),
+            promiscuous: promiscuous,
+            bpf: normalizedBPF
+        ))
+    }
+
+    func encode(with coder: NSCoder) {
+        coder.encode(interface as NSString, forKey: Key.interface)
+        coder.encode(Int64(snapLength), forKey: Key.snapLength)
+        coder.encode(promiscuous, forKey: Key.promiscuous)
+        if let bpf {
+            coder.encode(bpf as NSString, forKey: Key.bpf)
+        }
+    }
+
+    // MARK: Private
+
+    private enum Key {
+        static let interface = "if"
+        static let snapLength = "sl"
+        static let promiscuous = "pr"
+        static let bpf = "bpf"
+    }
+}
+
 // MARK: - TracexyHelperInterface
 
 /// Builds the `NSXPCInterface` for `TracexyHelperProtocol` with the secure-coding
@@ -225,6 +372,17 @@ nonisolated enum TracexyHelperInterface {
                 for: #selector(TracexyHelperProtocol.stopCapture(withReply:)),
                 argumentIndex: 0,
                 ofReply: true
+            )
+        }
+        // The immutable capture configuration is the one typed object the app
+        // *sends* to the helper, so its allow-list is set on the request argument
+        // (`ofReply: false`) rather than a reply.
+        if let allowedConfig = NSSet(array: [CaptureConfiguration.self, NSString.self]) as? Set<AnyHashable> {
+            interface.setClasses(
+                allowedConfig,
+                for: #selector(TracexyHelperProtocol.startCapture(configuration:withReply:)),
+                argumentIndex: 0,
+                ofReply: false
             )
         }
         return interface

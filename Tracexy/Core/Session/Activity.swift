@@ -52,7 +52,10 @@ enum ActivityEvidence: Hashable, Sendable {
     nonisolated var tier: ConfidenceTier {
         switch self {
         case .dnsAnswerToConnection: .causal
-        case .sameProcessAtConnect: .causal
+        // A shared owner is strong attribution, but it does not prove that one
+        // connection caused another. Only an observed protocol transition earns
+        // the causal tier.
+        case .sameProcessAtConnect: .strong
         case .canonicalNameMatch: .strong
         // Deliberately weak: things that merely happen at the same moment are
         // not related, and on a busy interface almost everything is adjacent.
