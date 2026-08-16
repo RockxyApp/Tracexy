@@ -26,6 +26,12 @@ enum ActivityBuilder {
     /// deliberately short causal window rather than an attempt to model TTL.
     static let dnsCausalWindow: TimeInterval = 30
 
+    /// How close in time two identifier-only sessions must sit to be treated as
+    /// one action. The second pass has *no* observed causal step — only agreeing
+    /// process and name — so it earns a far tighter window than the DNS pass: a
+    /// process talking to a host every few seconds is many actions, not one.
+    static let sameIdentityAdjacencyWindow: TimeInterval = 2
+
     static func build(from sessions: [SessionSummary], window: TimeInterval = dnsCausalWindow) -> Result {
         guard !sessions.isEmpty else {
             return Result()
@@ -116,11 +122,21 @@ enum ActivityBuilder {
 
         // Second pass: sessions with no DNS link, but the same process talking to
         // the same name close together. Strong, not causal — no observed step
-        // ties them, only agreeing identifiers.
+        // ties them, only agreeing identifiers. Because the only signal here is
+        // identity, the bar is deliberately high: a session needs a *real*
+        // observed process AND a shared canonical name to even be a candidate.
+        // Sessions whose process attribution is nil/empty are never second-pass
+        // grouped — an absent process is not a matching process.
         let remaining = ordered.filter { !consumed.contains($0.id) }
         var buckets: [String: [SessionSummary]] = [:]
         for session in remaining {
-            let key = "\(session.processName ?? "—")\u{1}\(Self.canonicalName([session]) ?? session.host)"
+            guard let process = Self.attributedProcess(of: session),
+                  let canonical = Self.canonicalName([session]) else
+            {
+                result.ungrouped.append(session)
+                continue
+            }
+            let key = "\(process)\u{1}\(canonical)"
             buckets[key, default: []].append(session)
         }
 
@@ -131,7 +147,7 @@ enum ActivityBuilder {
             }
             // Only group what is actually adjacent in time; a process talking to
             // one host all day is not one action.
-            for run in Self.runs(in: bucket, window: window) {
+            for run in Self.runs(in: bucket, window: Self.sameIdentityAdjacencyWindow) {
                 if run.count == 1 {
                     result.ungrouped.append(contentsOf: run)
                     continue
@@ -171,6 +187,19 @@ enum ActivityBuilder {
         }
         let host = String(endpoint[endpoint.startIndex ..< separator])
         return host.isEmpty ? nil : host
+    }
+
+    /// A session's process attribution, only when it is a real non-empty name.
+    /// A nil or empty `processName` is unknown, not a value to correlate on.
+    private static func attributedProcess(of session: SessionSummary) -> String? {
+        guard let rawName = session.processName else {
+            return nil
+        }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            return nil
+        }
+        return name
     }
 
     private static func sharedProcess(_ sessions: [SessionSummary]) -> String? {

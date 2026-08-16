@@ -76,10 +76,14 @@ private extension SessionAccumulator {
         // MARK: Lifecycle
 
         init(first packet: DecodedPacket) {
+            var enriched = packet
             earliest = packet
             latestTime = packet.timestamp
             rich = packet
-            fold(packet)
+            _ = enrichFromTCPStream(&enriched)
+            earliest = enriched
+            rich = enriched
+            fold(enriched)
         }
 
         // MARK: Internal
@@ -87,7 +91,9 @@ private extension SessionAccumulator {
         /// Fold a subsequent packet of the same five-tuple. `merge` also updates
         /// the representatives; the first packet is folded via `fold` directly
         /// from `init`, where the representatives are already seeded.
-        mutating func merge(_ packet: DecodedPacket) {
+        mutating func merge(_ incoming: DecodedPacket) {
+            var packet = incoming
+            let hasReassembledApplication = enrichFromTCPStream(&packet)
             // Earliest packet: a strictly-smaller timestamp wins, so equal
             // timestamps keep the first-seen packet — matching `sorted.first`.
             if packet.timestamp < earliest.timestamp {
@@ -100,7 +106,9 @@ private extension SessionAccumulator {
             }
             // Richest representative: only a strictly-greater layer count wins, so
             // ties keep the first-seen packet — matching `packets.max(by:)`.
-            if rich.layers.count < packet.layers.count {
+            if rich.layers.count < packet.layers.count
+                || (hasReassembledApplication && applicationRichness(packet) > applicationRichness(rich))
+            {
                 rich = packet
             }
             fold(packet)
@@ -177,17 +185,21 @@ private extension SessionAccumulator {
         private var dnsQueryTime: Date?
         private var dnsResponseTime: Date?
 
-        private var anyAppProtocol = false
         private var anyTCPRST = false
 
+        /// At most one 16 KiB prefix per direction. Once a complete first
+        /// application record/header is classified, the bytes are released and
+        /// only the decoded metadata remains in the summary state.
+        private var tcpDirections: [IPEndpoint: TCPDirectionState] = [:]
+
         private var status: SessionStatus {
-            if anyTCPRST {
-                return .error
-            }
-            if !anyAppProtocol, rich.transport == .tcp {
-                return .warning
-            }
-            return .ok
+            // Only observed evidence sets status. An explicit TCP RST is a real
+            // reset and reads as an error. The absence of a decoded application
+            // protocol is *not* evidence of anything — a bare SYN, a midstream
+            // TCP payload we could not classify, or a tunnel we do not parse are
+            // all normal traffic, so they stay `.ok` rather than being invented
+            // into a warning that then feeds Security/findings.
+            anyTCPRST ? .error : .ok
         }
 
         private var latency: Double? {
@@ -201,6 +213,76 @@ private extension SessionAccumulator {
             packet.layers.contains { layer in
                 layer.proto == .tcp && (layer.fields.first { $0.name == "Flags" }?.value.contains("RST") ?? false)
             }
+        }
+
+        /// Reassembles only enough of one TCP direction to classify its first
+        /// TLS/HTTP/DNS record. The connection/session seam owns ordering state;
+        /// the protocol decoder stays stateless and receives a bounded prefix.
+        private mutating func enrichFromTCPStream(_ packet: inout DecodedPacket) -> Bool {
+            guard packet.transport == .tcp,
+                  let source = packet.sourceEndpoint,
+                  let destination = packet.destinationEndpoint,
+                  let sequence = packet.tcpPayloadSequence,
+                  !packet.tcpPayloadBytes.isEmpty else
+            {
+                return false
+            }
+
+            var direction = tcpDirections[source] ?? TCPDirectionState()
+            guard !direction.finished else {
+                return false
+            }
+            var output = direction.reassembler.ingest(sequence: sequence, payload: packet.tcpPayloadBytes)
+            var metadata = PacketDecoder.decodeReassembledTCPPayload(
+                output.contiguous,
+                sourcePort: source.port,
+                destinationPort: destination.port
+            )
+
+            // A capture may begin in the middle of an existing byte stream. If
+            // this packet is independently recognizable at its own boundary but
+            // the earlier anchor was opaque, re-anchor here instead of retaining
+            // an undecodable prefix until the bound is exhausted.
+            if metadata == nil, packet.appProtocol != nil,
+               output.contiguous.count != packet.tcpPayloadBytes.count
+            {
+                direction.reassembler.reset()
+                output = direction.reassembler.ingest(sequence: sequence, payload: packet.tcpPayloadBytes)
+                metadata = PacketDecoder.decodeReassembledTCPPayload(
+                    output.contiguous,
+                    sourcePort: source.port,
+                    destinationPort: destination.port
+                )
+            }
+
+            guard let metadata else {
+                tcpDirections[source] = direction
+                return false
+            }
+            packet.appProtocol = metadata.appProtocol
+            packet.sni = metadata.sni ?? packet.sni
+            packet.dnsQuery = metadata.dnsQuery ?? packet.dnsQuery
+            if !metadata.dnsAnswers.isEmpty {
+                packet.dnsAnswers = metadata.dnsAnswers
+            }
+            packet.layers.removeAll { $0.proto == metadata.appProtocol }
+            packet.layers.append(contentsOf: metadata.layers)
+
+            if metadata.isComplete || direction.reassembler.didOverflow {
+                direction.reassembler.reset()
+                direction.finished = true
+            }
+            tcpDirections[source] = direction
+            return true
+        }
+
+        private func applicationRichness(_ packet: DecodedPacket) -> Int {
+            func layerScore(_ layer: DecodedLayer) -> Int {
+                layer.fields.count + layer.children.reduce(0) { $0 + 1 + layerScore($1) }
+            }
+            return packet.layers.reduce(0) { $0 + layerScore($1) }
+                + (packet.sni == nil ? 0 : 100)
+                + (packet.dnsQuery == nil ? 0 : 50)
         }
 
         /// Fold the parts of a packet that accumulate the same way for the first
@@ -229,9 +311,6 @@ private extension SessionAccumulator {
                 }
             }
 
-            if packet.appProtocol != nil {
-                anyAppProtocol = true
-            }
             if !anyTCPRST, Self.hasTCPRST(packet) {
                 anyTCPRST = true
             }
@@ -245,5 +324,10 @@ private extension SessionAccumulator {
             }
             return candidate < stored ? candidate : stored
         }
+    }
+
+    nonisolated struct TCPDirectionState {
+        var reassembler = TCPStreamReassembler()
+        var finished = false
     }
 }

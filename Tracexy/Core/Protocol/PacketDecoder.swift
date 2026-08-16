@@ -13,6 +13,15 @@ nonisolated enum LinkType {
 nonisolated enum PacketDecoder {
     // MARK: Internal
 
+    struct ReassembledTCPApplication: Sendable {
+        let appProtocol: ProtocolKind
+        let layers: [DecodedLayer]
+        let sni: String?
+        let dnsQuery: String?
+        let dnsAnswers: [String]
+        let isComplete: Bool
+    }
+
     static func decode(_ frame: PacketBuffer, linkType: UInt32, timestamp: Date, originalLength: Int) -> DecodedPacket {
         var packet = DecodedPacket(timestamp: timestamp, originalLength: originalLength)
         do {
@@ -30,10 +39,68 @@ nonisolated enum PacketDecoder {
         return packet
     }
 
+    /// Classifies a bounded, contiguous TCP prefix assembled by the Session
+    /// layer. Returned layers deliberately carry no frame byte ranges: their
+    /// bytes can span multiple packets and must never highlight offsets in one
+    /// representative frame.
+    static func decodeReassembledTCPPayload(
+        _ bytes: [UInt8], sourcePort: UInt16, destinationPort: UInt16
+    )
+        -> ReassembledTCPApplication?
+    {
+        let buffer = PacketBuffer(bytes)
+        var packet = DecodedPacket(timestamp: .distantPast, originalLength: bytes.count)
+        let complete: Bool
+        do {
+            if isTLS(buffer) {
+                try tlsRecords(buffer, into: &packet)
+                let declared = try 5 + Int(buffer.u16(3))
+                complete = bytes.count >= declared
+            } else if sourcePort == 53 || destinationPort == 53,
+                      bytes.count >= 2
+            {
+                let declared = try Int(buffer.u16(0))
+                guard declared > 0, bytes.count >= 2 + declared else {
+                    return nil
+                }
+                try dns(buffer, into: &packet, tcp: true)
+                complete = true
+            } else if isHTTP(buffer) {
+                try http(buffer, into: &packet)
+                complete = containsHTTPHeaderTerminator(bytes)
+            } else {
+                return nil
+            }
+        } catch {
+            return nil
+        }
+        guard let appProtocol = packet.appProtocol else {
+            return nil
+        }
+        return ReassembledTCPApplication(
+            appProtocol: appProtocol,
+            layers: packet.layers.map(withoutByteRanges),
+            sni: packet.sni,
+            dnsQuery: packet.dnsQuery,
+            dnsAnswers: packet.dnsAnswers,
+            isComplete: complete
+        )
+    }
+
     // MARK: Private
 
     /// IPv6 extension-header protocol numbers (RFC 8200 order).
     private static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+
+    /// STUN magic cookie (RFC 5389 §6): the fixed value at header offset 4 that
+    /// disambiguates STUN from other UDP payloads regardless of port.
+    private static let stunMagicCookie: UInt32 = 0x2112A442
+
+    /// Largest plausible TLS record body: the 2^14 plaintext limit plus the
+    /// ciphertext-expansion allowance (RFC 5246 §6.2.3 / RFC 8446 §5.2), i.e.
+    /// 2^14 + 2048. A declared length beyond this cannot be a real TLS record, so
+    /// it is rejected to bound false positives.
+    private static let tlsMaxRecordLength = 16_384 + 2_048
 
     /// Decodes a tunnel/raw frame whose link-layer header is unknown: a bare IP
     /// packet, or one prefixed with a 4-byte BSD address family (NULL/LOOP).
@@ -351,6 +418,9 @@ nonisolated enum PacketDecoder {
         let dstPort = try buf.u16(2)
         let seq = try buf.u32(4)
         let dataOffset = try Int(buf.u8(12) >> 4) * 4
+        guard dataOffset >= 20, dataOffset <= buf.length else {
+            throw PacketError.malformed("Invalid TCP data offset")
+        }
         let flags = try buf.u8(13)
         packet.transport = .tcp
         packet.sourceEndpoint = IPEndpoint(ip: src, port: srcPort)
@@ -382,8 +452,10 @@ nonisolated enum PacketDecoder {
         if payload.isEmpty {
             return
         }
+        packet.tcpPayloadSequence = seq &+ ((flags & 0x02) == 0 ? 0 : 1)
+        packet.tcpPayloadBytes = try payload.bytes(0, payload.length)
         if isTLS(payload) {
-            try tls(payload, into: &packet)
+            try tlsRecords(payload, into: &packet)
         } else if srcPort == 53 || dstPort == 53 {
             try dns(payload, into: &packet, tcp: true)
         } else if isHTTP(payload) {
@@ -463,10 +535,15 @@ nonisolated enum PacketDecoder {
             byteRange: span(buf, 8)
         ))
         let payload = try buf.subset(from: 8)
-        if srcPort == 53 || dstPort == 53 {
+        if isSTUN(payload) {
+            // Content-detected (magic cookie), so port-independent — STUN rides on
+            // ephemeral ICE ports, not a well-known one. The UDP five-tuple/session
+            // grouping set above is preserved; this only enriches the app layer.
+            try stun(payload, into: &packet)
+        } else if srcPort == 53 || dstPort == 53 {
             try dns(payload, into: &packet, tcp: false)
         } else if srcPort == 443 || dstPort == 443, isQUIC(payload) {
-            quicLayer(&packet)
+            quic(payload, into: &packet)
         }
     }
 
@@ -585,16 +662,73 @@ nonisolated enum PacketDecoder {
         }
     }
 
+    /// Walk all complete coalesced TLS records in one TCP payload. A final
+    /// truncated record is still emitted once with an honest fragment label.
+    private static func tlsRecords(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        var offset = 0
+        var recordCount = 0
+        while offset + 5 <= buf.length, recordCount < 32 {
+            let record = try buf.subset(from: offset)
+            guard isTLS(record) else {
+                break
+            }
+            try tls(record, into: &packet)
+            recordCount += 1
+            let recordLength = try 5 + Int(record.u16(3))
+            guard recordLength <= record.length else {
+                break
+            }
+            offset += recordLength
+        }
+    }
+
     private static func tls(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        let contentType = try buf.u8(0)
         let recordVersion = try buf.u16(1)
-        let handshakeType = try buf.u8(5)
-        let recordLength = (try? buf.u16(3)).map { 5 + Int($0) } ?? buf.length
+        let declaredBody = try Int(buf.u16(3))
+        let recordLength = 5 + declaredBody // declared record length (header + body)
+        let capturedBody = max(0, min(recordLength, buf.length) - 5)
+        let typeName = tlsContentTypeName(contentType)
         var layer = DecodedLayer(
             proto: .tls, title: "Transport Layer Security", summary: tlsVersionName(recordVersion),
             byteRange: span(buf, recordLength)
         )
-        layer.fields.append(ranged("Content Type", "Handshake (22)", in: buf, at: 0, 1))
+        layer.fields.append(ranged("Content Type", "\(typeName) (\(contentType))", in: buf, at: 0, 1))
+        layer.fields.append(ranged("Version", tlsVersionName(recordVersion), in: buf, at: 1, 2))
+        // A packet — or even the bounded session prefix — may still contain only
+        // part of a record. Label captured-vs-declared honestly.
+        if capturedBody < declaredBody {
+            layer.fields.append(ranged(
+                "Record Length", "\(declaredBody) declared, \(capturedBody) captured (fragment)",
+                in: buf, at: 3, 2
+            ))
+        } else {
+            layer.fields.append(ranged("Record Length", "\(declaredBody)", in: buf, at: 3, 2))
+        }
         packet.appProtocol = .tls
+        // Only a Handshake record carries a handshake message; never read a handshake
+        // byte for Application Data / Alert / Change Cipher Spec / Heartbeat records.
+        // A truncated or malformed handshake leaves the record-level layer intact
+        // (metadata only — this is not decryption or stream reassembly).
+        if contentType == 22 {
+            try? enrichTLSHandshake(
+                buf, recordVersion: recordVersion, recordLength: recordLength, layer: &layer, packet: &packet
+            )
+        }
+        packet.layers.append(layer)
+    }
+
+    /// Enriches a TLS *Handshake* record with ClientHello (SNI/ALPN/version/ciphers)
+    /// or ServerHello (version/cipher) detail. Bounds-checked; a truncated handshake
+    /// throws and the caller keeps the record-level layer. The caller gates this on
+    /// the Handshake content type, so a handshake byte is never read for other records.
+    private static func enrichTLSHandshake(
+        _ buf: PacketBuffer, recordVersion: UInt16, recordLength: Int,
+        layer: inout DecodedLayer, packet: inout DecodedPacket
+    )
+        throws
+    {
+        let handshakeType = try buf.u8(5)
         // Parse ClientHello for SNI + ALPN + version/ciphers.
         if handshakeType == 0x01 {
             var hello = DecodedLayer(
@@ -664,7 +798,6 @@ nonisolated enum PacketDecoder {
             layer.summary = "\(tlsVersionName(serverVersion)) · Server Hello"
             layer.children.append(serverHello)
         }
-        packet.layers.append(layer)
     }
 
     /// Parses a TLS ALPN protocol-name list into a comma-joined string.
@@ -718,18 +851,209 @@ nonisolated enum PacketDecoder {
         ))
     }
 
-    private static func quicLayer(_ packet: inout DecodedPacket) {
+    /// Surfaces the clear-text QUIC long-header fields (RFC 9000 §17.2): packet
+    /// type, version, and the destination/source connection IDs. The caller's
+    /// `isQUIC` gate proved the long-header form bit; the fixed bit, packet-number
+    /// space, and everything after the source CID are encrypted and never guessed.
+    /// A version of 0 is Version Negotiation (§17.2.1). Any bounds failure — a
+    /// short header slipping the gate, a CID length over the 20-byte cap, or a
+    /// truncated header — falls back to honest identification only.
+    private static func quic(_ buf: PacketBuffer, into packet: inout DecodedPacket) {
         packet.appProtocol = .quic
-        packet.layers.append(DecodedLayer(proto: .quic, title: "QUIC", summary: "encrypted transport"))
+        guard let first = try? buf.u8(0),
+              let version = try? buf.u32(1),
+              let dcidLen = try? Int(buf.u8(5)), dcidLen <= 20,
+              let dcid = try? buf.bytes(6, dcidLen),
+              let scidLen = try? Int(buf.u8(6 + dcidLen)), scidLen <= 20,
+              let scid = try? buf.bytes(7 + dcidLen, scidLen) else
+        {
+            packet.layers.append(DecodedLayer(proto: .quic, title: "QUIC", summary: "encrypted transport"))
+            return
+        }
+        let scidLenOffset = 6 + dcidLen
+        let isVersionNegotiation = version == 0
+        let typeName = isVersionNegotiation ? "Version Negotiation" : quicLongPacketType(first, version: version)
+        let versionText = isVersionNegotiation ? "Version Negotiation (0x00000000)" : String(format: "0x%08x", version)
+        let summary = isVersionNegotiation ? "Version Negotiation" : "\(typeName) · encrypted transport"
+        packet.layers.append(DecodedLayer(
+            proto: .quic, title: "QUIC", summary: summary,
+            fields: [
+                ranged("Packet Type", typeName, in: buf, at: 0, 1),
+                ranged("Version", versionText, in: buf, at: 1, 4),
+                ranged(
+                    "Destination CID", dcid.isEmpty ? "(zero-length)" : hexString(dcid),
+                    in: buf, at: 5, 1 + dcidLen
+                ),
+                ranged(
+                    "Source CID", scid.isEmpty ? "(zero-length)" : hexString(scid),
+                    in: buf, at: scidLenOffset, 1 + scidLen
+                ),
+            ],
+            byteRange: span(buf, scidLenOffset + 1 + scidLen)
+        ))
+    }
+
+    /// Names a QUIC v1 long-header packet type from the two type bits (RFC 9000
+    /// §17.2). The type-bit meaning is version-specific, so any non-v1 version
+    /// renders the raw type value rather than assuming the v1 mapping.
+    private static func quicLongPacketType(_ firstByte: UInt8, version: UInt32) -> String {
+        let type = (firstByte >> 4) & 0x03
+        guard version == 0x00000001 else {
+            return "Long Header (type \(type))"
+        }
+        switch type {
+        case 0x00: return "Initial"
+        case 0x01: return "0-RTT"
+        case 0x02: return "Handshake"
+        default: return "Retry"
+        }
+    }
+
+    /// Decodes the fixed 20-byte STUN header (RFC 5389 §6) and then walks the
+    /// declared attribute TLVs. Metadata only — ICE negotiation state and TURN
+    /// allocation state are deliberately not tracked; attributes are surfaced by
+    /// name, with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS IPv4 reflexive addresses
+    /// decoded when fully present. `isSTUN` already proved the magic cookie and
+    /// that the declared attribute region is 4-byte aligned and fully captured.
+    private static func stun(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        let messageType = try buf.u16(0)
+        let messageLength = try Int(buf.u16(2))
+        let cookie = try buf.u32(4)
+        let transactionID = try buf.bytes(8, 12)
+        let typeName = stunMessageTypeName(messageType)
+        packet.appProtocol = .stun
+        var fields: [DecodedField] = [
+            ranged("Message Type", "\(typeName) (\(String(format: "0x%04x", messageType)))", in: buf, at: 0, 2),
+            ranged("Message Length", "\(messageLength)", in: buf, at: 2, 2),
+            ranged("Magic Cookie", String(format: "0x%08x", cookie), in: buf, at: 4, 4),
+            ranged("Transaction ID", hexString(transactionID), in: buf, at: 8, 12),
+        ]
+        fields += stunAttributes(buf, messageLength: messageLength)
+        packet.layers.append(DecodedLayer(
+            proto: .stun, title: "Session Traversal Utilities for NAT", summary: typeName,
+            fields: fields,
+            byteRange: span(buf, 20 + messageLength)
+        ))
+    }
+
+    /// Walks the STUN attribute TLVs (RFC 5389 §15): 2-byte type, 2-byte value
+    /// length, value padded to a 4-byte boundary, starting at offset 20. Every
+    /// read is bounds-checked; a truncated or over-declared attribute stops the
+    /// walk and keeps the header-level record intact rather than trapping.
+    private static func stunAttributes(_ buf: PacketBuffer, messageLength: Int) -> [DecodedField] {
+        var fields: [DecodedField] = []
+        let end = min(20 + messageLength, buf.length)
+        var offset = 20
+        var guardCounter = 0
+        while offset + 4 <= end, guardCounter < 64 {
+            guardCounter += 1
+            guard let type = try? buf.u16(offset),
+                  let valueLength = try? Int(buf.u16(offset + 2)),
+                  offset + 4 + valueLength <= end else
+            {
+                break
+            }
+            let valueStart = offset + 4
+            let name = stunAttributeName(type)
+            let value = stunAttributeValue(type: type, buf: buf, at: valueStart, length: valueLength)
+            fields.append(DecodedField(
+                name: "Attribute: \(name)", value: value,
+                byteRange: (buf.start + offset) ..< (buf.start + valueStart + valueLength)
+            ))
+            // Advance past the value plus its 4-byte-boundary padding.
+            offset = valueStart + ((valueLength + 3) & ~0x03)
+        }
+        return fields
+    }
+
+    /// Readable names for the RFC 5389 §18.2 attribute registry. Any other type
+    /// (including ICE/TURN extensions we deliberately do not interpret) falls back
+    /// to an honest hex rendering rather than a guessed label.
+    private static func stunAttributeName(_ type: UInt16) -> String {
+        switch type {
+        case 0x0001: "MAPPED-ADDRESS"
+        case 0x0006: "USERNAME"
+        case 0x0008: "MESSAGE-INTEGRITY"
+        case 0x0009: "ERROR-CODE"
+        case 0x000A: "UNKNOWN-ATTRIBUTES"
+        case 0x0014: "REALM"
+        case 0x0015: "NONCE"
+        case 0x0020: "XOR-MAPPED-ADDRESS"
+        case 0x8022: "SOFTWARE"
+        case 0x8023: "ALTERNATE-SERVER"
+        case 0x8028: "FINGERPRINT"
+        default: String(format: "0x%04x", type)
+        }
+    }
+
+    /// Renders an attribute's value. MAPPED-ADDRESS / XOR-MAPPED-ADDRESS surface a
+    /// decoded IPv4 `address:port` when the family is IPv4 and the value is fully
+    /// present; every other attribute (and IPv6 or malformed address families)
+    /// stays a metadata-only byte count — never a fabricated value.
+    private static func stunAttributeValue(type: UInt16, buf: PacketBuffer, at offset: Int, length: Int) -> String {
+        switch type {
+        case 0x0001: stunMappedAddress(buf, at: offset, length: length, xor: false) ?? "\(length) bytes"
+        case 0x0020: stunMappedAddress(buf, at: offset, length: length, xor: true) ?? "\(length) bytes"
+        default: "\(length) bytes"
+        }
+    }
+
+    /// Decodes a STUN (XOR-)MAPPED-ADDRESS value (RFC 5389 §15.1–15.2) for the
+    /// IPv4 family only: reserved byte, family, port, 4-byte address. XOR form
+    /// un-masks the port with the cookie's high half and the address with the full
+    /// magic cookie. Returns nil for the IPv6 family or any short/malformed value.
+    private static func stunMappedAddress(_ buf: PacketBuffer, at offset: Int, length: Int, xor: Bool) -> String? {
+        guard length >= 8,
+              let family = try? buf.u8(offset + 1), family == 0x01,
+              var port = try? buf.u16(offset + 2),
+              var octets = try? buf.bytes(offset + 4, 4) else
+        {
+            return nil
+        }
+        if xor {
+            port ^= UInt16(stunMagicCookie >> 16)
+            octets[0] ^= UInt8((stunMagicCookie >> 24) & 0xFF)
+            octets[1] ^= UInt8((stunMagicCookie >> 16) & 0xFF)
+            octets[2] ^= UInt8((stunMagicCookie >> 8) & 0xFF)
+            octets[3] ^= UInt8(stunMagicCookie & 0xFF)
+        }
+        return "\(octets.map { "\($0)" }.joined(separator: ".")):\(port)"
+    }
+
+    /// Readable names for the canonical Binding method classes; any other valid
+    /// STUN type falls back to an honest hex rendering rather than a guess.
+    private static func stunMessageTypeName(_ type: UInt16) -> String {
+        switch type {
+        case 0x0001: "Binding Request"
+        case 0x0011: "Binding Indication"
+        case 0x0101: "Binding Success Response"
+        case 0x0111: "Binding Error Response"
+        default: String(format: "0x%04x", type)
+        }
     }
 
     // MARK: Heuristics
 
+    /// Content-based TLS record recognition (RFC 8446 §5.1), independent of port.
+    /// A recognized record needs a *complete* 5-byte record header: a defined
+    /// content type (20…24 — CCS/Alert/Handshake/ApplicationData/Heartbeat), the
+    /// record-layer major version 3, a plausible minor (SSL 3.0 … TLS 1.3), and a
+    /// declared body length within the 2^14 + 2048 ciphertext allowance. The
+    /// declared body is deliberately *not* required to be fully present — TCP
+    /// reassembly does not exist, so a packet may carry only a record fragment;
+    /// `tls` labels captured-vs-declared honestly. Rejecting invalid
+    /// type/version/length bounds false positives on arbitrary TCP payloads.
     private static func isTLS(_ buf: PacketBuffer) -> Bool {
-        guard let type = try? buf.u8(0), let major = try? buf.u8(1) else {
+        guard buf.length >= 5,
+              let type = try? buf.u8(0), (20 ... 24).contains(type),
+              let major = try? buf.u8(1), major == 0x03,
+              let minor = try? buf.u8(2), minor <= 0x04,
+              let length = try? Int(buf.u16(3)),
+              length >= 1, length <= tlsMaxRecordLength else
+        {
             return false
         }
-        return type == 0x16 && major == 0x03
+        return true
     }
 
     private static func isHTTP(_ buf: PacketBuffer) -> Bool {
@@ -740,11 +1064,65 @@ nonisolated enum PacketDecoder {
         return ["GET ", "POST", "PUT ", "HEAD", "DELE", "PATC", "OPTI", "HTTP"].contains { prefix.hasPrefix($0) }
     }
 
-    private static func isQUIC(_ buf: PacketBuffer) -> Bool {
-        guard let first = try? buf.u8(0) else {
+    private static func containsHTTPHeaderTerminator(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 4 else {
             return false
         }
-        return (first & 0x80) != 0 // long-header form
+        for index in 0 ... (bytes.count - 4)
+            where bytes[index] == 13 && bytes[index + 1] == 10
+            && bytes[index + 2] == 13 && bytes[index + 3] == 10
+        {
+            return true
+        }
+        return false
+    }
+
+    private static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
+        DecodedLayer(
+            proto: layer.proto,
+            title: layer.title,
+            summary: layer.summary,
+            fields: layer.fields.map { DecodedField(name: $0.name, value: $0.value) },
+            children: layer.children.map(withoutByteRanges)
+        )
+    }
+
+    /// Conservative QUIC long-header recognition. A high bit by itself is far
+    /// too weak on busy UDP/443 traffic, so require the complete clear-text
+    /// prefix and RFC-bounded connection IDs. Non-zero versions also carry the
+    /// fixed bit; Version Negotiation deliberately does not require it because
+    /// those unused header bits are randomized.
+    private static func isQUIC(_ buf: PacketBuffer) -> Bool {
+        guard buf.length >= 7,
+              let first = try? buf.u8(0), (first & 0x80) != 0,
+              let version = try? buf.u32(1),
+              version == 0 || (first & 0x40) != 0,
+              let dcidLength = try? Int(buf.u8(5)), dcidLength <= 20,
+              (try? buf.bytes(6, dcidLength)) != nil,
+              let scidLength = try? Int(buf.u8(6 + dcidLength)), scidLength <= 20,
+              (try? buf.bytes(7 + dcidLength, scidLength)) != nil else
+        {
+            return false
+        }
+        return true
+    }
+
+    /// STUN detection (RFC 5389): a ≥20-byte payload whose two leading type bits
+    /// are zero, whose offset-4 word is the magic cookie, and whose declared
+    /// attribute length is 4-byte aligned and fully present in the capture. All
+    /// three together make a false positive on arbitrary UDP effectively impossible;
+    /// truncated or oversized-length payloads fail the last check and stay UDP.
+    private static func isSTUN(_ buf: PacketBuffer) -> Bool {
+        guard buf.length >= 20,
+              let typeByte = try? buf.u8(0), (typeByte & 0xC0) == 0,
+              let cookie = try? buf.u32(4), cookie == stunMagicCookie,
+              let messageLength = try? Int(buf.u16(2)),
+              messageLength % 4 == 0,
+              20 + messageLength <= buf.length else
+        {
+            return false
+        }
+        return true
     }
 
     // MARK: Byte-range helpers
@@ -776,6 +1154,11 @@ nonisolated enum PacketDecoder {
 
     private static func mac(_ buf: PacketBuffer, _ offset: Int) throws -> String {
         try (0 ..< 6).map { try String(format: "%02x", buf.u8(offset + $0)) }.joined(separator: ":")
+    }
+
+    /// Lower-case contiguous hex (e.g. a STUN transaction ID), no separators.
+    private static func hexString(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     private static func ipv4Address(_ buf: PacketBuffer, _ offset: Int) throws -> String {
@@ -852,6 +1235,19 @@ nonisolated enum PacketDecoder {
             parts.append("RST")
         }
         return parts.isEmpty ? "·" : parts.joined(separator: ", ")
+    }
+
+    /// Human-readable TLS record content-type name (RFC 8446 §5.1). Only 20…24 are
+    /// defined; anything else is rendered honestly rather than guessed.
+    private static func tlsContentTypeName(_ type: UInt8) -> String {
+        switch type {
+        case 20: "Change Cipher Spec"
+        case 21: "Alert"
+        case 22: "Handshake"
+        case 23: "Application Data"
+        case 24: "Heartbeat"
+        default: "type \(type)"
+        }
     }
 
     private static func tlsVersionName(_ version: UInt16) -> String {

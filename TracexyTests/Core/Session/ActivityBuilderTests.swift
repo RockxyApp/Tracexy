@@ -47,6 +47,28 @@ struct ActivityBuilderTests {
         #expect(result.ungrouped.count == 2)
     }
 
+    @Test("A DNS answer still attributes a connection late in the 30-second window")
+    func dnsCausalWindowSpansThirtySeconds() throws {
+        let base = Date()
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        // 25 seconds after the answer — well beyond the identity window but still
+        // inside the DNS causal window, which is deliberately the longer of the two.
+        let tcp = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(25), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [dns, tcp])
+        let activity = try #require(result.activities.first)
+
+        #expect(activity.sessions.count == 2)
+        #expect(activity.confidence == .causal)
+        #expect(result.ungrouped.isEmpty)
+    }
+
     @Test("A shared address is contested, and that lowers confidence")
     func sharedAddressLowersConfidence() throws {
         let base = Date()
@@ -108,7 +130,7 @@ struct ActivityBuilderTests {
 
         #expect(activity.sessions.count == 2)
         // No observed causal step, so it must not claim one.
-        #expect(activity.confidence == .causal || activity.confidence == .strong)
+        #expect(activity.confidence == .strong)
         #expect(!activity.evidence.contains {
             if case .dnsAnswerToConnection = $0 {
                 true
@@ -116,6 +138,80 @@ struct ActivityBuilderTests {
                 false
             }
         })
+    }
+
+    @Test("Same process and name within the adjacency window still groups")
+    func sameIdentityWithinWindowGroups() throws {
+        let base = Date()
+        let first = Self.session(
+            host: "api.example.com", at: base, process: "MyApp", stack: [.tcp], sni: "api.example.com"
+        )
+        // Well inside the 2-second identity window.
+        let second = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(1.5),
+            process: "MyApp", stack: [.tls], sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [first, second])
+        let activity = try #require(result.activities.first)
+
+        #expect(activity.sessions.count == 2)
+        #expect(result.ungrouped.isEmpty)
+    }
+
+    @Test("Same process and name beyond the adjacency window does not group")
+    func sameIdentityBeyondWindowDoesNotGroup() {
+        let base = Date()
+        let first = Self.session(
+            host: "api.example.com", at: base, process: "MyApp", stack: [.tcp], sni: "api.example.com"
+        )
+        // Three seconds apart: outside the identity window, so these are two
+        // separate actions even though process and name agree.
+        let second = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(3),
+            process: "MyApp", stack: [.tls], sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [first, second])
+
+        #expect(result.activities.isEmpty)
+        #expect(result.ungrouped.count == 2)
+    }
+
+    @Test("Missing process attribution is never second-pass grouped")
+    func missingProcessNeverGroups() {
+        let base = Date()
+        // Same name, adjacent in time, but no observed process on either session.
+        // An absent process is not a matching process.
+        let first = Self.session(
+            host: "api.example.com", at: base, process: nil, stack: [.tcp], sni: "api.example.com"
+        )
+        let second = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.2),
+            process: nil, stack: [.tls], sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [first, second])
+
+        #expect(result.activities.isEmpty)
+        #expect(result.ungrouped.count == 2)
+    }
+
+    @Test("Whitespace-only process attribution is never second-pass grouped")
+    func blankProcessNeverGroups() {
+        let base = Date()
+        let first = Self.session(
+            host: "api.example.com", at: base, process: "   ", stack: [.tcp], sni: "api.example.com"
+        )
+        let second = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.2),
+            process: "\t", stack: [.tls], sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [first, second])
+
+        #expect(result.activities.isEmpty)
+        #expect(result.ungrouped.count == 2)
     }
 
     @Test("Unattributable sessions stay visible rather than being absorbed")

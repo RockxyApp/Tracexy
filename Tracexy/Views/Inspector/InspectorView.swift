@@ -388,7 +388,7 @@ struct InspectorView: View {
     private func applicationLayers(_ layers: [DecodedLayer]) -> [DecodedLayer] {
         var found: [DecodedLayer] = []
         for layer in layers {
-            let isApplication: Set<ProtocolKind> = [.http, .http2, .dns, .websocket, .quic]
+            let isApplication: Set<ProtocolKind> = [.http, .http2, .dns, .websocket, .quic, .stun]
             if isApplication.contains(layer.proto) {
                 found.append(layer)
             }

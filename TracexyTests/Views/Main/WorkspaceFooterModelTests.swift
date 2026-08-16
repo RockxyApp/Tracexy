@@ -275,16 +275,17 @@ struct WorkspaceFooterModelTests {
         ) == nil)
     }
 
-    // MARK: - Retention truncation (save/export bound, never capture loss)
+    // MARK: - Retention truncation (inspection-memory bound, never capture loss)
 
     @Test("Retention truncation is a neutral notice, never a capture-loss alarm")
     func retentionTruncationPresence() {
         #expect(telemetry(retainedFrameEvictionCount: 0, kind: .retentionTruncation) == nil)
 
         let truncated = telemetry(retainedFrameEvictionCount: 5_000, kind: .retentionTruncation)
-        // Neutral, not warning/error — sessions are intact; only the save tail was trimmed.
+        // Neutral, not warning/error — sessions and the disk-backed save are intact.
         #expect(truncated?.role == .neutral)
-        #expect(truncated?.text.contains("not retained") == true)
+        #expect(truncated?.text.contains("outside memory window") == true)
+        #expect(truncated?.help.contains("complete disk-backed save remain unaffected") == true)
         // It never masquerades as kernel packet loss.
         #expect(truncated?.kind != .packetDrops)
         // A pure retention eviction produces no packet-drop or helper-drop chip.

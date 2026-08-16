@@ -75,15 +75,22 @@ final class MainContentCoordinator {
     /// bounded on a long-running capture.
     static let maxCorrelatedSessions = 5_000
 
-    /// How many raw frames are retained for save/export.
+    /// How many recent raw frames are retained for immediate UI inspection.
     ///
     /// This is a bound on *memory*, not on capture fidelity. Sessions accumulate
     /// incrementally in `LiveSessionEngine` and do not depend on this window, so
-    /// evicting an old raw frame here never drops a session or forces a re-decode
-    /// of history — it leaves only the recent tail available to a `.pcap` save. Every
-    /// eviction is counted in `retainedFrameEvictionCount`, and that count is a
-    /// UI-side figure that must never be presented as kernel/interface loss.
+    /// evicting an old raw frame here never drops a session, truncates a saved
+    /// capture, or forces a re-decode of history. Complete live capture bytes are
+    /// written independently to ``LiveCaptureSpool``. Every memory-window eviction
+    /// is counted in `retainedFrameEvictionCount`, and that count is a UI-side
+    /// figure that must never be presented as kernel/interface loss.
     static let retainedFrameLimit = 8_000
+
+    static let fileStampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        return formatter
+    }()
 
     /// The capacity limits this build runs under. Held so the views that need
     /// to *show* a limit can read it; nothing reads it to decide behaviour —
@@ -170,7 +177,7 @@ final class MainContentCoordinator {
     /// or receives packet bytes.
     private(set) var savedCaptureActivity: CaptureActivity?
 
-    /// Link type of the current capture, needed to write a faithful `.pcap`.
+    /// Link type of the current capture, needed for faithful decode and capture-file export.
     var currentLinkType: UInt32 = LinkType.ethernet
 
     /// Shared privileged-helper manager (install/version/update/uninstall).
@@ -191,16 +198,27 @@ final class MainContentCoordinator {
     /// Protocols muted from the session list.
     private(set) var mutedProtocols: Set<ProtocolKind> = MainContentCoordinator.loadMutedProtocols()
 
-    /// Cumulative frames dropped from the *local* raw-retention window (kept only
-    /// for save/export; see ``retainedFrameLimit``). This is a UI-side memory
-    /// bound, never kernel/interface loss, and must never be surfaced as capture
-    /// fidelity. Sessions are unaffected by it. Read straight off the retention
-    /// buffer so there is a single source of truth for the count.
+    /// Complete local raw-frame retention for save/export. The in-memory frame
+    /// window remains bounded independently for responsive UI.
+    let liveCaptureSpool = LiveCaptureSpool(
+        directoryName: TracexyIdentity.current.appSupportDirectoryName
+    )
+    /// Serializes engine access so batches fold in arrival order even though each
+    /// call hops onto the engine actor, and so a boundary reset is ordered ahead
+    /// of the ingests that follow it.
+    var ingestChain: Task<Void, Never>?
+    /// Bounded FIFO window of raw frames kept for immediate UI state. Complete
+    /// save/export reads the disk-backed spool instead.
+    var retainedFrames = RetainedFrameBuffer(capacity: MainContentCoordinator.retainedFrameLimit)
+
+    /// Cumulative frames evicted from the local in-memory inspection window. This
+    /// is a UI memory bound, never kernel/interface loss; sessions and the complete
+    /// disk-backed save/export spool are unaffected.
     var retainedFrameEvictionCount: UInt64 {
         retainedFrames.evictionCount
     }
 
-    /// Raw frames currently held for save/export. Distinct from the session count:
+    /// Raw frames currently held for immediate UI inspection. Distinct from the session count:
     /// this is only the recent tail kept in memory, bounded by
     /// ``retainedFrameLimit``. Surfaced as retention state, never as capture loss.
     var retainedFrameCount: Int {
@@ -208,13 +226,14 @@ final class MainContentCoordinator {
     }
 
     /// The retention window's capacity — the denominator in the Overview's
-    /// "N / capacity frames" retention readout.
+    /// "N / capacity frames" retention readout. Reads the live buffer so it
+    /// reflects the configured "Retain up to" size a running capture adopted.
     var retainedFrameCapacity: Int {
-        Self.retainedFrameLimit
+        retainedFrames.capacity
     }
 
-    /// Sum of the captured lengths of the retained frames — the payload bytes a
-    /// `.pcap` save would write. Used only to estimate a save size; it is neither
+    /// Sum of the captured lengths in the in-memory window. Used only as a bounded
+    /// live-buffer estimate; it is neither
     /// capture fidelity nor total captured traffic.
     var retainedCapturedByteCount: Int {
         retainedFrames.capturedByteCount
@@ -568,10 +587,16 @@ final class MainContentCoordinator {
         focusGate.canInsertFocusSet(into: focusSets)
     }
 
-    /// Read-only copy used by the session-export extension before it leaves the
-    /// main actor to scope and serialize packet data.
-    var retainedFrameSnapshotForExport: [CapturedFrame] {
-        retainedFrames.frames
+    /// `~/Library/Application Support/<bundle id>/Captures`, created on demand.
+    static func capturesDirectory() -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let directory = base
+            .appendingPathComponent(TracexyIdentity.current.appBundleIdentifier, isDirectory: true)
+            .appendingPathComponent("Captures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
     func setSessionExporting(_ isExporting: Bool) {
@@ -688,25 +713,6 @@ final class MainContentCoordinator {
         UserDefaults.standard.set(pinnedHosts, forKey: Self.pinnedHostsKey)
     }
 
-    /// Writes the retained frames to a timestamped `.pcap` under Application Support,
-    /// then refreshes the saved list. Returns the new file (nil if nothing to save).
-    @discardableResult
-    func saveCurrentCapture() -> SavedCapture? {
-        guard !retainedFrames.isEmpty, let directory = Self.capturesDirectory() else {
-            return nil
-        }
-        let stamp = Self.fileStampFormatter.string(from: Date())
-        let url = directory.appendingPathComponent("Capture \(stamp).pcap")
-        do {
-            try PcapWriter.write(linkType: currentLinkType, frames: retainedFrames.frames, to: url)
-        } catch {
-            captureError = "Couldn’t save capture: \(error.localizedDescription)"
-            return nil
-        }
-        refreshSavedCaptures()
-        return savedCaptures.first { $0.url == url }
-    }
-
     /// Loads a saved `.pcap`/`.pcapng` into the session list (read-only) and stops live.
     func openSavedCapture(_ capture: SavedCapture) {
         do {
@@ -744,23 +750,26 @@ final class MainContentCoordinator {
         }
     }
 
-    /// Imports an external `.pcap` file: copies it into the captures folder and opens it.
+    /// Imports an external `.pcap` file into the captures folder and opens it.
+    ///
+    /// Lossless and idempotent: a source that is already the managed file is
+    /// refreshed and reopened in place, and a name collision with a different
+    /// external file replaces the old copy only after the new one is fully
+    /// staged, so a failed import never destroys existing capture data.
     func importCapture(from source: URL) {
         guard let directory = Self.capturesDirectory() else {
             return
         }
-        let destination = directory.appendingPathComponent(source.lastPathComponent)
+        let destination: URL
         do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.copyItem(at: source, to: destination)
-            refreshSavedCaptures()
-            if let imported = savedCaptures.first(where: { $0.url == destination }) {
-                openSavedCapture(imported)
-            }
+            destination = try CaptureImporter.importCapture(from: source, intoDirectory: directory)
         } catch {
             captureError = "Couldn’t import “\(source.lastPathComponent)”: \(error.localizedDescription)"
+            return
+        }
+        refreshSavedCaptures()
+        if let imported = savedCaptures.first(where: { $0.url == destination }) {
+            openSavedCapture(imported)
         }
     }
 
@@ -970,13 +979,32 @@ final class MainContentCoordinator {
         guard !isStarting else {
             return
         }
+        // Read the current Capture-Settings preferences fresh at each start and map
+        // them to a validated, bounded configuration (interface, snap length,
+        // promiscuous mode, optional BPF). An invalid custom filter — or any
+        // out-of-bounds value — surfaces here, before any capture backend is asked
+        // to start, rather than failing silently mid-capture.
+        let resolvedConfiguration = CaptureSettingsResolver.configuration(interface: captureInterface)
+        let configuration: CaptureConfiguration
+        switch resolvedConfiguration.validated() {
+        case let .success(valid):
+            configuration = valid
+        case let .failure(error):
+            captureError = "Capture couldn’t start — \(error.message)"
+            return
+        }
+        activeCaptureConfiguration = configuration
         captureError = nil
         isStarting = true
         startGeneration &+= 1
         isViewingSavedCapture = false
         activeSavedCapture = nil
         savedCaptureActivity = nil
-        retainedFrames.reset()
+        // Size the in-memory inspection window from the configured
+        // "Retain up to" preference, resetting it to a clean, zeroed window. This
+        // bounds memory only — sessions accumulate independently (see
+        // ``retainedFrameLimit``).
+        retainedFrames = RetainedFrameBuffer(capacity: CaptureSettingsResolver.retainCapacity())
         sessions = []
         throughputSamples = []
         pendingChartBytes = 0
@@ -991,11 +1019,11 @@ final class MainContentCoordinator {
         if [.overview, .saved].contains(activeWorkspace.sidebarSelection) {
             selectSidebarItem(.sessions)
         }
-        // Dev fast path: bypass the signed helper and capture straight through
-        // libpcap. The helper needs one-time Login-Items approval; a dev build
-        // launched by `scripts/run.sh` (which passes `--direct-capture`) instead
-        // opens /dev/bpf directly — which works whenever the user can access BPF
-        // (e.g. a member of the ChmodBPF / access_bpf group). No sudo, no approval.
+        // Explicit development fast path: bypass the signed helper and capture
+        // straight through libpcap. `scripts/run.sh -d` opts into this mode; the
+        // default script path remains production-shaped and exercises the helper.
+        // Direct mode works whenever the user can access a free BPF device (for
+        // example through ChmodBPF / access_bpf). No sudo or helper approval.
         if Self.forceDirectCapture {
             startDirect()
             return
@@ -1066,12 +1094,6 @@ final class MainContentCoordinator {
 
     private static let pinnedHostsKey = TracexyIdentity.current.defaultsKey("pinnedHosts")
 
-    private static let fileStampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        return formatter
-    }()
-
     // MARK: Focus / Noise persistence
 
     private static let focusSetsKey = TracexyIdentity.current.defaultsKey("focusSets")
@@ -1085,16 +1107,13 @@ final class MainContentCoordinator {
     /// Off-main incremental session engine: decodes and groups each captured frame
     /// exactly once, so the main actor never re-decodes retained history.
     private let sessionEngine = LiveSessionEngine()
-    /// Serializes engine access so batches fold in arrival order even though each
-    /// call hops onto the engine actor, and so a boundary reset is ordered ahead
-    /// of the ingests that follow it.
-    private var ingestChain: Task<Void, Never>?
     private var lastSessionsUpdate = Date.distantPast
     private var pendingChartBytes = 0
-    /// Bounded FIFO window of raw frames kept only for save/export. Independent of
-    /// session accumulation — evicting here never drops a session — and its
-    /// cumulative eviction count is surfaced only as retention truncation.
-    private var retainedFrames = RetainedFrameBuffer(capacity: MainContentCoordinator.retainedFrameLimit)
+
+    /// The validated configuration for the capture currently starting/running,
+    /// built from the live Capture-Settings preferences at ``startCapture()`` and
+    /// consumed by both the direct and helper backends so neither re-reads defaults.
+    private var activeCaptureConfiguration: CaptureConfiguration?
 
     private var pollTimer: Timer?
     /// Bumped every time a start attempt begins or ends. A late helper reply or a
@@ -1131,18 +1150,6 @@ final class MainContentCoordinator {
     private static func loadMutedProtocols() -> Set<ProtocolKind> {
         let raw = UserDefaults.standard.stringArray(forKey: mutedProtocolsKey) ?? []
         return Set(raw.compactMap(ProtocolKind.init(rawValue:)))
-    }
-
-    /// `~/Library/Application Support/<bundle id>/Captures`, created on demand.
-    private static func capturesDirectory() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        let directory = base
-            .appendingPathComponent(TracexyIdentity.current.appBundleIdentifier, isDirectory: true)
-            .appendingPathComponent("Captures", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
     }
 
     /// A host is a domain name (not a bare IPv4/IPv6 literal).
@@ -1297,9 +1304,13 @@ final class MainContentCoordinator {
 
 private extension MainContentCoordinator {
     func startViaHelper(token: Int) {
+        guard let configuration = activeCaptureConfiguration else {
+            handleCaptureError("Capture configuration was unavailable.")
+            return
+        }
         do {
             let proxy = try helper.proxy()
-            proxy.startCapture(interface: captureInterface) { [weak self] started, message in
+            proxy.startCapture(configuration: configuration) { [weak self] started, message in
                 Task { @MainActor in
                     guard let self, self.startGeneration == token else {
                         return
@@ -1446,31 +1457,36 @@ private extension MainContentCoordinator {
             isStarting = false
             return
         }
+        guard let configuration = activeCaptureConfiguration else {
+            handleCaptureError("Capture configuration was unavailable.")
+            return
+        }
+        // Open + compile the filter synchronously so a bad snap length or BPF fails
+        // before the capture is reported started, rather than after.
+        do {
+            try live.start(
+                configuration: configuration,
+                onBatch: { [weak self] frames, linkType in
+                    guard let coordinator = self else {
+                        return
+                    }
+                    Task { @MainActor in coordinator.ingest(frames, linkType: linkType) }
+                },
+                onStatistics: { [weak self] sample in
+                    guard let coordinator = self else {
+                        return
+                    }
+                    Task { @MainActor in coordinator.captureStatistics = sample }
+                }
+            )
+        } catch {
+            handleCaptureError((error as? LiveCapture.Failure)?.message ?? error.localizedDescription)
+            return
+        }
         isCapturing = true
         isStarting = false
         captureStartedAt = Date()
         captureStatistics = nil
-        live.start(
-            interface: captureInterface,
-            onBatch: { [weak self] frames, linkType in
-                guard let coordinator = self else {
-                    return
-                }
-                Task { @MainActor in coordinator.ingest(frames, linkType: linkType) }
-            },
-            onError: { [weak self] message in
-                guard let coordinator = self else {
-                    return
-                }
-                Task { @MainActor in coordinator.handleCaptureError(message) }
-            },
-            onStatistics: { [weak self] sample in
-                guard let coordinator = self else {
-                    return
-                }
-                Task { @MainActor in coordinator.captureStatistics = sample }
-            }
-        )
     }
 
     private func ingest(_ frames: [CapturedFrame], linkType: UInt32) {
@@ -1501,6 +1517,15 @@ private extension MainContentCoordinator {
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
+            do {
+                try await self.liveCaptureSpool.append(frames, defaultLinkType: linkType, epoch: token)
+            } catch {
+                self.captureError = "Capture stopped: the local spool failed — \(error.localizedDescription). "
+                    + "Frames written before the failure remain available to save."
+                if self.isCapturing {
+                    self.stopCapture()
+                }
+            }
             await self.sessionEngine.ingest(frames, linkType: linkType, epoch: token)
             guard shouldSnapshot,
                   self.startGeneration == token,
@@ -1528,6 +1553,16 @@ private extension MainContentCoordinator {
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
+            do {
+                try await self.liveCaptureSpool.append(
+                    frames,
+                    defaultLinkType: linkType,
+                    epoch: captureToken
+                )
+            } catch {
+                self.captureError = "Capture stopped: the local spool failed — \(error.localizedDescription). "
+                    + "Frames written before the failure remain available to save."
+            }
             await self.sessionEngine.ingest(frames, linkType: linkType, epoch: captureToken)
             guard self.startGeneration == stoppedToken,
                   !self.isCapturing,
@@ -1543,7 +1578,7 @@ private extension MainContentCoordinator {
         }
     }
 
-    /// Stage raw frames for save/export within a bounded window. The window and
+    /// Stage recent raw frames for UI inspection within a bounded window. The window and
     /// its saturating eviction count live in ``RetainedFrameBuffer``; this is a
     /// thin hop so the ingest path reads clearly. Independent of session
     /// accumulation — see ``retainedFrameLimit``.
@@ -1599,8 +1634,16 @@ private extension MainContentCoordinator {
     /// work carries the previous token and is dropped by the engine's epoch guard.
     private func resetSessionEngine(token: Int) {
         let engine = sessionEngine
+        let spool = liveCaptureSpool
+        let previous = ingestChain
         ingestChain = Task { @MainActor in
+            await previous?.value
             await engine.reset(epoch: token)
+            do {
+                try await spool.reset(epoch: token)
+            } catch {
+                self.captureError = "Capture spool unavailable — \(error.localizedDescription)"
+            }
         }
     }
 
@@ -1649,7 +1692,7 @@ enum CaptureDisplayState {
 
 // MARK: - SavedCapture
 
-/// One saved `.pcap` file on disk, listed under the sidebar's "Saved Captures".
+/// One saved `.pcap` or `.pcapng` file on disk, listed under the sidebar's "Saved Captures".
 struct SavedCapture: Identifiable, Hashable {
     let url: URL
     let name: String

@@ -10,8 +10,11 @@
 TRACEXY_APP_VERSION = 0.1.4
 TRACEXY_APP_BUILD = 5
 
-TRACEXY_HELPER_VERSION = 0.1.2
-TRACEXY_HELPER_BUILD = 3
-// Protocol v2: typed NSSecureCoding frame/batch drain surface (was v1's [Data]).
-// A v1 helper is classified installedIncompatible and Start is gated — no fallback.
-TRACEXY_HELPER_PROTOCOL_VERSION = 2
+TRACEXY_HELPER_VERSION = 0.1.3
+TRACEXY_HELPER_BUILD = 4
+// Protocol v3: typed NSSecureCoding CaptureConfiguration start surface (interface,
+// snap length, promiscuous, optional BPF) replaced v2's bare interface string.
+// v2 kept the typed frame/batch drain surface (was v1's [Data]). Any helper below
+// v3 is classified installedIncompatible and Start is gated — no fallback, so an
+// old helper must be reinstalled (uninstall → rebuild → reinstall).
+TRACEXY_HELPER_PROTOCOL_VERSION = 3

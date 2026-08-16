@@ -169,11 +169,11 @@ struct OverviewView: View {
         return (stats.isLossy || coordinator.helperBufferDropCount > 0) ? .orange : .green
     }
 
-    /// Estimated bytes a `.pcap` save of the retained frames would write: the
-    /// 24-byte global header, a 16-byte record header per frame, and each frame's
-    /// captured payload.
-    private var estimatedSaveBytes: Int {
-        24 + coordinator.retainedFrameCount * 16 + coordinator.retainedCapturedByteCount
+    /// Captured payload currently available for immediate packet inspection.
+    /// This is deliberately not labelled as a save estimate: the complete live
+    /// capture is stored independently in the disk-backed pcapng spool.
+    private var inspectionWindowBytes: Int {
+        coordinator.retainedCapturedByteCount
     }
 
     // MARK: Layout
@@ -361,8 +361,8 @@ struct OverviewView: View {
 
     // MARK: Storage
 
-    /// Where the capture lives: a live capture's local save buffer (retention and
-    /// estimated size), or a saved file's on-disk provenance. Fidelity and drops
+    /// Where the capture lives: a live capture's bounded inspection buffer plus
+    /// complete disk-backed spool, or a saved file's on-disk provenance. Fidelity and drops
     /// are reported here so a green figure never implies a complete capture and an
     /// absent one never reads as clean.
     private var storageCard: some View {
@@ -391,7 +391,7 @@ struct OverviewView: View {
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
                 .disabled(!coordinator.canSaveCapture)
-                .help("Write the retained frames to a .pcap under Application Support")
+                .help("Write the complete disk-backed capture to a .pcapng under Application Support")
             }
         }
     }
@@ -417,8 +417,8 @@ struct OverviewView: View {
             "Retention",
             "\(coordinator.retainedFrameCount.formatted()) / \(coordinator.retainedFrameCapacity.formatted()) frames"
         )
-        storageRow("Estimated size", byteString(estimatedSaveBytes))
-        storageRow("Save format", "PCAP")
+        storageRow("Window bytes", byteString(inspectionWindowBytes))
+        storageRow("Save format", "PCAPNG")
         if let fidelity = stats?.fidelity {
             let incomplete = (stats?.isLossy ?? false) || helperDrops > 0
             storageRow(
@@ -438,7 +438,7 @@ struct OverviewView: View {
         }
         if coordinator.retainedFrameEvictionCount > 0 {
             Text(
-                "\(coordinator.retainedFrameEvictionCount.formatted()) frames trimmed from the save buffer — a local memory bound, not capture loss; sessions are unaffected."
+                "\(coordinator.retainedFrameEvictionCount.formatted()) older frames left the inspection window — the complete disk-backed capture and sessions are unaffected."
             )
             .font(Theme.Typography.micro)
             .foregroundStyle(.secondary)
@@ -474,7 +474,7 @@ struct OverviewView: View {
     // MARK: Protocol mix
 
     private var protocolMixCard: some View {
-        let kinds: [ProtocolKind] = [.dns, .tcp, .udp, .tls, .http, .http2, .quic]
+        let kinds: [ProtocolKind] = [.dns, .tcp, .udp, .tls, .http, .http2, .quic, .stun]
         let entries = kinds
             .map { (kind: $0, hits: coordinator.count(for: $0)) }
             .filter { $0.hits > 0 }
@@ -706,6 +706,7 @@ struct OverviewView: View {
         case .tls: .tls
         case .http: .http
         case .quic: .quic
+        case .stun: .stun
         default: nil
         }
     }

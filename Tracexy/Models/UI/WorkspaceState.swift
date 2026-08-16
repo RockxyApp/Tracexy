@@ -49,10 +49,12 @@ final class WorkspaceState: Identifiable {
     /// reveal stops for good — a panel the user dismissed must not reappear.
     var allowsAutomaticInspectorReveal: Bool?
 
-    /// How the session list groups rows. Defaults to correlated actions —
-    /// that is the point of the product — with a one-click way back to raw
-    /// sessions when the grouping looks wrong.
-    var sessionGrouping: SessionGrouping = .action
+    /// How the session list groups rows. Defaults to the raw observed sessions
+    /// exactly as decoded. Action grouping is inference layered on top and is
+    /// opt-in — a real high-volume capture collapses into a handful of guessed
+    /// rows, so the honest default is to show every session and let the user
+    /// switch to Action/Host/Process when they want the interpretation.
+    var sessionGrouping: SessionGrouping = .none
 
     /// Selection
     var selectedSessionID: UUID?

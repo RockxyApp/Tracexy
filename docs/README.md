@@ -18,14 +18,15 @@ This documentation describes what is actually in the source today, and clearly m
 
 ## Status at a glance
 
-**Implemented:** live libpcap capture through a signed helper, PCAP read/write and PCAPNG read,
-interface discovery, a bounds-checked packet decoder (L2–L4 plus DNS/TLS/HTTP-1/QUIC summaries),
-five-tuple session grouping, action correlation with confidence levels, per-process attribution where
-macOS reports it, and a native SwiftUI/AppKit interface with workspaces, filtering, focus sets, and an
-inspector.
+**Implemented:** live libpcap capture through a signed helper, PCAP read/write, PCAPNG read and
+disk-backed live-save, interface discovery, a bounds-checked packet decoder (L2–L4 plus
+DNS/TLS/HTTP-1/QUIC/STUN summaries), incremental five-tuple session grouping, action correlation with
+confidence levels, per-process attribution where macOS reports it, and a native SwiftUI/AppKit
+interface with workspaces, filtering, focus sets, and an inspector.
 
-**Partial:** application-layer decode is naming-level only — DNS records, TLS handshake metadata, the
-HTTP/1 request line, QUIC identification. Session building is a batch rebuild, not a stateful engine.
+**Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record
+metadata, HTTP/1 headers, QUIC long-header metadata, and STUN attributes. TCP prefix reassembly is
+bounded to initial TLS/HTTP/DNS metadata; a general stateful connection/reassembly engine is not present.
 
 **Planned / not yet implemented:** a decoder registry with dispatch-table handoff, a stateful
 connection table with TCP reassembly, an analysis/security engine, persistent SQLite storage, an

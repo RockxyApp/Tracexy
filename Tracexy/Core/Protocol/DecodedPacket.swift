@@ -116,9 +116,15 @@ nonisolated struct DecodedPacket {
     var dnsAnswers: [String]
     var sourceEndpoint: IPEndpoint?
     var destinationEndpoint: IPEndpoint?
+    /// Sequence number of the first TCP payload byte and its captured bytes.
+    /// Session accumulation uses this bounded handoff for metadata-only stream
+    /// reassembly; packet decoding itself remains stateless.
+    var tcpPayloadSequence: UInt32?
+    var tcpPayloadBytes: [UInt8] = []
 
     /// Protocol stack outer→inner, e.g. [.tcp, .tls]. Used by the session list.
     var protocolStack: [ProtocolKind] {
-        layers.map(\.proto).filter { $0 != .ethernet }
+        var seen = Set<ProtocolKind>()
+        return layers.map(\.proto).filter { $0 != .ethernet && seen.insert($0).inserted }
     }
 }

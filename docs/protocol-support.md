@@ -33,16 +33,17 @@ field-by-field parse.
 | Protocol | Support | Not covered |
 |---|---|---|
 | DNS | Question name; answer records A, AAAA, CNAME, NS, PTR, MX, TXT, SRV, SOA (others shown by type); compression pointers; DNS-over-TCP length prefix | Full record-set decode; DNSSEC |
-| TLS | Handshake metadata only: record version, ClientHello (offered version, cipher-suite count, **SNI**, **ALPN**), ServerHello (chosen version and cipher) | **No decryption**; no certificate parsing; no application data |
+| TLS | Record metadata for all coalesced records in a payload; ClientHello (offered version, cipher-suite count, **SNI**, **ALPN**) and ServerHello (chosen version and cipher); bounded per-direction TCP prefix recovery when the first record is segmented | **No decryption**; no certificate parsing; no application data; no general stream tracking |
 | HTTP/1 | **Request-line recognition only** — the first line (method / target / version) plus the `Host` header | Full header set, response/status parsing, bodies, chunked/compressed content |
-| QUIC | **Identification only** — detected on UDP/443 by the long-header bit and labeled "QUIC (encrypted transport)" | Version, connection IDs, frames, any payload |
+| STUN | Detected by the magic cookie (port-independent): message type, length, magic cookie, transaction ID, and a bounds-checked walk of the RFC 5389 attribute TLVs — attributes named where known (else an honest hex type), with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS **IPv4** reflexive `address:port` decoded when fully present | IPv6 reflexive addresses (metadata-only); attribute value bodies beyond addresses; ICE negotiation and TURN allocation state |
+| QUIC | **Long-header metadata only** — conservatively detected on UDP/443 from a complete clear-text prefix, valid fixed-bit semantics, and bounded connection IDs: packet type (Initial / 0-RTT / Handshake / Retry for v1, raw type otherwise), version (version 0 → Version Negotiation), and the destination/source connection IDs (≤ 20 bytes) | Frames and any encrypted payload; short or malformed headers (stay UDP); 0-RTT/handshake decryption; HTTP/3 |
 
 ## Explicitly not implemented
 
 - **No decryption** of TLS or QUIC. Tracexy reads only what is on the wire in the clear.
-- **No TCP reassembly.** Every application parser runs against a single packet's payload; there is no
-  stream buffer, so an HTTP request split across segments is only recognized from the segment that
-  carries its start.
+- **No general TCP connection/reassembly engine.** Session accumulation keeps only a bounded 16 KiB
+  prefix per direction until it can classify the first TLS record, HTTP header, or DNS-over-TCP
+  message, then releases the bytes. It does not reconstruct long-lived streams or application bodies.
 - **No deep HTTP/2** parsing, **no HTTP/3**, and **no WebSocket** decode. (`http2` and `websocket`
   exist as protocol labels for grouping, but the decoder never produces them from bytes.)
 

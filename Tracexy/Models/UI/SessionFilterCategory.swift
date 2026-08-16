@@ -15,6 +15,7 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
     case http2
     case quic
     case websocket
+    case stun
     case security
     case errors
 
@@ -22,7 +23,7 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
 
     /// Protocol categories, in display order (the "All" tab clears these).
     static let protocolFilters: [SessionFilterCategory] = [
-        .dns, .tcp, .udp, .tls, .http, .http2, .quic, .websocket,
+        .dns, .tcp, .udp, .tls, .http, .http2, .quic, .websocket, .stun,
     ]
 
     /// Investigation categories, applied independently of the protocol group.
@@ -42,6 +43,7 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         case .http2: "HTTP/2"
         case .quic: "QUIC"
         case .websocket: "WebSocket"
+        case .stun: "STUN"
         case .security: "Security"
         case .errors: "Errors"
         }
@@ -62,6 +64,7 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         case .http2: .http2
         case .quic: .quic
         case .websocket: .websocket
+        case .stun: .stun
         case .security,
              .errors: nil
         }

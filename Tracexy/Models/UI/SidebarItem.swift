@@ -11,6 +11,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     case tls
     case http
     case quic
+    case stun
     case saved
 
     // MARK: Internal
@@ -29,6 +30,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .tls: "TLS"
         case .http: "HTTP"
         case .quic: "QUIC"
+        case .stun: "STUN"
         case .saved: "Saved"
         }
     }
@@ -44,6 +46,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .tls: "lock.shield"
         case .http: "globe"
         case .quic: "bolt.horizontal"
+        case .stun: "point.3.connected.trianglepath.dotted"
         case .saved: "folder"
         }
     }
@@ -56,6 +59,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .tls: .tls
         case .http: .http
         case .quic: .quic
+        case .stun: .stun
         default: nil
         }
     }
@@ -94,7 +98,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
     nonisolated var items: [SidebarItem] {
         switch self {
         case .monitor: [.overview, .sessions, .flow]
-        case .protocols: [.dns, .tcp, .tls, .http, .quic]
+        case .protocols: [.dns, .tcp, .tls, .http, .quic, .stun]
         }
     }
 }
