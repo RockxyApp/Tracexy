@@ -198,6 +198,15 @@ final class MainContentCoordinator {
     /// Protocols muted from the session list.
     private(set) var mutedProtocols: Set<ProtocolKind> = MainContentCoordinator.loadMutedProtocols()
 
+    // MARK: Source visibility
+
+    /// Source rows the user removed from the Browse sidebar. This is presentation
+    /// state only: captured sessions and packet evidence remain untouched and can
+    /// still be found from Sessions. Each category can restore its hidden rows.
+    var hiddenSourceApps = SourceVisibilityPreferences.loadApps()
+    var hiddenSourceDomains = SourceVisibilityPreferences.loadDomains()
+    var hiddenSourceIPs = SourceVisibilityPreferences.loadIPs()
+
     /// Complete local raw-frame retention for save/export. The in-memory frame
     /// window remains bounded independently for responsive UI.
     let liveCaptureSpool = LiveCaptureSpool(
@@ -599,6 +608,18 @@ final class MainContentCoordinator {
         return directory
     }
 
+    /// A host is a domain name (not a bare IPv4/IPv6 literal).
+    static func isDomainName(_ host: String) -> Bool {
+        if host.contains(":") {
+            return false // IPv6 literal
+        }
+        let parts = host.split(separator: ".")
+        if parts.count == 4, parts.allSatisfy({ UInt8($0) != nil }) {
+            return false // IPv4 literal
+        }
+        return host.contains(".") && host.contains { $0.isLetter }
+    }
+
     func setSessionExporting(_ isExporting: Bool) {
         isExportingSession = isExporting
     }
@@ -771,11 +792,6 @@ final class MainContentCoordinator {
         if let imported = savedCaptures.first(where: { $0.url == destination }) {
             openSavedCapture(imported)
         }
-    }
-
-    func deleteSavedCapture(_ capture: SavedCapture) {
-        try? FileManager.default.removeItem(at: capture.url)
-        refreshSavedCaptures()
     }
 
     /// Rescans the captures folder and rebuilds `savedCaptures`, newest first.
@@ -1150,18 +1166,6 @@ final class MainContentCoordinator {
     private static func loadMutedProtocols() -> Set<ProtocolKind> {
         let raw = UserDefaults.standard.stringArray(forKey: mutedProtocolsKey) ?? []
         return Set(raw.compactMap(ProtocolKind.init(rawValue:)))
-    }
-
-    /// A host is a domain name (not a bare IPv4/IPv6 literal).
-    private static func isDomainName(_ host: String) -> Bool {
-        if host.contains(":") {
-            return false // IPv6 literal
-        }
-        let parts = host.split(separator: ".")
-        if parts.count == 4, parts.allSatisfy({ UInt8($0) != nil }) {
-            return false // IPv4 literal
-        }
-        return host.contains(".") && host.contains { $0.isLetter }
     }
 
     /// The IP portion of an "ip:port" endpoint (handles IPv6's inner colons).

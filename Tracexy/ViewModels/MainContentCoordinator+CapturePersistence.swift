@@ -3,6 +3,18 @@ import Foundation
 // MARK: - Capture persistence
 
 extension MainContentCoordinator {
+    /// Removes a managed capture from the Library through the recoverable macOS
+    /// Trash. If the file is currently open, its decoded in-memory view is also
+    /// cleared so the workspace cannot keep presenting a capture that no longer
+    /// exists in the Library.
+    func moveSavedCaptureToTrash(_ capture: SavedCapture) throws {
+        try FileManager.default.trashItem(at: capture.url, resultingItemURL: nil)
+        if activeSavedCapture?.url.standardizedFileURL == capture.url.standardizedFileURL {
+            clearSessions()
+        }
+        refreshSavedCaptures()
+    }
+
     /// Saves the complete current capture under Application Support. Live frames
     /// come from the disk-backed pcapng spool, not the bounded UI retention window.
     func saveCurrentCapture() {

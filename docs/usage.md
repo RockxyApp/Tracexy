@@ -41,6 +41,14 @@ Open a `.pcap` (classic libpcap) or `.pcapng` file from disk — no helper or ad
 Tracexy sniffs the file format, reads its frames, and runs them through the same decode → session
 pipeline as live capture. This is the most predictable way to exercise the full pipeline.
 
+## Sidebar sources
+
+The **Sources** groups in Browse are derived from the current capture. Secondary-click an app,
+domain, or IP row to open its sessions, copy its identity, pin an address, or **Remove from Sources**.
+Removing a source hides only that sidebar row and persists the presentation preference; it never
+deletes captured sessions or packet evidence. Secondary-click the Apps, Domains, or IP Addresses
+category to restore every hidden row in that category.
+
 ## Overview
 
 **Overview** is the first destination under **Monitor**, followed by **Sessions** and **Flow Map**. It

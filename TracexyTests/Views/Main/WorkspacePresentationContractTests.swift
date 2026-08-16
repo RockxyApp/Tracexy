@@ -98,6 +98,46 @@ struct WorkspacePresentationContractTests {
         #expect(filters.contains("systemImage: category == .security ? \"exclamationmark.shield\" : nil"))
     }
 
+    @Test("Saved captures expose native context actions and recoverable removal")
+    func savedCaptureRemovalUsesTrash() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let persistence = try readProjectFile(
+            "Tracexy/ViewModels/MainContentCoordinator+CapturePersistence.swift"
+        )
+
+        #expect(sidebar.contains("Button(\"Open\", systemImage: \"eye\")"))
+        #expect(sidebar.contains("Button(\"Reveal in Finder\", systemImage: \"folder\")"))
+        #expect(sidebar.contains("Button(\"Copy Path\", systemImage: \"doc.on.doc\")"))
+        #expect(sidebar.contains("Button(\"Move to Trash…\", systemImage: \"trash\", role: .destructive)"))
+        #expect(sidebar.contains(".confirmationDialog("))
+        #expect(persistence.contains("FileManager.default.trashItem(at: capture.url"))
+        #expect(!persistence.contains("removeItem(at: capture.url)"))
+    }
+
+    @Test("Sources category rows expose full-width context actions")
+    func sourceCategoryRowsHaveContextMenus() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let visibility = try readProjectFile(
+            "Tracexy/ViewModels/MainContentCoordinator+SourceVisibility.swift"
+        )
+
+        #expect(sidebar.contains("sourceCategoryLabel("))
+        #expect(sidebar.contains("copyLabel: \"Copy App Names\""))
+        #expect(sidebar.contains("copyLabel: \"Copy Domains\""))
+        #expect(sidebar.contains("copyLabel: \"Copy IP Addresses\""))
+        #expect(sidebar.contains("Button(\"Show All Sessions\", systemImage: \"rectangle.stack\")"))
+        #expect(sidebar.contains("Button(\"Remove from Sources\", systemImage: \"trash\", role: .destructive)"))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden Apps\""))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden Domains\""))
+        #expect(sidebar.contains("restoreLabel: \"Restore Hidden IP Addresses\""))
+        #expect(sidebar.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(visibility.contains("sources.hiddenApps"))
+        #expect(visibility.contains("sources.hiddenDomains"))
+        #expect(visibility.contains("sources.hiddenIPs"))
+        #expect(visibility.contains("persistHiddenSources()"))
+        #expect(!visibility.contains("sessions.removeAll"))
+    }
+
     @Test("AI Assistant uses a truthful conversation shell")
     func assistantUsesConversationShell() throws {
         let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")
