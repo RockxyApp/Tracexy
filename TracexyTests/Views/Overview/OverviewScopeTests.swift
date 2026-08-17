@@ -65,6 +65,48 @@ struct OverviewScopeTests {
         #expect(env.coordinator.captureStatistics == nil)
     }
 
+    @Test("Opening a saved file records truthful provenance and a real activity aggregation")
+    func savedCaptureExposesProvenance() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        // The Overview labels the exact file it opened rather than guessing.
+        #expect(coordinator.isViewingSavedCapture)
+        #expect(coordinator.activeSavedCapture?.name == "sample")
+
+        // Frame count and duration come from the real file, not a fabricated total.
+        let activity = try #require(coordinator.savedCaptureActivity)
+        #expect(activity.totalFrames == coordinator.retainedFrameCount)
+        #expect(activity.totalFrames > 0)
+        #expect(activity.duration >= 0)
+        // A frames-over-time aggregation exists — the saved surface draws this, not
+        // the live "waiting for traffic" throughput state.
+        #expect(!activity.isEmpty)
+
+        // A file is shown in full: no fidelity, and neither capture-source loss nor
+        // local retention eviction is reported for it.
+        #expect(coordinator.captureStatistics == nil)
+        #expect(coordinator.helperBufferDropCount == 0)
+        #expect(coordinator.retainedFrameEvictionCount == 0)
+    }
+
+    @Test("Live/new/clear boundaries drop the saved-file identity so it never outlives the capture")
+    func clearingDropsSavedProvenance() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        try #require(coordinator.activeSavedCapture != nil)
+        try #require(coordinator.savedCaptureActivity != nil)
+
+        coordinator.clearSessions()
+
+        #expect(coordinator.activeSavedCapture == nil)
+        #expect(coordinator.savedCaptureActivity == nil)
+        #expect(!coordinator.isViewingSavedCapture)
+    }
+
     @Test("Plaintext-HTTP finding states only the decoded fact, never exposure")
     func plaintextHTTPFindingIsEvidenceHonest() throws {
         let env = try makeLoadedCoordinator()
@@ -106,6 +148,58 @@ struct OverviewScopeTests {
 
         #expect(!findingSessionIDs.isEmpty)
         #expect(matchingSessionIDs == findingSessionIDs)
+    }
+
+    @Test("Removing sessions hides them across presentation surfaces and remains reversible")
+    func removedSessionsStayOutOfPresentation() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        let target = try #require(coordinator.sessions.first)
+        let rawCount = coordinator.sessions.count
+        let rawBytes = coordinator.totalBytes
+        let targetHostCount = coordinator.sessions.filter { $0.host == target.host }.count
+
+        coordinator.select(target)
+        coordinator.removeSessionsFromView(Set([target.id]))
+
+        // Removal is a reversible presentation operation, never evidence loss.
+        #expect(coordinator.sessions.count == rawCount)
+        #expect(coordinator.sessions.contains { $0.id == target.id })
+        #expect(coordinator.removedSessionCount == 1)
+
+        // Every UI-facing seam excludes the removed identity and its rollups.
+        #expect(!coordinator.presentedSessions.contains { $0.id == target.id })
+        #expect(!coordinator.visibleSessions.contains { $0.id == target.id })
+        #expect(!coordinator.sessionRows.contains { $0.id == target.id })
+        #expect(coordinator.selectedSession == nil)
+        #expect(coordinator.activeWorkspace.selectedSessionID == nil)
+        #expect(coordinator.totalBytes == rawBytes - target.totalBytes)
+        #expect(coordinator.findings.allSatisfy { $0.sessionID != target.id })
+        #expect((coordinator.hosts.first { $0.name == target.host }?.count ?? 0) == targetHostCount - 1)
+
+        coordinator.restoreRemovedSessions()
+
+        #expect(coordinator.removedSessionCount == 0)
+        #expect(coordinator.presentedSessions.count == rawCount)
+        #expect(coordinator.visibleSessions.contains { $0.id == target.id })
+        #expect(coordinator.totalBytes == rawBytes)
+    }
+
+    @Test("Capture boundaries discard removed-session presentation state")
+    func clearDiscardsRemovedSessions() throws {
+        let env = try makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        let target = try #require(coordinator.sessions.first)
+
+        coordinator.removeSessionsFromView(Set([target.id]))
+        try #require(coordinator.removedSessionCount == 1)
+
+        coordinator.clearSessions()
+
+        #expect(coordinator.removedSessionCount == 0)
+        #expect(coordinator.removedSessionIDs.isEmpty)
     }
 
     // MARK: Private

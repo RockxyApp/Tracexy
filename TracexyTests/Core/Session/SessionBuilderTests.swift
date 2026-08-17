@@ -10,9 +10,95 @@ import Foundation
 import Testing
 @testable import Tracexy
 
+// MARK: - SessionBuilderTests
+
 @Suite("SessionBuilder end-to-end")
 struct SessionBuilderTests {
     // MARK: Internal
+
+    @Test("A ClientHello split across TCP segments is reassembled into session metadata")
+    func splitTLSClientHello() {
+        let payload = PacketBuilder.tlsClientHello(sni: "split.example.com")
+        let cut = 3
+        let frames = [
+            tcpFrame(payload: Array(payload[..<cut]), sequence: 1_000, timestamp: 1),
+            tcpFrame(payload: Array(payload[cut...]), sequence: 1_000 + UInt32(cut), timestamp: 2),
+        ]
+
+        let session = SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first
+        #expect(session?.sni == "split.example.com")
+        #expect(session?.host == "split.example.com")
+        #expect(session?.protocolStack == [.tcp, .tls])
+        #expect(session?.decodedLayers.first { $0.proto == .tls }?.byteRange == nil)
+    }
+
+    @Test("Out-of-order TCP segments drain deterministically before TLS classification")
+    func outOfOrderTLSClientHello() {
+        let payload = PacketBuilder.tlsClientHello(sni: "ordered.example.com")
+        let firstEnd = 3
+        let secondEnd = 18
+        let frames = [
+            tcpFrame(payload: Array(payload[..<firstEnd]), sequence: 4_000, timestamp: 1),
+            tcpFrame(
+                payload: Array(payload[secondEnd...]),
+                sequence: 4_000 + UInt32(secondEnd),
+                timestamp: 2
+            ),
+            tcpFrame(
+                payload: Array(payload[firstEnd ..< secondEnd]),
+                sequence: 4_000 + UInt32(firstEnd),
+                timestamp: 3
+            ),
+        ]
+
+        let session = SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first
+        #expect(session?.sni == "ordered.example.com")
+        #expect(session?.protocolStack == [.tcp, .tls])
+    }
+
+    @Test("An HTTP header split across TCP segments retains its Host metadata")
+    func splitHTTPRequest() {
+        let payload = Array("GET /health HTTP/1.1\r\nHost: split-http.example\r\n\r\n".utf8)
+        let cut = 2
+        let frames = [
+            tcpFrame(
+                payload: Array(payload[..<cut]), sequence: 6_000, timestamp: 1,
+                sourcePort: 51_000, destinationPort: 80
+            ),
+            tcpFrame(
+                payload: Array(payload[cut...]), sequence: 6_000 + UInt32(cut), timestamp: 2,
+                sourcePort: 51_000, destinationPort: 80
+            ),
+        ]
+
+        let session = SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first
+        #expect(session?.host == "split-http.example")
+        #expect(session?.protocolStack == [.tcp, .http])
+        #expect(session?.decodedLayers.first { $0.proto == .http }?.byteRange == nil)
+    }
+
+    @Test("A length-prefixed DNS query split across TCP segments is reassembled")
+    func splitTCPDNSQuery() {
+        let dns = PacketBuilder.dnsQuery(name: "split-dns.example")
+        let payload = [UInt8(dns.count >> 8), UInt8(dns.count & 0xFF)] + dns
+        let cut = 1
+        let frames = [
+            tcpFrame(
+                payload: Array(payload[..<cut]), sequence: 8_000, timestamp: 1,
+                sourcePort: 52_000, destinationPort: 53
+            ),
+            tcpFrame(
+                payload: Array(payload[cut...]), sequence: 8_000 + UInt32(cut), timestamp: 2,
+                sourcePort: 52_000, destinationPort: 53
+            ),
+        ]
+
+        let session = SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first
+        #expect(session?.dnsQuery == "split-dns.example")
+        #expect(session?.host == "split-dns.example")
+        #expect(session?.protocolStack == [.tcp, .dns])
+        #expect(session?.decodedLayers.first { $0.proto == .dns }?.byteRange == nil)
+    }
 
     @Test
     func producesRealSessions() {
@@ -41,9 +127,39 @@ struct SessionBuilderTests {
     }
 
     @Test
-    func incompleteHandshakeIsWarning() {
+    func bareSynIsVisibleButNotWarned() {
+        // A SYN with no response is a real session and must stay visible, but the
+        // absence of an application protocol (or any reply) is not evidence of a
+        // problem — so it stays `.ok` rather than a fabricated warning.
         let syn = sessions().first { $0.host == "203.0.113.9" }
-        #expect(syn?.status == .warning)
+        #expect(syn != nil)
+        #expect(syn?.status == .ok)
+    }
+
+    @Test
+    func midstreamTCPWithoutAppDataIsNotWarned() {
+        // A TCP segment carrying payload we cannot classify — a captured tunnel,
+        // an unrecognised binary protocol, or a mid-stream capture that missed the
+        // handshake. It is a real session and stays visible, but "no application
+        // protocol decoded" is not evidence of a problem, so it stays `.ok`.
+        let frame = CapturedFrame(
+            bytes: PacketBuilder.ethernetIPv4(
+                proto: 6,
+                src: "10.0.0.5",
+                dst: "198.51.100.20",
+                payload: PacketBuilder.tcp(
+                    srcPort: 55_000, dstPort: 8_443, flags: 0x18,
+                    payload: [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
+                )
+            ),
+            timestamp: Date(),
+            originalLength: 74
+        )
+        let result = SessionBuilder.build(from: [frame], linkType: LinkType.ethernet)
+        let session = result.first { $0.destinationEndpoint.contains("198.51.100.20") }
+        #expect(session != nil)
+        #expect(session?.protocolStack.contains(.tcp) == true)
+        #expect(session?.status == .ok)
     }
 
     @Test
@@ -178,4 +294,32 @@ struct SessionBuilderTests {
     private func sessions() -> [SessionSummary] {
         SessionBuilder.build(from: SampleCapture.frames(now: Date()), linkType: LinkType.ethernet)
     }
+}
+
+private func tcpFrame(
+    payload: [UInt8],
+    sequence: UInt32,
+    timestamp: TimeInterval,
+    sourcePort: UInt16 = 50_000,
+    destinationPort: UInt16 = 443
+)
+    -> CapturedFrame
+{
+    let bytes = PacketBuilder.ethernetIPv4(
+        proto: 6,
+        src: "10.0.0.5",
+        dst: "93.184.216.34",
+        payload: PacketBuilder.tcp(
+            srcPort: sourcePort,
+            dstPort: destinationPort,
+            flags: 0x18,
+            payload: payload,
+            sequence: sequence
+        )
+    )
+    return CapturedFrame(
+        bytes: bytes,
+        timestamp: Date(timeIntervalSince1970: timestamp),
+        originalLength: bytes.count
+    )
 }

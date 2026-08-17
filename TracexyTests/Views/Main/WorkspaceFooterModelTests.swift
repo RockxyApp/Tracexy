@@ -21,20 +21,25 @@ struct WorkspaceFooterModelTests {
     func placementAndIdentity() {
         let actions = makeActions()
 
-        // Exactly the six real effects — no invented controls.
-        #expect(actions.count == 6)
+        // Exactly the seven real effects — no invented controls.
+        #expect(actions.count == 7)
         #expect(Set(actions.map(\.kind)) == Set(FooterActionDescriptor.Kind.allCases))
 
         // Identity is the kind, so every surface variant agrees, and ids are unique.
         #expect(actions.map(\.id) == actions.map(\.kind))
         #expect(Set(actions.map(\.id)).count == actions.count)
 
-        // Clear / Advanced Filters / Auto Select are List Options, never inline.
+        // Capture/session maintenance and list behavior stay in List Options.
         let listOptions = actions.filter { $0.placement == .listOptions }
-        #expect(listOptions.map(\.kind) == [.clearSessions, .advancedFilters, .autoSelectLatest])
+        #expect(listOptions.map(\.kind) == [
+            .clearSessions,
+            .restoreRemovedSessions,
+            .advancedFilters,
+            .autoSelectLatest,
+        ])
 
         // Priority is monotonic across the whole catalog, primaries first.
-        #expect(actions.map(\.priority) == [0, 1, 2, 3, 4, 5])
+        #expect(actions.map(\.priority) == [0, 1, 2, 3, 4, 5, 6])
     }
 
     @Test("Every descriptor carries a distinct, non-empty title and help")
@@ -82,6 +87,18 @@ struct WorkspaceFooterModelTests {
 
         // Only Clear is destructive.
         #expect(makeActions().filter(\.isDestructive).map(\.kind) == [.clearSessions])
+    }
+
+    @Test("Restore Removed Sessions is enabled only when rows can be restored")
+    func restoreRemovedSessionsMetadata() {
+        let empty = action(.restoreRemovedSessions, in: makeActions(removedSessionCount: 0))
+        #expect(empty?.isEnabled == false)
+        #expect(empty?.title == "Restore Removed Sessions (0)")
+        #expect(empty?.isDestructive == false)
+
+        let available = action(.restoreRemovedSessions, in: makeActions(removedSessionCount: 3))
+        #expect(available?.isEnabled == true)
+        #expect(available?.title == "Restore Removed Sessions (3)")
     }
 
     @Test("Advanced Filters shows active/check state from the builder or live rules")
@@ -275,16 +292,17 @@ struct WorkspaceFooterModelTests {
         ) == nil)
     }
 
-    // MARK: - Retention truncation (save/export bound, never capture loss)
+    // MARK: - Retention truncation (inspection-memory bound, never capture loss)
 
     @Test("Retention truncation is a neutral notice, never a capture-loss alarm")
     func retentionTruncationPresence() {
         #expect(telemetry(retainedFrameEvictionCount: 0, kind: .retentionTruncation) == nil)
 
         let truncated = telemetry(retainedFrameEvictionCount: 5_000, kind: .retentionTruncation)
-        // Neutral, not warning/error — sessions are intact; only the save tail was trimmed.
+        // Neutral, not warning/error — sessions and the disk-backed save are intact.
         #expect(truncated?.role == .neutral)
-        #expect(truncated?.text.contains("not retained") == true)
+        #expect(truncated?.text.contains("outside memory window") == true)
+        #expect(truncated?.help.contains("complete disk-backed save remain unaffected") == true)
         // It never masquerades as kernel packet loss.
         #expect(truncated?.kind != .packetDrops)
         // A pure retention eviction produces no packet-drop or helper-drop chip.
@@ -336,6 +354,7 @@ struct WorkspaceFooterModelTests {
         canAddFocusSet: Bool = true,
         isNoiseControlActive: Bool = false,
         hasSessions: Bool = true,
+        removedSessionCount: Int = 0,
         activeFilterRuleCount: Int = 0,
         isAdvancedFilterVisible: Bool = false,
         autoSelectLatest: Bool = false
@@ -347,6 +366,7 @@ struct WorkspaceFooterModelTests {
             canAddFocusSet: canAddFocusSet,
             isNoiseControlActive: isNoiseControlActive,
             hasSessions: hasSessions,
+            removedSessionCount: removedSessionCount,
             activeFilterRuleCount: activeFilterRuleCount,
             isAdvancedFilterVisible: isAdvancedFilterVisible,
             autoSelectLatest: autoSelectLatest

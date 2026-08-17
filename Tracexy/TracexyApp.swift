@@ -32,6 +32,17 @@ struct TracexyApp: App {
             // `isSidebarPresented` with the native toolbar toggle.
             SidebarCommands()
 
+            // Edit ▸ Find (⌘F). Reuses the standard Find placement so the shortcut
+            // reads as native, then routes to the Sessions search box the app
+            // already has — no `.searchable`, no new surface. Repeated presses
+            // re-focus the field via the workspace's focus token.
+            CommandGroup(after: .textEditing) {
+                Button("Find") {
+                    coordinator.beginSessionSearch()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     updater.checkForUpdates()

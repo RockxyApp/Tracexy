@@ -99,28 +99,29 @@ struct HelperCompatibilityTests {
         #expect(older == .installedIncompatible)
     }
 
-    @Test("A v1 helper is incompatible against the current v2 protocol; v2 is fine")
-    func protocolV2AgainstV1() {
-        // The typed-drain migration bumped the protocol to 2. A previously
-        // installed v1 helper — even a newer build — must be classified
-        // incompatible so Start stays gated (no unsafe legacy-frame fallback),
-        // while a matching v2 helper at the shipped build is compatible.
-        let legacyV1 = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "0.1.1", buildNumber: 99, protocolVersion: 1),
-            expectedProtocolVersion: 2,
-            bundledBuild: 3
+    @Test("A pre-v3 helper is incompatible against the current v3 protocol; v3 is fine")
+    func protocolV3AgainstOlder() {
+        // The typed-CaptureConfiguration start surface bumped the protocol to 3. A
+        // previously installed v2 helper — even a newer build — must be classified
+        // incompatible so Start stays gated (no downgraded start request) and the
+        // old helper must be reinstalled, while a matching v3 helper at the shipped
+        // build is compatible.
+        let legacyV2 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "0.1.2", buildNumber: 99, protocolVersion: 2),
+            expectedProtocolVersion: 3,
+            bundledBuild: 4
         )
-        let currentV2 = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "0.1.2", buildNumber: 3, protocolVersion: 2),
-            expectedProtocolVersion: 2,
-            bundledBuild: 3
+        let currentV3 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "0.1.3", buildNumber: 4, protocolVersion: 3),
+            expectedProtocolVersion: 3,
+            bundledBuild: 4
         )
 
-        #expect(legacyV1 == .installedIncompatible)
-        #expect(currentV2 == .installedCompatible)
+        #expect(legacyV2 == .installedIncompatible)
+        #expect(currentV3 == .installedCompatible)
         // An incompatible helper maps Start to a clear, gated message, not ready.
         #expect(
-            HelperClient.captureAvailability(for: legacyV1, unreachableDetail: nil)
+            HelperClient.captureAvailability(for: legacyV2, unreachableDetail: nil)
                 == .unavailable("the installed helper uses an incompatible protocol. Update it in Settings → Helper.")
         )
     }

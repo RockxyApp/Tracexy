@@ -70,7 +70,7 @@ struct NoiseControlWindow: View {
     /// can be un-muted even after its traffic scrolled off.
     private var topHosts: [(host: String, hits: Int)] {
         var counts: [String: Int] = [:]
-        for session in coordinator.sessions {
+        for session in coordinator.presentedSessions {
             counts[session.host, default: 0] += 1
         }
         for host in coordinator.mutedHosts where counts[host] == nil {

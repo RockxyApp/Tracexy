@@ -15,6 +15,12 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         // Optional: `pcap_stats` is unsupported on some sources (notably when
         // reading a savefile), so a missing symbol must not fail the capture.
         stats = try? LiveCapture.symbol(library, "pcap_stats", as: StatsFn.self)
+        // Optional: only needed when a BPF filter is configured. A no-filter
+        // capture never fails on these; a requested filter with them missing does.
+        compileFilter = try? LiveCapture.symbol(library, "pcap_compile", as: CompileFn.self)
+        setFilter = try? LiveCapture.symbol(library, "pcap_setfilter", as: SetFilterFn.self)
+        freeCode = try? LiveCapture.symbol(library, "pcap_freecode", as: FreeCodeFn.self)
+        getError = try? LiveCapture.symbol(library, "pcap_geterr", as: GetErrFn.self)
     }
 
     // MARK: Internal
@@ -28,22 +34,47 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         var len: UInt32
     }
 
-    /// Start capturing on `interface`. `onBatch` and `onError` fire on a
-    /// background thread; the caller hops to the main actor.
+    /// Start capturing with a validated `configuration` (interface, snap length,
+    /// promiscuous mode, optional BPF). `onBatch` fires on a background thread; the
+    /// caller hops to the main actor.
+    ///
+    /// Opening the handle and compiling any BPF happen synchronously: this throws
+    /// on an out-of-bounds value, an interface that can't be opened, or a bad
+    /// filter, so the caller never reports a started capture that isn't running or
+    /// silently dropped its filter. On success it returns the interface's real
+    /// link type before the worker starts.
+    @discardableResult
     func start(
-        interface: String,
+        configuration: CaptureConfiguration,
         onBatch: @escaping @Sendable ([CapturedFrame], UInt32) -> Void,
-        onError: @escaping @Sendable (String) -> Void,
         onStatistics: (@Sendable (CaptureStatistics) -> Void)? = nil
-    ) {
+    )
+        throws -> UInt32
+    {
         stop()
+        let config: CaptureConfiguration
+        switch configuration.validated() {
+        case let .success(normalized):
+            config = normalized
+        case let .failure(error):
+            throw Failure(message: error.message)
+        }
         var errbuf = [CChar](repeating: 0, count: 256)
-        let handle = interface.withCString { name in
-            openLive(name, 65_536, 1, 100, &errbuf)
+        let snaplen = Int32(config.snapLength)
+        let promisc: Int32 = config.promiscuous ? 1 : 0
+        let handle = config.interface.withCString { name in
+            openLive(name, snaplen, promisc, 100, &errbuf)
         }
         guard let handle else {
-            onError(String(cString: errbuf))
-            return
+            throw Failure(message: String(cString: errbuf))
+        }
+        if let expression = config.bpf {
+            do {
+                try applyFilter(expression, handle: handle)
+            } catch {
+                closeHandle(handle)
+                throw error
+            }
         }
         self.handle = handle
         let linkType = UInt32(bitPattern: dataLink(handle))
@@ -64,6 +95,7 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         worker.stackSize = 1 << 20
         thread = worker
         worker.start()
+        return linkType
     }
 
     /// Stops capture and blocks until the worker thread has left `pcap_next_ex`
@@ -101,6 +133,17 @@ nonisolated final class LiveCapture: @unchecked Sendable {
     private typealias CloseFn = @convention(c) (OpaquePointer?) -> Void
     private typealias DataLinkFn = @convention(c) (OpaquePointer?) -> Int32
     private typealias StatsFn = @convention(c) (OpaquePointer?, UnsafeMutableRawPointer?) -> Int32
+    /// `int pcap_compile(pcap_t*, struct bpf_program*, const char*, int optimize, bpf_u_int32 netmask)`.
+    private typealias CompileFn = @convention(c) (
+        OpaquePointer?, UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int32, UInt32
+    )
+        -> Int32
+    /// `int pcap_setfilter(pcap_t*, struct bpf_program*)`.
+    private typealias SetFilterFn = @convention(c) (OpaquePointer?, UnsafeMutableRawPointer?) -> Int32
+    /// `void pcap_freecode(struct bpf_program*)`.
+    private typealias FreeCodeFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
+    /// `char *pcap_geterr(pcap_t*)`.
+    private typealias GetErrFn = @convention(c) (OpaquePointer?) -> UnsafePointer<CChar>?
 
     private let library: UnsafeMutableRawPointer
     private let openLive: OpenLiveFn
@@ -108,6 +151,10 @@ nonisolated final class LiveCapture: @unchecked Sendable {
     private let closeHandle: CloseFn
     private let dataLink: DataLinkFn
     private let stats: StatsFn?
+    private let compileFilter: CompileFn?
+    private let setFilter: SetFilterFn?
+    private let freeCode: FreeCodeFn?
+    private let getError: GetErrFn?
 
     private var handle: OpaquePointer?
     private var thread: Thread?
@@ -121,6 +168,44 @@ nonisolated final class LiveCapture: @unchecked Sendable {
             throw Failure(message: "missing symbol \(name)")
         }
         return unsafeBitCast(pointer, to: T.self)
+    }
+
+    /// Compile and install a BPF filter on an open handle, freeing the compiled
+    /// program on every path. Throws with libpcap's own error text (via
+    /// `pcap_geterr`) so a bad expression surfaces the real reason.
+    private func applyFilter(_ expression: String, handle: OpaquePointer) throws {
+        guard let compileFilter, let setFilter, let freeCode else {
+            throw Failure(message: "BPF filtering is unavailable on this system.")
+        }
+        // `struct bpf_program { u_int bf_len; struct bpf_insn *bf_insns; }` is 16
+        // bytes on LP64. Zero it so a failed compile leaves nothing to free.
+        let programSize = 16
+        let program = UnsafeMutableRawPointer.allocate(byteCount: programSize, alignment: 8)
+        program.initializeMemory(as: UInt8.self, repeating: 0, count: programSize)
+        defer { program.deallocate() }
+        let netmaskUnknown: UInt32 = 0xFFFFFFFF
+        let compiled = expression.withCString { cstr in
+            compileFilter(handle, program, cstr, 1, netmaskUnknown)
+        }
+        guard compiled == 0 else {
+            throw Failure(message: filterErrorMessage(handle: handle, fallback: "invalid BPF filter expression."))
+        }
+        // Once compiled, free the program regardless of how setfilter goes — the
+        // kernel/handle keeps its own copy after a successful install.
+        defer { freeCode(program) }
+        guard setFilter(handle, program) == 0 else {
+            throw Failure(message: filterErrorMessage(handle: handle, fallback: "could not apply the BPF filter."))
+        }
+    }
+
+    private func filterErrorMessage(handle: OpaquePointer, fallback: String) -> String {
+        if let getError, let cstr = getError(handle) {
+            let message = String(cString: cstr)
+            if !message.isEmpty {
+                return message
+            }
+        }
+        return fallback
     }
 
     /// Sampled by the worker thread itself. `pcap_stats` needs the same handle

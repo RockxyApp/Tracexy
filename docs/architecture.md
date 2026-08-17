@@ -13,8 +13,9 @@ hostile capture file can never crash the app.
 ## The pipeline today
 
 **Capture** (`Tracexy/Core/Capture`) acquires frames and reads/writes capture files. Live capture
-runs through the privileged helper over libpcap; the app also reads classic PCAP and PCAPNG files and
-writes PCAP. Interface discovery and capture statistics live here.
+runs through the privileged helper over libpcap; the app also reads classic PCAP and PCAPNG files,
+writes classic PCAP where required, and saves complete live captures as PCAPNG. Interface discovery
+and capture statistics live here.
 
 **Protocol** (`Tracexy/Core/Protocol`) turns raw bytes into a `DecodedPacket`. `PacketBuffer` is a
 bounds-checked, zero-copy view over the frame: every read is offset-checked and **throws** on a short
@@ -92,9 +93,9 @@ never folded into one another:
   never imply a complete capture when the helper stage lost frames. Stop returns the worker's final
   flushed frames and final accounting in one typed reply, so teardown does not silently lose the tail
   or race a separate fetch against the next capture generation.
-- **Local raw-retention eviction** (`RetainedFrameBuffer`), a save/export memory bound. It is reported
-  separately as retention truncation and is never presented as captured-packet loss, since every
-  session is still accounted for — a `.pcap` save contains only the retained recent tail.
+- **Local inspection-window eviction** (`RetainedFrameBuffer`), a UI memory bound. It is reported
+  separately and is never presented as captured-packet loss: sessions remain accounted for while the
+  complete accepted raw stream is written off-main to a disk-backed pcapng spool for save/export.
 
 ## Planned / not yet implemented
 
@@ -102,7 +103,8 @@ These are design intent — do not write code, or read these docs, as if they ex
 
 - a **decoder registry** with dispatch-table handoff between protocols (replacing the current monolithic
   decoder);
-- a **stateful connection table** with TCP **reassembly** (today's grouping folds packets into
+- a full **stateful connection table** with general TCP **reassembly** (today's grouping includes only
+  bounded per-direction prefix reassembly for initial TLS/HTTP/DNS metadata and otherwise folds packets into
   per-tuple summaries, incrementally on the live path, but tracks no connection state or byte streams);
 - an **analysis / security** engine deriving latency, errors, and findings;
 - **persistent storage** (a SQLite session store with large-payload offload);

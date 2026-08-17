@@ -7,8 +7,17 @@ protocol TracexyHelperProtocol {
     /// Helper binary version, build number, protocol version.
     func getHelperInfo(withReply reply: @escaping (String, Int, Int) -> Void)
 
-    /// Begin capturing on `interface`. Reply: (started, errorMessage).
-    func startCapture(interface: String, withReply reply: @escaping (Bool, String) -> Void)
+    /// Begin capturing with a typed, validated `configuration` (interface, snap
+    /// length, promiscuous mode, optional BPF). Reply: (started, errorMessage).
+    ///
+    /// The helper re-validates the configuration and compiles any BPF against
+    /// libpcap *before* replying, so an out-of-bounds value or a bad filter
+    /// expression fails closed with a clear message and no capture is reported
+    /// started. This is protocol v3 — the immutable `CaptureConfiguration` command
+    /// surface replaced v2's bare `interface: String`. The app fails closed against
+    /// an older helper (`getHelperInfo` classifies the protocol mismatch) rather
+    /// than downgrading the start request.
+    func startCapture(configuration: CaptureConfiguration, withReply reply: @escaping (Bool, String) -> Void)
 
     /// Stop the active capture and return the worker's final flushed batch plus
     /// final accounting. Returning this atomically avoids a stop→fetch race with

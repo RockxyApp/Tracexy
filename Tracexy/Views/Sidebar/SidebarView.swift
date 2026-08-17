@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// swaps the whole body so each kind of work stands alone, instead of stacking
 /// Monitor + Protocols + Sources + Favorites into one crowded list.
 ///
-/// - Browse  — Monitor destinations (Sessions/Overview/Flow Map), the Protocols
+/// - Browse  — Monitor destinations (Overview/Sessions/Flow Map), the Protocols
 ///             lens group, and Sources (Apps/Domains/IPs). Protocols is a single
 ///             disclosure group, collapsed by default: those rows filter the same
 ///             list rather than navigating anywhere, so they stay secondary to the
@@ -53,6 +53,25 @@ struct SidebarView: View {
                 Button("Import Capture…", systemImage: "tray.and.arrow.down") { importCapture() }
             }
         }
+        .confirmationDialog(
+            capturePendingRemoval.map { "Move “\($0.name)” to Trash?" } ?? "Move Capture to Trash?",
+            isPresented: captureRemovalConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let capture = capturePendingRemoval {
+                Button("Move to Trash", role: .destructive) {
+                    moveCaptureToTrash(capture)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The capture will disappear from Saved and can be recovered from the Trash.")
+        }
+        .alert("Couldn’t Remove Capture", isPresented: captureRemovalErrorPresentation) {
+            Button("OK", role: .cancel) { captureRemovalError = nil }
+        } message: {
+            Text(captureRemovalError ?? "The capture could not be moved to the Trash.")
+        }
     }
 
     // MARK: Private
@@ -63,6 +82,13 @@ struct SidebarView: View {
     /// the navigator's own rows and never touches `WorkspaceState.filterText` or
     /// the session list, which have their own filter controls.
     @State private var sidebarSearch = ""
+
+    /// Context-menu removal is staged through a confirmation because a saved
+    /// capture is user data, not merely sidebar presentation state. The actual
+    /// operation is recoverable (move to Trash), matching native macOS library
+    /// behavior while still removing the row immediately after success.
+    @State private var capturePendingRemoval: SavedCapture?
+    @State private var captureRemovalError: String?
 
     @State private var protocolsExpanded = false
     @State private var savedExpanded = false
@@ -101,14 +127,24 @@ struct SidebarView: View {
 
     /// Apps whose name matches, or that contacted a matching host. A name match
     /// keeps every child; otherwise only the matching hosts are shown.
+    private var visibleAppGroups: [AppGroup] {
+        coordinator.appGroups.compactMap { group in
+            guard !coordinator.isSourceAppHidden(group.app) else {
+                return nil
+            }
+            let hosts = group.hosts.filter { !coordinator.isSourceHostHidden($0) }
+            return AppGroup(app: group.app, hosts: hosts, count: group.count)
+        }
+    }
+
     private var filteredAppGroups: [AppGroup] {
         guard isSearching else {
-            return coordinator.appGroups
+            return visibleAppGroups
         }
         if matches("Apps") || matches("Sources") {
-            return coordinator.appGroups
+            return visibleAppGroups
         }
-        return coordinator.appGroups.compactMap { group in
+        return visibleAppGroups.compactMap { group in
             if matches(group.app) {
                 return group
             }
@@ -117,14 +153,24 @@ struct SidebarView: View {
         }
     }
 
+    private var visibleDomainGroups: [DomainGroup] {
+        coordinator.domainGroups.compactMap { group in
+            guard !coordinator.isSourceDomainHidden(group.domain) else {
+                return nil
+            }
+            let ips = group.ips.filter { !coordinator.isSourceIPHidden($0) }
+            return DomainGroup(domain: group.domain, ips: ips, count: group.count)
+        }
+    }
+
     private var filteredDomainGroups: [DomainGroup] {
         guard isSearching else {
-            return coordinator.domainGroups
+            return visibleDomainGroups
         }
         if matches("Domains") || matches("Sources") {
-            return coordinator.domainGroups
+            return visibleDomainGroups
         }
-        return coordinator.domainGroups.compactMap { group in
+        return visibleDomainGroups.compactMap { group in
             if matches(group.domain) {
                 return group
             }
@@ -133,14 +179,30 @@ struct SidebarView: View {
         }
     }
 
+    private var visibleIPHosts: [(name: String, count: Int)] {
+        coordinator.ipHosts.filter { !coordinator.isSourceIPHidden($0.name) }
+    }
+
     private var filteredIPHosts: [(name: String, count: Int)] {
         guard isSearching else {
-            return coordinator.ipHosts
+            return visibleIPHosts
         }
         if matches("IP Addresses") || matches("Sources") {
-            return coordinator.ipHosts
+            return visibleIPHosts
         }
-        return coordinator.ipHosts.filter { matches($0.name) }
+        return visibleIPHosts.filter { matches($0.name) }
+    }
+
+    private var showsAppsCategory: Bool {
+        !filteredAppGroups.isEmpty || (!isSearching && !coordinator.hiddenSourceApps.isEmpty)
+    }
+
+    private var showsDomainsCategory: Bool {
+        !filteredDomainGroups.isEmpty || (!isSearching && !coordinator.hiddenSourceDomains.isEmpty)
+    }
+
+    private var showsIPAddressesCategory: Bool {
+        !filteredIPHosts.isEmpty || (!isSearching && !coordinator.hiddenSourceIPs.isEmpty)
     }
 
     private var filteredPinnedHosts: [String] {
@@ -195,6 +257,28 @@ struct SidebarView: View {
     /// browsing but bows out of a search unless the query is about muting.
     private var showsNoiseControl: Bool {
         !isSearching || matches("noise control") || matches("muted") || matches("mute")
+    }
+
+    private var captureRemovalConfirmation: Binding<Bool> {
+        Binding(
+            get: { capturePendingRemoval != nil },
+            set: {
+                if !$0 {
+                    capturePendingRemoval = nil
+                }
+            }
+        )
+    }
+
+    private var captureRemovalErrorPresentation: Binding<Bool> {
+        Binding(
+            get: { captureRemovalError != nil },
+            set: {
+                if !$0 {
+                    captureRemovalError = nil
+                }
+            }
+        )
     }
 
     /// Honest empty state — shown only while searching, so an idle capture with
@@ -298,9 +382,13 @@ struct SidebarView: View {
                         .accessibilityAddTraits(isActiveHost(host) ? .isSelected : [])
                         .accessibilityAction { coordinator.selectHost(host) }
                         .contextMenu {
-                            Button("Unpin", systemImage: "pin.slash") {
-                                coordinator.togglePinHost(host)
-                            }
+                            SidebarSourceContextMenu(
+                                value: host,
+                                copyLabel: "Copy Address",
+                                pinnedHost: host,
+                                coordinator: coordinator,
+                                onShowSessions: { coordinator.selectHost(host) }
+                            )
                         }
                 }
             }
@@ -327,9 +415,12 @@ struct SidebarView: View {
                             Button("Reveal in Finder", systemImage: "folder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([capture.url])
                             }
+                            Button("Copy Path", systemImage: "doc.on.doc") {
+                                copyToPasteboard(capture.url.path)
+                            }
                             Divider()
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                coordinator.deleteSavedCapture(capture)
+                            Button("Move to Trash…", systemImage: "trash", role: .destructive) {
+                                capturePendingRemoval = capture
                             }
                         }
                 }
@@ -357,22 +448,52 @@ struct SidebarView: View {
     /// hosts/IPs that app contacted.
     private var appsDisclosure: some View {
         DisclosureGroup(isExpanded: searchExpansion($appsExpanded)) {
-            ForEach(filteredAppGroups) { group in
-                AppRow(group: group, coordinator: coordinator, forceExpanded: isSearching)
+            if filteredAppGroups.isEmpty {
+                Text("No visible apps")
+                    .font(Theme.Typography.caption).foregroundStyle(.tertiary)
+            } else {
+                ForEach(filteredAppGroups) { group in
+                    AppRow(group: group, coordinator: coordinator, forceExpanded: isSearching)
+                }
             }
         } label: {
-            Label("Apps", systemImage: "app.badge").badge(coordinator.appGroups.count)
+            sourceCategoryLabel(
+                title: "Apps",
+                systemImage: "app.badge",
+                count: visibleAppGroups.count,
+                expanded: $appsExpanded,
+                copyLabel: "Copy App Names",
+                values: filteredAppGroups.map(\.app).filter { $0 != "—" },
+                hiddenCount: coordinator.hiddenSourceApps.count,
+                restoreLabel: "Restore Hidden Apps",
+                onRestore: coordinator.restoreHiddenSourceApps
+            )
         }
     }
 
     /// Domains, each expandable to the server IPs it resolved to (sub-IPs).
     private var domainsDisclosure: some View {
         DisclosureGroup(isExpanded: searchExpansion($domainsExpanded)) {
-            ForEach(filteredDomainGroups) { group in
-                DomainRow(group: group, coordinator: coordinator, forceExpanded: isSearching)
+            if filteredDomainGroups.isEmpty {
+                Text("No visible domains")
+                    .font(Theme.Typography.caption).foregroundStyle(.tertiary)
+            } else {
+                ForEach(filteredDomainGroups) { group in
+                    DomainRow(group: group, coordinator: coordinator, forceExpanded: isSearching)
+                }
             }
         } label: {
-            Label("Domains", systemImage: "globe").badge(coordinator.domainGroups.count)
+            sourceCategoryLabel(
+                title: "Domains",
+                systemImage: "globe",
+                count: visibleDomainGroups.count,
+                expanded: $domainsExpanded,
+                copyLabel: "Copy Domains",
+                values: filteredDomainGroups.map(\.domain),
+                hiddenCount: coordinator.hiddenSourceDomains.count,
+                restoreLabel: "Restore Hidden Domains",
+                onRestore: coordinator.restoreHiddenSourceDomains
+            )
         }
     }
 
@@ -381,21 +502,95 @@ struct SidebarView: View {
     private var ipAddressesDisclosure: some View {
         let hosts = isSearching ? filteredIPHosts : Array(filteredIPHosts.prefix(20))
         return DisclosureGroup(isExpanded: searchExpansion($ipsExpanded)) {
-            ForEach(hosts, id: \.name) { host in
-                Label(host.name, systemImage: "number")
-                    .foregroundStyle(isActiveIP(host.name) ? Color.accentColor : .secondary)
-                    .font(isActiveIP(host.name) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
-                    .lineLimit(1).badge(host.count)
-                    .contentShape(Rectangle())
-                    .onTapGesture { coordinator.selectIP(host.name) }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAddTraits(isActiveIP(host.name) ? .isSelected : [])
-                    .accessibilityAction { coordinator.selectIP(host.name) }
-                    .help("Show sessions for \(host.name)")
-                    .contextMenu { PinHostButton(host: host.name, coordinator: coordinator) }
+            if hosts.isEmpty {
+                Text("No visible IP addresses")
+                    .font(Theme.Typography.caption).foregroundStyle(.tertiary)
+            } else {
+                ForEach(hosts, id: \.name) { host in
+                    Label(host.name, systemImage: "number")
+                        .foregroundStyle(isActiveIP(host.name) ? Color.accentColor : .secondary)
+                        .font(isActiveIP(host.name) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .badge(host.count)
+                        .contentShape(Rectangle())
+                        .onTapGesture { coordinator.selectIP(host.name) }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAddTraits(isActiveIP(host.name) ? .isSelected : [])
+                        .accessibilityAction { coordinator.selectIP(host.name) }
+                        .help("Show sessions for \(host.name)")
+                        .contextMenu {
+                            SidebarSourceContextMenu(
+                                value: host.name,
+                                copyLabel: "Copy IP Address",
+                                pinnedHost: host.name,
+                                coordinator: coordinator,
+                                onShowSessions: { coordinator.selectIP(host.name) },
+                                onRemove: { coordinator.hideSourceIP(host.name) }
+                            )
+                        }
+                }
             }
         } label: {
-            Label("IP Addresses", systemImage: "number").badge(coordinator.ipHosts.count)
+            sourceCategoryLabel(
+                title: "IP Addresses",
+                systemImage: "number",
+                count: visibleIPHosts.count,
+                expanded: $ipsExpanded,
+                copyLabel: "Copy IP Addresses",
+                values: hosts.map(\.name),
+                hiddenCount: coordinator.hiddenSourceIPs.count,
+                restoreLabel: "Restore Hidden IP Addresses",
+                onRestore: coordinator.restoreHiddenSourceIPs
+            )
+        }
+    }
+
+    /// A Sources category is itself an actionable sidebar item, not only a
+    /// disclosure triangle. The full-width label makes secondary-clicking the
+    /// row reliable, while the menu exposes category-level actions that remain
+    /// meaningful even before the user expands it.
+    private func sourceCategoryLabel(
+        title: String,
+        systemImage: String,
+        count: Int,
+        expanded: Binding<Bool>,
+        copyLabel: String,
+        values: [String],
+        hiddenCount: Int,
+        restoreLabel: String,
+        onRestore: @escaping () -> Void
+    )
+        -> some View
+    {
+        let appearsExpanded = isSearching || expanded.wrappedValue
+        return HStack {
+            Label(title, systemImage: systemImage)
+            Spacer(minLength: 0)
+        }
+        .badge(count)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Show All Sessions", systemImage: "rectangle.stack") {
+                coordinator.selectSidebarItem(.sessions)
+            }
+            Button(copyLabel, systemImage: "doc.on.doc") {
+                copyToPasteboard(values.joined(separator: "\n"))
+            }
+            .disabled(values.isEmpty)
+            if hiddenCount > 0 {
+                Button("\(restoreLabel) (\(hiddenCount))", systemImage: "arrow.uturn.backward") {
+                    onRestore()
+                }
+            }
+            Divider()
+            Button(
+                appearsExpanded ? "Collapse \(title)" : "Expand \(title)",
+                systemImage: appearsExpanded ? "chevron.up" : "chevron.down"
+            ) {
+                expanded.wrappedValue.toggle()
+            }
+            .disabled(isSearching)
         }
     }
 
@@ -440,15 +635,15 @@ struct SidebarView: View {
                 }
             }
 
-            if !filteredAppGroups.isEmpty || !filteredDomainGroups.isEmpty || !filteredIPHosts.isEmpty {
+            if showsAppsCategory || showsDomainsCategory || showsIPAddressesCategory {
                 Section("Sources") {
-                    if !filteredAppGroups.isEmpty {
+                    if showsAppsCategory {
                         appsDisclosure
                     }
-                    if !filteredDomainGroups.isEmpty {
+                    if showsDomainsCategory {
                         domainsDisclosure
                     }
-                    if !filteredIPHosts.isEmpty {
+                    if showsIPAddressesCategory {
                         ipAddressesDisclosure
                     }
                 }
@@ -532,6 +727,20 @@ struct SidebarView: View {
         if panel.runModal() == .OK, let url = panel.url {
             coordinator.importCapture(from: url)
         }
+    }
+
+    private func moveCaptureToTrash(_ capture: SavedCapture) {
+        capturePendingRemoval = nil
+        do {
+            try coordinator.moveSavedCaptureToTrash(capture)
+        } catch {
+            captureRemovalError = error.localizedDescription
+        }
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     private func selectionBinding(_ workspace: WorkspaceState) -> Binding<SidebarItem?> {
@@ -618,25 +827,47 @@ private struct DomainRow: View {
                     .foregroundStyle(isActiveIP(ip) ? Color.accentColor : .secondary)
                     .font(isActiveIP(ip) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.selectIP(ip) }
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAddTraits(isActiveIP(ip) ? .isSelected : [])
                     .accessibilityAction { coordinator.selectIP(ip) }
                     .help("Show sessions for \(ip)")
+                    .contextMenu {
+                        SidebarSourceContextMenu(
+                            value: ip,
+                            copyLabel: "Copy IP Address",
+                            pinnedHost: ip,
+                            coordinator: coordinator,
+                            onShowSessions: { coordinator.selectIP(ip) },
+                            onRemove: { coordinator.hideSourceIP(ip) }
+                        )
+                    }
             }
         } label: {
             Label(group.domain, systemImage: "globe")
                 .foregroundStyle(isActiveHost ? Color.accentColor : .secondary)
                 .font(isActiveHost ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
-                .lineLimit(1).badge(group.count)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .badge(group.count)
                 .contentShape(Rectangle())
                 .onTapGesture { coordinator.selectHost(group.domain) }
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAddTraits(isActiveHost ? .isSelected : [])
                 .accessibilityAction { coordinator.selectHost(group.domain) }
                 .help("Show sessions for \(group.domain)")
-                .contextMenu { PinHostButton(host: group.domain, coordinator: coordinator) }
+                .contextMenu {
+                    SidebarSourceContextMenu(
+                        value: group.domain,
+                        copyLabel: "Copy Domain",
+                        pinnedHost: group.domain,
+                        coordinator: coordinator,
+                        onShowSessions: { coordinator.selectHost(group.domain) },
+                        onRemove: { coordinator.hideSourceDomain(group.domain) }
+                    )
+                }
         }
     }
 
@@ -656,6 +887,40 @@ private struct DomainRow: View {
     private func isActiveIP(_ ip: String) -> Bool {
         coordinator.activeWorkspace.sidebarSelection == .sessions
             && coordinator.activeWorkspace.ipFilter == ip
+    }
+}
+
+// MARK: - SidebarSourceContextMenu
+
+/// Shared native actions for dynamic source rows. Static navigation groups stay
+/// intentionally quiet (as in Rockxy); rows representing actual apps, hosts,
+/// domains, and IPs expose the actions that help an investigation continue.
+private struct SidebarSourceContextMenu: View {
+    let value: String
+    let copyLabel: String
+    var pinnedHost: String?
+    let coordinator: MainContentCoordinator
+    let onShowSessions: () -> Void
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        Button("Show Sessions", systemImage: "rectangle.stack") {
+            onShowSessions()
+        }
+        Button(copyLabel, systemImage: "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+        }
+        if let pinnedHost {
+            Divider()
+            PinHostButton(host: pinnedHost, coordinator: coordinator)
+        }
+        if let onRemove {
+            Divider()
+            Button("Remove from Sources", systemImage: "trash", role: .destructive) {
+                onRemove()
+            }
+        }
     }
 }
 
@@ -693,12 +958,23 @@ private struct AppRow: View {
                     .foregroundStyle(isActiveHost(host) ? Color.accentColor : .secondary)
                     .font(isActiveHost(host) ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.selectHost(host) }
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAddTraits(isActiveHost(host) ? .isSelected : [])
                     .accessibilityAction { coordinator.selectHost(host) }
                     .help("Show sessions for \(host)")
+                    .contextMenu {
+                        SidebarSourceContextMenu(
+                            value: host,
+                            copyLabel: "Copy Address",
+                            pinnedHost: host,
+                            coordinator: coordinator,
+                            onShowSessions: { coordinator.selectHost(host) },
+                            onRemove: { coordinator.hideSourceHost(host) }
+                        )
+                    }
             }
         } label: {
             HStack(spacing: 6) {
@@ -706,6 +982,7 @@ private struct AppRow: View {
                 Text(group.app).lineLimit(1)
                     .font(isActiveApp ? Theme.Typography.navigationMedium : Theme.Typography.navigation)
                     .foregroundStyle(isActiveApp ? Color.accentColor : .primary)
+                Spacer(minLength: 0)
             }
             .badge(group.count)
             .contentShape(Rectangle())
@@ -714,6 +991,16 @@ private struct AppRow: View {
             .accessibilityAddTraits(isActiveApp ? .isSelected : [])
             .accessibilityAction { coordinator.selectProcess(group.app) }
             .help("Show sessions from \(group.app)")
+            .contextMenu {
+                SidebarSourceContextMenu(
+                    value: group.app,
+                    copyLabel: "Copy App Name",
+                    pinnedHost: nil,
+                    coordinator: coordinator,
+                    onShowSessions: { coordinator.selectProcess(group.app) },
+                    onRemove: { coordinator.hideSourceApp(group.app) }
+                )
+            }
         }
     }
 

@@ -68,6 +68,16 @@ struct SessionCenterView: View {
             } description: {
                 Text(error)
             }
+        } else if coordinator.presentedSessions.isEmpty, coordinator.removedSessionCount > 0 {
+            ContentUnavailableView {
+                Label("All Sessions Removed from View", systemImage: "eye.slash")
+            } description: {
+                Text("The capture evidence is still intact and can be restored.")
+            } actions: {
+                Button("Restore Removed Sessions") {
+                    coordinator.restoreRemovedSessions()
+                }
+            }
         } else if coordinator.isCapturing {
             ContentUnavailableView {
                 Label("Capturing on \(coordinator.captureInterface)", systemImage: "dot.radiowaves.left.and.right")
@@ -355,6 +365,16 @@ struct SessionCenterView: View {
                 Button("Copy Summary", systemImage: "doc.on.doc") {
                     copyToPasteboard(row.summary)
                 }
+
+                Divider()
+
+                Button(
+                    "Remove \(activity.sessions.count) Sessions from View",
+                    systemImage: "trash",
+                    role: .destructive
+                ) {
+                    coordinator.removeSessionsFromView(Set(activity.sessions.map(\.id)))
+                }
             case let .group(group):
                 groupMenu(group)
             }
@@ -427,6 +447,12 @@ struct SessionCenterView: View {
             coordinator.isProtocolMuted(proto) ? "Unmute \(proto.label)" : "Mute \(proto.label)",
             systemImage: coordinator.isProtocolMuted(proto) ? "speaker.wave.2" : "speaker.slash"
         ) { coordinator.toggleMuteProtocol(proto) }
+
+        Divider()
+
+        Button("Remove from View", systemImage: "trash", role: .destructive) {
+            coordinator.removeSessionsFromView(Set([session.id]))
+        }
     }
 
     /// The menu for an observed group. Scopes by the group's real attribute — a
@@ -466,6 +492,16 @@ struct SessionCenterView: View {
             Button("Show Sessions for \(group.key)", systemImage: "app.badge") {
                 coordinator.selectProcess(group.key)
             }
+        }
+
+        Divider()
+
+        Button(
+            "Remove \(group.sessions.count) Sessions from View",
+            systemImage: "trash",
+            role: .destructive
+        ) {
+            coordinator.removeSessionsFromView(Set(group.sessions.map(\.id)))
         }
     }
 

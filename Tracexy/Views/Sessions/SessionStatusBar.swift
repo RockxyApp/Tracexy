@@ -39,6 +39,7 @@ nonisolated struct FooterActionDescriptor: Identifiable, Equatable {
         case newFocusSet
         case noiseControl
         case clearSessions
+        case restoreRemovedSessions
         case advancedFilters
         case autoSelectLatest
     }
@@ -131,8 +132,8 @@ nonisolated struct FooterSnapshot: Equatable {
 ///   from `pcap_stats`; unknown when no statistics are available;
 /// - `helperDropCount`, frames the privileged helper evicted before the app drained
 ///   them — capture-source loss that is *not* part of the kernel figure;
-/// - `retentionEvictionCount`, frames trimmed from the local save/export window —
-///   a memory bound, never captured-packet loss.
+/// - `retentionEvictionCount`, frames trimmed from the local inspection window —
+///   a memory bound, never captured-packet or savefile loss.
 nonisolated struct CaptureLoss: Equatable {
     let hasStatistics: Bool
     let totalDropped: UInt64
@@ -160,6 +161,7 @@ nonisolated enum SessionStatusBarModel {
         canAddFocusSet: Bool,
         isNoiseControlActive: Bool,
         hasSessions: Bool,
+        removedSessionCount: Int,
         activeFilterRuleCount: Int,
         isAdvancedFilterVisible: Bool,
         autoSelectLatest: Bool
@@ -171,7 +173,7 @@ nonisolated enum SessionStatusBarModel {
             FooterActionDescriptor(
                 kind: .saveCapture,
                 title: "Save Capture",
-                help: "Save the current capture to a .pcap file.",
+                help: "Save the complete current capture to a .pcapng file.",
                 systemImage: "square.and.arrow.down",
                 placement: .primary,
                 priority: 0,
@@ -218,12 +220,23 @@ nonisolated enum SessionStatusBarModel {
                 isDestructive: true
             ),
             FooterActionDescriptor(
+                kind: .restoreRemovedSessions,
+                title: "Restore Removed Sessions (\(removedSessionCount))",
+                help: "Restore every session removed from the current capture's views.",
+                systemImage: "arrow.uturn.backward",
+                placement: .listOptions,
+                priority: 4,
+                isEnabled: removedSessionCount > 0,
+                isActive: false,
+                isDestructive: false
+            ),
+            FooterActionDescriptor(
                 kind: .advancedFilters,
                 title: activeFilterRuleCount > 0 ? "Advanced Filters (on)" : "Advanced Filters",
                 help: "Show the advanced filter rule builder.",
                 systemImage: "line.3.horizontal.decrease.circle",
                 placement: .listOptions,
-                priority: 4,
+                priority: 5,
                 isEnabled: true,
                 isActive: isAdvancedFilterVisible || activeFilterRuleCount > 0,
                 isDestructive: false
@@ -234,7 +247,7 @@ nonisolated enum SessionStatusBarModel {
                 help: "Automatically select the newest session as it arrives.",
                 systemImage: "arrow.down.circle",
                 placement: .listOptions,
-                priority: 5,
+                priority: 6,
                 isEnabled: true,
                 isActive: autoSelectLatest,
                 isDestructive: false
@@ -367,17 +380,17 @@ nonisolated enum SessionStatusBarModel {
             ))
         }
 
-        // Retention truncation — the local save/export window trimmed its oldest
-        // frames to stay bounded. This is emphatically *not* capture loss: every
-        // session is still accounted for, only the tail of raw frames a `.pcap`
-        // save could write was shortened. Neutral and last, so it never reads as
-        // an alarm about missed traffic.
+        // Memory-window eviction — the immediate inspection window trimmed its
+        // oldest frames to stay bounded. This is emphatically *not* capture loss:
+        // sessions remain accounted for and the complete raw stream continues to
+        // the disk-backed spool used by save/export. Neutral and last, so it never
+        // reads as an alarm about missed traffic.
         if loss.retentionEvictionCount > 0 {
             items.append(FooterTelemetry(
                 kind: .retentionTruncation,
-                text: "\(loss.retentionEvictionCount.formatted()) not retained",
-                help: "Older raw frames were dropped from the save/export window to bound memory — "
-                    + "sessions are unaffected; a saved .pcap contains only the retained recent tail.",
+                text: "\(loss.retentionEvictionCount.formatted()) outside memory window",
+                help: "Older raw frames left the bounded inspection window — sessions and the complete "
+                    + "disk-backed save remain unaffected.",
                 systemImage: "tray.full",
                 role: .neutral
             ))

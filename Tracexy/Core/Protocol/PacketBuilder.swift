@@ -40,6 +40,32 @@ nonisolated enum PacketBuilder {
         )
     }
 
+    /// Ethernet+IPv4+TCP frame carrying a single raw TLS record. `declaredLength`
+    /// overrides the record's length field (defaulting to the actual body length),
+    /// so a test can model a fragment whose declared body exceeds the captured
+    /// bytes — TCP reassembly does not exist, so records legitimately arrive split.
+    static func tlsRecordFrame(
+        contentType: UInt8,
+        version: UInt16 = 0x0303,
+        body: [UInt8],
+        declaredLength: UInt16? = nil,
+        src: String,
+        dst: String,
+        srcPort: UInt16 = 50_000,
+        dstPort: UInt16 = 443
+    )
+        -> [UInt8]
+    {
+        let length = declaredLength ?? UInt16(body.count)
+        let record = [contentType] + be16(version) + be16(length) + body
+        return ethernetIPv4(
+            proto: 6,
+            src: src,
+            dst: dst,
+            payload: tcp(srcPort: srcPort, dstPort: dstPort, flags: 0x18, payload: record)
+        )
+    }
+
     static func httpRequestFrame(
         host: String,
         path: String,
@@ -133,9 +159,17 @@ nonisolated enum PacketBuilder {
         [nextHeader, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00]
     }
 
-    static func tcp(srcPort: UInt16, dstPort: UInt16, flags: UInt8, payload: [UInt8]) -> [UInt8] {
+    static func tcp(
+        srcPort: UInt16,
+        dstPort: UInt16,
+        flags: UInt8,
+        payload: [UInt8],
+        sequence: UInt32 = 1
+    )
+        -> [UInt8]
+    {
         var header = be16(srcPort) + be16(dstPort)
-        header += be32(1) + be32(0) // seq, ack
+        header += be32(sequence) + be32(0) // seq, ack
         header += [0x50, flags] // data offset (5 words), flags
         header += [0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00] // window, checksum, urgent
         return header + payload

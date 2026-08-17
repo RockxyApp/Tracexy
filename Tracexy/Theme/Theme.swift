@@ -239,6 +239,7 @@ enum Theme {
         case .http2: .mint
         case .quic: .orange
         case .websocket: .pink
+        case .stun: .yellow
         }
     }
 

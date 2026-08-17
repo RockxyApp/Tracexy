@@ -33,6 +33,26 @@ struct RetainedFrameBufferTests {
         #expect(buffer.isEmpty)
         #expect(buffer.isEmpty)
         #expect(buffer.evictionCount == 0)
+        #expect(buffer.capturedByteCount == 0)
+    }
+
+    @Test("Captured-byte total tracks only the frames still retained, across evict/replace/reset")
+    func capturedByteTotalTracksRetainedFrames() {
+        // Each helper frame carries exactly one captured byte, so the running total
+        // equals the retained count and stays a memory/save-size figure — never a
+        // capture-loss figure, which the eviction counter reports separately.
+        var buffer = RetainedFrameBuffer(capacity: 3)
+        buffer.append(contentsOf: frames(0 ..< 5))
+        #expect(buffer.count == 3)
+        #expect(buffer.capturedByteCount == 3) // three retained × 1 captured byte
+        #expect(buffer.evictionCount == 2) // loss/truncation is a distinct figure
+
+        buffer.replace(with: frames(0 ..< 10))
+        #expect(buffer.capturedByteCount == 10)
+        #expect(buffer.evictionCount == 0)
+
+        buffer.reset()
+        #expect(buffer.capturedByteCount == 0)
     }
 
     @Test("Replace bypasses the capacity bound and zeroes the count for an opened file")
