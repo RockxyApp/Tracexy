@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Add a capture summary dashboard with traffic activity, protocol mix, top talkers, and evidence-based findings.
 - Add native session search, decoded-evidence copy actions, source management, and reversible session removal.
-- Add deeper STUN, TLS-record, QUIC, and segmented TCP/DNS/TLS/HTTP inspection.
+- Add deeper STUN, TLS-record, and QUIC long-header inspection, plus segmented TCP/DNS/TLS/HTTP recovery.
 
 ### Changed
 
