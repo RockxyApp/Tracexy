@@ -71,7 +71,7 @@ bytes are the answer, but they do not dominate the workspace.
 <p align="center"><em>Inspect decoded protocol fields alongside the raw bytes that support them.</em></p>
 
 <p align="center">
-  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second walkthrough on Rockxy Web →</a>
+  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second Tracexy walkthrough →</a>
 </p>
 
 ## Why Tracexy

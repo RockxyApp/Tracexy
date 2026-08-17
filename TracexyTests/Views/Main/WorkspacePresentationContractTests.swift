@@ -58,7 +58,7 @@ struct WorkspacePresentationContractTests {
         #expect(table.contains("struct ContextInspectorFullRow"))
     }
 
-    @Test("Session search keeps the Rockxy control rhythm with Tracexy field semantics")
+    @Test("Session search keeps the native control rhythm with Tracexy field semantics")
     func sessionSearchUsesResponsiveNativeControls() throws {
         let source = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
 
