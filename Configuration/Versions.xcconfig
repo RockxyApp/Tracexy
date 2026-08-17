@@ -12,7 +12,8 @@ TRACEXY_APP_BUILD = 6
 
 TRACEXY_HELPER_VERSION = 1.0.0
 TRACEXY_HELPER_BUILD = 4
-// The typed CaptureConfiguration start surface replaces the protocol-v3 bare
-// interface request. The next release must bump this value before building so
-// an older installed helper is classified incompatible rather than accepted.
+// Protocol v4: typed NSSecureCoding CaptureConfiguration start surface
+// (interface, snap length, promiscuous mode, optional BPF) replaces protocol
+// v3's bare interface request. Older helpers are classified incompatible and
+// Start is gated — no fallback.
 TRACEXY_HELPER_PROTOCOL_VERSION = 3
