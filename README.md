@@ -24,6 +24,29 @@
 
 ---
 
+<!-- BEGIN GENERATED: latest-release -->
+## Latest Tagged Release
+
+**v0.2.0** — 2026-08-13
+
+### Added
+
+- Add Tracexy demo captures
+- Add update badge and inspector detail tables
+- Add session export actions
+
+### Fixed
+
+- Harden live frame ingestion
+
+### Changed
+
+- Refine session search and assistant dock
+- Streamline security investigation
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+<!-- END GENERATED: latest-release -->
+
 Tracexy is an open-source network intelligence app built specifically for macOS. It captures traffic
 passively and turns frames into explainable sessions and correlated activities: which process
 contacted which host, which protocols appeared, how much data moved, and what evidence supports the
