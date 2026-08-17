@@ -27,22 +27,18 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.2.0** — 2026-08-13
+**v0.3.0** — 2026-08-17
 
 ### Added
 
-- Add Tracexy demo captures
-- Add update badge and inspector detail tables
-- Add session export actions
-
-### Fixed
-
-- Harden live frame ingestion
+- Add a capture summary dashboard with traffic activity, protocol mix, top talkers, and evidence-based findings.
+- Add native session search, decoded-evidence copy actions, source management, and reversible session removal.
+- Add deeper STUN, TLS-record, and QUIC long-header inspection, plus segmented TCP/DNS/TLS/HTTP recovery.
 
 ### Changed
 
-- Refine session search and assistant dock
-- Streamline security investigation
+- Preserve packet timestamps, lengths, link types, and capture-loss accounting across live capture and export, with configurable snap length, promiscuous mode, and BPF filters.
+- Keep sustained captures responsive with bounded disk spooling and incremental session updates.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
