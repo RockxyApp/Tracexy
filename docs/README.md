@@ -27,9 +27,11 @@ interface with workspaces, filtering, focus sets, and an inspector.
 **Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record
 metadata, HTTP/1 headers, QUIC long-header metadata, and STUN attributes. TCP prefix reassembly is
 bounded to initial TLS/HTTP/DNS metadata; a general stateful connection/reassembly engine is not present.
+Protected `.tracexysession` export enforces the Privacy settings by omitting raw frames and sensitive
+decoded metadata. Raw pcap/pcapng remains evidence-preserving and is never presented as redacted.
 
 **Planned / not yet implemented:** a decoder registry with dispatch-table handoff, a stateful
 connection table with TCP reassembly, an analysis/security engine, persistent SQLite storage, an
-MCP/AI bridge, and an enforced export-redaction pipeline. Do not treat these as present.
+MCP/AI bridge, and packet-rewriting redaction for raw capture formats. Do not treat these as present.
 
 When the source and these docs disagree, the source is correct — please open an issue or a fix.
