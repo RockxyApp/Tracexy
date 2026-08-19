@@ -32,6 +32,13 @@ extension MainContentCoordinator {
         guard !isExportingSession else {
             return
         }
+        let configuredPrivacy = PrivacySettingsResolver.exportPolicy()
+        guard let exportPrivacy = confirmedPrivacyPolicy(
+            for: format,
+            configuredPrivacy: configuredPrivacy
+        ) else {
+            return
+        }
         setSessionExporting(true)
 
         Task { [weak self] in
@@ -51,7 +58,8 @@ extension MainContentCoordinator {
                         for: session,
                         frames: sessionFrames,
                         defaultLinkType: capture.linkType,
-                        format: format
+                        format: format,
+                        privacy: exportPrivacy
                     )
                 }.value
                 let panel = NSSavePanel()
@@ -82,5 +90,32 @@ extension MainContentCoordinator {
                 self?.captureError = "Couldn’t export session: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Native session documents can enforce the configured protections by
+    /// omitting raw frames. Pcap formats are evidence-preserving byte streams, so
+    /// exporting one while protections are active requires an explicit, per-action
+    /// acknowledgement and then deliberately uses the unprotected policy.
+    private func confirmedPrivacyPolicy(
+        for format: SessionExportFormat,
+        configuredPrivacy: SessionExportPrivacyPolicy
+    )
+        -> SessionExportPrivacyPolicy?
+    {
+        guard format != .session, configuredPrivacy.hasProtections else {
+            return configuredPrivacy
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Export unprotected packet data?"
+        alert.informativeText = """
+        \(format.fileExtension.uppercased()) files preserve the exact captured packet bytes. \
+        Redacting payloads, stripping credentials, and masking IP addresses cannot be applied to this raw format. \
+        Export only if you intend to handle the file as sensitive data.
+        """
+        alert.addButton(withTitle: "Export Raw Capture")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .none : nil
     }
 }

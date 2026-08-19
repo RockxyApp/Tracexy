@@ -2,19 +2,19 @@ import SwiftUI
 
 // MARK: - PrivacySettingsView
 
-/// Privacy preferences. These persist the user's choices; the redaction / masking
-/// pipeline and retention timer that consume them are not yet implemented (they
-/// arrive with the export & analysis engines). Local-first is the default posture.
+/// Privacy preferences for protected native session exports. Raw capture formats
+/// preserve packet evidence and therefore require explicit acknowledgement when
+/// any protection is active. Local-first remains the default posture.
 struct PrivacySettingsView: View {
     // MARK: Internal
 
     var body: some View {
         SettingsPane {
-            SettingsSection("On Export & Share") {
+            SettingsSection("Protected Session Export") {
                 SettingsCheckbox(
                     isOn: $redactBodies,
                     title: "Redact payload bodies",
-                    description: "Replace request and response bodies with placeholders in exported captures."
+                    description: "Exclude captured packet bytes from protected Tracexy session documents."
                 )
 
                 SettingsDivider()
@@ -22,7 +22,7 @@ struct PrivacySettingsView: View {
                 SettingsCheckbox(
                     isOn: $stripCredentials,
                     title: "Strip credentials & tokens",
-                    description: "Remove Authorization headers, cookies, and API keys before sharing."
+                    description: "Remove DNS-derived and free-form decoded metadata that may carry secrets."
                 )
 
                 SettingsDivider()
@@ -30,8 +30,19 @@ struct PrivacySettingsView: View {
                 SettingsCheckbox(
                     isOn: $maskIPs,
                     title: "Mask IP addresses",
-                    description: "Anonymize source and destination addresses in exports and shared sessions."
+                    description: "Replace literal addresses in protected session summaries with a fixed placeholder."
                 )
+
+                SettingsDivider()
+
+                SettingsIndented {
+                    SettingsFootnote(
+                        """
+                        These protections apply to .tracexysession documents. Raw pcap and pcapng exports preserve \
+                        captured bytes and always require confirmation while a protection is enabled.
+                        """
+                    )
+                }
             }
 
             SettingsSection("Data") {
