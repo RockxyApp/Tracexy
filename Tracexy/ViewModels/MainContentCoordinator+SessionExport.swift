@@ -103,7 +103,11 @@ extension MainContentCoordinator {
         -> SessionExportPrivacyPolicy?
     {
         guard format != .session, configuredPrivacy.hasProtections else {
-            return configuredPrivacy
+            return Self.resolvedExportPrivacyPolicy(
+                for: format,
+                configuredPrivacy: configuredPrivacy,
+                didConfirmRawExport: false
+            )
         }
 
         let alert = NSAlert()
@@ -116,6 +120,26 @@ extension MainContentCoordinator {
         """
         alert.addButton(withTitle: "Export Raw Capture")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .none : nil
+        return Self.resolvedExportPrivacyPolicy(
+            for: format,
+            configuredPrivacy: configuredPrivacy,
+            didConfirmRawExport: alert.runModal() == .alertFirstButtonReturn
+        )
+    }
+
+    /// Pure decision seam for the modal confirmation above. Keeping Optional
+    /// cancellation distinct from the permissive policy prevents Swift from
+    /// resolving `.none` as `Optional.none` on the confirmed branch.
+    nonisolated static func resolvedExportPrivacyPolicy(
+        for format: SessionExportFormat,
+        configuredPrivacy: SessionExportPrivacyPolicy,
+        didConfirmRawExport: Bool
+    )
+        -> SessionExportPrivacyPolicy?
+    {
+        guard format != .session, configuredPrivacy.hasProtections else {
+            return configuredPrivacy
+        }
+        return didConfirmRawExport ? SessionExportPrivacyPolicy.none : nil
     }
 }

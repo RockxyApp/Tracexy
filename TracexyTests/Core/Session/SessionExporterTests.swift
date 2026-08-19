@@ -325,6 +325,43 @@ struct SessionExporterTests {
         }
     }
 
+    @Test("Raw export confirmation resolves to an unprotected policy only after approval")
+    func rawExportConfirmationDecision() {
+        let protected = SessionExportPrivacyPolicy(redactPayloadBodies: true)
+
+        for format in [SessionExportFormat.pcap, .pcapng] {
+            let approved = MainContentCoordinator.resolvedExportPrivacyPolicy(
+                for: format,
+                configuredPrivacy: protected,
+                didConfirmRawExport: true
+            )
+            #expect(approved != nil)
+            #expect(approved?.hasProtections == false)
+
+            let cancelled = MainContentCoordinator.resolvedExportPrivacyPolicy(
+                for: format,
+                configuredPrivacy: protected,
+                didConfirmRawExport: false
+            )
+            #expect(cancelled == nil)
+        }
+
+        let native = MainContentCoordinator.resolvedExportPrivacyPolicy(
+            for: .session,
+            configuredPrivacy: protected,
+            didConfirmRawExport: false
+        )
+        #expect(native == protected)
+
+        let alreadyUnprotected = MainContentCoordinator.resolvedExportPrivacyPolicy(
+            for: .pcap,
+            configuredPrivacy: .none,
+            didConfirmRawExport: false
+        )
+        #expect(alreadyUnprotected != nil)
+        #expect(alreadyUnprotected?.hasProtections == false)
+    }
+
     // MARK: Private
 
     private func makeRichSession(
