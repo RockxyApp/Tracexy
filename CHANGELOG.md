@@ -8,14 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+### Fixed
+
+### Changed
+
+## [0.4.0] - 2026-08-19
+
+### Added
+
 - Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
 
 ### Fixed
 
 - Strengthen privileged capture-helper authentication against process-identity races.
 - Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
-
-### Changed
 
 ## [0.3.0] - 2026-08-17
 

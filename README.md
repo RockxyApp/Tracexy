@@ -27,18 +27,16 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.3.0** — 2026-08-17
+**v0.4.0** — 2026-08-19
 
 ### Added
 
-- Add a capture summary dashboard with traffic activity, protocol mix, top talkers, and evidence-based findings.
-- Add native session search, decoded-evidence copy actions, source management, and reversible session removal.
-- Add deeper STUN, TLS-record, and QUIC long-header inspection, plus segmented TCP/DNS/TLS/HTTP recovery.
+- Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
 
-### Changed
+### Fixed
 
-- Preserve packet timestamps, lengths, link types, and capture-loss accounting across live capture and export, with configurable snap length, promiscuous mode, and BPF filters.
-- Keep sustained captures responsive with bounded disk spooling and incremental session updates.
+- Strengthen privileged capture-helper authentication against process-identity races.
+- Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
