@@ -2,10 +2,14 @@ import Foundation
 import Security
 
 /// Testable caller-validation primitives shared between the helper and app test targets.
-/// `ConnectionValidator` delegates to these for its two-layer validation:
+/// `ConnectionValidator` resolves a caller `SecCode` from the connection's audit token and
+/// delegates to `validateCallerCode(_:allowedIdentifiers:)` for its two-layer validation:
 /// 1. Team identifier comparison (same-developer check), with exact certificate
 ///    chain comparison as a fallback when the signing team cannot be read.
 /// 2. Bundle identity requirement (allowlist check)
+///
+/// Both layers evaluate the same supplied `SecCode`, so authorization derives from one
+/// audit-token-anchored identity rather than a PID that could be recycled between checks.
 enum CallerValidation {
     // MARK: Internal
 
@@ -53,20 +57,23 @@ enum CallerValidation {
         certificates.map { SecCertificateCopyData($0) as Data }
     }
 
-    // MARK: - Full Caller Validation by PID
+    // MARK: - Full Caller Validation
 
-    /// Performs the same two-layer validation as `ConnectionValidator.isValidCaller(_:)`
-    /// but accepts a `pid_t` directly, making it testable without a real `NSXPCConnection`.
+    /// Runs the full two-layer validation against a single, already-resolved caller `SecCode`.
+    /// This is the one place the two layers are composed; every caller-authentication path
+    /// (production audit-token, diagnostic PID) funnels through here so the signing logic is
+    /// never duplicated.
     ///
-    /// Layer 1: Extracts signing TeamIdentifiers for the current process and caller PID,
+    /// Layer 1: Extracts signing TeamIdentifiers for the current process and the caller code,
     ///          then compares them (same-developer check). If either team is unavailable,
-    ///          falls back to exact certificate-chain comparison.
-    /// Layer 2: Constructs `SecRequirement` for each allowed identifier and validates
-    ///          the caller's `SecCode` against them (bundle identity check).
-    static func validateCaller(pid: pid_t, allowedIdentifiers: [String]) -> Bool {
-        guard let selfCode = secCodeForSelf(),
-              let callerCode = secCodeForPID(pid) else
-        {
+    ///          falls back to exact certificate-chain comparison, then to the local Xcode
+    ///          ad-hoc DerivedData pairing.
+    /// Layer 2: Constructs `SecRequirement` for each allowed identifier and validates the
+    ///          caller's `SecCode` against them (bundle identity check).
+    ///
+    /// Fails closed: if the current process's own `SecCode` cannot be read, no caller is trusted.
+    static func validateCallerCode(_ callerCode: SecCode, allowedIdentifiers: [String]) -> Bool {
+        guard let selfCode = secCodeForSelf() else {
             return false
         }
 
@@ -75,6 +82,24 @@ enum CallerValidation {
         }
 
         return callerSatisfiesAnyIdentifier(callerCode: callerCode, allowedIdentifiers: allowedIdentifiers)
+    }
+
+    /// Diagnostics/tests only: resolves a caller `SecCode` from a `pid_t` and runs the full
+    /// two-layer validation. This path is subject to PID-recycling TOCTOU and must NOT be used
+    /// by the production XPC entrypoint — `ConnectionValidator` authenticates from the
+    /// connection's audit token instead. Retained for local diagnostics and unit tests.
+    static func validateCaller(pid: pid_t, allowedIdentifiers: [String]) -> Bool {
+        guard let callerCode = secCodeForPID(pid) else {
+            return false
+        }
+        return validateCallerCode(callerCode, allowedIdentifiers: allowedIdentifiers)
+    }
+
+    /// Testable accessor: the code-signing identifier (`kSecCodeInfoIdentifier`) of a `SecCode`.
+    /// Lets tests derive the running host's own identifier to exercise the success path without
+    /// hardcoding a bundle id that varies by signing configuration.
+    static func signingIdentifier(of code: SecCode) -> String? {
+        signingProfile(from: code)?.identifier
     }
 
     // MARK: - Security Framework Helpers

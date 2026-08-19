@@ -229,6 +229,48 @@ enum CaptureSettingsResolver {
     }
 }
 
+// MARK: - PrivacySettingsResolver
+
+/// Resolves export protections from persisted preferences without treating an
+/// unset `UserDefaults` key as `false`. The Privacy pane's shipped defaults are
+/// protective, so a fresh install must apply them before the user has opened
+/// Settings or caused `@AppStorage` to materialize the keys.
+enum PrivacySettingsResolver {
+    // MARK: Internal
+
+    static func exportPolicy(defaults: UserDefaults = .standard) -> SessionExportPrivacyPolicy {
+        SessionExportPrivacyPolicy(
+            redactPayloadBodies: resolvedBool(
+                forKey: SettingsKeys.redactBodies,
+                defaultValue: true,
+                defaults: defaults
+            ),
+            stripCredentials: resolvedBool(
+                forKey: SettingsKeys.stripCredentials,
+                defaultValue: true,
+                defaults: defaults
+            ),
+            maskIPAddresses: resolvedBool(
+                forKey: SettingsKeys.maskIPs,
+                defaultValue: false,
+                defaults: defaults
+            )
+        )
+    }
+
+    // MARK: Private
+
+    private static func resolvedBool(
+        forKey key: String,
+        defaultValue: Bool,
+        defaults: UserDefaults
+    )
+        -> Bool
+    {
+        (defaults.object(forKey: key) as? Bool) ?? defaultValue
+    }
+}
+
 // MARK: - AutoClear
 
 enum AutoClear: String, CaseIterable, Identifiable {

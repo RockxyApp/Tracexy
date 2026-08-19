@@ -12,18 +12,23 @@ page states plainly what the app does and does not do today.
   after launch setup completes. The gate on capturing is the one-time operating-system approval of
   the privileged helper (System Settings → Login Items) — there is no separate per-capture consent
   dialog, and this documentation does not claim one.
-- **Exports are sensitive — redact them yourself.** Exporting or sharing a capture writes the raw
-  captured frame bytes. A `.pcap` is a recording of everything that crossed the wire, including things
-  you may have forgotten were in it. Treat every export as sensitive and redact before sharing.
+- **Raw exports are sensitive.** A `.pcap` or `.pcapng` is a recording of captured packet bytes,
+  including data you may have forgotten was present. Tracexy does not claim to rewrite or redact these
+  evidence-preserving formats. When a Privacy protection is enabled, every raw export requires explicit
+  acknowledgement before the save panel opens.
 
-### Redaction preferences vs. enforcement
+### Protected session export
 
-Settings → Privacy offers redaction and retention **preferences** — redact payload bodies, strip
-credentials and tokens, mask IP addresses, auto-clear. These persist your choices, but the
-end-to-end pipeline that would **enforce** them on export is **not implemented yet**. In other words:
-turning on "redact bodies" records the intent, but today's export path does not yet act on it. Until
-that lands, do your own redaction before sharing a capture, and don't rely on these toggles to sanitize
-output.
+Settings → Privacy controls the native `.tracexysession` export path. Redacting payloads, stripping
+credentials, or masking addresses produces a version-2 protected document that contains session and
+frame metadata but no raw packet bytes. Credential stripping also removes DNS query/answer strings and
+the free-form decoded summary; IP masking replaces literal IPv4/IPv6 addresses in exported summary
+fields with a fixed placeholder. The document records the applied protections as machine-readable
+metadata. A version-1 document with packet bytes is produced only when every protection is disabled.
+
+These controls do not sanitize raw pcap/pcapng files. Use the warning as a hard trust boundary: export
+those formats only when you intend to handle the result as sensitive evidence. Automatic retention
+cleanup remains planned; the Auto-clear choice currently records intent only.
 
 ## The privileged helper and trust boundary
 

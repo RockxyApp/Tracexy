@@ -82,9 +82,13 @@ session rather than disappearing.
 
 Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
 controls. The same menu is available from the session row's **Export** submenu. **Export Session**
-writes a versioned `.tracexysession` document containing the session summary and its captured
-packet frames. **Export as pcap** writes a classic capture when all matching frames share one link type;
-**Export as pcapng** preserves mixed per-frame link types. Export is always an explicit local save-panel
+writes a versioned `.tracexysession` document. With the default Privacy settings, the protected document
+keeps session and frame metadata but omits captured packet bytes, DNS-derived strings, and the free-form
+summary; optional IP masking replaces literal addresses with a fixed placeholder. Turning every export
+protection off preserves the original version-1 document with packet frames. **Export as pcap** writes a
+classic capture when all matching frames share one link type; **Export as pcapng** preserves mixed
+per-frame link types. Those raw formats always preserve captured bytes and require a per-export warning
+acknowledgement while any privacy protection is enabled. Export is always an explicit local save-panel
 action. Live export reads the complete local pcapng spool; saved-capture export re-reads the source file,
 so the bounded in-memory inspection window does not silently truncate an export.
 

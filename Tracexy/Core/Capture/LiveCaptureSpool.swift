@@ -12,13 +12,24 @@ actor LiveCaptureSpool {
     init(directoryName: String) {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        directory = base
+        self.init(directory: base
             .appendingPathComponent(directoryName, isDirectory: true)
-            .appendingPathComponent("LiveCaptureSpool", isDirectory: true)
+            .appendingPathComponent("LiveCaptureSpool", isDirectory: true))
+    }
+
+    /// Test/inspection seam: root the spool at an explicit directory. Production
+    /// code uses `init(directoryName:)`, which places the spool under the app cache.
+    init(directory: URL) {
+        self.directory = directory
     }
 
     deinit {
+        // Normal teardown: release the advisory lock and drop this actor's own
+        // current spool file so it is never left behind for later cleanup.
         try? handle?.close()
+        if let url {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     // MARK: Internal
@@ -183,15 +194,93 @@ actor LiveCaptureSpool {
         withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
     }
 
+    private static func isOrphanCandidate(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let published = name.hasPrefix("capture-") && name.hasSuffix(".pcapng")
+        let staging = name.hasPrefix(".capture-") && name.hasSuffix(".pcapng.staging")
+        return published || staging
+    }
+
     private func prepareFile() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let nextURL = directory.appendingPathComponent("capture-\(UUID().uuidString).pcapng")
-        guard FileManager.default.createFile(atPath: nextURL.path, contents: nil) else {
+        removeInactiveOrphans()
+
+        // Stage under a hidden name the cleanup pattern never matches, lock it, then
+        // publish it under the final `capture-*.pcapng` name via an atomic rename. The
+        // file is therefore already locked the instant it becomes a cleanup candidate,
+        // so a concurrent spool can never delete this actor's file mid-preparation.
+        let name = UUID().uuidString
+        let stagingURL = directory.appendingPathComponent(".capture-\(name).pcapng.staging")
+        let finalURL = directory.appendingPathComponent("capture-\(name).pcapng")
+
+        guard FileManager.default.createFile(atPath: stagingURL.path, contents: nil) else {
             throw Failure.unavailable("Couldn’t create the local capture spool.")
         }
-        let nextHandle = try FileHandle(forWritingTo: nextURL)
-        try nextHandle.write(contentsOf: Self.sectionHeaderBlock())
-        url = nextURL
+
+        let nextHandle: FileHandle
+        do {
+            nextHandle = try FileHandle(forWritingTo: stagingURL)
+        } catch {
+            try? FileManager.default.removeItem(at: stagingURL)
+            throw Failure.unavailable(error.localizedDescription)
+        }
+
+        guard flock(nextHandle.fileDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+            try? nextHandle.close()
+            try? FileManager.default.removeItem(at: stagingURL)
+            throw Failure.unavailable("Couldn’t lock the local capture spool.")
+        }
+
+        do {
+            try nextHandle.write(contentsOf: Self.sectionHeaderBlock())
+            try FileManager.default.moveItem(at: stagingURL, to: finalURL)
+        } catch {
+            try? nextHandle.close() // releases the advisory lock
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? FileManager.default.removeItem(at: finalURL)
+            throw Failure.unavailable(error.localizedDescription)
+        }
+
+        url = finalURL
         handle = nextHandle
+    }
+
+    /// Best-effort recovery of spool files left by crashed instances. Scoped strictly
+    /// to this spool's directory and exact filename pattern; a candidate is removed only
+    /// when an exclusive advisory lock proves no live handle holds it. Never throws.
+    private func removeInactiveOrphans() {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsSubdirectoryDescendants]
+        ) else {
+            return
+        }
+        for entry in entries where Self.isOrphanCandidate(entry) {
+            removeIfUnlocked(entry)
+        }
+    }
+
+    private func removeIfUnlocked(_ candidate: URL) {
+        // O_NOFOLLOW refuses symlinks; O_NONBLOCK avoids blocking on special files.
+        let descriptor = open(candidate.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
+        guard descriptor >= 0 else {
+            return
+        }
+        defer { close(descriptor) }
+        // A directory can be named like a spool file. Prove the opened object is
+        // a regular file before any removal so cleanup never recurses into a
+        // directory or touches another filesystem object type.
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG else
+        {
+            return
+        }
+        // A live spool holds LOCK_EX on its open handle, so this fails for active files.
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            return
+        }
+        try? FileManager.default.removeItem(at: candidate)
     }
 }
