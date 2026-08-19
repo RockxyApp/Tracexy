@@ -27,16 +27,11 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.4.0** — 2026-08-19
-
-### Added
-
-- Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
+**v0.4.1** — 2026-08-19
 
 ### Fixed
 
-- Strengthen privileged capture-helper authentication against process-identity races.
-- Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
+- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
