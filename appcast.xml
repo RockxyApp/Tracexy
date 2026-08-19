@@ -6,6 +6,26 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.4.0</title>
+            <pubDate>Wed, 19 Aug 2026 10:37:37 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.4.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.4.0 (build 8)
+
+## Added
+
+- Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
+
+## Fixed
+
+- Strengthen privileged capture-helper authentication against process-identity races.
+- Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.4.0/Tracexy-0.4.0-8.dmg" length="6518436" type="application/octet-stream" sparkle:edSignature="jiE28sGwI3vp/zBaxt/Ud8COCCJPEVk58SUm4qesaN4SdKChz7cOz6M4VqVkY1GZTUxqy+bx5jHho0HvRvV5Dw=="/>
+        </item>
+        <item>
             <title>0.3.0</title>
             <pubDate>Mon, 17 Aug 2026 10:14:45 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.3.0</sparkle:fullReleaseNotesLink>
@@ -53,22 +73,6 @@
 
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.2.0/Tracexy-0.2.0-6.dmg" length="6265484" type="application/octet-stream" sparkle:edSignature="ROzr+Jc8f334w9H9v/P8IEJrX8oGogLmacWJS+wk8QORdovb6ocMYRdi2ePHOlKzBJSfIlBDJoWxxpwnzaH3Cw=="/>
-        </item>
-        <item>
-            <title>0.1.4</title>
-            <pubDate>Thu, 06 Aug 2026 11:51:31 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.1.4</sparkle:fullReleaseNotesLink>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>0.1.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.1.4 (build 5)
-
-## Changed
-
-- Make force reset authorization-safe
-
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.1.4/Tracexy-0.1.4-5.dmg" length="6091361" type="application/octet-stream" sparkle:edSignature="xObuEnctKD/hmF/yaaNZSEAZSetnorh0OY/Z4UMXU9kJCa4yqNKYPHZyceaVlNn+WB+ctJ6j5ea/tVFdA4ZLBg=="/>
         </item>
     </channel>
 </rss>
