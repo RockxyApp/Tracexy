@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
+
 ### Changed
 
 ## [0.4.0] - 2026-08-19
