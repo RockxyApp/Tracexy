@@ -8,9 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
+- Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
+- Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
+
 ### Fixed
 
 ### Changed
+
+- Stream large saved captures off the main UI path and keep complete live-capture session summaries through disk-backed spooling.
+- Refresh the native workspace and Settings with adaptive macOS materials, accessible opaque data surfaces, and responsive window chrome.
+- Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
 
 ## [0.4.1] - 2026-08-19
 
