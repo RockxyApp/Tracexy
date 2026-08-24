@@ -8,11 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+### Fixed
+
+### Changed
+
+## [0.5.0] - 2026-08-24
+
+### Added
+
 - Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
 - Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
 - Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
-
-### Fixed
 
 ### Changed
 

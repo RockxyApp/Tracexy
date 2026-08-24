@@ -27,11 +27,19 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.4.1** — 2026-08-19
+**v0.5.0** — 2026-08-24
 
-### Fixed
+### Added
 
-- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
+- Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
+- Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
+- Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
+
+### Changed
+
+- Stream large saved captures off the main UI path and keep complete live-capture session summaries through disk-backed spooling.
+- Refresh the native workspace and Settings with adaptive macOS materials, accessible opaque data surfaces, and responsive window chrome.
+- Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
