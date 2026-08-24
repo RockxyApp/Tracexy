@@ -22,7 +22,7 @@ struct SettingsPane<Content: View>: View {
     // MARK: Internal
 
     var body: some View {
-        ScrollView {
+        let pane = ScrollView {
             VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
                 content
             }
@@ -32,6 +32,16 @@ struct SettingsPane<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            pane.scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            pane
+        }
+        #else
+        pane
+        #endif
     }
 
     // MARK: Private
@@ -123,14 +133,12 @@ struct SettingsCard<Content: View>: View {
         .padding(.horizontal, metrics.cardHorizontalPadding)
         .padding(.vertical, metrics.cardVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color.secondary.opacity(0.065),
-            in: RoundedRectangle(cornerRadius: metrics.cardCornerRadius)
+        .tracexyContentSurface(
+            in: RoundedRectangle(
+                cornerRadius: metrics.cardCornerRadius,
+                style: .continuous
+            )
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: metrics.cardCornerRadius)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 0.5)
-        }
     }
 
     // MARK: Private
@@ -315,14 +323,13 @@ struct SettingsStatusBanner<Accessory: View>: View {
         .padding(.vertical, 14)
         .frame(minHeight: 76)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color.secondary.opacity(0.065),
-            in: RoundedRectangle(cornerRadius: metrics.cardCornerRadius)
+        .tracexyContentSurface(
+            tint: tint,
+            in: RoundedRectangle(
+                cornerRadius: metrics.cardCornerRadius,
+                style: .continuous
+            )
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: metrics.cardCornerRadius)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 0.5)
-        }
     }
 
     // MARK: Private
@@ -401,10 +408,9 @@ struct SettingsBadge: View {
             Text(text)
                 .font(metrics.metadataFont(weight: .medium))
         }
-        .foregroundStyle(tint)
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
-        .background(Color.secondary.opacity(0.10), in: Capsule())
+        .tracexyChipStyle(tint: tint, isActive: true)
     }
 
     // MARK: Private
@@ -653,25 +659,18 @@ struct SettingsThemeCard: View {
                     .font(metrics.font(weight: .medium))
                 Text(appearance.detail)
                     .font(metrics.metadataFont())
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.82) : .secondary)
+                    .foregroundStyle(.secondary)
             }
-            .foregroundStyle(isSelected ? Color.white : .primary)
+            .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, minHeight: 62)
-            .background(
-                isSelected
-                    ? Color.accentColor
-                    : Color.secondary.opacity(0.09),
-                in: RoundedRectangle(cornerRadius: 7)
+            .tracexyGlassEffect(
+                // A full accent tint made accent-colored labels disappear into
+                // the glass in Light appearance. A restrained native tint keeps
+                // selection visible without sacrificing text contrast.
+                tint: isSelected ? Color.accentColor.opacity(0.18) : nil,
+                interactive: true,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(
-                        isSelected
-                            ? Color.accentColor
-                            : Color(nsColor: .separatorColor).opacity(0.24),
-                        lineWidth: isSelected ? 1.5 : 0.5
-                    )
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -28,6 +28,15 @@ enum NativeWorkspaceWindowChrome {
     ) {
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        window.toolbarStyle = .unified
+        window.titlebarSeparatorStyle = .none
+        window.autorecalculatesKeyViewLoop = true
+        // The capture-interface picker is the leading workspace context. Keep a
+        // stable semantic window title for the Window menu and accessibility,
+        // but never let SwiftUI promote a surface title or product tagline into
+        // the toolbar and push that picker away from its native position.
+        window.title = TracexyIdentity.current.displayName
+        window.titleVisibility = .hidden
 
         if let workspaceSplitController,
            let toolbarConfiguration
@@ -37,8 +46,6 @@ enum NativeWorkspaceWindowChrome {
                 configuration: toolbarConfiguration
             )
         }
-
-        window.titleVisibility = .hidden
     }
 }
 
@@ -142,9 +149,10 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         -> [NSToolbarItem.Identifier]
     {
         // The bordered sidebar toggle sits behind a leading flexible space with the
-        // tracking separator immediately after it, so the control lands directly
-        // above the source list and tracks the first divider. Capture status is
-        // centred; the capture/inspector actions trail on the right.
+        // tracking separator immediately after it, so the interface picker returns
+        // to its native leading workspace slot. Capture status is centred; every
+        // capture/inspector commands trail in one coherent native group, with
+        // the native export menu immediately beside it.
         [
             .flexibleSpace,
             Self.sidebarToggleIdentifier,
@@ -153,8 +161,6 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             .flexibleSpace,
             Self.captureStatusIdentifier,
             .flexibleSpace,
-            Self.captureActionIdentifier,
-            .space,
             Self.sessionExportIdentifier,
             Self.actionsIdentifier,
         ]
@@ -196,12 +202,10 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView: AnyView(CaptureStatusView(coordinator: coordinator))
             )
-        case Self.captureActionIdentifier:
-            makeCaptureItem()
         case Self.sessionExportIdentifier:
             makeSessionExportItem()
         case Self.actionsIdentifier:
-            makeInspectorGroup()
+            makeActionGroup()
         default:
             nil
         }
@@ -264,7 +268,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemSymbolName: "square.and.arrow.up",
             accessibilityDescription: label
         )
-        item.isBordered = true
+        item.isBordered = false
         item.showsIndicator = true
         item.menu = sessionExportMenu()
         item.isEnabled = coordinator.canExportSelectedSession
@@ -287,9 +291,11 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return menu
     }
 
-    /// Bottom and right inspectors remain one compact native action group after
-    /// the export menu, preserving their existing geometry and semantics.
-    private func makeInspectorGroup() -> NSToolbarItemGroup {
+    /// Capture and the two inspector commands share one native Liquid Glass
+    /// family. Export remains the adjacent native menu toolbar item because
+    /// AppKit suppresses an `NSMenuToolbarItem` when nested inside a group.
+    private func makeActionGroup() -> NSToolbarItemGroup {
+        let captureItem = makeCaptureItem()
         let bottomInspectorItem = imageItem(
             identifier: NSToolbarItem.Identifier(
                 "\(Self.actionsIdentifier.rawValue).bottomInspector"
@@ -314,6 +320,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         group.label = String(localized: "Workspace Actions")
         group.paletteLabel = group.label
         group.subitems = [
+            captureItem,
             bottomInspectorItem,
             contextDockItem,
         ]

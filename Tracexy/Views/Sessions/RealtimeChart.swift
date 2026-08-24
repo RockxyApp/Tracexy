@@ -65,7 +65,9 @@ struct RealtimeChart: View {
             chart
         }
         .padding(8)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius))
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
     }
 
     // MARK: Private

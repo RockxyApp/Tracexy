@@ -47,8 +47,6 @@ struct RootView: View {
             ContextDockView(coordinator: coordinator)
         }
         .ignoresSafeArea(.container, edges: .top)
-        .navigationTitle(coordinator.activeWorkspace.sidebarSelection.title)
-        .navigationSubtitle(TracexyIdentity.tagline)
         // The unified window toolbar — sidebar toggle, interface picker, capture
         // status, and the capture/inspector actions — is installed natively by
         // `NativeWorkspaceWindowChrome`, so the sidebar toggle can sit above the
@@ -146,43 +144,40 @@ struct MainDetailView: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let footerSurface = statusSurface(for: workspace.sidebarSelection)
-        // The status bar is a fixed full-width telemetry footer below every
-        // surface, pinned across Sessions and Overview alike. Commands stay in
-        // the session command bar above the list.
-        VStack(spacing: 0) {
-            surface(workspace)
-            SessionStatusBar(snapshot: footerSnapshot(workspace, surface: footerSurface))
-        }
-        // Selection is the trigger for revealing the panels, and it has two
-        // sources: `coordinator.select(_:)` (the dock's related cards) and the
-        // tables, which write `selectedSessionID` straight through their own
-        // binding. Watching the state itself catches both — hooking only the
-        // method left clicking a row unable to bring the inspector back, which
-        // is the most ordinary thing a user does here.
-        .onChange(of: workspace.selectedSessionID) { _, newValue in
-            // Raw Follow Stream bytes are explicitly selection-scoped. Table
-            // bindings bypass `coordinator.select(_:)`, so this root observer is
-            // the authoritative retirement boundary for both selection paths.
-            coordinator.cancelFollowStream(clearResult: true)
-            if newValue != nil {
-                coordinator.revealPanelsForSelection()
+        surface(workspace)
+            .tracexySafeAreaBar(edge: .bottom) {
+                SessionStatusBar(snapshot: footerSnapshot(workspace, surface: footerSurface))
             }
-        }
-        .confirmationDialog(
-            "Clear all capture data?",
-            isPresented: $showsClearConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clear Capture Data", role: .destructive) {
-                coordinator.clearSessions()
+            // Selection is the trigger for revealing the panels, and it has two
+            // sources: `coordinator.select(_:)` (the dock's related cards) and the
+            // tables, which write `selectedSessionID` straight through their own
+            // binding. Watching the state itself catches both — hooking only the
+            // method left clicking a row unable to bring the inspector back, which
+            // is the most ordinary thing a user does here.
+            .onChange(of: workspace.selectedSessionID) { _, newValue in
+                // Raw Follow Stream bytes are explicitly selection-scoped. Table
+                // bindings bypass `coordinator.select(_:)`, so this root observer is
+                // the authoritative retirement boundary for both selection paths.
+                coordinator.cancelFollowStream(clearResult: true)
+                if newValue != nil {
+                    coordinator.revealPanelsForSelection()
+                }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This removes decoded sessions, retained packets, capture statistics, "
-                    + "and throughput history. Save the capture first if you need it later."
-            )
-        }
+            .confirmationDialog(
+                "Clear all capture data?",
+                isPresented: $showsClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Clear Capture Data", role: .destructive) {
+                    coordinator.clearSessions()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This removes decoded sessions, retained packets, capture statistics, "
+                        + "and throughput history. Save the capture first if you need it later."
+                )
+            }
     }
 
     // MARK: Private
@@ -214,17 +209,7 @@ struct MainDetailView: View {
     /// whole subtree, so table selection and scroll position survive every toggle.
     private var sessionArea: some View {
         let workspace = coordinator.activeWorkspace
-        return VStack(spacing: 0) {
-            SessionCommandBar(
-                descriptors: sessionCommandDescriptors(workspace),
-                onAction: { performSessionCommand($0, workspace) }
-            )
-            .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
-                InvestigationQueryEditorView(
-                    coordinator: coordinator,
-                    workspace: workspace
-                )
-            }
+        return TracexyGlassEffectGroup(spacing: Theme.Metrics.spacingM) {
             NativeBottomInspectorSplitView(
                 isInspectorPresented: bottomInspectorPresented,
                 autosaveName: bottomInspectorAutosaveName,
@@ -234,6 +219,19 @@ struct MainDetailView: View {
                 SessionCenterView(coordinator: coordinator)
             } inspector: {
                 InspectorView(coordinator: coordinator)
+            }
+            .tracexyDenseScrollEdge()
+            .tracexySafeAreaBar(edge: .top) {
+                SessionCommandBar(
+                    descriptors: sessionCommandDescriptors(workspace),
+                    onAction: { performSessionCommand($0, workspace) }
+                )
+                .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
+                    InvestigationQueryEditorView(
+                        coordinator: coordinator,
+                        workspace: workspace
+                    )
+                }
             }
         }
     }
@@ -428,11 +426,11 @@ struct CaptureStatusView: View {
             }
         }
         .frame(height: Theme.Metrics.toolbarControlHeight)
+        .tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))
     }
 
     // MARK: Private
 
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var updater = AppUpdater.shared
     @State private var showsReadiness = false
 
@@ -452,14 +450,6 @@ struct CaptureStatusView: View {
         ]
         .compactMap { $0 }
         .joined(separator: "\n")
-    }
-
-    private var updateBadgeBackground: Color {
-        Color(nsColor: .systemGray).opacity(colorScheme == .dark ? 0.62 : 0.82)
-    }
-
-    private var updateBadgeStroke: Color {
-        Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06)
     }
 
     private var statusColor: Color {
@@ -482,18 +472,10 @@ struct CaptureStatusView: View {
     private func updateBadge(_ title: String) -> some View {
         Text(title)
             .font(Theme.Typography.toolbarBadge)
-            .foregroundStyle(.white)
             .lineLimit(1)
             .padding(.horizontal, Theme.Metrics.updateBadgeHorizontalPadding)
             .frame(height: Theme.Metrics.updateBadgeHeight)
-            .background {
-                Capsule(style: .continuous).fill(updateBadgeBackground)
-            }
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(updateBadgeStroke, lineWidth: Theme.Metrics.updateBadgeStrokeWidth)
-            }
-            .contentShape(Capsule(style: .continuous))
+            .tracexyChipStyle(tint: .accentColor, isActive: true)
     }
 
     private func updateHelp(_ summary: AppUpdater.UpdateStatusSummary) -> String {

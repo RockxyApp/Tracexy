@@ -82,17 +82,20 @@ struct HistoryView: View {
     @Bindable var coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
+        Group {
             if let historyError = coordinator.historyError,
                captureState == .content
             {
-                recoverableNotice(historyError)
-                Divider()
+                VStack(spacing: 0) {
+                    recoverableNotice(historyError)
+                    captureContent
+                }
+            } else {
+                captureContent
             }
-            captureContent
         }
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) { header }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             if case .idle = coordinator.historyAvailability {
@@ -168,9 +171,9 @@ struct HistoryView: View {
             .disabled(coordinator.historyCaptures.isEmpty)
             .help("Clear all local History summaries")
         }
+        .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
-        .background(.bar)
     }
 
     @ViewBuilder private var captureContent: some View {
@@ -203,6 +206,14 @@ struct HistoryView: View {
             sessionContent
                 .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
         }
+        // HSplitView hosts AppKit children that do not consume the safe-area bar
+        // inset. Preserve the visual underlap while keeping the first/last data
+        // rows reachable instead of hiding them under functional chrome.
+        .tracexyChromeContentClearance(edge: .top, length: 12)
+        .tracexyChromeContentClearance(
+            edge: .bottom,
+            length: Theme.Metrics.footerBarHeight + Theme.Glass.functionalBarVerticalInset * 2
+        )
     }
 
     private var captureList: some View {
@@ -232,9 +243,10 @@ struct HistoryView: View {
                     .foregroundStyle(Color.accentColor)
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)
         }
-        .background(.regularMaterial)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder private var sessionContent: some View {
@@ -336,7 +348,14 @@ struct HistoryView: View {
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .frame(height: 38)
-        .background(.bar)
+        .tracexyGlassEffect(
+            in: RoundedRectangle(
+                cornerRadius: Theme.Glass.functionalBarCornerRadius,
+                style: .continuous
+            )
+        )
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+        .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
     }
 
     private func unavailableView(_ message: String) -> some View {

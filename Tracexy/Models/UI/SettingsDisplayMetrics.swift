@@ -13,12 +13,17 @@ struct SettingsDisplayMetrics: Equatable {
     /// Shared instance used by every Settings pane.
     static let standard = SettingsDisplayMetrics()
 
-    let bodyFontSize: CGFloat = 12
+    let bodyFontSize: CGFloat = 13
     let secondaryFontSize: CGFloat = 11
     let metadataFontSize: CGFloat = 10
 
-    let windowWidth: CGFloat = 820
-    let windowHeight: CGFloat = 600
+    let windowMinWidth: CGFloat = 760
+    let windowIdealWidth: CGFloat = 900
+    let windowMinHeight: CGFloat = 540
+    let windowIdealHeight: CGFloat = 640
+    let sidebarMinWidth: CGFloat = 180
+    let sidebarIdealWidth: CGFloat = 200
+    let sidebarMaxWidth: CGFloat = 250
 
     let contentPadding: CGFloat = 28
     let labelWidth: CGFloat = 140

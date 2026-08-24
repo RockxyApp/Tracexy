@@ -23,55 +23,26 @@ struct SidebarView: View {
 
     var body: some View {
         let workspace = coordinator.activeWorkspace
-        VStack(spacing: 0) {
-            // The Browse / Focus / Library navigator is the first content row. The
-            // sidebar owns no show/hide chrome — that toggle lives in the native
-            // window toolbar, above this column (see `NativeWorkspaceWindowChrome`).
-            Picker("Navigator", selection: navigatorBinding(workspace)) {
-                ForEach(SidebarNavigatorMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+        navigatorChrome(workspace)
+            .confirmationDialog(
+                capturePendingRemoval.map { "Move “\($0.name)” to Trash?" } ?? "Move Capture to Trash?",
+                isPresented: captureRemovalConfirmation,
+                titleVisibility: .visible
+            ) {
+                if let capture = capturePendingRemoval {
+                    Button("Move to Trash", role: .destructive) {
+                        moveCaptureToTrash(capture)
+                    }
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The capture will disappear from Saved and can be recovered from the Trash.")
             }
-            .workspaceSegmentedPicker()
-
-            Divider()
-
-            switch workspace.navigatorMode {
-            case .browse: browseList(workspace)
-            case .focus: focusList
-            case .library: libraryList
+            .alert("Couldn’t Remove Capture", isPresented: captureRemovalErrorPresentation) {
+                Button("OK", role: .cancel) { captureRemovalError = nil }
+            } message: {
+                Text(captureRemovalError ?? "The capture could not be moved to the Trash.")
             }
-
-            // Final sibling of the root VStack (not a `safeAreaInset`) so the
-            // footer is a real member of the source-list pane and sits inside the
-            // native sidebar column rather than floating above its scroll edge.
-            SidebarBottomBar(searchText: $sidebarSearch) {
-                Button("Save Current Capture", systemImage: "square.and.arrow.down") {
-                    coordinator.saveCurrentCapture()
-                }
-                .disabled(!coordinator.canSaveCapture)
-                Button("Import Capture…", systemImage: "tray.and.arrow.down") { importCapture() }
-            }
-        }
-        .confirmationDialog(
-            capturePendingRemoval.map { "Move “\($0.name)” to Trash?" } ?? "Move Capture to Trash?",
-            isPresented: captureRemovalConfirmation,
-            titleVisibility: .visible
-        ) {
-            if let capture = capturePendingRemoval {
-                Button("Move to Trash", role: .destructive) {
-                    moveCaptureToTrash(capture)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The capture will disappear from Saved and can be recovered from the Trash.")
-        }
-        .alert("Couldn’t Remove Capture", isPresented: captureRemovalErrorPresentation) {
-            Button("OK", role: .cancel) { captureRemovalError = nil }
-        } message: {
-            Text(captureRemovalError ?? "The capture could not be moved to the Trash.")
-        }
     }
 
     // MARK: Private
@@ -279,6 +250,16 @@ struct SidebarView: View {
                 }
             }
         )
+    }
+
+    private var sidebarBottomBar: some View {
+        SidebarBottomBar(searchText: $sidebarSearch) {
+            Button("Save Current Capture", systemImage: "square.and.arrow.down") {
+                coordinator.saveCurrentCapture()
+            }
+            .disabled(!coordinator.canSaveCapture)
+            Button("Import Capture…", systemImage: "tray.and.arrow.down") { importCapture() }
+        }
     }
 
     /// Honest empty state — shown only while searching, so an idle capture with
@@ -543,6 +524,46 @@ struct SidebarView: View {
                 restoreLabel: "Restore Hidden IP Addresses",
                 onRestore: coordinator.restoreHiddenSourceIPs
             )
+        }
+    }
+
+    // MARK: Native Liquid Glass chrome
+
+    /// macOS 26 seats navigator controls in safe-area bars so the source list
+    /// continues behind the sidebar's native Liquid Glass layer. The explicit
+    /// fallback preserves the previous stacked structure on older systems.
+    private func navigatorChrome(_ workspace: WorkspaceState) -> some View {
+        navigatorList(workspace)
+            .tracexySoftScrollEdge()
+            .tracexySafeAreaBar(edge: .top) {
+                navigatorPicker(workspace)
+            }
+            .tracexySafeAreaBar(edge: .bottom) {
+                sidebarBottomBar
+            }
+    }
+
+    private func navigatorPicker(_ workspace: WorkspaceState) -> some View {
+        WorkspaceModeSegmentedControl(
+            selection: navigatorBinding(workspace),
+            segments: SidebarNavigatorMode.allCases.map { mode in
+                WorkspaceModeSegment(
+                    value: mode,
+                    title: mode.title,
+                    systemImage: mode.systemImage
+                )
+            },
+            accessibilityLabel: String(localized: "Navigator")
+        )
+        .workspaceModeSwitcherStyle()
+    }
+
+    @ViewBuilder
+    private func navigatorList(_ workspace: WorkspaceState) -> some View {
+        switch workspace.navigatorMode {
+        case .browse: browseList(workspace)
+        case .focus: focusList
+        case .library: libraryList
         }
     }
 

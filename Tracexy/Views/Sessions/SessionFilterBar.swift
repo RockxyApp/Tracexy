@@ -30,8 +30,7 @@ struct SessionFilterBar: View {
             searchRow(workspace)
                 .padding(.vertical, 5)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
+        .tracexyFunctionalBar()
         .fixedSize(horizontal: false, vertical: true)
         // ⌘F focus. `.task(id:)` fires both on first appear and on every token
         // change, so a press that *mounts* this bar (coming from Overview/Flow)
@@ -118,7 +117,7 @@ struct SessionFilterBar: View {
                     Label("Reset Filters", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .font(Theme.Typography.body)
+                .font(Theme.Typography.chromeAction)
                 .foregroundStyle(.secondary)
                 .padding(.trailing, 8)
                 .help("Clear all session filters")
@@ -226,6 +225,7 @@ struct SessionFilterBar: View {
             advancedDisclosure(workspace)
             groupByMenu(workspace)
         }
+        .font(Theme.Typography.chromeAction)
         .fixedSize()
     }
 
@@ -240,7 +240,9 @@ struct SessionFilterBar: View {
                 Image(systemName: "plus")
             }
         }
-        .buttonStyle(.bordered)
+        // This action already sits on the filter shelf's single glass surface.
+        // Keep it borderless so controls do not become glass-on-glass islands.
+        .buttonStyle(.borderless)
         .controlSize(.small)
         .disabled(disabled)
         .help(disabled
@@ -386,12 +388,15 @@ struct FilterPillButton: View {
                 Text(title)
             }
             .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-            .foregroundStyle(isActive ? tint : Color.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(isActive ? tint.opacity(0.15) : Color.clear)
-            .cornerRadius(4)
         }
         .buttonStyle(.borderless)
+        .tracexyChipStyle(tint: tint, isActive: isActive, isHovered: isHovered)
+        .onHover { isHovered = $0 }
     }
+
+    // MARK: Private
+
+    @State private var isHovered = false
 }

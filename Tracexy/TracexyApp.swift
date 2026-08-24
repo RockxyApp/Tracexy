@@ -1,5 +1,7 @@
 import SwiftUI
 
+// MARK: - TracexyApp
+
 @main
 struct TracexyApp: App {
     // MARK: Internal
@@ -27,6 +29,8 @@ struct TracexyApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            TracexySettingsCommands()
+
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
@@ -75,6 +79,7 @@ struct TracexyApp: App {
         }
         .defaultSize(width: 600, height: 420)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
 
         Window("Noise Control", id: Self.noiseControlWindowID) {
             NoiseControlWindow(coordinator: coordinator)
@@ -82,11 +87,15 @@ struct TracexyApp: App {
         }
         .defaultSize(width: 460, height: 560)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView(updater: updater)
                 .preferredColorScheme(colorScheme)
         }
+        .defaultSize(width: 900, height: 640)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unified(showsTitle: true))
     }
 
     // MARK: Private
@@ -121,4 +130,23 @@ struct TracexyApp: App {
             return coordinator
         }
     }
+}
+
+// MARK: - TracexySettingsCommands
+
+private struct TracexySettingsCommands: Commands {
+    // MARK: Internal
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+
+    // MARK: Private
+
+    @Environment(\.openWindow) private var openWindow
 }

@@ -241,9 +241,7 @@ struct CaptureReadinessPopover: View {
     @Binding var isPresented: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            header
-            Divider()
+        ScrollView {
             Grid(
                 alignment: .leading,
                 horizontalSpacing: Theme.Metrics.spacingL,
@@ -253,21 +251,23 @@ struct CaptureReadinessPopover: View {
                     itemRow(item)
                 }
             }
-            Divider()
-            HStack(spacing: Theme.Metrics.spacingM) {
-                Button("Capture Settings…") { open(tab: .capture) }
-                Button("Helper Settings…") { open(tab: .helper) }
-                Spacer()
-            }
-            .controlSize(.small)
+            .padding(Theme.Metrics.spacingL)
         }
-        .padding(16)
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) {
+            header
+                .padding(Theme.Metrics.spacingL)
+        }
+        .tracexySafeAreaBar(edge: .bottom) {
+            actionBar
+                .padding(Theme.Metrics.spacingM)
+        }
         .frame(width: 430)
     }
 
     // MARK: Private
 
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     private var presentation: CaptureReadinessPresentation {
         let interface = NetworkInterfaces.available().first { $0.id == coordinator.captureInterface }
@@ -303,7 +303,7 @@ struct CaptureReadinessPopover: View {
                 .frame(width: 28, height: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                Text(presentation.title).font(Theme.Typography.surfaceTitle)
+                Text(presentation.title).font(Theme.Typography.title)
                 Text(presentation.description)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
@@ -317,10 +317,22 @@ struct CaptureReadinessPopover: View {
                     coordinator.toggleCapture()
                     isPresented = false
                 }
+                .tracexyGlassButtonStyle(prominent: coordinator.captureDisplayState != .capturing)
                 .controlSize(.small)
                 .disabled(!presentation.isActionEnabled)
             }
         }
+    }
+
+    private var actionBar: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Button("Capture Settings…") { open(tab: .capture) }
+                .tracexyGlassButtonStyle()
+            Button("Helper Settings…") { open(tab: .helper) }
+                .tracexyGlassButtonStyle()
+            Spacer()
+        }
+        .controlSize(.small)
     }
 
     private func itemRow(_ item: CaptureReadinessItem) -> some View {
@@ -352,6 +364,6 @@ struct CaptureReadinessPopover: View {
     private func open(tab: SettingsTab) {
         UserDefaults.standard.set(tab.rawValue, forKey: SettingsKeys.selectedSettingsTab)
         isPresented = false
-        openSettings()
+        openWindow(id: "settings")
     }
 }

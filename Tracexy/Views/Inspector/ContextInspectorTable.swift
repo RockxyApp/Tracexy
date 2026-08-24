@@ -137,7 +137,6 @@ private struct ContextInspectorTableHeader: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Theme.Metrics.contextTableColumnPadding)
             .padding(.vertical, Theme.Metrics.contextTableHeaderVerticalPadding)
-            .background(Color(nsColor: .controlBackgroundColor))
     }
 }
 
@@ -147,11 +146,12 @@ private struct ContextInspectorTableChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(Color(nsColor: .textBackgroundColor))
-            .overlay {
-                RoundedRectangle(cornerRadius: Theme.Metrics.contextTableCornerRadius)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            }
+            .tracexyContentSurface(
+                in: RoundedRectangle(
+                    cornerRadius: Theme.Metrics.contextTableCornerRadius,
+                    style: .continuous
+                )
+            )
             .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.contextTableCornerRadius))
     }
 }
