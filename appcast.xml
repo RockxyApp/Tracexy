@@ -6,6 +6,29 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.5.0</title>
+            <pubDate>Mon, 24 Aug 2026 22:35:54 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.5.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>10</sparkle:version>
+            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.5.0 (build 10)
+
+## Added
+
+- Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
+- Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
+- Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
+
+## Changed
+
+- Stream large saved captures off the main UI path and keep complete live-capture session summaries through disk-backed spooling.
+- Refresh the native workspace and Settings with adaptive macOS materials, accessible opaque data surfaces, and responsive window chrome.
+- Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.5.0/Tracexy-0.5.0-10.dmg" length="7730076" type="application/octet-stream" sparkle:edSignature="L95RguL0MwbkoTbO8+Sj1vuCg/IQqh2nlhnOBtB1Flsr5cBKnzx8B6b6GAwUtIXTKfshxMxhE3ue8g2l+QtCBg=="/>
+        </item>
+        <item>
             <title>0.4.1</title>
             <pubDate>Wed, 19 Aug 2026 11:01:05 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.4.1</sparkle:fullReleaseNotesLink>
@@ -39,28 +62,6 @@
 - Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.4.0/Tracexy-0.4.0-8.dmg" length="6518436" type="application/octet-stream" sparkle:edSignature="jiE28sGwI3vp/zBaxt/Ud8COCCJPEVk58SUm4qesaN4SdKChz7cOz6M4VqVkY1GZTUxqy+bx5jHho0HvRvV5Dw=="/>
-        </item>
-        <item>
-            <title>0.3.0</title>
-            <pubDate>Mon, 17 Aug 2026 10:14:45 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.3.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>7</sparkle:version>
-            <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.3.0 (build 7)
-
-## Added
-
-- Add a capture summary dashboard with traffic activity, protocol mix, top talkers, and evidence-based findings.
-- Add native session search, decoded-evidence copy actions, source management, and reversible session removal.
-- Add deeper STUN, TLS-record, and QUIC long-header inspection, plus segmented TCP/DNS/TLS/HTTP recovery.
-
-## Changed
-
-- Preserve packet timestamps, lengths, link types, and capture-loss accounting across live capture and export, with configurable snap length, promiscuous mode, and BPF filters.
-- Keep sustained captures responsive with bounded disk spooling and incremental session updates.
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.3.0/Tracexy-0.3.0-7.dmg" length="6493479" type="application/octet-stream" sparkle:edSignature="pi7pRehq/qPNwzJ7nt9yyebcl2yN6Eh8Nf3rwJEzuu5LgpMoPHYNh1te6vyAgOtRedFijz2vx5fYmMSvs8EJAw=="/>
         </item>
     </channel>
 </rss>
