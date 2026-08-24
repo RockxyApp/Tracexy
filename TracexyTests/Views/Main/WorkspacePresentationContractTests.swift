@@ -259,6 +259,18 @@ struct WorkspacePresentationContractTests {
         #expect(!visibility.contains("sessions.removeAll"))
     }
 
+    @Test("Capture data auto-expands Protocols, Apps, and Domains without following filters")
+    func captureDataAutoExpandsSidebarGroups() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+
+        #expect(sidebar.contains(".onChange(of: coordinator.sessions.isEmpty, initial: true)"))
+        #expect(sidebar.contains("protocolsExpanded = true"))
+        #expect(sidebar.contains("appsExpanded = true"))
+        #expect(sidebar.contains("domainsExpanded = true"))
+        #expect(!sidebar.contains("ipsExpanded = true"))
+        #expect(!sidebar.contains(".onChange(of: coordinator.visibleSessions.count"))
+    }
+
     @Test("AI Assistant uses a truthful conversation shell")
     func assistantUsesConversationShell() throws {
         let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")
