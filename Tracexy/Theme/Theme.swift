@@ -13,11 +13,57 @@ import SwiftUI
 /// app-wide backstop that scene modifiers alone cannot provide.
 @MainActor
 enum AppThemeApplier {
+    // MARK: Internal
+
     static func apply(_ appearance: AppAppearance) {
-        switch appearance {
-        case .system: NSApp.appearance = nil
-        case .light: NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        let resolvedAppearance: NSAppearance? = switch appearance {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+
+        NSApp.appearance = resolvedAppearance
+        refreshExistingWindowChrome(with: resolvedAppearance)
+
+        // SwiftUI-hosted NSToolbar items can finish updating after the setting
+        // action returns. A second main-loop refresh prevents an old sampled
+        // Light/Dark tone from surviving inside the new window appearance.
+        DispatchQueue.main.async {
+            refreshExistingWindowChrome(with: resolvedAppearance)
+        }
+    }
+
+    static func refreshWindowChrome(_ window: NSWindow, appearance: NSAppearance?) {
+        window.appearance = appearance
+        window.contentView?.appearance = nil
+        window.contentView?.needsLayout = true
+        window.contentView?.needsDisplay = true
+
+        guard let toolbar = window.toolbar else {
+            return
+        }
+
+        let hostedViews = (toolbar.items + (toolbar.visibleItems ?? [])).compactMap(\.view)
+        for view in hostedViews {
+            refreshToolbarView(view, appearance: appearance)
+        }
+        toolbar.validateVisibleItems()
+    }
+
+    static func refreshToolbarView(_ view: NSView, appearance: NSAppearance?) {
+        view.appearance = appearance
+        view.needsLayout = true
+        view.needsDisplay = true
+        for subview in view.subviews {
+            refreshToolbarView(subview, appearance: appearance)
+        }
+    }
+
+    // MARK: Private
+
+    private static func refreshExistingWindowChrome(with appearance: NSAppearance?) {
+        for window in NSApp.windows {
+            refreshWindowChrome(window, appearance: appearance)
         }
     }
 }
@@ -110,7 +156,7 @@ enum Theme {
     /// | `title`        | `.title3`      | 15  | What a panel is about            |
     /// | `surfaceTitle` | `.headline`    | 13  | Surface and sheet headers        |
     /// | `navigation`   | `.body`        | 13  | Source-list navigation rows      |
-    /// | `body`         | `.callout`     | 12  | Rows, fields, controls — default |
+    /// | `body`         | `.body`        | 13  | Rows, fields, controls — default |
     /// | `caption`      | `.subheadline` | 11  | Supporting text off a body line  |
     /// | `micro`        | `.caption`     | 10  | Ticks, badges, section headers   |
     ///
@@ -121,16 +167,16 @@ enum Theme {
     enum Typography {
         // Structure
         static let title = Font.title3.weight(.semibold)
-        static let surfaceTitle = Font.headline
+        static let surfaceTitle = Font.headline.weight(.semibold)
 
         // Navigation — source-list rows read at the native sidebar size.
         static let navigation = Font.body
         static let navigationMedium = Font.body.weight(.medium)
 
         // Body — the default for rows, fields and controls
-        static let body = Font.callout
-        static let bodyMedium = Font.callout.weight(.medium)
-        static let bodyEmphasis = Font.callout.weight(.semibold)
+        static let body = Font.body
+        static let bodyMedium = Font.body.weight(.medium)
+        static let bodyEmphasis = Font.body.weight(.semibold)
 
         // Supporting text
         static let caption = Font.subheadline
@@ -146,7 +192,7 @@ enum Theme {
 
         /// Mode switchers — the sidebar navigator and the inspector's segmented
         /// control. Sits on the body step so a switcher reads as chrome, not text.
-        static let modeSwitcher = Font.callout
+        static let modeSwitcher = Font.body
 
         // Workspace chrome — the shared footer/status baseline. `WorkspaceFooterBar`
         // installs `chrome` as the environment font so every bottom bar inherits it;
@@ -170,8 +216,6 @@ enum Theme {
         /// step made them look like a heading that had gone wrong.
         static let metric = Font.system(size: 26, weight: .semibold)
         static let metricRounded = Font.system(size: 26, weight: .semibold, design: .rounded)
-        static let hero = Font.system(size: 28, weight: .bold)
-
         /// Legacy alias — table rows are plain body text.
         static let rowTitle = body
     }
@@ -195,29 +239,30 @@ enum Theme {
         static let heroLarge: CGFloat = 40
     }
 
-    // MARK: Chrome (sidebar + workspace footers)
+    // MARK: Liquid Glass
 
-    /// Semantic surfaces for the two bottom bars, so the sidebar footer and the
-    /// workspace status bar meet on one baseline and adapt to light/dark and
-    /// accessibility contrast without hand-tuned colors.
-    ///
-    /// They are deliberately *different* materials: the sidebar footer lives
-    /// inside the source-list column, so it expresses that column's own sidebar
-    /// material; the workspace footer spans the (non-vibrant) content area, so it
-    /// uses an opaque window background rather than a `.bar` that would tint
-    /// whatever scrolls beneath it.
-    enum Chrome {
-        /// Sidebar footer fill. Clear on purpose: it sits over the source-list
-        /// column and inherits that column's sidebar material, reading as part of
-        /// the sidebar rather than a separate strip. The top hairline is the seam.
-        static let sidebarFooterBackground = Color.clear
+    /// Optical tokens for functional chrome and dense adaptive content surfaces.
+    /// Keeping these values together prevents each screen from inventing its own
+    /// translucency, border and corner-radius recipe.
+    enum Glass {
+        static let functionalBarCornerRadius: CGFloat = 12
+        static let functionalBarHorizontalInset: CGFloat = 7
+        static let functionalBarVerticalInset: CGFloat = 5
 
-        /// Workspace footer / status-bar fill — opaque window background so the
-        /// table and inspector never bleed up through it.
-        static let workspaceFooterBackground = Color(nsColor: .windowBackgroundColor)
+        static let fallbackTintOpacity = 0.15
+        static let fallbackStrokeOpacity = 0.28
+        static let neutralStrokeOpacity = 0.12
 
-        /// Hairline between either footer and the content above it.
-        static let separator = Color(nsColor: .separatorColor)
+        static let neutralFillOpacity = 0.06
+        static let hoverFillOpacity = 0.10
+        static let semanticFillOpacity = 0.14
+        static let semanticHoverFillOpacity = 0.20
+        static let semanticStrokeOpacity = 0.34
+        static let semanticHoverStrokeOpacity = 0.52
+
+        static let contentStrokeOpacity = 0.11
+        static let contentTintOpacity = 0.07
+        static let contentTintStrokeOpacity = 0.20
     }
 
     // MARK: Protocol accents

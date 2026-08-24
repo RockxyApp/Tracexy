@@ -14,18 +14,20 @@ struct AIAssistantDockView: View {
     let coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(spacing: 0) {
-            conversationHeader
-            Divider()
-            attachedContextHeader
-            Divider()
-            conversationTranscript
-            Divider()
-            promptComposer
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("AI Assistant")
+        conversationTranscript
+            .tracexySoftScrollEdge()
+            .tracexySafeAreaBar(edge: .top) {
+                VStack(spacing: 0) {
+                    conversationHeader
+                    attachedContextHeader
+                }
+            }
+            .tracexySafeAreaBar(edge: .bottom) {
+                promptComposer
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("AI Assistant")
     }
 
     // MARK: Private
@@ -158,7 +160,7 @@ struct AIAssistantDockView: View {
                         .font(Theme.Typography.bodyEmphasis)
                         .frame(width: 16, height: 16)
                 }
-                .buttonStyle(.borderedProminent)
+                .tracexyGlassButtonStyle(prominent: true)
                 .controlSize(.small)
                 .disabled(true)
                 .help("Assistant not connected")
@@ -167,14 +169,13 @@ struct AIAssistantDockView: View {
             .padding(.leading, Theme.Metrics.assistantContentPadding)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
-            .background(
-                Color(nsColor: .textBackgroundColor),
-                in: RoundedRectangle(cornerRadius: Theme.Metrics.assistantComposerCornerRadius)
+            .tracexyGlassEffect(
+                interactive: true,
+                in: RoundedRectangle(
+                    cornerRadius: Theme.Metrics.assistantComposerCornerRadius,
+                    style: .continuous
+                )
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: Theme.Metrics.assistantComposerCornerRadius)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
 
             HStack(spacing: 8) {
                 Label("Not connected", systemImage: "cpu")

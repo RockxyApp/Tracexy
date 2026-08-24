@@ -16,15 +16,8 @@ struct InspectorView: View {
         // selection is hidden for the newly-selected session.
         let visibleTabs = session.map { InspectorTab.visibleTabs(for: $0) } ?? []
         let activeTab = visibleTabs.contains(workspace.inspectorTab) ? workspace.inspectorTab : .timeline
-        VStack(spacing: 0) {
+        Group {
             if let session {
-                // One chrome row, not two: the facet tabs and the scope label
-                // share a line, so the pane spends its height on evidence.
-                tabStrip(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab, session: session)
-                if supportsFieldFilter(activeTab) {
-                    fieldFilterRow
-                }
-                Divider()
                 if activeTab == .layers {
                     layersInspector(session)
                 } else {
@@ -39,6 +32,23 @@ struct InspectorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) {
+            if let session {
+                VStack(spacing: 0) {
+                    // Facet tabs and scope remain one compact functional row.
+                    tabStrip(
+                        workspace: workspace,
+                        visibleTabs: visibleTabs,
+                        activeTab: activeTab,
+                        session: session
+                    )
+                    if supportsFieldFilter(activeTab) {
+                        fieldFilterRow
+                    }
+                }
+            }
+        }
         // Claim the full width here, on the pane itself.
         //
         // This used to happen by accident: a header row sat above both branches
@@ -51,7 +61,6 @@ struct InspectorView: View {
         // Layout intent belongs where it is meant, not as a side effect of a
         // spacer inside a subview that may or may not be rendered.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session evidence inspector")
         .onAppear {
@@ -89,7 +98,8 @@ struct InspectorView: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(.background.secondary)
+        .tracexyContentSurface(in: Capsule(style: .continuous))
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
     }
 
     private var followStreamLoading: some View {
@@ -123,7 +133,9 @@ struct InspectorView: View {
             }
         }
         .padding(Theme.Metrics.spacingM)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
     }
 
     /// What the pane is currently describing, stated at the right of the tab row.
@@ -152,8 +164,7 @@ struct InspectorView: View {
                     .font(Theme.Typography.microMedium)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
+                    .tracexyChipStyle(tint: .accentColor, isActive: true)
             }
         }
     }
@@ -249,7 +260,6 @@ struct InspectorView: View {
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 6)
-        .background(.background.secondary)
     }
 
     private func tabButtons(
@@ -265,13 +275,9 @@ struct InspectorView: View {
             } label: {
                 Text(tab.title)
                     .font(tab == activeTab ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                    .foregroundStyle(tab == activeTab ? Color.accentColor : Color.secondary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(tab == activeTab ? Color.accentColor.opacity(0.12) : Color.clear)
-                    )
+                    .tracexyChipStyle(tint: .accentColor, isActive: tab == activeTab)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -359,7 +365,9 @@ struct InspectorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.Metrics.spacingM)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
     }
 
     private func followStreamResult(_ result: FollowStreamResult) -> some View {

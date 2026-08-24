@@ -38,22 +38,26 @@ struct FlowMapView: View {
     var coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            HSplitView {
-                mapSide
-                    .frame(minWidth: Self.mapMinWidth, maxWidth: .infinity, maxHeight: .infinity)
-                endpointList
-                    .frame(
-                        minWidth: Self.listMinWidth,
-                        idealWidth: Self.listIdealWidth,
-                        maxWidth: Self.listMaxWidth,
-                        maxHeight: .infinity
-                    )
-            }
-            .id("tracexy-flow-split")
+        HSplitView {
+            mapSide
+                .frame(minWidth: Self.mapMinWidth, maxWidth: .infinity, maxHeight: .infinity)
+            endpointList
+                .frame(
+                    minWidth: Self.listMinWidth,
+                    idealWidth: Self.listIdealWidth,
+                    maxWidth: Self.listMaxWidth,
+                    maxHeight: .infinity
+                )
         }
+        .id("tracexy-flow-split")
+        // The map/list split is fixed AppKit content, so it needs explicit room
+        // for the outer workspace footer while still rendering beneath its glass.
+        .tracexyChromeContentClearance(
+            edge: .bottom,
+            length: Theme.Metrics.footerBarHeight + Theme.Glass.functionalBarVerticalInset * 2
+        )
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) { header }
         // Keyed by the set of addresses (plus capture mode), not by bytes or row
         // order, so a saved capture reveals exactly once and a live one re-reveals
         // only when a genuinely new address appears — never on a byte-count tick.
@@ -198,7 +202,7 @@ struct FlowMapView: View {
     private var header: some View {
         HStack(spacing: Theme.Metrics.spacingM) {
             Label("Flow", systemImage: "globe.americas")
-                .font(Theme.Typography.surfaceTitle)
+                .font(Theme.Typography.title)
             Text("\(endpoints.count) addresses · \(routes.count) regions")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
@@ -351,6 +355,13 @@ struct FlowMapView: View {
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+        .tracexyContentSurface(
+            in: RoundedRectangle(
+                cornerRadius: Theme.Metrics.cornerRadius,
+                style: .continuous
+            )
+        )
+        .padding(Theme.Glass.functionalBarVerticalInset)
     }
 
     // MARK: List side
@@ -519,14 +530,17 @@ struct FlowMapView: View {
                     .font(Theme.Typography.caption)
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
             .padding(.top, 2)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary)
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
+        .padding(Theme.Glass.functionalBarVerticalInset)
     }
 
     @ViewBuilder

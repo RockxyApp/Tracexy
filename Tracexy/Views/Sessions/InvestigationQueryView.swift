@@ -12,17 +12,24 @@ struct InvestigationQueryEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            header
-            combinationPicker
-            Divider()
             rows
             if let error = workspace.investigationQueryError, error.rowID == nil {
                 errorText(error.message)
             }
-            Divider()
-            actions
         }
         .padding(Theme.Metrics.spacingL)
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) {
+            VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                header
+                combinationPicker
+            }
+            .padding(Theme.Metrics.spacingL)
+        }
+        .tracexySafeAreaBar(edge: .bottom) {
+            actions
+                .padding(Theme.Metrics.spacingM)
+        }
         .frame(width: 720)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Investigation query editor")
@@ -82,12 +89,14 @@ struct InvestigationQueryEditorView: View {
             } label: {
                 Label("Add Row", systemImage: "plus")
             }
+            .tracexyGlassButtonStyle()
             .disabled(workspace.investigationDraft.rows.count >= InvestigationQueryDraftCompiler.maximumRows)
 
             if workspace.hasActiveInvestigationQuery {
                 Button("Clear Query") {
                     coordinator.clearInvestigationQuery(in: workspace)
                 }
+                .tracexyGlassButtonStyle()
             }
             Spacer()
             if workspace.isEvaluatingInvestigationQuery {
@@ -98,6 +107,7 @@ struct InvestigationQueryEditorView: View {
             Button("Apply") {
                 coordinator.applyInvestigationQuery(workspace.investigationDraft, in: workspace)
             }
+            .tracexyGlassButtonStyle(prominent: true)
             .keyboardShortcut(.defaultAction)
             .disabled(workspace.isEvaluatingInvestigationQuery)
         }
@@ -141,8 +151,9 @@ struct InvestigationQueryEditorView: View {
             }
         }
         .padding(Theme.Metrics.spacingS)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.pillCornerRadius, style: .continuous)
+        )
     }
 
     @ViewBuilder

@@ -31,8 +31,14 @@ struct StructuredFilterBar: View {
             rowsViewport(rules: rules, workspace: workspace)
         }
         .padding(.bottom, 6)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
+        .tracexyContentSurface(
+            in: RoundedRectangle(
+                cornerRadius: Theme.Glass.functionalBarCornerRadius,
+                style: .continuous
+            )
+        )
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+        .padding(.bottom, Theme.Glass.functionalBarVerticalInset)
     }
 
     // MARK: Private
@@ -189,7 +195,7 @@ struct StructuredFilterBar: View {
         } label: {
             Image(systemName: "minus").font(.system(size: Theme.Icon.small))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderless)
         .controlSize(.small)
         .disabled(workspace.filterRules.count <= 1)
         .help("Remove this rule")
@@ -203,7 +209,7 @@ struct StructuredFilterBar: View {
         } label: {
             Image(systemName: "plus").font(.system(size: Theme.Icon.small))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderless)
         .controlSize(.small)
         .disabled(atCap)
         .help(atCap

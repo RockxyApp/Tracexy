@@ -40,32 +40,29 @@ private struct FocusSetEditorForm: View {
     // MARK: Internal
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach($draft.rules) { $rule in
-                        ruleRow($rule, isFirst: rule.id == draft.rules.first?.id)
-                    }
-                    Button {
-                        draft.rules.append(SessionFilterRule())
-                    } label: {
-                        Label("Add Rule", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .disabled(draft.rules.count >= coordinator.policy.maxSessionFilterRules)
-                    .help(draft.rules.count >= coordinator.policy.maxSessionFilterRules
-                        ? "Filter limit reached — this build allows \(coordinator.policy.maxSessionFilterRules) rules"
-                        : "Add a filter rule")
-                    .padding(.top, 2)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach($draft.rules) { $rule in
+                    ruleRow($rule, isFirst: rule.id == draft.rules.first?.id)
                 }
-                .padding(16)
+                Button {
+                    draft.rules.append(SessionFilterRule())
+                } label: {
+                    Label("Add Rule", systemImage: "plus")
+                }
+                .tracexyGlassButtonStyle()
+                .controlSize(.small)
+                .disabled(draft.rules.count >= coordinator.policy.maxSessionFilterRules)
+                .help(draft.rules.count >= coordinator.policy.maxSessionFilterRules
+                    ? "Filter limit reached — this build allows \(coordinator.policy.maxSessionFilterRules) rules"
+                    : "Add a filter rule")
+                .padding(.top, 2)
             }
-            Divider()
-            footer
+            .padding(16)
         }
+        .tracexySoftScrollEdge()
+        .tracexySafeAreaBar(edge: .top) { header }
+        .tracexySafeAreaBar(edge: .bottom) { footer }
     }
 
     // MARK: Private
@@ -91,7 +88,7 @@ private struct FocusSetEditorForm: View {
             Image(systemName: "scope").font(.system(size: Theme.Icon.xlarge)).foregroundStyle(Color.accentColor)
             TextField("Focus set name", text: $draft.name)
                 .textFieldStyle(.roundedBorder)
-                .font(Theme.Typography.surfaceTitle)
+                .font(Theme.Typography.body)
         }
         .padding(16)
     }
@@ -106,6 +103,7 @@ private struct FocusSetEditorForm: View {
             Spacer()
             Button("Cancel") { close() }
                 .keyboardShortcut(.cancelAction)
+                .tracexyGlassButtonStyle()
             Button("Save") {
                 var toSave = draft
                 if toSave.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -115,6 +113,7 @@ private struct FocusSetEditorForm: View {
                 close()
             }
             .keyboardShortcut(.defaultAction)
+            .tracexyGlassButtonStyle(prominent: true)
             .disabled(trimmedName.isEmpty || wouldExceedFocusSetLimit)
         }
         .padding(16)
@@ -154,7 +153,7 @@ private struct FocusSetEditorForm: View {
             } label: {
                 Image(systemName: "minus").font(.system(size: Theme.Icon.small))
             }
-            .buttonStyle(.bordered).controlSize(.small)
+            .buttonStyle(.borderless).controlSize(.small)
             .disabled(draft.rules.count <= 1)
         }
         .opacity(rule.wrappedValue.isEnabled ? 1 : 0.5)

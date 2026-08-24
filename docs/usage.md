@@ -83,6 +83,12 @@ Removing a source hides only that sidebar row and persists the presentation pref
 deletes captured sessions or packet evidence. Secondary-click the Apps, Domains, or IP Addresses
 category to restore every hidden row in that category.
 
+At launch, **Protocols**, **Apps**, and **Domains** remain compact until the first decoded session
+arrives, then open automatically so live capture data is visible without extra clicks. This happens
+only once for the current data lifetime: manually collapsing a group afterwards is respected while
+more sessions arrive. Clearing or starting another live capture resets the session list and re-arms
+the behavior.
+
 ## Overview
 
 **Overview** is the first destination under **Monitor**, followed by **Sessions** and **Flow Map**. It

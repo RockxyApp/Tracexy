@@ -21,4 +21,12 @@ enum SidebarNavigatorMode: String, CaseIterable, Identifiable, Hashable {
         case .library: String(localized: "Library")
         }
     }
+
+    nonisolated var systemImage: String {
+        switch self {
+        case .browse: "sidebar.left"
+        case .focus: "scope"
+        case .library: "books.vertical"
+        }
+    }
 }

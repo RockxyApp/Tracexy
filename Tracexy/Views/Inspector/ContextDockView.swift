@@ -35,21 +35,20 @@ struct ContextDockView: View {
     @Bindable var coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabStrip
-            Divider()
-            // Details reads as stacked native diagnostics tables with a summary
-            // footer; the AI Assistant owns its own layout so its composer can
-            // pin below a scrolling transcript.
+        Group {
             switch coordinator.activeWorkspace.contextDockTab {
             case .details:
-                VStack(spacing: 0) {
-                    detailsList
-                    detailsFooter
-                }
+                detailsList
+                    .tracexyDenseScrollEdge()
+                    .tracexySafeAreaBar(edge: .bottom) {
+                        detailsFooter
+                    }
             case .aiAssistant:
                 AIAssistantDockView(coordinator: coordinator)
             }
+        }
+        .tracexySafeAreaBar(edge: .top) {
+            tabStrip
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
@@ -99,12 +98,18 @@ struct ContextDockView: View {
     /// and a strip that changes width per selection is what made them un-learnable.
     /// A section with nothing to say omits itself; the mode never vanishes.
     private var tabStrip: some View {
-        Picker("Inspector Mode", selection: selectedTab) {
-            ForEach(ContextDockTab.allCases) { tab in
-                Text(tab.title).tag(tab)
-            }
-        }
-        .workspaceSegmentedPicker()
+        WorkspaceModeSegmentedControl(
+            selection: selectedTab,
+            segments: ContextDockTab.allCases.map { tab in
+                WorkspaceModeSegment(
+                    value: tab,
+                    title: tab.title,
+                    systemImage: tab.systemImage
+                )
+            },
+            accessibilityLabel: String(localized: "Inspector Mode")
+        )
+        .workspaceModeSwitcherStyle()
     }
 
     // MARK: State D — no selection
@@ -223,7 +228,7 @@ struct ContextDockView: View {
     /// footers on one baseline. It states only facts the selection already carries
     /// — Details has no actions to offer, so it adds none.
     private var detailsFooter: some View {
-        WorkspaceFooterBar(surface: .workspace) {
+        WorkspaceFooterBar(surface: .inspector) {
             HStack(spacing: Theme.Metrics.spacingM) {
                 Text(detailsFooterSummary)
                     .font(Theme.Typography.caption)
@@ -485,7 +490,7 @@ struct ContextDockView: View {
             Button("Ungroup · edit grouping") {
                 coordinator.activeWorkspace.sessionGrouping = .none
             }
-            .buttonStyle(.bordered)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
             .frame(maxWidth: .infinity)
             .padding(.top, 2)

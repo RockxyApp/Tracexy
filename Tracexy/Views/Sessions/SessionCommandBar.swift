@@ -171,16 +171,16 @@ struct SessionCommandBar: View {
     let onAction: (SessionCommandKind) -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            commandRow(immediateCount: 6)
-            commandRow(immediateCount: 4)
-            commandRow(immediateCount: 2)
-            commandRow(immediateCount: 1)
+        TracexyGlassEffectGroup(spacing: Theme.Metrics.spacingS) {
+            ViewThatFits(in: .horizontal) {
+                commandRow(immediateCount: 6)
+                commandRow(immediateCount: 4)
+                commandRow(immediateCount: 2)
+                commandRow(immediateCount: 1)
+            }
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingS)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -214,12 +214,12 @@ struct SessionCommandBar: View {
                 set: { _ in onAction(descriptor.id) }
             )) {
                 Label(descriptor.title, systemImage: descriptor.systemImage)
-                    .font(Theme.Typography.caption)
+                    .font(Theme.Typography.chromeAction)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
             .toggleStyle(.button)
-            .buttonStyle(.bordered)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
@@ -230,11 +230,11 @@ struct SessionCommandBar: View {
                 onAction(descriptor.id)
             } label: {
                 Label(descriptor.title, systemImage: descriptor.systemImage)
-                    .font(Theme.Typography.caption)
+                    .font(Theme.Typography.chromeAction)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .buttonStyle(.bordered)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
@@ -252,7 +252,7 @@ struct SessionCommandBar: View {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: Theme.Icon.medium))
         }
-        .menuStyle(.borderlessButton)
+        .tracexyGlassButtonStyle()
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More session actions")

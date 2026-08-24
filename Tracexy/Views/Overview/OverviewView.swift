@@ -42,6 +42,8 @@ struct OverviewView: View {
                 )
                 .padding(Theme.Metrics.spacingL)
             }
+            .tracexyDenseScrollEdge()
+            .tracexySafeAreaBar(edge: .top) { overviewHeader }
         }
     }
 
@@ -171,6 +173,20 @@ struct OverviewView: View {
     /// capture is stored independently in the disk-backed pcapng spool.
     private var inspectionWindowBytes: Int {
         coordinator.retainedCapturedByteCount
+    }
+
+    private var overviewHeader: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Label("Overview", systemImage: "chart.xyaxis.line")
+                .font(Theme.Typography.title)
+            Text(identitySubtitle)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingM)
     }
 
     // MARK: Layout
@@ -660,7 +676,12 @@ struct OverviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(Theme.Metrics.spacingL)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius))
+        .tracexyContentSurface(
+            in: RoundedRectangle(
+                cornerRadius: Theme.Metrics.cornerRadius,
+                style: .continuous
+            )
+        )
     }
 
     private func sectionLabel(_ title: String, systemImage: String) -> some View {

@@ -12,52 +12,44 @@ struct NoiseControlWindow: View {
     @Bindable var coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label("Noise Control", systemImage: "speaker.slash").font(Theme.Typography.surfaceTitle)
-                Spacer()
-                Button("Clear All") { coordinator.clearNoiseControl() }
-                    .controlSize(.small)
-                    .disabled(!coordinator.isNoiseControlActive)
-            }
-            .padding(16)
-            Divider()
-
-            List {
-                Section("Protocols") {
-                    if coordinator.presentProtocols.isEmpty {
-                        Text("No traffic yet").font(Theme.Typography.caption).foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(coordinator.presentProtocols) { proto in
-                            muteRow(
-                                title: proto.label,
-                                isMuted: coordinator.isProtocolMuted(proto)
-                            ) { coordinator.toggleMuteProtocol(proto) }
-                        }
-                    }
-                }
-
-                Section("Hosts") {
-                    if topHosts.isEmpty {
-                        Text("No hosts yet").font(Theme.Typography.caption).foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(topHosts, id: \.host) { entry in
-                            muteRow(
-                                title: entry.host,
-                                subtitle: entry.hits > 0 ? "\(entry.hits)" : nil,
-                                isMuted: coordinator.isHostMuted(entry.host)
-                            ) { coordinator.toggleMuteHost(entry.host) }
-                        }
+        List {
+            Section("Protocols") {
+                if coordinator.presentProtocols.isEmpty {
+                    Text("No traffic yet").font(Theme.Typography.caption).foregroundStyle(.tertiary)
+                } else {
+                    ForEach(coordinator.presentProtocols) { proto in
+                        muteRow(
+                            title: proto.label,
+                            isMuted: coordinator.isProtocolMuted(proto)
+                        ) { coordinator.toggleMuteProtocol(proto) }
                     }
                 }
             }
 
-            Divider()
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            Section("Hosts") {
+                if topHosts.isEmpty {
+                    Text("No hosts yet").font(Theme.Typography.caption).foregroundStyle(.tertiary)
+                } else {
+                    ForEach(topHosts, id: \.host) { entry in
+                        muteRow(
+                            title: entry.host,
+                            subtitle: entry.hits > 0 ? "\(entry.hits)" : nil,
+                            isMuted: coordinator.isHostMuted(entry.host)
+                        ) { coordinator.toggleMuteHost(entry.host) }
+                    }
+                }
             }
-            .padding(16)
+        }
+        .tracexySoftScrollEdge()
+        .tracexySafeAreaBar(edge: .bottom) { windowFooter }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Clear All", systemImage: "speaker.slash") {
+                    coordinator.clearNoiseControl()
+                }
+                .disabled(!coordinator.isNoiseControlActive)
+                .help("Clear every muted protocol and host")
+            }
         }
         .frame(minWidth: 420, minHeight: 420)
     }
@@ -82,6 +74,16 @@ struct NoiseControlWindow: View {
             }
             .prefix(40)
             .map { (host: $0.key, hits: $0.value) }
+    }
+
+    private var windowFooter: some View {
+        HStack {
+            Spacer()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .tracexyGlassButtonStyle(prominent: true)
+        }
+        .padding(12)
     }
 
     private func muteRow(

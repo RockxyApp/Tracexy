@@ -8,15 +8,13 @@ struct HelperInstallPromptView: View {
     var coordinator: MainContentCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
+        ScrollView {
             reasons
-            Divider()
-            footer
         }
+        .tracexySoftScrollEdge()
+        .tracexySafeAreaBar(edge: .top) { header }
+        .tracexySafeAreaBar(edge: .bottom) { footer }
         .frame(width: 580)
-        .background(.background)
     }
 
     // MARK: Private
@@ -30,9 +28,9 @@ struct HelperInstallPromptView: View {
             icon
             VStack(alignment: .leading, spacing: 8) {
                 Text("Install Helper Tool")
-                    .font(Theme.Typography.hero)
+                    .font(Theme.Typography.title)
                 Text("Tracexy uses a small privileged helper so macOS can grant packet-capture access securely.")
-                    .font(Theme.Typography.surfaceTitle)
+                    .font(Theme.Typography.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -42,18 +40,14 @@ struct HelperInstallPromptView: View {
     }
 
     private var icon: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(LinearGradient(
-                colors: [Color(red: 0.13, green: 0.45, blue: 0.95), Color(red: 0.18, green: 0.30, blue: 0.78)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ))
+        Image(systemName: "lock.shield.fill")
+            .font(.system(size: Theme.Icon.heroLarge, weight: .medium))
+            .foregroundStyle(Color.accentColor)
             .frame(width: 84, height: 84)
-            .overlay(
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: Theme.Icon.heroLarge, weight: .medium))
-                    .foregroundStyle(.white)
+            .tracexyGlassEffect(
+                tint: .accentColor,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
             )
-            .shadow(color: Color.blue.opacity(0.25), radius: 8, y: 3)
     }
 
     private var reasons: some View {
@@ -80,6 +74,7 @@ struct HelperInstallPromptView: View {
             HStack {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .tracexyGlassButtonStyle()
                 Spacer()
                 Button {
                     Task {
@@ -114,7 +109,7 @@ struct HelperInstallPromptView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .tracexyGlassButtonStyle(prominent: true)
                 .disabled(isInstalling)
             }
         }
@@ -127,7 +122,7 @@ struct HelperInstallPromptView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .font(Theme.Typography.title)
-            Text(text).font(Theme.Typography.surfaceTitle)
+            Text(text).font(Theme.Typography.body)
             Spacer(minLength: 0)
         }
     }

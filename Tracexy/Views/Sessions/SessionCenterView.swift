@@ -11,62 +11,15 @@ struct SessionCenterView: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let sessions = coordinator.visibleSessions
-        VStack(spacing: 0) {
-            if workspace.isFilterBarVisible {
-                SessionFilterBar(coordinator: coordinator)
-                // The advanced rule builder reveals just below the category tabs
-                // when the footer "Filter" button is toggled on.
-                if workspace.isAdvancedFilterVisible {
-                    StructuredFilterBar(coordinator: coordinator)
-                }
+        sessionContent(sessions: sessions, workspace: workspace)
+            .tracexyDenseScrollEdge()
+            .tracexySafeAreaBar(edge: .top) {
+                sessionControlShelf(workspace)
             }
-            // Live traffic chart: a modest, collapsible strip above the list — the
-            // hero real-time graph, without the old full-height crush. It reads
-            // ONLY `throughputSamples`, so its ~1×/sec ticks re-render the strip
-            // alone and never re-run this body (which drives the Table).
-            LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
-            Divider()
-            if coordinator.isOpeningSavedCapture {
-                savedCaptureOpeningNotice
-                Divider()
-            } else if let warning = coordinator.savedCaptureWarning {
-                savedCaptureWarningNotice(warning)
-                Divider()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: visibilityFingerprint(workspace)) { _, _ in
+                coordinator.reconcileLiveFollowing(in: workspace)
             }
-            // List-first (Wireshark/Proxyman): the table is the spine and takes the
-            // remaining height.
-            //
-            // NOTE (reentrancy): the Table stays in its own branch with no
-            // GeometryReader — feeding a Table a height derived from its own
-            // container re-enters NSTableView layout ("reentrant operation in its
-            // NSTableView delegate" → hang/assert under the debugger).
-            //
-            // When there are no rows, show ONLY the purposeful empty state — not
-            // an empty `Table` (its header + ghost row separators would show
-            // through an overlay). Safe w.r.t. the live-reload reentrancy note:
-            // with zero rows there is nothing for NSTableView to reload, and
-            // sessions grow monotonically during capture (one empty→filled flip).
-            if sessions.isEmpty {
-                emptyState
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Group {
-                    if workspace.sessionGrouping == .none {
-                        sessionTable(sessions: sessions, workspace: workspace)
-                    } else {
-                        groupedTable(rows: coordinator.sessionRows, workspace: workspace)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        // The spine of the window takes every point it is offered. Stated here
-        // rather than left to whichever child happens to be greedy, so an empty
-        // list or a hidden filter bar can never shrink the column.
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: visibilityFingerprint(workspace)) { _, _ in
-            coordinator.reconcileLiveFollowing(in: workspace)
-        }
     }
 
     // MARK: Private
@@ -158,6 +111,58 @@ struct SessionCenterView: View {
         } description: {
             Text("Start a capture from the toolbar to observe network sessions.")
         }
+    }
+
+    private func sessionControlShelf(_ workspace: WorkspaceState) -> some View {
+        VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
+            if workspace.isFilterBarVisible {
+                SessionFilterBar(coordinator: coordinator)
+                if workspace.isAdvancedFilterVisible {
+                    StructuredFilterBar(coordinator: coordinator)
+                }
+            }
+            LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
+        }
+        .padding(.bottom, Theme.Glass.functionalBarVerticalInset)
+    }
+
+    private func sessionContent(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
+        VStack(spacing: 0) {
+            if coordinator.isOpeningSavedCapture {
+                savedCaptureOpeningNotice
+                Divider()
+            } else if let warning = coordinator.savedCaptureWarning {
+                savedCaptureWarningNotice(warning)
+                Divider()
+            }
+            // List-first (Wireshark/Proxyman): the table is the spine and takes the
+            // remaining height.
+            //
+            // NOTE (reentrancy): the Table stays in its own branch with no
+            // GeometryReader — feeding a Table a height derived from its own
+            // container re-enters NSTableView layout ("reentrant operation in its
+            // NSTableView delegate" → hang/assert under the debugger).
+            //
+            // When there are no rows, show ONLY the purposeful empty state — not
+            // an empty `Table` (its header + ghost row separators would show
+            // through an overlay). Safe w.r.t. the live-reload reentrancy note:
+            // with zero rows there is nothing for NSTableView to reload, and
+            // sessions grow monotonically during capture (one empty→filled flip).
+            if sessions.isEmpty {
+                emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Group {
+                    if workspace.sessionGrouping == .none {
+                        sessionTable(sessions: sessions, workspace: workspace)
+                    } else {
+                        groupedTable(rows: coordinator.sessionRows, workspace: workspace)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func savedCaptureWarningNotice(_ warning: String) -> some View {
@@ -360,14 +365,15 @@ struct SessionCenterView: View {
                         .font(Theme.Typography.badge)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                        .foregroundStyle(.secondary)
+                        .tracexyChipStyle(tint: .secondary, isActive: true)
                     Text(activity.confidence.title)
                         .font(Theme.Typography.badge)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Theme.color(for: activity.confidence).opacity(0.15)))
-                        .foregroundStyle(Theme.color(for: activity.confidence))
+                        .tracexyChipStyle(
+                            tint: Theme.color(for: activity.confidence),
+                            isActive: true
+                        )
                     if activity.isContested {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: Theme.Icon.small))
@@ -397,8 +403,7 @@ struct SessionCenterView: View {
                     .font(Theme.Typography.badge)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                    .foregroundStyle(.secondary)
+                    .tracexyChipStyle(tint: .secondary, isActive: true)
             }
         case let .session(session):
             Text(session.host).font(Theme.Typography.body).lineLimit(1)
@@ -717,7 +722,10 @@ private struct LiveTrafficStrip: View {
                     .padding(.bottom, Theme.Metrics.spacingS)
             }
         }
-        .background(.background.secondary)
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
     }
 
     // MARK: Private
