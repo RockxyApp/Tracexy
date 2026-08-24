@@ -18,20 +18,22 @@ This documentation describes what is actually in the source today, and clearly m
 
 ## Status at a glance
 
-**Implemented:** live libpcap capture through a signed helper, PCAP read/write, PCAPNG read and
-disk-backed live-save, interface discovery, a bounds-checked packet decoder (L2–L4 plus
-DNS/TLS/HTTP-1/QUIC/STUN summaries), incremental five-tuple session grouping, action correlation with
-confidence levels, per-process attribution where macOS reports it, and a native SwiftUI/AppKit
-interface with workspaces, filtering, focus sets, and an inspector.
+**Implemented:** live libpcap capture through a signed helper, PCAP/PCAPNG read/write and disk-backed
+live-save, interface discovery, a bounds-checked packet decoder, incremental five-tuple sessions, a
+bounded TCP connection/evidence table, selected evidence-linked findings, deterministic replay,
+protected session export, terminal-summary SQLite History, and a native SwiftUI/AppKit investigation
+workspace with typed queries and explicit bounded Follow Stream.
 
 **Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record
-metadata, HTTP/1 headers, QUIC long-header metadata, and STUN attributes. TCP prefix reassembly is
-bounded to initial TLS/HTTP/DNS metadata; a general stateful connection/reassembly engine is not present.
+metadata, HTTP/1 headers, QUIC long-header metadata, and STUN attributes. TCP prefix recovery is
+bounded to initial TLS/HTTP/DNS metadata; the connection table does not provide a general always-on
+stream/record analyzer.
 Protected `.tracexysession` export enforces the Privacy settings by omitting raw frames and sensitive
 decoded metadata. Raw pcap/pcapng remains evidence-preserving and is never presented as redacted.
 
-**Planned / not yet implemented:** a decoder registry with dispatch-table handoff, a stateful
-connection table with TCP reassembly, an analysis/security engine, persistent SQLite storage, an
-MCP/AI bridge, and packet-rewriting redaction for raw capture formats. Do not treat these as present.
+**Planned / not yet implemented:** a decoder registry with dispatch-table handoff, general TCP
+stream/record reassembly, deeper protocol/security policy, raw capture persistence, automatic History
+retention, an MCP/AI bridge, and packet-rewriting redaction for raw capture formats. The existing
+read-only automation core has no executable or network transport. Do not treat these as present.
 
 When the source and these docs disagree, the source is correct — please open an issue or a fix.
