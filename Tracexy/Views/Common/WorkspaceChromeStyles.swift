@@ -22,6 +22,26 @@ struct WorkspaceModeSegment<Value: Hashable> {
     let systemImage: String
 }
 
+// MARK: - WorkspaceModeSegmentedControlCoordinator
+
+@MainActor
+final class WorkspaceModeSegmentedControlCoordinator: NSObject {
+    // MARK: Lifecycle
+
+    init(applySelection: @escaping (Int) -> Void) {
+        self.applySelection = applySelection
+    }
+
+    // MARK: Internal
+
+    var applySelection: (Int) -> Void
+
+    @objc
+    func selectionChanged(_ sender: NSSegmentedControl) {
+        applySelection(sender.selectedSegment)
+    }
+}
+
 // MARK: - WorkspaceModeSegmentedControl
 
 /// Equal-width native segmented control used by the sidebar and inspector.
@@ -42,36 +62,13 @@ struct WorkspaceModeSegmentedControl<Value: Hashable>: NSViewRepresentable {
 
     // MARK: Internal
 
-    @MainActor
-    final class Coordinator: NSObject {
-        // MARK: Lifecycle
-
-        init(selection: Binding<Value>, segments: [WorkspaceModeSegment<Value>]) {
-            self.selection = selection
-            self.segments = segments
-        }
-
-        // MARK: Internal
-
-        var selection: Binding<Value>
-        var segments: [WorkspaceModeSegment<Value>]
-
-        @objc
-        func selectionChanged(_ sender: NSSegmentedControl) {
-            guard segments.indices.contains(sender.selectedSegment) else {
-                return
-            }
-            selection.wrappedValue = segments[sender.selectedSegment].value
-        }
-    }
-
     @Binding var selection: Value
 
     let segments: [WorkspaceModeSegment<Value>]
     let accessibilityLabel: String
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(selection: $selection, segments: segments)
+    func makeCoordinator() -> WorkspaceModeSegmentedControlCoordinator {
+        WorkspaceModeSegmentedControlCoordinator(applySelection: selectionHandler())
     }
 
     func makeNSView(context: Context) -> EqualWidthSegmentedControl {
@@ -94,9 +91,11 @@ struct WorkspaceModeSegmentedControl<Value: Hashable>: NSViewRepresentable {
 
     // MARK: Private
 
-    private func update(_ control: EqualWidthSegmentedControl, coordinator: Coordinator) {
-        coordinator.selection = $selection
-        coordinator.segments = segments
+    private func update(
+        _ control: EqualWidthSegmentedControl,
+        coordinator: WorkspaceModeSegmentedControlCoordinator
+    ) {
+        coordinator.applySelection = selectionHandler()
 
         if control.segmentCount != segments.count {
             control.segmentCount = segments.count
@@ -118,6 +117,17 @@ struct WorkspaceModeSegmentedControl<Value: Hashable>: NSViewRepresentable {
         control.selectedSegment = segments.firstIndex { $0.value == selection } ?? -1
         control.setAccessibilityLabel(accessibilityLabel)
         control.needsLayout = true
+    }
+
+    private func selectionHandler() -> (Int) -> Void {
+        let selection = $selection
+        let segments = segments
+        return { index in
+            guard segments.indices.contains(index) else {
+                return
+            }
+            selection.wrappedValue = segments[index].value
+        }
     }
 }
 
