@@ -124,9 +124,62 @@ struct PcapReaderTests {
         }
     }
 
+    // MARK: - URL adapter (streaming)
+
+    @Test
+    func urlAdapterMatchesInMemoryRead() throws {
+        let dns = PacketBuilder.dnsQueryFrame(name: "example.com", src: "192.168.1.2", dst: "1.1.1.1")
+        let tls = PacketBuilder.tlsClientHelloFrame(sni: "example.com", src: "192.168.1.2", dst: "93.184.16.34")
+
+        var file = bigEndianHeader()
+        file += bigEndianRecord(dns, tsSec: 1_700_000_000, tsUsec: 500_000)
+        file += bigEndianRecord(tls, tsSec: 1_700_000_001, tsUsec: 0)
+
+        let inMemory = try PcapReader.read(file)
+        try withTempFile(file) { url in
+            let streamed = try PcapReader.read(contentsOf: url)
+            #expect(streamed.linkType == inMemory.linkType)
+            #expect(streamed.frames.count == inMemory.frames.count)
+            for (streamedFrame, memoryFrame) in zip(streamed.frames, inMemory.frames) {
+                #expect(streamedFrame.bytes == memoryFrame.bytes)
+                #expect(streamedFrame.originalLength == memoryFrame.originalLength)
+                #expect(streamedFrame.capturedLength == memoryFrame.capturedLength)
+                #expect(abs(
+                    streamedFrame.timestamp.timeIntervalSince1970
+                        - memoryFrame.timestamp.timeIntervalSince1970
+                ) < 0.0001)
+            }
+        }
+    }
+
+    @Test
+    func urlAdapterRecoversTruncatedTail() throws {
+        let dns = PacketBuilder.dnsQueryFrame(name: "example.com", src: "192.168.1.2", dst: "1.1.1.1")
+        var file = littleEndianHeader()
+        file += littleEndianRecord(dns, tsSec: 1_700_000_000, tsUsec: 0)
+        // A record header claiming 9999 payload bytes with only 3 present.
+        file += le32(1_700_000_001) + le32(0) + le32(9_999) + le32(9_999)
+        file += [0x01, 0x02, 0x03]
+
+        try withTempFile(file) { url in
+            let result = try PcapReader.read(contentsOf: url)
+            #expect(result.frames.count == 1)
+            #expect(result.frames[0].bytes == dns)
+        }
+    }
+
     // MARK: Private
 
     // MARK: - Helpers
+
+    /// Write `bytes` to a unique temp `.pcap`, run `body`, and always clean up.
+    private func withTempFile(_ bytes: [UInt8], _ body: (URL) throws -> Void) throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pcapreader-\(UUID().uuidString).pcap")
+        try Data(bytes).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try body(url)
+    }
 
     /// Little-endian 32-bit encoding.
     private func le32(_ value: UInt32) -> [UInt8] {

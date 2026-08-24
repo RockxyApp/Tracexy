@@ -19,6 +19,13 @@ nonisolated enum PacketDecoder {
         let sni: String?
         let dnsQuery: String?
         let dnsAnswers: [String]
+        let dnsAnswersOmittedCount: Int
+        let dnsFacts: DNSMessageFacts?
+        /// Neutral TLS record facts recovered from the reassembled prefix and whether
+        /// that walk hit the 32-record cap. Carried solely so the TLS evidence fold can
+        /// exclude-count multi-frame records it may not cite (and count a recovered
+        /// truncation indicator) — never propagated onto a representative packet.
+        let tlsRecords: [TLSRecordFact], tlsRecordsTruncated: Bool
         let isComplete: Bool
     }
 
@@ -48,33 +55,13 @@ nonisolated enum PacketDecoder {
     )
         -> ReassembledTCPApplication?
     {
-        let buffer = PacketBuffer(bytes)
         var packet = DecodedPacket(timestamp: .distantPast, originalLength: bytes.count)
-        let complete: Bool
-        do {
-            if isTLS(buffer) {
-                try tlsRecords(buffer, into: &packet)
-                let declared = try 5 + Int(buffer.u16(3))
-                complete = bytes.count >= declared
-            } else if sourcePort == 53 || destinationPort == 53,
-                      bytes.count >= 2
-            {
-                let declared = try Int(buffer.u16(0))
-                guard declared > 0, bytes.count >= 2 + declared else {
-                    return nil
-                }
-                try dns(buffer, into: &packet, tcp: true)
-                complete = true
-            } else if isHTTP(buffer) {
-                try http(buffer, into: &packet)
-                complete = containsHTTPHeaderTerminator(bytes)
-            } else {
-                return nil
-            }
-        } catch {
-            return nil
-        }
-        guard let appProtocol = packet.appProtocol else {
+        let context = ApplicationMatchContext(
+            payload: PacketBuffer(bytes), sourcePort: sourcePort, destinationPort: destinationPort
+        )
+        guard let complete = decodeReassembledApplication(context: context, into: &packet),
+              let appProtocol = packet.appProtocol else
+        {
             return nil
         }
         return ReassembledTCPApplication(
@@ -83,6 +70,10 @@ nonisolated enum PacketDecoder {
             sni: packet.sni,
             dnsQuery: packet.dnsQuery,
             dnsAnswers: packet.dnsAnswers,
+            dnsAnswersOmittedCount: packet.dnsAnswersOmittedCount,
+            dnsFacts: packet.dnsFacts,
+            tlsRecords: packet.tlsRecords,
+            tlsRecordsTruncated: packet.tlsRecordsTruncated,
             isComplete: complete
         )
     }
@@ -96,11 +87,15 @@ nonisolated enum PacketDecoder {
     /// disambiguates STUN from other UDP payloads regardless of port.
     private static let stunMagicCookie: UInt32 = 0x2112A442
 
-    /// Largest plausible TLS record body: the 2^14 plaintext limit plus the
-    /// ciphertext-expansion allowance (RFC 5246 §6.2.3 / RFC 8446 §5.2), i.e.
-    /// 2^14 + 2048. A declared length beyond this cannot be a real TLS record, so
-    /// it is rejected to bound false positives.
-    private static let tlsMaxRecordLength = 16_384 + 2_048
+    /// Largest number of valid DNS answer records a single decoded packet retains
+    /// (values + display fields). Records beyond this are counted, not stored, so a
+    /// pathological response cannot grow the decoded packet without bound.
+    private static let dnsAnswerRetentionCap = 64
+
+    /// The RFC 7323 window-scale semantic cap. A byte above this is not a valid
+    /// scale; the raw value is still rendered, but no typed scale is retained and
+    /// no shift is ever computed for it.
+    private static let tcpMaxWindowScale: UInt8 = 14
 
     /// Decodes a tunnel/raw frame whose link-layer header is unknown: a bare IP
     /// packet, or one prefixed with a 4-byte BSD address family (NULL/LOOP).
@@ -365,6 +360,9 @@ nonisolated enum PacketDecoder {
     {
         let type = try buf.u8(0)
         let code = try buf.u8(1)
+        // Both fixed bytes read — retain neutral family/type/code before building the
+        // layer. Family is the already-known IP protocol, never inferred from the body.
+        packet.icmpFacts = ICMPMessageFacts(family: isV6 ? .ipv6 : .ipv4, type: type, code: code)
         let kind: ProtocolKind = isV6 ? .icmpv6 : .icmp
         let typeName = isV6 ? icmpv6TypeName(type) : icmpTypeName(type)
         packet.transport = kind
@@ -417,11 +415,13 @@ nonisolated enum PacketDecoder {
         let srcPort = try buf.u16(0)
         let dstPort = try buf.u16(2)
         let seq = try buf.u32(4)
+        let ack = try buf.u32(8)
         let dataOffset = try Int(buf.u8(12) >> 4) * 4
         guard dataOffset >= 20, dataOffset <= buf.length else {
             throw PacketError.malformed("Invalid TCP data offset")
         }
         let flags = try buf.u8(13)
+        let window = try buf.u16(14)
         packet.transport = .tcp
         packet.sourceEndpoint = IPEndpoint(ip: src, port: srcPort)
         packet.destinationEndpoint = IPEndpoint(ip: dst, port: dstPort)
@@ -436,15 +436,33 @@ nonisolated enum PacketDecoder {
             ranged("Seq", "\(seq)", in: buf, at: 4, 4),
             ranged("Flags", tcpFlags(flags), in: buf, at: 13, 1),
         ]
-        // Parse TCP options (between the fixed 20-byte header and dataOffset).
-        if dataOffset > 20 {
-            fields += (try? tcpOptions(buf, end: min(dataOffset, buf.length))) ?? []
+        // Parse TCP options once (between the fixed 20-byte header and dataOffset)
+        // for both the rendered fields and the typed option facts.
+        var optionFacts = TCPOptionFacts()
+        if dataOffset > 20, let parsed = try? tcpOptions(buf, end: min(dataOffset, buf.length)) {
+            fields += parsed.fields
+            optionFacts = parsed.facts
         }
         packet.layers.append(DecodedLayer(
             proto: .tcp, title: "Transmission Control Protocol", summary: "\(srcPort) → \(dstPort)",
             fields: fields,
             byteRange: span(buf, dataOffset)
         ))
+        // Typed facts from exact header offsets. Acknowledgement is stored even
+        // without the ACK flag; payload sequence consumes SYN exactly once; payload
+        // length is the captured byte count. A bare/header-only segment still gets
+        // a complete fact value (payloadLength == 0).
+        let capturedPayloadLength = max(0, buf.length - dataOffset)
+        packet.tcpFacts = TCPSegmentFacts(
+            sequenceNumber: seq,
+            acknowledgementNumber: ack,
+            flags: TCPFlags(rawValue: flags),
+            windowSize: window,
+            headerLength: dataOffset,
+            payloadSequence: seq &+ ((flags & 0x02) == 0 ? 0 : 1),
+            payloadLength: capturedPayloadLength,
+            options: optionFacts
+        )
         guard dataOffset < buf.length else {
             return
         }
@@ -454,20 +472,23 @@ nonisolated enum PacketDecoder {
         }
         packet.tcpPayloadSequence = seq &+ ((flags & 0x02) == 0 ? 0 : 1)
         packet.tcpPayloadBytes = try payload.bytes(0, payload.length)
-        if isTLS(payload) {
-            try tlsRecords(payload, into: &packet)
-        } else if srcPort == 53 || dstPort == 53 {
-            try dns(payload, into: &packet, tcp: true)
-        } else if isHTTP(payload) {
-            try http(payload, into: &packet)
-        }
+        try decodeFrameApplication(
+            tcpFrameApplicationCandidates,
+            context: ApplicationMatchContext(payload: payload, sourcePort: srcPort, destinationPort: dstPort),
+            into: &packet
+        )
     }
 
     /// Parses the TCP option list (offset 20 → `end`) into decoded fields. Our
     /// own walk of the kind/length/value TLV format (RFC 793/7323), referencing
     /// the option-parsing approach in PcapPlusPlus/libtins.
-    private static func tcpOptions(_ buf: PacketBuffer, end: Int) throws -> [DecodedField] {
+    private static func tcpOptions(
+        _ buf: PacketBuffer, end: Int
+    )
+        throws -> (fields: [DecodedField], facts: TCPOptionFacts)
+    {
         var fields: [DecodedField] = []
+        var facts = TCPOptionFacts()
         var offset = 20
         var guardCounter = 0
         while offset < end, guardCounter < 40 {
@@ -487,28 +508,46 @@ nonisolated enum PacketDecoder {
             guard length >= 2, offset + length <= end else {
                 break
             }
-            fields.append(tcpOptionField(kind: kind, buf: buf, at: offset, length: length))
+            fields.append(tcpOptionField(kind: kind, buf: buf, at: offset, length: length, facts: &facts))
             offset += length
         }
-        return fields
+        return (fields, facts)
     }
 
-    private static func tcpOptionField(kind: UInt8, buf: PacketBuffer, at offset: Int, length: Int) -> DecodedField {
+    private static func tcpOptionField(
+        kind: UInt8, buf: PacketBuffer, at offset: Int, length: Int, facts: inout TCPOptionFacts
+    )
+        -> DecodedField
+    {
         let range = (buf.start + offset) ..< (buf.start + offset + length)
         switch kind {
         case 2 where length == 4:
             let mss = (try? buf.u16(offset + 2)) ?? 0
+            facts.maximumSegmentSize = mss
             return DecodedField(name: "Option: MSS", value: "\(mss)", byteRange: range)
         case 3 where length == 3:
             let shift = (try? buf.u8(offset + 2)) ?? 0
-            return DecodedField(name: "Option: Window Scale", value: "\(shift) (×\(1 << shift))", byteRange: range)
-        case 4:
+            facts.windowScaleRaw = shift
+            // RFC 7323 section 2.3 requires an observed value above 14 to be
+            // treated as 14. Preserve both raw and effective values and never
+            // shift by the invalid raw byte.
+            if shift <= tcpMaxWindowScale {
+                facts.windowScale = shift
+                return DecodedField(name: "Option: Window Scale", value: "\(shift) (×\(1 << shift))", byteRange: range)
+            }
+            facts.windowScale = tcpMaxWindowScale
+            return DecodedField(
+                name: "Option: Window Scale", value: "\(shift) (effective 14)", byteRange: range
+            )
+        case 4 where length == 2:
+            facts.sackPermitted = true
             return DecodedField(name: "Option: SACK Permitted", value: "yes", byteRange: range)
         case 5:
             return DecodedField(name: "Option: SACK", value: "\(length - 2) bytes", byteRange: range)
         case 8 where length == 10:
             let tsval = (try? buf.u32(offset + 2)) ?? 0
             let tsecr = (try? buf.u32(offset + 6)) ?? 0
+            facts.timestamps = TCPTimestamps(value: tsval, echoReply: tsecr)
             return DecodedField(name: "Option: Timestamps", value: "tsval=\(tsval) tsecr=\(tsecr)", byteRange: range)
         default:
             return DecodedField(name: "Option: kind \(kind)", value: "\(length) bytes", byteRange: range)
@@ -535,16 +574,11 @@ nonisolated enum PacketDecoder {
             byteRange: span(buf, 8)
         ))
         let payload = try buf.subset(from: 8)
-        if isSTUN(payload) {
-            // Content-detected (magic cookie), so port-independent — STUN rides on
-            // ephemeral ICE ports, not a well-known one. The UDP five-tuple/session
-            // grouping set above is preserved; this only enriches the app layer.
-            try stun(payload, into: &packet)
-        } else if srcPort == 53 || dstPort == 53 {
-            try dns(payload, into: &packet, tcp: false)
-        } else if srcPort == 443 || dstPort == 443, isQUIC(payload) {
-            quic(payload, into: &packet)
-        }
+        try decodeFrameApplication(
+            udpFrameApplicationCandidates,
+            context: ApplicationMatchContext(payload: payload, sourcePort: srcPort, destinationPort: dstPort),
+            into: &packet
+        )
     }
 
     // MARK: Application layer
@@ -552,14 +586,16 @@ nonisolated enum PacketDecoder {
     private static func dns(_ input: PacketBuffer, into packet: inout DecodedPacket, tcp: Bool) throws {
         // DNS over TCP is length-prefixed (2 bytes).
         let buf = tcp ? try input.subset(from: 2) : input
-        let flags = try buf.u16(2)
-        let qdCount = try Int(buf.u16(4))
-        let anCount = try Int(buf.u16(6))
-        let isResponse = (flags & 0x8000) != 0
+        // Read the fixed 12-byte header exactly once and retain neutral facts before any
+        // variable-body parsing. A short header throws inside the initializer, so
+        // `dnsFacts` stays nil; an intact header with a malformed/truncated body keeps it.
+        let facts = try DNSMessageFacts(dnsHeader: buf)
+        packet.dnsFacts = facts
+        let isResponse = facts.isResponse
         var offset = 12
         var firstName = ""
         var firstNameRange: Range<Int>?
-        for index in 0 ..< max(qdCount, 0) {
+        for index in 0 ..< max(Int(facts.questionCount), 0) {
             let nameStart = offset
             let (name, next) = try dnsName(buf, at: offset)
             if index == 0 {
@@ -571,27 +607,40 @@ nonisolated enum PacketDecoder {
         var ipAnswers: [String] = [] // bare IPs only (drives the domain→IP sidebar)
         var displayAnswers: [String] = [] // human-readable per-record values
         var answerFields: [DecodedField] = []
-        for index in 0 ..< max(anCount, 0) {
+        var omittedAnswers = 0
+        for index in 0 ..< max(Int(facts.answerCount), 0) {
             let (_, afterName) = try dnsName(buf, at: offset)
             let type = try buf.u16(afterName)
             let rdLength = try Int(buf.u16(afterName + 8))
             let rdataOffset = afterName + 10
             let rdataRange = (buf.start + rdataOffset) ..< (buf.start + min(rdataOffset + rdLength, buf.length))
+            // Decode into a scratch IP list so the cap bounds every retained
+            // collection identically. Structural validation continues past the cap
+            // — reaching the retention limit never stops bounds-checked parsing.
+            var recordIPs: [String] = []
             if let value = try dnsResourceValue(
                 type: type,
                 rdLength: rdLength,
                 buf: buf,
                 at: rdataOffset,
-                ip: &ipAnswers
+                ip: &recordIPs
             ) {
-                displayAnswers.append(value)
-                answerFields.append(DecodedField(name: "Answer \(index + 1)", value: value, byteRange: rdataRange))
+                if displayAnswers.count < dnsAnswerRetentionCap {
+                    ipAnswers.append(contentsOf: recordIPs)
+                    displayAnswers.append(value)
+                    answerFields.append(DecodedField(name: "Answer \(index + 1)", value: value, byteRange: rdataRange))
+                } else {
+                    // A valid record beyond the retained cap — an omission, not a
+                    // duplicate.
+                    omittedAnswers += 1
+                }
             }
             offset = rdataOffset + rdLength
         }
         packet.appProtocol = .dns
         packet.dnsQuery = firstName
         packet.dnsAnswers = ipAnswers
+        packet.dnsAnswersOmittedCount = omittedAnswers
         var fields: [DecodedField] = [
             ranged("Type", isResponse ? "Response" : "Query", in: buf, at: 2, 2),
             DecodedField(name: "Query", value: firstName, byteRange: firstNameRange),
@@ -667,14 +716,28 @@ nonisolated enum PacketDecoder {
     private static func tlsRecords(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
         var offset = 0
         var recordCount = 0
-        while offset + 5 <= buf.length, recordCount < 32 {
+        while offset + 5 <= buf.length {
             let record = try buf.subset(from: offset)
             guard isTLS(record) else {
                 break
             }
-            try tls(record, into: &packet)
-            recordCount += 1
+            // A further recognizable record begins past the 32-record cap: record the
+            // explicit truncation and stop before decoding a 33rd record.
+            if recordCount == 32 {
+                packet.tlsRecordsTruncated = true
+                break
+            }
             let recordLength = try 5 + Int(record.u16(3))
+            let boundedRecord = try record.subset(
+                from: 0, count: min(recordLength, record.length)
+            )
+            // Bound both presentation and typed parsing to this record. A following
+            // coalesced record must never satisfy fields missing from this one.
+            try tls(boundedRecord, into: &packet)
+            if let fact = TLSFactsDecoder.recordFact(boundedRecord) {
+                packet.tlsRecords.append(fact)
+            }
+            recordCount += 1
             guard recordLength <= record.length else {
                 break
             }
@@ -1034,26 +1097,10 @@ nonisolated enum PacketDecoder {
 
     // MARK: Heuristics
 
-    /// Content-based TLS record recognition (RFC 8446 §5.1), independent of port.
-    /// A recognized record needs a *complete* 5-byte record header: a defined
-    /// content type (20…24 — CCS/Alert/Handshake/ApplicationData/Heartbeat), the
-    /// record-layer major version 3, a plausible minor (SSL 3.0 … TLS 1.3), and a
-    /// declared body length within the 2^14 + 2048 ciphertext allowance. The
-    /// declared body is deliberately *not* required to be fully present — TCP
-    /// reassembly does not exist, so a packet may carry only a record fragment;
-    /// `tls` labels captured-vs-declared honestly. Rejecting invalid
-    /// type/version/length bounds false positives on arbitrary TCP payloads.
+    /// Content-based TLS record recognition, delegated to `TLSFactsDecoder` so record
+    /// header validation lives beside the neutral TLS fact parsing.
     private static func isTLS(_ buf: PacketBuffer) -> Bool {
-        guard buf.length >= 5,
-              let type = try? buf.u8(0), (20 ... 24).contains(type),
-              let major = try? buf.u8(1), major == 0x03,
-              let minor = try? buf.u8(2), minor <= 0x04,
-              let length = try? Int(buf.u16(3)),
-              length >= 1, length <= tlsMaxRecordLength else
-        {
-            return false
-        }
-        return true
+        TLSFactsDecoder.isTLSRecord(buf)
     }
 
     private static func isHTTP(_ buf: PacketBuffer) -> Bool {
@@ -1258,5 +1305,157 @@ nonisolated enum PacketDecoder {
         case 0x0304: "TLS 1.3"
         default: String(format: "0x%04x", version)
         }
+    }
+}
+
+// MARK: - Application matcher registry
+
+/// The centralized, first-match-wins application classifiers. These live in a same-file
+/// extension purely so the primary `PacketDecoder` enum stays within its body-length
+/// budget; `private` members here remain reachable from the enum in the same file. The
+/// three ordered arrays preserve the exact predicate composition, precedence, thrown-error
+/// behavior and completion rules of the former inline `if`/`else if` chains — this only
+/// centralizes them; it is deliberately *not* a generic decoder architecture.
+private extension PacketDecoder {
+    // MARK: Internal
+
+    /// The fixed context every application matcher sees: the transport payload — a
+    /// whole-frame TCP/UDP payload, or the bounded reassembled TCP prefix — plus the
+    /// connection's ports. For the reassembled buffer `payload.length` equals the
+    /// assembled byte count, so length checks read the same as the old `bytes.count`.
+    struct ApplicationMatchContext {
+        let payload: PacketBuffer
+        let sourcePort: UInt16
+        let destinationPort: UInt16
+    }
+
+    // MARK: Fileprivate
+
+    /// One immutable, first-match-wins application candidate: a pure `matches` gate
+    /// and the `decode` action run when it is the first gate to pass. `decode` returns
+    /// the reassembled `isComplete` value, or nil to abort a reassembled decode; the
+    /// whole-frame driver ignores the returned value. A candidate whose `decode`
+    /// throws never falls through to a lower-priority candidate.
+    struct ApplicationCandidate {
+        let matches: (ApplicationMatchContext) -> Bool
+        let decode: (ApplicationMatchContext, inout DecodedPacket) throws -> Bool?
+    }
+
+    /// Whole-frame TCP order: content-detected TLS → port-53 DNS → content-detected HTTP.
+    static let tcpFrameApplicationCandidates: [ApplicationCandidate] = [
+        ApplicationCandidate(
+            matches: { isTLS($0.payload) },
+            decode: { context, packet in
+                try tlsRecords(context.payload, into: &packet)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { $0.sourcePort == 53 || $0.destinationPort == 53 },
+            decode: { context, packet in
+                try dns(context.payload, into: &packet, tcp: true)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { isHTTP($0.payload) },
+            decode: { context, packet in
+                try http(context.payload, into: &packet)
+                return nil
+            }
+        ),
+    ]
+
+    /// Whole-frame UDP order: content-detected STUN (port-independent — STUN rides on
+    /// ephemeral ICE ports, not a well-known one; the UDP five-tuple/session grouping
+    /// set by `udp` is preserved and this only enriches the app layer) → port-53 DNS →
+    /// port-443 QUIC (a 443 endpoint plus the conservative content predicate).
+    static let udpFrameApplicationCandidates: [ApplicationCandidate] = [
+        ApplicationCandidate(
+            matches: { isSTUN($0.payload) },
+            decode: { context, packet in
+                try stun(context.payload, into: &packet)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { $0.sourcePort == 53 || $0.destinationPort == 53 },
+            decode: { context, packet in
+                try dns(context.payload, into: &packet, tcp: false)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { ($0.sourcePort == 443 || $0.destinationPort == 443) && isQUIC($0.payload) },
+            decode: { context, packet in
+                quic(context.payload, into: &packet)
+                return nil
+            }
+        ),
+    ]
+
+    /// Reassembled TCP order: content-detected TLS → port-53 DNS (only once the
+    /// two-byte length prefix is present) → content-detected HTTP. Each `decode`
+    /// yields the record's `isComplete`, or nil to fail the whole reassembled decode.
+    static let reassembledApplicationCandidates: [ApplicationCandidate] = [
+        ApplicationCandidate(
+            matches: { isTLS($0.payload) },
+            decode: { context, packet in
+                try tlsRecords(context.payload, into: &packet)
+                let declared = try 5 + Int(context.payload.u16(3))
+                return context.payload.length >= declared
+            }
+        ),
+        ApplicationCandidate(
+            matches: { ($0.sourcePort == 53 || $0.destinationPort == 53) && $0.payload.length >= 2 },
+            decode: { context, packet in
+                let declared = try Int(context.payload.u16(0))
+                guard declared > 0, context.payload.length >= 2 + declared else {
+                    return nil
+                }
+                try dns(context.payload, into: &packet, tcp: true)
+                return true
+            }
+        ),
+        ApplicationCandidate(
+            matches: { isHTTP($0.payload) },
+            decode: { context, packet in
+                try http(context.payload, into: &packet)
+                return try containsHTTPHeaderTerminator(context.payload.bytes(0, context.payload.length))
+            }
+        ),
+    ]
+
+    /// Runs the whole-frame application chain: the first candidate whose gate passes
+    /// decodes and returns; a throw propagates (kept partial by `decode`'s top-level
+    /// catch) and never falls through. No match leaves the frame at its transport layer.
+    static func decodeFrameApplication(
+        _ candidates: [ApplicationCandidate],
+        context: ApplicationMatchContext,
+        into packet: inout DecodedPacket
+    )
+        throws
+    {
+        for candidate in candidates where candidate.matches(context) {
+            _ = try candidate.decode(context, &packet)
+            return
+        }
+    }
+
+    /// Runs the reassembled TCP application chain: the first passing gate decodes and
+    /// returns its `isComplete`; a nil result, a throw, or no match fails the decode
+    /// (nil) without falling through to a lower-priority candidate.
+    static func decodeReassembledApplication(
+        context: ApplicationMatchContext,
+        into packet: inout DecodedPacket
+    )
+        -> Bool?
+    {
+        for candidate in reassembledApplicationCandidates where candidate.matches(context) {
+            // A throwing candidate fails the whole reassembled decode (nil) rather than
+            // falling through to a lower-priority gate — `try?` flattens both to nil.
+            return try? candidate.decode(context, &packet)
+        }
+        return nil
     }
 }

@@ -12,20 +12,28 @@ final class MainContentCoordinator {
     /// `layoutPreferences` is optional rather than defaulted so the default is
     /// built *inside* the main-actor init. A default argument is evaluated in a
     /// nonisolated context, which makes constructing a main-actor-isolated value
-    /// there a concurrency warning today and an error under Swift 6.
+    /// there a concurrency warning today and an error under Swift 6. `policy` uses
+    /// the same optional-default pattern for that reason.
+    /// `sessionStore` is optional and defaults to `nil` so unit tests run with no
+    /// persistent database and never touch the production file. The app
+    /// composition root injects one writable store (see ``HistoryStoreFactory``);
+    /// a `nil` store simply leaves History unavailable and never affects capture.
     init(
-        policy: any AppPolicy = DefaultAppPolicy(),
-        layoutPreferences: WorkspaceLayoutPreferences? = nil
+        policy: (any AppPolicy)? = nil,
+        layoutPreferences: WorkspaceLayoutPreferences? = nil,
+        sessionStore: SessionStore? = nil
     ) {
-        self.policy = policy
+        self.sessionStore = sessionStore
+        let resolvedPolicy = policy ?? DefaultAppPolicy()
+        self.policy = resolvedPolicy
         focusGate = FocusPolicyGate(
-            maxFocusSets: policy.maxFocusSets,
-            maxPinnedHosts: policy.maxPinnedHosts
+            maxFocusSets: resolvedPolicy.maxFocusSets,
+            maxPinnedHosts: resolvedPolicy.maxPinnedHosts
         )
         let preferences = layoutPreferences ?? WorkspaceLayoutPreferences()
         self.layoutPreferences = preferences
         workspaces = WorkspaceStore(
-            maxWorkspaces: policy.maxWorkspaceTabs,
+            maxWorkspaces: resolvedPolicy.maxWorkspaceTabs,
             layoutPreferences: preferences
         )
         // Boot empty: nothing is shown until a real capture streams real frames.
@@ -45,6 +53,9 @@ final class MainContentCoordinator {
         }
         localIPv4 = NetworkInterfaces.primaryIPv4()
         pinnedHosts = Self.loadPinnedHosts()
+        // History is unavailable until a store is injected; otherwise it begins idle
+        // and loads lazily on the first refresh.
+        historyAvailability = sessionStore == nil ? .unavailable : .idle
         refreshSavedCaptures()
         // Before any destructive/privileged helper op (force reset), stop active
         // capture and invalidate polling so nothing keeps touching a helper that
@@ -63,13 +74,6 @@ final class MainContentCoordinator {
     static let forceDirectCapture: Bool =
         ProcessInfo.processInfo.environment["TRACEXY_DIRECT_CAPTURE"] == "1"
             || CommandLine.arguments.contains("--direct-capture")
-
-    /// Severity-ranked findings for the Overview panel, derived only from real
-    /// decoded signals (status, plaintext-HTTP, empty DNS answers, high latency) —
-    /// never a fabricated anomaly. Sorted error→warning→note; stable within a rank.
-    /// Cap on findings built per pass — bounds the Overview findings array under
-    /// a huge (100k+) capture.
-    static let maxFindings = 1_000
 
     /// Most recent sessions considered for correlation. Keeps grouping cost
     /// bounded on a long-running capture.
@@ -116,7 +120,7 @@ final class MainContentCoordinator {
     private(set) var activities: [Activity] = []
 
     /// Rolling real-time throughput samples (bytes/sec), for the live chart.
-    private(set) var throughputSamples: [ThroughputSample] = []
+    var throughputSamples: [ThroughputSample] = []
 
     // MARK: Capture state
 
@@ -146,7 +150,7 @@ final class MainContentCoordinator {
     /// stage — reported separately from kernel/interface loss (`captureStatistics`)
     /// and from local retention eviction below, because they are different stages
     /// and conflating them would misstate where fidelity was lost.
-    private(set) var helperBufferDropCount: UInt64 = 0
+    var helperBufferDropCount: UInt64 = 0
 
     /// This Mac's primary IPv4, discovered once at launch (no hardcoded IP).
     let localIPv4: String?
@@ -168,20 +172,121 @@ final class MainContentCoordinator {
     /// truthfully (name, format, size, provenance) instead of guessing. Cleared at
     /// every live/new/clear boundary so a stale file identity can never outlive the
     /// capture it described.
-    private(set) var activeSavedCapture: SavedCapture?
+    var activeSavedCapture: SavedCapture?
 
     /// Bounded, deterministic frames-over-time aggregation for the open saved
     /// capture, computed once at open/import and cached here. `nil` for live and
     /// idle captures. Derived from real frame timestamps/lengths behind this seam,
     /// so the Overview chart draws from per-bucket totals and never re-scans frames
     /// or receives packet bytes.
-    private(set) var savedCaptureActivity: CaptureActivity?
+    var savedCaptureActivity: CaptureActivity?
+
+    /// Saved-file opening is an off-main, final-only transaction. The previous
+    /// workspace remains intact while this is true; only monotonic byte progress
+    /// crosses back to the UI before the immutable result is adopted.
+    var isOpeningSavedCapture = false
+    var savedCaptureOpenProgress: PcapStreamProgress?
+    /// A successfully recovered truncated tail is usable, but must remain visibly
+    /// distinct from a clean file.
+    var savedCaptureWarning: String?
+
+    /// At most one saved session's representative bytes are resident outside the
+    /// bounded raw tail. They are loaded lazily from the selected file offset.
+    var selectedSessionEvidenceBytes: [UInt8] = []
+    var isLoadingSelectedSessionEvidence = false
+    var selectedSessionEvidenceError: String?
+
+    // Saved-open/evidence task state is kept here so the separate activation
+    // extension can own the workflow without weakening the coordinator's actor
+    // boundary. Request IDs retire every late progress/result callback.
+    var savedCaptureOpenRequestID = 0
+    var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
+    var savedCaptureBoundaryTask: Task<Void, Never>?
+    var savedCaptureOpenTask: Task<Void, Never>?
+    var savedCaptureEvidence: [UUID: CaptureEvidenceReference] = [:]
+    var savedCaptureEvidenceURL: URL?
+    var selectedSessionEvidenceID: UUID?
+    var selectedSessionEvidenceRequestID = 0
+    var selectedSessionEvidenceTask: Task<Void, Never>?
+
+    /// Explicit, selection-scoped Follow Stream state. Raw application bytes enter
+    /// coordinator memory only after the user requests this operation and are
+    /// retired at every selection/capture/source boundary.
+    var followStreamResult: FollowStreamResult?
+    var followStreamProgress: PcapStreamProgress?
+    var followStreamError: String?
+    var isLoadingFollowStream = false
+    var followStreamRequestID = 0
+    var followStreamTask: Task<Void, Never>?
+    /// A stopped live spool is safe to copy only after its exact final ingest and
+    /// publication boundary has completed for this generation.
+    var stoppedCaptureReadyGeneration: Int?
 
     /// Link type of the current capture, needed for faithful decode and capture-file export.
     var currentLinkType: UInt32 = LinkType.ethernet
 
     /// Shared privileged-helper manager (install/version/update/uninstall).
     let helper = HelperClient.shared
+
+    // MARK: Terminal history persistence
+
+    /// The injected terminal-history store, or `nil` when no persistent database
+    /// is composed (all unit tests, and any production launch where the factory
+    /// could not open one). It is written to exactly once per terminated live or
+    /// opened saved capture; it is never on the live 0.8-second publication path.
+    let sessionStore: SessionStore?
+
+    /// Durable identity of the *running* live capture, minted once on confirmed
+    /// backend start. It is never keyed on the capture generation (which repeats
+    /// across launches). Cleared/retired at every clear/new/start boundary and
+    /// frozen at stop.
+    var liveHistoryLifetime: LiveHistoryLifetime?
+
+    /// The frozen terminal inputs captured at stop *before* the UI timer is
+    /// cleared, so the terminal hook never reads the already-cleared
+    /// ``captureStartedAt``. Consumed by the exact stopped generation.
+    var frozenHistoryLifetime: FrozenHistoryLifetime?
+
+    /// Terminal generations (live) and saved-open request IDs whose History write
+    /// has already been scheduled, so a duplicate/stale terminal callback cannot
+    /// schedule a second write for the same capture.
+    var scheduledHistoryTerminals: Set<HistoryTerminalToken> = []
+
+    /// A recoverable, History-specific error from a failed projection/write or
+    /// read. It is deliberately distinct from ``captureError``: a History failure
+    /// never stops capture, replaces sessions, or claims success.
+    var historyError: String?
+
+    /// The bounded read model's coarse availability, distinguishable between
+    /// unavailable (no store), idle, loading, loaded (possibly empty) and failed.
+    var historyAvailability: HistoryAvailability = .unavailable
+
+    /// The newest-first captures loaded so far, and the cursor to resume after
+    /// them (`nil` when the last page was not full).
+    var historyCaptures: [HistoryStoredCapture] = []
+    var historyCaptureCursor: HistoryCaptureCursor?
+
+    /// The currently selected History capture and its ordinal-ascending session
+    /// page state.
+    var selectedHistoryCaptureID: UUID?
+    var historySessions: [HistorySessionRecord] = []
+    var historySessionCursor: HistorySessionCursor?
+    var historySessionsAvailability: HistoryAvailability = .idle
+
+    /// Retires late History read callbacks. Every refresh/clear bumps this so a
+    /// superseded capture page can never overwrite newer read-model state.
+    var historyRequestID = 0
+    var historyTask: Task<Void, Never>?
+    /// Independent staleness guard/handle for the selected capture's session page,
+    /// so selecting a capture never cancels capture-list paging and vice versa.
+    var historySessionRequestID = 0
+    var historySessionTask: Task<Void, Never>?
+    /// At most one terminal write may be scheduled per capture; this handle lets
+    /// tests await the exact write without timing sleeps.
+    var historyWriteTask: Task<Void, Never>?
+    /// Identifies the tail of the serialized terminal-write chain. Only the tail
+    /// may clear the handle and refresh the read model.
+    var historyWriteRequestID = 0
 
     // MARK: Focus Sets
 
@@ -227,6 +332,53 @@ final class MainContentCoordinator {
     /// save/export reads the disk-backed spool instead.
     var retainedFrames = RetainedFrameBuffer(capacity: MainContentCoordinator.retainedFrameLimit)
 
+    var pendingChartBytes = 0
+    /// Bumped every time a start attempt begins or ends. A late helper reply or a
+    /// start watchdog compares its captured token against this so a stale callback
+    /// from an abandoned attempt can't revive `isCapturing`/`isStarting`.
+    var startGeneration = 0
+
+    /// The immutable passive connection-table snapshot for the current capture,
+    /// published in lock-step with ``sessions`` behind the same generation guard.
+    ///
+    /// Non-visual in this package: no View reads or displays it. It is additive
+    /// evidence adopted alongside the session summaries and reset to an empty
+    /// snapshot at every capture boundary so stale connection state can never
+    /// outlive the capture it described.
+    private(set) var connectionSnapshot = ConnectionTable.Snapshot.empty
+
+    /// The immutable passive connection *analysis* for the current capture,
+    /// published in lock-step with ``connectionSnapshot`` and ``sessions`` behind
+    /// the same generation guard, and only ever through ``adoptInvestigation``.
+    ///
+    /// Non-visual in this package: no View reads or displays it. It is the exact
+    /// N3A2a assessment of ``connectionSnapshot`` — never re-derived on the main
+    /// actor — adopted alongside the session summaries and reset to the empty
+    /// analysis at every capture boundary so stale findings can never outlive the
+    /// capture they described.
+    private(set) var connectionAnalysisSnapshot = ConnectionAnalysisSnapshot.empty
+
+    /// The immutable passive *datagram* analysis for the current capture, published
+    /// in lock-step with ``connectionAnalysisSnapshot``, ``connectionSnapshot`` and
+    /// ``sessions`` behind the same generation guard, and only ever through
+    /// ``adoptInvestigation``.
+    ///
+    /// Non-visual in this package: no View reads or displays it. It is the exact
+    /// N3B3a assessment of the same fold's datagram evidence — never re-derived on
+    /// the main actor — adopted alongside the connection evidence/analysis and reset
+    /// to the empty analysis at every capture boundary so stale findings can never
+    /// outlive the capture they described.
+    private(set) var datagramAnalysisSnapshot = DatagramAnalysisSnapshot.empty
+
+    /// The complete immutable query input matching the currently published sessions
+    /// and analyses. Live publication replaces its sessions only with the process-
+    /// attributed copies shown by the UI; every evidence projection remains verbatim.
+    private(set) var investigationSnapshot = InvestigationSnapshot.empty
+
+    /// At most one off-main query evaluation per workspace. Superseding Apply/live
+    /// refresh and capture boundaries cancel the prior task before issuing a new request.
+    var investigationQueryTasks: [UUID: Task<Void, Never>] = [:]
+
     /// Cumulative frames evicted from the local in-memory inspection window. This
     /// is a UI memory bound, never kernel/interface loss; sessions and the complete
     /// disk-backed save/export spool are unaffected.
@@ -256,7 +408,7 @@ final class MainContentCoordinator {
     }
 
     /// All sessions decoded from the current capture's real frames.
-    private(set) var sessions: [SessionSummary] = [] {
+    var sessions: [SessionSummary] = [] {
         didSet { rebuildActivities() }
     }
 
@@ -266,54 +418,7 @@ final class MainContentCoordinator {
 
     /// Sessions visible in the active workspace, after sidebar + pill + text filtering.
     var visibleSessions: [SessionSummary] {
-        let ws = activeWorkspace
-        let protocolFilter = ws.sidebarSelection.protocolFilter
-        let categories = ws.categoryFilters
-        // A disabled search keeps its text but stops constraining the list.
-        let query = ws.isSearchActive
-            ? ws.filterText.trimmingCharacters(in: .whitespaces).lowercased()
-            : ""
-        let searchField = ws.searchField
-        let advancedRules = ws.activeFilterRules
-        // Compile the advanced rules' regex patterns once for the whole pass,
-        // not once per session.
-        let preparedRules = SessionFilterRuleEvaluator.prepared(advancedRules)
-
-        return presentedSessions.filter { session in
-            // Noise Control (sidebar Focus) hides muted hosts/protocols everywhere.
-            if mutedHosts.contains(session.host) {
-                return false
-            }
-            if mutedProtocols.contains(session.primaryProtocol) {
-                return false
-            }
-            if let proto = protocolFilter, !session.protocolStack.contains(proto) {
-                return false
-            }
-            if !Self.categoryFilterMatches(session, categories: categories) {
-                return false
-            }
-            if let host = ws.hostFilter, session.host != host {
-                return false
-            }
-            if let process = ws.processFilter, (session.processName ?? "—") != process {
-                return false
-            }
-            if let ip = ws.ipFilter,
-               !session.sourceEndpoint.contains(ip), !session.destinationEndpoint.contains(ip),
-               !session.dnsAnswers.contains(ip)
-            {
-                return false
-            }
-            if !query.isEmpty, !searchField.haystack(in: session).contains(query) {
-                return false
-            }
-            // Advanced rule builder: AND/OR rows, applied on top of everything above.
-            if !advancedRules.isEmpty, !preparedRules.matches(session) {
-                return false
-            }
-            return true
-        }
+        visibleSessions(in: activeWorkspace)
     }
 
     var selectedSession: SessionSummary? {
@@ -333,57 +438,26 @@ final class MainContentCoordinator {
         presentedSessions.filter { $0.status == .warning }.count
     }
 
-    /// Severity-ranked findings across the whole capture, derived only from real
-    /// decoded signals (status, plaintext HTTP, empty DNS answers, high DNS
-    /// response time). The Overview scopes these to the active filter before
-    /// display, so a filtered list and its findings summary never disagree.
+    /// Severity-ranked UI projections of the accepted Core analysis snapshots.
+    /// This layer adds fixed copy and session navigation only; it never re-derives
+    /// policy from session status, protocol presence, DNS answers or latency.
     var findings: [Finding] {
+        let presented = presentedSessions
+        let presentedIDs = Set(presented.map(\.id))
+        let hostBySessionID = Dictionary(uniqueKeysWithValues: presented.map { ($0.id, $0.host) })
         var result: [Finding] = []
-        for session in presentedSessions {
-            if result.count >= Self.maxFindings {
-                break
+        for finding in connectionAnalysisSnapshot.findings {
+            let sessionID = SessionBuilder.sessionID(for: finding.tuple)
+            guard presentedIDs.contains(sessionID), let host = hostBySessionID[sessionID] else {
+                continue
             }
-            switch session.status {
-            case .error:
-                result.append(Finding(
-                    severity: .error, title: session.host, subtitle: session.infoSummary, sessionID: session.id
-                ))
-            case .warning:
-                result.append(Finding(
-                    severity: .warning, title: session.host, subtitle: session.infoSummary, sessionID: session.id
-                ))
-            case .ok:
-                break
+            result.append(Finding(finding, host: host))
+        }
+        for finding in datagramAnalysisSnapshot.findings {
+            guard presentedIDs.contains(finding.sessionID), let host = hostBySessionID[finding.sessionID] else {
+                continue
             }
-            if session.protocolStack.contains(.http), !session.protocolStack.contains(.tls) {
-                // State only the decoded fact — the traffic was unencrypted.
-                // We decode the plaintext HTTP; we do not observe that any
-                // credentials or PII were actually present, so the copy must
-                // not claim they were exposed.
-                result.append(Finding(
-                    severity: .warning,
-                    title: "Plaintext HTTP",
-                    subtitle: "Unencrypted HTTP traffic to \(session.host)",
-                    sessionID: session.id
-                ))
-            }
-            if let query = session.dnsQuery, !query.isEmpty, session.dnsAnswers.isEmpty {
-                result.append(Finding(
-                    severity: .note, title: "DNS returned no answer", subtitle: query, sessionID: session.id
-                ))
-            }
-            if let latency = session.latencyMilliseconds, latency > 400 {
-                // `latencyMilliseconds` is the DNS query→response time only (see
-                // `SessionAccumulator`), so the finding names that specifically
-                // rather than claiming a general network-latency figure we do not
-                // measure.
-                result.append(Finding(
-                    severity: .note,
-                    title: "High DNS response time",
-                    subtitle: "\(Int(latency)) ms to resolve \(session.host)",
-                    sessionID: session.id
-                ))
-            }
+            result.append(Finding(finding, host: host))
         }
         // Stable sort: worst severity first, insertion order preserved within a rank.
         return result.enumerated()
@@ -393,6 +467,12 @@ final class MainContentCoordinator {
                     : lhs.element.severity.rawValue < rhs.element.severity.rawValue
             }
             .map(\.element)
+    }
+
+    /// Exact session membership of the current typed findings. Quick filtering
+    /// consumes this set instead of duplicating analysis rules over summaries.
+    var findingSessionIDs: Set<UUID> {
+        Set(findings.map(\.sessionID))
     }
 
     /// Unique processes with session counts, for the sidebar "All" group.
@@ -471,6 +551,22 @@ final class MainContentCoordinator {
             return "idle — press Start to capture"
         }
         return "\(presentedSessions.count.formatted()) sessions"
+    }
+
+    /// The immutable settings the running/starting capture actually adopted, or
+    /// the freshly resolved next-start settings while stopped. The readiness
+    /// popover uses this seam so changing Settings mid-capture never rewrites the
+    /// truth about the active source.
+    var readinessCaptureConfiguration: CaptureConfiguration {
+        activeCaptureConfiguration
+            ?? CaptureSettingsResolver.configuration(interface: captureInterface)
+    }
+
+    var readinessRetentionCapacity: Int {
+        if isCapturing || isStarting {
+            return retainedFrames.capacity
+        }
+        return CaptureSettingsResolver.retainCapacity()
     }
 
     // MARK: Aggregate rollups (status bar)
@@ -655,8 +751,32 @@ final class MainContentCoordinator {
     }
 
     func select(_ session: SessionSummary) {
+        cancelFollowStream(clearResult: true)
         activeWorkspace.selectedSessionID = session.id
+        loadSelectedSavedCaptureEvidence()
         revealPanelsForSelection()
+    }
+
+    /// Saved-opening activation is split into its own file, while the engine
+    /// reset implementation remains private to this file's live pipeline.
+    func resetSessionEngineForSavedCapture(token: Int) {
+        resetSessionEngine(token: token)
+    }
+
+    /// The only cross-file mutation seam for published investigation state. It adopts
+    /// the complete immutable snapshot, projects the existing analysis properties and
+    /// refreshes only accepted capture-local queries, so sessions/evidence/results can
+    /// never drift across a publication boundary.
+    ///
+    /// Both analyses are passed in pre-assessed (off the main actor, from a saved
+    /// load result or a live ``InvestigationSnapshot``); this seam never runs an
+    /// assessor itself.
+    func adoptInvestigation(_ snapshot: InvestigationSnapshot) {
+        investigationSnapshot = snapshot
+        connectionSnapshot = snapshot.connections
+        connectionAnalysisSnapshot = snapshot.connectionAnalysis
+        datagramAnalysisSnapshot = snapshot.datagramAnalysis
+        refreshActiveInvestigationQueries()
     }
 
     // MARK: Search
@@ -741,92 +861,6 @@ final class MainContentCoordinator {
         UserDefaults.standard.set(pinnedHosts, forKey: Self.pinnedHostsKey)
     }
 
-    /// Loads a saved `.pcap`/`.pcapng` into the session list (read-only) and stops live.
-    func openSavedCapture(_ capture: SavedCapture) {
-        do {
-            let parsed = try CaptureFileReader.read(contentsOf: capture.url)
-            if isCapturing {
-                stopCapture()
-            }
-            // Supersede any in-flight live engine work and clear its state so a
-            // late snapshot can't overwrite the file being opened.
-            startGeneration &+= 1
-            resetSessionEngine(token: startGeneration)
-            currentLinkType = parsed.linkType
-            // A savefile carries no kernel accounting: whatever loss happened
-            // during the original capture is not recoverable from the file, so
-            // the fidelity figure must read as unknown rather than perfect. The
-            // helper-buffer and local-retention counters are live-only, so they
-            // reset to zero for a static file too. The file is shown in full —
-            // `replace` bypasses the live retention bound and zeroes its count.
-            captureStatistics = nil
-            helperBufferDropCount = 0
-            retainedFrames.replace(with: parsed.frames)
-            removedSessionIDs.removeAll()
-            sessions = SessionBuilder.build(from: parsed.frames, linkType: parsed.linkType)
-            isViewingSavedCapture = true
-            // Remember which file this is and aggregate its activity once, here at
-            // the open boundary, so the Overview can label the file truthfully and
-            // draw its frames-over-time chart without re-scanning frames on every
-            // body update.
-            activeSavedCapture = capture
-            savedCaptureActivity = CaptureActivityBuilder.build(frames: parsed.frames)
-            captureError = nil
-            activeWorkspace.selectedSessionID = nil
-            selectSidebarItem(.sessions)
-        } catch {
-            captureError = "Couldn’t open “\(capture.name)”: \(error.localizedDescription)"
-        }
-    }
-
-    /// Imports an external `.pcap` file into the captures folder and opens it.
-    ///
-    /// Lossless and idempotent: a source that is already the managed file is
-    /// refreshed and reopened in place, and a name collision with a different
-    /// external file replaces the old copy only after the new one is fully
-    /// staged, so a failed import never destroys existing capture data.
-    func importCapture(from source: URL) {
-        guard let directory = Self.capturesDirectory() else {
-            return
-        }
-        let destination: URL
-        do {
-            destination = try CaptureImporter.importCapture(from: source, intoDirectory: directory)
-        } catch {
-            captureError = "Couldn’t import “\(source.lastPathComponent)”: \(error.localizedDescription)"
-            return
-        }
-        refreshSavedCaptures()
-        if let imported = savedCaptures.first(where: { $0.url == destination }) {
-            openSavedCapture(imported)
-        }
-    }
-
-    /// Rescans the captures folder and rebuilds `savedCaptures`, newest first.
-    func refreshSavedCaptures() {
-        guard let directory = Self.capturesDirectory(),
-              let urls = try? FileManager.default.contentsOfDirectory(
-                  at: directory,
-                  includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
-              ) else
-        {
-            savedCaptures = []
-            return
-        }
-        savedCaptures = urls
-            .filter { ["pcap", "pcapng"].contains($0.pathExtension.lowercased()) }
-            .map { url in
-                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-                return SavedCapture(
-                    url: url,
-                    name: url.deletingPathExtension().lastPathComponent,
-                    date: values?.contentModificationDate ?? .distantPast,
-                    byteCount: values?.fileSize ?? 0
-                )
-            }
-            .sorted { $0.date > $1.date }
-    }
-
     /// Bottom evidence inspector. Hiding it by hand also cancels the automatic
     /// reveal — a panel the user dismissed must not reappear on the next
     /// selection.
@@ -886,6 +920,8 @@ final class MainContentCoordinator {
 
     /// Clears all captured sessions (status-bar "Clear").
     func clearSessions() {
+        cancelFollowStream(clearResult: true)
+        cancelSavedCaptureOpen(clearPublishedEvidence: true)
         // Supersede any in-flight engine work so a late snapshot can't repopulate
         // the list after a clear, and zero the accounting counters.
         startGeneration &+= 1
@@ -895,12 +931,27 @@ final class MainContentCoordinator {
         retainedFrames.reset()
         removedSessionIDs.removeAll()
         sessions = []
+        // Clear connection + analysis publication at the boundary so a late
+        // generation can never revive any of them alongside the cleared sessions.
+        clearAllInvestigationQueries()
+        adoptInvestigation(.empty)
         throughputSamples = []
         pendingChartBytes = 0
         isViewingSavedCapture = false
         activeSavedCapture = nil
         savedCaptureActivity = nil
-        activeWorkspace.selectedSessionID = nil
+        savedCaptureWarning = nil
+        stoppedCaptureReadyGeneration = nil
+        // Clearing discards the pre-clear lifetime but does not stop an active
+        // backend. Start a fresh lifetime for the post-clear engine generation so
+        // its eventual terminal snapshot can still enter History.
+        retireLiveHistoryLifetime()
+        if isCapturing {
+            beginLiveHistoryLifetime(captureGeneration: startGeneration)
+        }
+        for workspace in workspaces.workspaces {
+            workspace.selectedSessionID = nil
+        }
     }
 
     /// Inserts or updates a focus set (used by the editor sheet), then persists.
@@ -1004,6 +1055,8 @@ final class MainContentCoordinator {
         guard !isStarting else {
             return
         }
+        cancelFollowStream(clearResult: true)
+        cancelSavedCaptureOpen(clearPublishedEvidence: true)
         // Read the current Capture-Settings preferences fresh at each start and map
         // them to a validated, bounded configuration (interface, snap length,
         // promiscuous mode, optional BPF). An invalid custom filter — or any
@@ -1025,6 +1078,11 @@ final class MainContentCoordinator {
         isViewingSavedCapture = false
         activeSavedCapture = nil
         savedCaptureActivity = nil
+        savedCaptureWarning = nil
+        stoppedCaptureReadyGeneration = nil
+        // New capture boundary: retire any stale live/frozen History identity so a
+        // superseded lifetime can never be persisted against this generation.
+        retireLiveHistoryLifetime()
         // Size the in-memory inspection window from the configured
         // "Retain up to" preference, resetting it to a clean, zeroed window. This
         // bounds memory only — sessions accumulate independently (see
@@ -1032,6 +1090,10 @@ final class MainContentCoordinator {
         retainedFrames = RetainedFrameBuffer(capacity: CaptureSettingsResolver.retainCapacity())
         removedSessionIDs.removeAll()
         sessions = []
+        // Clear stale connection + analysis publication at the start boundary
+        // before any new capture work can publish over it.
+        clearAllInvestigationQueries()
+        adoptInvestigation(.empty)
         throughputSamples = []
         pendingChartBytes = 0
         lastSessionsUpdate = .distantPast
@@ -1110,10 +1172,10 @@ final class MainContentCoordinator {
         visibleSessions.filter { $0.protocolStack.contains(proto) }.count
     }
 
-    /// Whether a session matches a single quick-filter chip. Delegates to the
-    /// pure ``categoryMatches(_:category:)`` so the decision lives in one place.
+    /// Whether a session matches a single quick-filter chip. Finding membership
+    /// comes from the already-published Core snapshots, not summary heuristics.
     func matches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        Self.categoryMatches(session, category: category)
+        Self.categoryMatches(session, category: category, findingSessionIDs: findingSessionIDs)
     }
 
     // MARK: Private
@@ -1134,7 +1196,6 @@ final class MainContentCoordinator {
     /// exactly once, so the main actor never re-decodes retained history.
     private let sessionEngine = LiveSessionEngine()
     private var lastSessionsUpdate = Date.distantPast
-    private var pendingChartBytes = 0
 
     /// The validated configuration for the capture currently starting/running,
     /// built from the live Capture-Settings preferences at ``startCapture()`` and
@@ -1142,10 +1203,6 @@ final class MainContentCoordinator {
     private var activeCaptureConfiguration: CaptureConfiguration?
 
     private var pollTimer: Timer?
-    /// Bumped every time a start attempt begins or ends. A late helper reply or a
-    /// start watchdog compares its captured token against this so a stale callback
-    /// from an abandoned attempt can't revive `isCapturing`/`isStarting`.
-    private var startGeneration = 0
     /// At most one helper frame-drain request may be outstanding. Without this
     /// guard, a wedged helper would accumulate a new XPC request every 350 ms.
     private var helperFetchInFlight = false
@@ -1198,7 +1255,9 @@ final class MainContentCoordinator {
         let stoppedToken = startGeneration
         helperFetchGeneration &+= 1
         helperFetchInFlight = false
+        var awaitsHelperStopReply = false
         if !Self.forceDirectCapture, let proxy = try? helper.proxy() {
+            awaitsHelperStopReply = true
             proxy.stopCapture { [weak self] batch in
                 // The helper worker has now finished its read loop, sampled final
                 // pcap_stats, flushed its last frames, and closed its own handle.
@@ -1219,6 +1278,7 @@ final class MainContentCoordinator {
                         let detail = "The capture helper returned \(rejectedFrameCount) frame(s) with invalid metadata."
                         self.helper.recordRuntimeConnectionFailure(detail)
                         self.captureError = detail
+                        self.queuePendingSavedCaptureOpenAfterCurrentIngest()
                         return
                     }
                     self.helperBufferDropCount = batch.bufferDroppedCount
@@ -1231,11 +1291,34 @@ final class MainContentCoordinator {
                     )
                 }
             }
+            if let pendingRequest = pendingSavedCaptureOpen {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard let self,
+                          self.pendingSavedCaptureOpen?.id == pendingRequest.id,
+                          self.savedCaptureOpenRequestID == pendingRequest.id,
+                          self.startGeneration == stoppedToken else
+                    {
+                        return
+                    }
+                    self.captureError = "Couldn’t open “\(pendingRequest.capture.name)” because the capture helper "
+                        + "didn’t finish its final drain. Recover the helper in Settings, then try again."
+                    self.cancelSavedCaptureOpen(clearPublishedEvidence: false)
+                }
+            }
         }
+        // Freeze the durable History identity for this exact stopped generation
+        // *before* clearing the UI timer below: the terminal hook must never read
+        // the cleared `captureStartedAt`. A capture that never confirmed start has
+        // no live lifetime, so nothing is frozen and no History is created.
+        freezeLiveHistoryLifetime(captureGeneration: captureToken, stoppedGeneration: stoppedToken)
         live?.stop()
         isCapturing = false
         isStarting = false
         captureStartedAt = nil
+        if !awaitsHelperStopReply {
+            publishStoppedSnapshotAfterCurrentIngest(captureToken: captureToken, stoppedToken: stoppedToken)
+        }
     }
 
     /// Groups sessions by an attribute read straight off them, in first-seen
@@ -1333,6 +1416,9 @@ private extension MainContentCoordinator {
                         self.isCapturing = true
                         self.isStarting = false
                         self.captureStartedAt = Date()
+                        // Confirmed backend start: mint one durable History identity
+                        // for this generation. A failed start never reaches here.
+                        self.beginLiveHistoryLifetime(captureGeneration: token)
                         self.startPolling()
                     } else {
                         self.handleCaptureError("helper: \(message)")
@@ -1501,6 +1587,8 @@ private extension MainContentCoordinator {
         isStarting = false
         captureStartedAt = Date()
         captureStatistics = nil
+        // Confirmed direct backend start: mint one durable History identity.
+        beginLiveHistoryLifetime(captureGeneration: startGeneration)
     }
 
     private func ingest(_ frames: [CapturedFrame], linkType: UInt32) {
@@ -1523,6 +1611,11 @@ private extension MainContentCoordinator {
             lastSessionsUpdate = now
         }
 
+        // Snapshot capture-loss knowledge on the main actor before enqueueing, so
+        // the value folded into the connection provenance reflects the accounting
+        // observed for this batch (never a later one, never UI-retention eviction).
+        let loss = currentCaptureLoss
+
         // Hand decode/group to the engine actor (off-main), chained so batches
         // fold in arrival order. Snapshots are guarded by the capture generation
         // so a late result from a superseded capture can never overwrite newer
@@ -1531,8 +1624,17 @@ private extension MainContentCoordinator {
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
+            // Append to the spool before engine ingest. Only a successful current
+            // append yields locators; a stale result or a failure offers the frames
+            // to the engine with nil locators so evidence failure never silently
+            // deletes session/connection observations.
+            var locators: [SessionEvidenceLocator]?
             do {
-                try await self.liveCaptureSpool.append(frames, defaultLinkType: linkType, epoch: token)
+                if case let .appended(appended) = try await self.liveCaptureSpool.append(
+                    frames, defaultLinkType: linkType, epoch: token
+                ) {
+                    locators = appended
+                }
             } catch {
                 self.captureError = "Capture stopped: the local spool failed — \(error.localizedDescription). "
                     + "Frames written before the failure remain available to save."
@@ -1540,15 +1642,17 @@ private extension MainContentCoordinator {
                     self.stopCapture()
                 }
             }
-            await self.sessionEngine.ingest(frames, linkType: linkType, epoch: token)
+            await self.sessionEngine.ingest(
+                frames, linkType: linkType, epoch: token, locators: locators, loss: loss
+            )
             guard shouldSnapshot,
                   self.startGeneration == token,
                   self.isCapturing,
-                  let snapshot = await self.sessionEngine.snapshot(epoch: token) else
+                  let snapshot = await self.sessionEngine.investigationSnapshot(epoch: token) else
             {
                 return
             }
-            self.publishLiveSessions(snapshot, expectedGeneration: token, isCapturing: true)
+            self.publishLiveDetailed(snapshot, expectedGeneration: token, isCapturing: true)
         }
     }
 
@@ -1564,31 +1668,72 @@ private extension MainContentCoordinator {
     ) {
         currentLinkType = linkType
         appendRetainedFrames(frames)
+        // Snapshot loss on the main actor before enqueueing, matching the live path.
+        let loss = currentCaptureLoss
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
+            var locators: [SessionEvidenceLocator]?
             do {
-                try await self.liveCaptureSpool.append(
+                if case let .appended(appended) = try await self.liveCaptureSpool.append(
                     frames,
                     defaultLinkType: linkType,
                     epoch: captureToken
-                )
+                ) {
+                    locators = appended
+                }
             } catch {
                 self.captureError = "Capture stopped: the local spool failed — \(error.localizedDescription). "
                     + "Frames written before the failure remain available to save."
             }
-            await self.sessionEngine.ingest(frames, linkType: linkType, epoch: captureToken)
-            guard self.startGeneration == stoppedToken,
-                  !self.isCapturing,
-                  let snapshot = await self.sessionEngine.snapshot(epoch: captureToken) else
-            {
-                return
-            }
-            self.publishLiveSessions(
-                snapshot,
-                expectedGeneration: stoppedToken,
-                isCapturing: false
+            await self.sessionEngine.ingest(
+                frames, linkType: linkType, epoch: captureToken, locators: locators, loss: loss
             )
+            if self.startGeneration == stoppedToken,
+               !self.isCapturing,
+               let snapshot = await self.sessionEngine.investigationSnapshot(epoch: captureToken)
+            {
+                let spoolIncomplete = await self.liveCaptureSpool.incompletenessReason() != nil
+                let completeness: HistoryCompleteness = self.currentCaptureLoss == .lossReported || spoolIncomplete
+                    ? .incomplete
+                    : .complete
+                self.publishLiveDetailed(
+                    snapshot,
+                    expectedGeneration: stoppedToken,
+                    isCapturing: false,
+                    terminalHistoryCompleteness: completeness
+                )
+            }
+            self.resumePendingSavedCaptureOpenAfterLiveDrain()
+        }
+    }
+
+    /// Publish the complete stopped snapshot for a direct capture (or a helper
+    /// stop that could not obtain a final reply) after every already-enqueued
+    /// batch has folded. Stop advances the coordinator generation immediately,
+    /// so ordinary coalesced live publications intentionally fail their old-token
+    /// guard; this final hop uses the old engine epoch for the snapshot and the
+    /// new stopped token for publication, matching the helper final-drain path.
+    private func publishStoppedSnapshotAfterCurrentIngest(captureToken: Int, stoppedToken: Int) {
+        let previous = ingestChain
+        ingestChain = Task { @MainActor in
+            await previous?.value
+            if self.startGeneration == stoppedToken,
+               !self.isCapturing,
+               let snapshot = await self.sessionEngine.investigationSnapshot(epoch: captureToken)
+            {
+                let spoolIncomplete = await self.liveCaptureSpool.incompletenessReason() != nil
+                let completeness: HistoryCompleteness = self.currentCaptureLoss == .lossReported || spoolIncomplete
+                    ? .incomplete
+                    : .complete
+                self.publishLiveDetailed(
+                    snapshot,
+                    expectedGeneration: stoppedToken,
+                    isCapturing: false,
+                    terminalHistoryCompleteness: completeness
+                )
+            }
+            self.resumePendingSavedCaptureOpenAfterLiveDrain()
         }
     }
 
@@ -1600,53 +1745,10 @@ private extension MainContentCoordinator {
         retainedFrames.append(contentsOf: frames)
     }
 
-    /// Enrich an engine snapshot with app-side process attribution and publish it
-    /// to `sessions` on the next runloop turn.
-    ///
-    /// Process attribution stays here (main actor, off the decode/group path):
-    /// it reads the local socket table, which is an app concern, not the engine's.
-    /// The assignment hops one runloop turn so it can't reload an `NSTableView`
-    /// reentrantly from inside a click currently being handled, and it re-checks
-    /// the capture generation so a stale enrichment can't revive old state.
-    private func publishLiveSessions(
-        _ snapshot: [SessionSummary],
-        expectedGeneration: Int,
-        isCapturing expectedCaptureState: Bool
-    ) {
-        ProcessResolver.shared.refresh()
-        var built = snapshot
-        for index in built.indices where built[index].processName == nil {
-            if let app = ProcessResolver.shared.appName(
-                forEndpoints: built[index].sourceEndpoint, built[index].destinationEndpoint
-            ) {
-                built[index].processName = app
-            }
-        }
-        let applied = built
-        Task { @MainActor in
-            guard self.startGeneration == expectedGeneration,
-                  self.isCapturing == expectedCaptureState else
-            {
-                return
-            }
-            self.sessions = applied
-            if self.activeWorkspace.autoSelectLatest,
-               // Newest by timestamp, tie-broken by id so the choice never depends
-               // on the array's (first-seen) order.
-               let latest = applied.lazy.filter({ !self.removedSessionIDs.contains($0.id) }).max(by: {
-                   ($0.startTime, $0.id.uuidString) < ($1.startTime, $1.id.uuidString)
-               }),
-               self.activeWorkspace.selectedSessionID != latest.id
-            {
-                self.activeWorkspace.selectedSessionID = latest.id
-            }
-        }
-    }
-
     /// Clears the engine and adopts a new capture generation. Enqueued on the
     /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
     /// work carries the previous token and is dropped by the engine's epoch guard.
-    private func resetSessionEngine(token: Int) {
+    func resetSessionEngine(token: Int) {
         let engine = sessionEngine
         let spool = liveCaptureSpool
         let previous = ingestChain
@@ -1707,7 +1809,7 @@ enum CaptureDisplayState {
 // MARK: - SavedCapture
 
 /// One saved `.pcap` or `.pcapng` file on disk, listed under the sidebar's "Saved Captures".
-struct SavedCapture: Identifiable, Hashable {
+struct SavedCapture: Identifiable, Hashable, Sendable {
     let url: URL
     let name: String
     let date: Date

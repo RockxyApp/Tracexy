@@ -384,7 +384,11 @@ nonisolated enum SessionExporter {
 /// (`inet_pton`) rather than a broad regex, so ordinary hostnames are never
 /// corrupted. Malformed or unknown input is handled totally — it is simply left
 /// unchanged. No network calls, no hashing of sensitive input.
-private enum PrivacyMask {
+///
+/// Kept module-internal (not `private`) so terminal-history projection can apply
+/// byte-for-byte identical host/endpoint masking to the neutral summaries it
+/// persists, rather than reimplementing the same semantics.
+nonisolated enum PrivacyMask {
     // MARK: Internal
 
     /// The honest, fixed stand-in written wherever an address is removed.

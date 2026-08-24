@@ -44,6 +44,17 @@ enum SettingsKeys {
     }
 }
 
+// MARK: - SettingsTab
+
+enum SettingsTab: String, CaseIterable {
+    case general
+    case capture
+    case helper
+    case privacy
+    case mcp
+    case updates
+}
+
 // MARK: - AppAppearance
 
 /// The user's appearance preference, applied app-wide via `.preferredColorScheme`.

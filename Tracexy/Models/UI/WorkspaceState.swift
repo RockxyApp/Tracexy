@@ -80,9 +80,25 @@ final class WorkspaceState: Identifiable {
     /// Whether the advanced rule builder is revealed below the category tabs.
     var isAdvancedFilterVisible: Bool = false
 
-    /// Status-bar toggles.
+    /// Capture-local structured Investigation state. It is intentionally absent from
+    /// every persisted FocusSet/settings path. A draft becomes accepted only after its
+    /// typed query has compiled and evaluated successfully off-main.
+    var investigationDraft = InvestigationQueryDraft()
+    var acceptedInvestigationDraft: InvestigationQueryDraft?
+    var investigationMatchedSessionIDs: Set<UUID> = []
+    var investigationIndeterminateSessionIDs: Set<UUID> = []
+    var investigationCoverageReasons: Set<QueryCoverageReason> = []
+    var investigationQueryError: InvestigationQueryDraftError?
+    var isEvaluatingInvestigationQuery = false
+    var investigationQueryRequestID = 0
+
+    /// Presentation toggles.
     var isFilterBarVisible: Bool = true
-    var autoSelectLatest: Bool = false
+
+    /// Persistent live-tail intent for this workspace. The coordinator owns the
+    /// selection transitions; keeping the mode here makes it independent across
+    /// workspace tabs and lets an empty filtered view remain armed.
+    var isFollowingLiveSessions: Bool = false
 
     /// Fresh identity issued every time something asks the session search field
     /// to take focus (⌘F). `SessionFilterBar` observes it via `.task(id:)`, so a
@@ -90,6 +106,10 @@ final class WorkspaceState: Identifiable {
     /// switched between workspaces. `nil` keeps a fresh workspace from stealing
     /// focus unprompted.
     var searchFocusRequest: UUID?
+
+    var hasActiveInvestigationQuery: Bool {
+        acceptedInvestigationDraft != nil
+    }
 
     /// The advanced rule rows that are enabled and carry a value (i.e. actually filter).
     var activeFilterRules: [SessionFilterRule] {
@@ -102,7 +122,8 @@ final class WorkspaceState: Identifiable {
         isSearchEnabled && !filterText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// True when any user filter (search, category tabs, sidebar scope, advanced rules) is active.
+    /// True when any user filter is active, including the separate capture-local
+    /// Investigation query. The query remains disjoint from persisted advanced rules.
     var hasActiveFilters: Bool {
         isSearchActive
             || !categoryFilters.isEmpty
@@ -110,5 +131,6 @@ final class WorkspaceState: Identifiable {
             || processFilter != nil
             || ipFilter != nil
             || !activeFilterRules.isEmpty
+            || hasActiveInvestigationQuery
     }
 }

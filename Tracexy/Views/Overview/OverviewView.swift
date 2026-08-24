@@ -74,10 +74,7 @@ struct OverviewView: View {
     private var scopedFindings: [Finding] {
         let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
         return coordinator.findings.filter { finding in
-            guard let id = finding.sessionID else {
-                return true
-            }
-            return visibleIDs.contains(id)
+            visibleIDs.contains(finding.sessionID)
         }
     }
 
@@ -520,8 +517,8 @@ struct OverviewView: View {
 
     // MARK: Findings summary
 
-    /// Overview reports security posture without duplicating the evidence list.
-    /// Individual sessions belong in the scalable Sessions/Security workflow.
+    /// Overview summarizes typed observations without duplicating the evidence list.
+    /// Individual sessions belong in the scalable Sessions/Findings workflow.
     private var findingSummaryBar: some View {
         let all = scopedFindings
         return HStack(spacing: Theme.Metrics.spacingM) {
@@ -532,11 +529,11 @@ struct OverviewView: View {
                 findingSeveritySummary(all)
                 Spacer(minLength: Theme.Metrics.spacingM)
                 Button("Review \(all.count.formatted()) in Sessions") {
-                    coordinator.showSecuritySessions()
+                    coordinator.showFindingSessions()
                 }
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
-                .help("Show sessions with security findings in the full session table")
+                .help("Show sessions with typed findings in the full session table")
             }
         }
     }

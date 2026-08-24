@@ -6,6 +6,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     case overview
     case sessions
     case flow
+    case history
     case dns
     case tcp
     case tls
@@ -25,6 +26,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .overview: "Overview"
         case .sessions: "Sessions"
         case .flow: "Flow Map"
+        case .history: "History"
         case .dns: "DNS"
         case .tcp: "TCP"
         case .tls: "TLS"
@@ -41,6 +43,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .overview: "gauge.with.dots.needle.67percent"
         case .sessions: "rectangle.stack"
         case .flow: "globe.americas"
+        case .history: "clock.arrow.circlepath"
         case .dns: "text.magnifyingglass"
         case .tcp: "arrow.left.arrow.right"
         case .tls: "lock.shield"
@@ -97,7 +100,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
 
     nonisolated var items: [SidebarItem] {
         switch self {
-        case .monitor: [.overview, .sessions, .flow]
+        case .monitor: [.overview, .sessions, .flow, .history]
         case .protocols: [.dns, .tcp, .tls, .http, .quic, .stun]
         }
     }

@@ -2,131 +2,11 @@ import Foundation
 import Testing
 @testable import Tracexy
 
-/// Pure, deterministic coverage for the footer presentation package: the session
-/// footer's action descriptors, its telemetry chips, the center status text, and
-/// the right Details footer summary. These are the parts that were made pure
-/// precisely so they could be asserted without a running AppKit window.
+/// Pure, deterministic coverage for the footer presentation package: telemetry,
+/// center status text, and the right Details footer summary. Session commands are
+/// covered separately because the footer is intentionally telemetry-only.
 struct WorkspaceFooterModelTests {
     // MARK: Internal
-
-    // MARK: - Session footer action descriptors
-
-    @Test("Primary launchers are ordered Save Capture → New Focus Set → Noise Control")
-    func primaryOrderingIsStable() {
-        let primary = makeActions().filter { $0.placement == .primary }
-        #expect(primary.map(\.kind) == [.saveCapture, .newFocusSet, .noiseControl])
-    }
-
-    @Test("Descriptors split into primary launchers and List Options with stable unique ids")
-    func placementAndIdentity() {
-        let actions = makeActions()
-
-        // Exactly the seven real effects — no invented controls.
-        #expect(actions.count == 7)
-        #expect(Set(actions.map(\.kind)) == Set(FooterActionDescriptor.Kind.allCases))
-
-        // Identity is the kind, so every surface variant agrees, and ids are unique.
-        #expect(actions.map(\.id) == actions.map(\.kind))
-        #expect(Set(actions.map(\.id)).count == actions.count)
-
-        // Capture/session maintenance and list behavior stay in List Options.
-        let listOptions = actions.filter { $0.placement == .listOptions }
-        #expect(listOptions.map(\.kind) == [
-            .clearSessions,
-            .restoreRemovedSessions,
-            .advancedFilters,
-            .autoSelectLatest,
-        ])
-
-        // Priority is monotonic across the whole catalog, primaries first.
-        #expect(actions.map(\.priority) == [0, 1, 2, 3, 4, 5, 6])
-    }
-
-    @Test("Every descriptor carries a distinct, non-empty title and help")
-    func titlesAndHelpAreDistinct() {
-        let actions = makeActions()
-        #expect(actions.allSatisfy { !$0.title.isEmpty && !$0.help.isEmpty })
-        #expect(Set(actions.map(\.title)).count == actions.count)
-        #expect(Set(actions.map(\.help)).count == actions.count)
-    }
-
-    @Test("Save Capture is enabled only from canSaveCapture")
-    func saveCaptureEnabled() {
-        #expect(action(.saveCapture, in: makeActions(canSaveCapture: false))?.isEnabled == false)
-        #expect(action(.saveCapture, in: makeActions(canSaveCapture: true))?.isEnabled == true)
-    }
-
-    @Test("New Focus Set is enabled only from canAddFocusSet")
-    func newFocusSetEnabled() {
-        #expect(action(.newFocusSet, in: makeActions(canAddFocusSet: false))?.isEnabled == false)
-        #expect(action(.newFocusSet, in: makeActions(canAddFocusSet: true))?.isEnabled == true)
-    }
-
-    @Test("Noise Control is always enabled and active only when muting")
-    func noiseControlMetadata() {
-        let inactive = action(.noiseControl, in: makeActions(isNoiseControlActive: false))
-        #expect(inactive?.isEnabled == true)
-        #expect(inactive?.isActive == false)
-
-        let active = action(.noiseControl, in: makeActions(isNoiseControlActive: true))
-        #expect(active?.isEnabled == true)
-        #expect(active?.isActive == true)
-    }
-
-    @Test("Clear Current Sessions is destructive and disabled with no sessions")
-    func clearMetadata() {
-        let empty = action(.clearSessions, in: makeActions(hasSessions: false))
-        #expect(empty?.isDestructive == true)
-        #expect(empty?.isEnabled == false)
-        #expect(empty?.title == "Clear Capture Data…")
-        #expect(empty?.help.contains("retained packets") == true)
-        // Clear is never a toggle, so it is never "active".
-        #expect(empty?.isActive == false)
-
-        #expect(action(.clearSessions, in: makeActions(hasSessions: true))?.isEnabled == true)
-
-        // Only Clear is destructive.
-        #expect(makeActions().filter(\.isDestructive).map(\.kind) == [.clearSessions])
-    }
-
-    @Test("Restore Removed Sessions is enabled only when rows can be restored")
-    func restoreRemovedSessionsMetadata() {
-        let empty = action(.restoreRemovedSessions, in: makeActions(removedSessionCount: 0))
-        #expect(empty?.isEnabled == false)
-        #expect(empty?.title == "Restore Removed Sessions (0)")
-        #expect(empty?.isDestructive == false)
-
-        let available = action(.restoreRemovedSessions, in: makeActions(removedSessionCount: 3))
-        #expect(available?.isEnabled == true)
-        #expect(available?.title == "Restore Removed Sessions (3)")
-    }
-
-    @Test("Advanced Filters shows active/check state from the builder or live rules")
-    func advancedFiltersActiveState() {
-        let idle = action(.advancedFilters, in: makeActions(activeFilterRuleCount: 0, isAdvancedFilterVisible: false))
-        #expect(idle?.isActive == false)
-        #expect(idle?.title == "Advanced Filters")
-
-        // Revealed builder counts as active even with no live rules yet.
-        #expect(action(
-            .advancedFilters,
-            in: makeActions(activeFilterRuleCount: 0, isAdvancedFilterVisible: true)
-        )?.isActive == true)
-
-        // Live rules count as active and relabel, even while the builder is hidden.
-        let withRules = action(
-            .advancedFilters,
-            in: makeActions(activeFilterRuleCount: 2, isAdvancedFilterVisible: false)
-        )
-        #expect(withRules?.isActive == true)
-        #expect(withRules?.title == "Advanced Filters (on)")
-    }
-
-    @Test("Auto Select Latest's active state mirrors the toggle")
-    func autoSelectActiveState() {
-        #expect(action(.autoSelectLatest, in: makeActions(autoSelectLatest: false))?.isActive == false)
-        #expect(action(.autoSelectLatest, in: makeActions(autoSelectLatest: true))?.isActive == true)
-    }
 
     // MARK: - Session footer status text
 
@@ -153,15 +33,6 @@ struct WorkspaceFooterModelTests {
         #expect(SessionStatusBarModel.statusText(
             surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false
         ) == "Flow map · 2 sessions")
-    }
-
-    @Test("Non-session surfaces expose no controls but retain their summaries")
-    func onlySessionListShowsControls() {
-        // The view gates descriptors on this flag, so only the session list gets
-        // the feature launchers / List Options; the rest keep status + telemetry.
-        #expect(StatusSurface.sessionList.showsSessionControls)
-        #expect(!StatusSurface.overview.showsSessionControls)
-        #expect(!StatusSurface.flow.showsSessionControls)
     }
 
     // MARK: - Telemetry chips
@@ -346,41 +217,6 @@ struct WorkspaceFooterModelTests {
     }
 
     // MARK: Private
-
-    /// Build the footer action catalog with sensible defaults so each test varies
-    /// only the input it is about.
-    private func makeActions(
-        canSaveCapture: Bool = true,
-        canAddFocusSet: Bool = true,
-        isNoiseControlActive: Bool = false,
-        hasSessions: Bool = true,
-        removedSessionCount: Int = 0,
-        activeFilterRuleCount: Int = 0,
-        isAdvancedFilterVisible: Bool = false,
-        autoSelectLatest: Bool = false
-    )
-        -> [FooterActionDescriptor]
-    {
-        SessionStatusBarModel.actions(
-            canSaveCapture: canSaveCapture,
-            canAddFocusSet: canAddFocusSet,
-            isNoiseControlActive: isNoiseControlActive,
-            hasSessions: hasSessions,
-            removedSessionCount: removedSessionCount,
-            activeFilterRuleCount: activeFilterRuleCount,
-            isAdvancedFilterVisible: isAdvancedFilterVisible,
-            autoSelectLatest: autoSelectLatest
-        )
-    }
-
-    private func action(
-        _ kind: FooterActionDescriptor.Kind,
-        in actions: [FooterActionDescriptor]
-    )
-        -> FooterActionDescriptor?
-    {
-        actions.first { $0.kind == kind }
-    }
 
     /// Build the telemetry list with defaults that suppress every chip, so a test
     /// enables exactly the ones it asserts on.

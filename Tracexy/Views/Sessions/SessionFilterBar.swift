@@ -48,6 +48,8 @@ struct SessionFilterBar: View {
 
     // MARK: Private
 
+    @State private var showsInvestigationCoverage = false
+
     /// Drives the native cursor for the existing search field; set by the ⌘F
     /// focus token above. No layout or styling changes hang off this.
     @FocusState private var isSearchFieldFocused: Bool
@@ -87,8 +89,8 @@ struct SessionFilterBar: View {
                         let isActive = workspace.categoryFilters.contains(category)
                         FilterPillButton(
                             title: category.title,
-                            systemImage: category == .security ? "exclamationmark.shield" : nil,
-                            tint: category == .security ? .red : .accentColor,
+                            systemImage: category == .security ? "list.bullet.clipboard" : nil,
+                            tint: .accentColor,
                             isActive: isActive
                         ) {
                             toggle(category, in: workspace)
@@ -99,6 +101,14 @@ struct SessionFilterBar: View {
                     }
                 }
                 .padding(.horizontal, 8)
+            }
+
+            if workspace.hasActiveInvestigationQuery || workspace.isEvaluatingInvestigationQuery {
+                InvestigationQueryChip(
+                    coordinator: coordinator,
+                    workspace: workspace,
+                    showsCoverage: $showsInvestigationCoverage
+                )
             }
 
             if workspace.hasActiveFilters {
@@ -333,6 +343,7 @@ struct SessionFilterBar: View {
         workspace.ipFilter = nil
         workspace.filterRules = [SessionFilterRule()]
         workspace.isAdvancedFilterVisible = false
+        coordinator.clearInvestigationQuery(in: workspace)
     }
 }
 

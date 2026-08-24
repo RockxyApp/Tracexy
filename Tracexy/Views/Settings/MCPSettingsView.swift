@@ -2,74 +2,56 @@ import SwiftUI
 
 // MARK: - MCPSettingsView
 
-/// MCP server + AI-insight preferences. These persist; the in-app MCP server and
-/// AI-insight provider are on the roadmap and not yet running, so the controls
-/// store intent only for now.
+/// Truthful placeholder for the planned MCP/AI surface. No listener, client
+/// connection or provider exists yet, so this view exposes no switch that could
+/// imply a service is running or capture data is being shared.
 struct MCPSettingsView: View {
     // MARK: Internal
 
     var body: some View {
         SettingsPane {
             SettingsSection("MCP Server") {
-                SettingsCheckbox(
-                    isOn: $mcpEnabled,
-                    title: "Enable in-app MCP server",
-                    description: "Run a local MCP server so AI clients can query captured sessions."
+                plannedCapability(
+                    title: "No server is running",
+                    detail: "Tracexy does not open a port or expose capture data. A reviewed, bounded local automation boundary must land before an MCP transport can be enabled."
                 )
-
-                SettingsDivider()
-
-                SettingsRow(label: "Port:") {
-                    TextField("7420", value: $mcpPort, format: .number.grouping(.never))
-                        .textFieldStyle(.roundedBorder)
-                        .font(metrics.monospacedFont())
-                        .frame(width: metrics.fieldWidth(80))
-                        .frame(minHeight: metrics.controlHeight)
-                        .disabled(!mcpEnabled)
-                }
-
-                SettingsDivider()
-
-                SettingsCheckbox(
-                    isOn: $mcpExposeSessions,
-                    title: "Expose sessions to AI clients",
-                    description: "Allow connected MCP clients to read conversation summaries and findings."
-                )
-                .disabled(!mcpEnabled)
             }
 
             SettingsSection("AI Insights") {
-                SettingsCheckbox(
-                    isOn: $aiInsights,
-                    title: "Enable AI insights",
-                    description: "Summarize latency, errors, and security findings for the active workspace."
+                plannedCapability(
+                    title: "Not connected",
+                    detail: "No provider receives sessions or evidence. Any future insight request must show the exact redacted snapshot and require explicit user review."
                 )
-
-                SettingsDivider()
-
-                SettingsRow(label: "Provider:") {
-                    Picker("", selection: $aiProvider) {
-                        Text("None").tag("none")
-                        Text("Claude (via MCP)").tag("claude")
-                    }
-                    .labelsHidden()
-                    .frame(width: metrics.menuWidth(200))
-                    .frame(minHeight: metrics.controlHeight)
-                    .disabled(!aiInsights)
-                }
             }
         }
     }
 
     // MARK: Private
 
-    @AppStorage(SettingsKeys.mcpEnabled) private var mcpEnabled = true
-    @AppStorage(SettingsKeys.mcpPort) private var mcpPort = 7_420
-    @AppStorage(SettingsKeys.mcpExposeSessions) private var mcpExposeSessions = true
-    @AppStorage(SettingsKeys.aiInsights) private var aiInsights = false
-    @AppStorage(SettingsKeys.aiProvider) private var aiProvider = "none"
-
-    private let metrics = SettingsDisplayMetrics.standard
+    private func plannedCapability(title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "lock.shield")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+                Text(title)
+                    .font(Theme.Typography.bodyEmphasis)
+                Text(detail)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Text("Planned")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, Theme.Metrics.spacingS)
+                .padding(.vertical, Theme.Metrics.spacingS)
+                .background(.quaternary, in: Capsule())
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 #Preview {

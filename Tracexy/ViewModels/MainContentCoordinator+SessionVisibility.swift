@@ -18,6 +18,64 @@ extension MainContentCoordinator {
         removedSessionIDs.intersection(Set(sessions.map(\.id))).count
     }
 
+    /// Sessions visible in an arbitrary workspace. Live following uses this seam
+    /// for inactive workspaces too, so a batch never applies the active tab's
+    /// filters to another tab's selection.
+    func visibleSessions(in workspace: WorkspaceState) -> [SessionSummary] {
+        let protocolFilter = workspace.sidebarSelection.protocolFilter
+        let categories = workspace.categoryFilters
+        let query = workspace.isSearchActive
+            ? workspace.filterText.trimmingCharacters(in: .whitespaces).lowercased()
+            : ""
+        let searchField = workspace.searchField
+        let advancedRules = workspace.activeFilterRules
+        let preparedRules = SessionFilterRuleEvaluator.prepared(advancedRules)
+        let findingIDs = findingSessionIDs
+        let investigationIDs = workspace.acceptedInvestigationDraft == nil
+            ? nil
+            : workspace.investigationMatchedSessionIDs
+
+        return presentedSessions.filter { session in
+            if mutedHosts.contains(session.host)
+                || mutedProtocols.contains(session.primaryProtocol)
+            {
+                return false
+            }
+            if let proto = protocolFilter, !session.protocolStack.contains(proto) {
+                return false
+            }
+            if !Self.categoryFilterMatches(
+                session,
+                categories: categories,
+                findingSessionIDs: findingIDs
+            ) {
+                return false
+            }
+            if let host = workspace.hostFilter, session.host != host {
+                return false
+            }
+            if let process = workspace.processFilter,
+               (session.processName ?? "—") != process
+            {
+                return false
+            }
+            if let ip = workspace.ipFilter,
+               !session.sourceEndpoint.contains(ip),
+               !session.destinationEndpoint.contains(ip),
+               !session.dnsAnswers.contains(ip)
+            {
+                return false
+            }
+            if !query.isEmpty, !searchField.haystack(in: session).contains(query) {
+                return false
+            }
+            if let investigationIDs, !investigationIDs.contains(session.id) {
+                return false
+            }
+            return advancedRules.isEmpty || preparedRules.matches(session)
+        }
+    }
+
     /// Removes decoded sessions from every presentation surface without
     /// mutating the capture evidence that Save/Export relies on.
     func removeSessionsFromView(_ ids: Set<UUID>) {
@@ -26,15 +84,19 @@ extension MainContentCoordinator {
             return
         }
         removedSessionIDs.formUnion(validIDs)
-        if let selectedID = activeWorkspace.selectedSessionID,
-           validIDs.contains(selectedID)
-        {
-            activeWorkspace.selectedSessionID = nil
+        for workspace in workspaces.workspaces {
+            if let selectedID = workspace.selectedSessionID,
+               validIDs.contains(selectedID)
+            {
+                workspace.selectedSessionID = nil
+            }
+            reconcileLiveFollowing(in: workspace)
         }
     }
 
     /// Restores every row removed from the current capture's presentation.
     func restoreRemovedSessions() {
         removedSessionIDs.removeAll()
+        followLatestVisibleSession()
     }
 }

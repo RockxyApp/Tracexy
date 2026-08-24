@@ -8,8 +8,8 @@ struct SessionRowGroupingTests {
     // MARK: Internal
 
     @Test("Flat mode emits one row per visible session and no actions")
-    func flatModeIsUngrouped() throws {
-        let env = try makeLoadedCoordinator()
+    func flatModeIsUngrouped() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = SessionGrouping.none
@@ -27,8 +27,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("Observed grouping conserves every visible session", arguments: [SessionGrouping.host, .process])
-    func observedGroupingConservesSessions(mode: SessionGrouping) throws {
-        let env = try makeLoadedCoordinator()
+    func observedGroupingConservesSessions(mode: SessionGrouping) async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = mode
@@ -46,8 +46,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("Observed groups are never singletons and never claim a confidence")
-    func observedGroupsAreHonest() throws {
-        let env = try makeLoadedCoordinator()
+    func observedGroupsAreHonest() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .host
@@ -66,8 +66,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("A group keeps its identity across recomputation so live rows don't churn")
-    func observedGroupIdentityIsStable() throws {
-        let env = try makeLoadedCoordinator()
+    func observedGroupIdentityIsStable() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .host
@@ -83,8 +83,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("Grouped mode never loses or duplicates a visible session")
-    func groupedModeConservesSessions() throws {
-        let env = try makeLoadedCoordinator()
+    func groupedModeConservesSessions() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .action
@@ -103,8 +103,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("An action row always has more than one child")
-    func actionsAreNeverSingletons() throws {
-        let env = try makeLoadedCoordinator()
+    func actionsAreNeverSingletons() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .action
@@ -119,8 +119,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("Filtering an action down to one session collapses it to a plain row")
-    func filteredActionCollapses() throws {
-        let env = try makeLoadedCoordinator()
+    func filteredActionCollapses() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .action
@@ -142,8 +142,8 @@ struct SessionRowGroupingTests {
     }
 
     @Test("A row resolves to a concrete session for the inspector to describe")
-    func rowsResolveToASession() throws {
-        let env = try makeLoadedCoordinator()
+    func rowsResolveToASession() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         coordinator.activeWorkspace.sessionGrouping = .action
@@ -160,7 +160,7 @@ struct SessionRowGroupingTests {
         let teardown: () -> Void
     }
 
-    private func makeLoadedCoordinator(function: String = #function) throws -> Environment {
+    private func makeLoadedCoordinator(function: String = #function) async throws -> Environment {
         let suiteName = "com.amunx.tracexy.tests.\(function).\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         let coordinator = MainContentCoordinator(
@@ -176,6 +176,7 @@ struct SessionRowGroupingTests {
         coordinator.openSavedCapture(
             SavedCapture(url: url, name: "sample", date: Date(), byteCount: frames.count)
         )
+        await coordinator.waitForSavedCaptureOpen()
         try #require(!coordinator.sessions.isEmpty)
 
         return Environment(coordinator: coordinator) {
