@@ -42,6 +42,8 @@ struct OverviewView: View {
                 )
                 .padding(Theme.Metrics.spacingL)
             }
+            .tracexyDenseScrollEdge()
+            .tracexySafeAreaBar(edge: .top) { overviewHeader }
         }
     }
 
@@ -74,10 +76,7 @@ struct OverviewView: View {
     private var scopedFindings: [Finding] {
         let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
         return coordinator.findings.filter { finding in
-            guard let id = finding.sessionID else {
-                return true
-            }
-            return visibleIDs.contains(id)
+            visibleIDs.contains(finding.sessionID)
         }
     }
 
@@ -174,6 +173,20 @@ struct OverviewView: View {
     /// capture is stored independently in the disk-backed pcapng spool.
     private var inspectionWindowBytes: Int {
         coordinator.retainedCapturedByteCount
+    }
+
+    private var overviewHeader: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Label("Overview", systemImage: "chart.xyaxis.line")
+                .font(Theme.Typography.title)
+            Text(identitySubtitle)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingM)
     }
 
     // MARK: Layout
@@ -520,8 +533,8 @@ struct OverviewView: View {
 
     // MARK: Findings summary
 
-    /// Overview reports security posture without duplicating the evidence list.
-    /// Individual sessions belong in the scalable Sessions/Security workflow.
+    /// Overview summarizes typed observations without duplicating the evidence list.
+    /// Individual sessions belong in the scalable Sessions/Findings workflow.
     private var findingSummaryBar: some View {
         let all = scopedFindings
         return HStack(spacing: Theme.Metrics.spacingM) {
@@ -532,11 +545,11 @@ struct OverviewView: View {
                 findingSeveritySummary(all)
                 Spacer(minLength: Theme.Metrics.spacingM)
                 Button("Review \(all.count.formatted()) in Sessions") {
-                    coordinator.showSecuritySessions()
+                    coordinator.showFindingSessions()
                 }
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
-                .help("Show sessions with security findings in the full session table")
+                .help("Show sessions with typed findings in the full session table")
             }
         }
     }
@@ -663,7 +676,12 @@ struct OverviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(Theme.Metrics.spacingL)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius))
+        .tracexyContentSurface(
+            in: RoundedRectangle(
+                cornerRadius: Theme.Metrics.cornerRadius,
+                style: .continuous
+            )
+        )
     }
 
     private func sectionLabel(_ title: String, systemImage: String) -> some View {

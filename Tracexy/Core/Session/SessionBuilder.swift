@@ -12,11 +12,43 @@ nonisolated enum SessionBuilder {
     /// ingesting a set of frames equals this batch build over the same frames —
     /// byte for byte.
     static func build(from frames: [CapturedFrame], linkType: UInt32) -> [SessionSummary] {
-        var accumulator = SessionAccumulator()
+        buildDetailed(from: frames, linkType: linkType).sessions
+    }
+
+    /// The additive detailed build: decode and fold every frame once through the
+    /// common ``SessionAccumulator`` path, then emit the session summaries plus the
+    /// connection snapshot for the same ordered frames. `build` is exactly its
+    /// `.sessions`, so the batch session semantics are unchanged byte for byte.
+    ///
+    /// - Parameter connectionConfiguration: bounds for the fold's connection table,
+    ///   injectable so a bounds test can force tiny caps.
+    static func buildDetailed(
+        from frames: [CapturedFrame],
+        linkType: UInt32,
+        connectionConfiguration: ConnectionTable.Configuration = ConnectionTable.Configuration()
+    )
+        -> SessionFoldSnapshot
+    {
+        var accumulator = SessionAccumulator(connectionConfiguration: connectionConfiguration)
         for frame in frames {
-            accumulator.add(decodePacket(frame, linkType: linkType))
+            let packet = decodePacket(frame, linkType: linkType)
+            accumulator.add(packet, context: frameContext(for: frame, linkType: linkType))
         }
-        return accumulator.summaries()
+        return accumulator.foldSnapshot()
+    }
+
+    /// The format-neutral fold context for a `CapturedFrame`: its truthful captured
+    /// length, the intrinsic per-frame link type (falling back to the source
+    /// default), no evidence locator — batch and live frames fabricate none — and
+    /// unknown loss. Shared by the batch build and the live engine so both supply
+    /// identical frame metadata.
+    static func frameContext(for frame: CapturedFrame, linkType: UInt32) -> SessionFrameContext {
+        SessionFrameContext(
+            capturedLength: frame.capturedLength,
+            linkType: frame.linkType ?? linkType,
+            locator: nil,
+            loss: .unknown
+        )
     }
 
     /// Stable identity shared by session accumulation and explicit session export.

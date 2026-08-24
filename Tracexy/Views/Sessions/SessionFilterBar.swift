@@ -30,8 +30,7 @@ struct SessionFilterBar: View {
             searchRow(workspace)
                 .padding(.vertical, 5)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
+        .tracexyFunctionalBar()
         .fixedSize(horizontal: false, vertical: true)
         // ⌘F focus. `.task(id:)` fires both on first appear and on every token
         // change, so a press that *mounts* this bar (coming from Overview/Flow)
@@ -47,6 +46,8 @@ struct SessionFilterBar: View {
     }
 
     // MARK: Private
+
+    @State private var showsInvestigationCoverage = false
 
     /// Drives the native cursor for the existing search field; set by the ⌘F
     /// focus token above. No layout or styling changes hang off this.
@@ -87,8 +88,8 @@ struct SessionFilterBar: View {
                         let isActive = workspace.categoryFilters.contains(category)
                         FilterPillButton(
                             title: category.title,
-                            systemImage: category == .security ? "exclamationmark.shield" : nil,
-                            tint: category == .security ? .red : .accentColor,
+                            systemImage: category == .security ? "list.bullet.clipboard" : nil,
+                            tint: .accentColor,
                             isActive: isActive
                         ) {
                             toggle(category, in: workspace)
@@ -101,6 +102,14 @@ struct SessionFilterBar: View {
                 .padding(.horizontal, 8)
             }
 
+            if workspace.hasActiveInvestigationQuery || workspace.isEvaluatingInvestigationQuery {
+                InvestigationQueryChip(
+                    coordinator: coordinator,
+                    workspace: workspace,
+                    showsCoverage: $showsInvestigationCoverage
+                )
+            }
+
             if workspace.hasActiveFilters {
                 Button {
                     reset(workspace)
@@ -108,7 +117,7 @@ struct SessionFilterBar: View {
                     Label("Reset Filters", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .font(Theme.Typography.body)
+                .font(Theme.Typography.chromeAction)
                 .foregroundStyle(.secondary)
                 .padding(.trailing, 8)
                 .help("Clear all session filters")
@@ -216,6 +225,7 @@ struct SessionFilterBar: View {
             advancedDisclosure(workspace)
             groupByMenu(workspace)
         }
+        .font(Theme.Typography.chromeAction)
         .fixedSize()
     }
 
@@ -230,7 +240,9 @@ struct SessionFilterBar: View {
                 Image(systemName: "plus")
             }
         }
-        .buttonStyle(.bordered)
+        // This action already sits on the filter shelf's single glass surface.
+        // Keep it borderless so controls do not become glass-on-glass islands.
+        .buttonStyle(.borderless)
         .controlSize(.small)
         .disabled(disabled)
         .help(disabled
@@ -333,6 +345,7 @@ struct SessionFilterBar: View {
         workspace.ipFilter = nil
         workspace.filterRules = [SessionFilterRule()]
         workspace.isAdvancedFilterVisible = false
+        coordinator.clearInvestigationQuery(in: workspace)
     }
 }
 
@@ -375,12 +388,15 @@ struct FilterPillButton: View {
                 Text(title)
             }
             .font(isActive ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-            .foregroundStyle(isActive ? tint : Color.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(isActive ? tint.opacity(0.15) : Color.clear)
-            .cornerRadius(4)
         }
         .buttonStyle(.borderless)
+        .tracexyChipStyle(tint: tint, isActive: isActive, isHovered: isHovered)
+        .onHover { isHovered = $0 }
     }
+
+    // MARK: Private
+
+    @State private var isHovered = false
 }

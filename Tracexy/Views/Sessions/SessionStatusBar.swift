@@ -3,68 +3,14 @@ import SwiftUI
 
 // MARK: - StatusSurface
 
-/// Which central surface the status bar sits under. Only the session list owns
-/// the feature launchers and List Options — those act on the session stream, so
-/// on Overview / Flow they would be dead affordances. Those intelligence
-/// surfaces get a quiet summary of the same real capture instead; Security now
-/// runs inside the session list as a quick filter.
+/// Which central surface the status bar sits under. Every surface gets a quiet,
+/// read-only summary of the same real capture; session commands live above the
+/// session list rather than in this telemetry footer.
 nonisolated enum StatusSurface {
     case sessionList
     case overview
     case flow
-
-    // MARK: Internal
-
-    var showsSessionControls: Bool {
-        self == .sessionList
-    }
-}
-
-// MARK: - FooterActionDescriptor
-
-/// A stable, pure description of one footer control.
-///
-/// It carries no view and no closure, so its ordering, identity, placement and
-/// enabled/active/destructive state can be asserted directly in a unit test. The
-/// view maps `kind` to the matching effect through the `onAction` callback; the
-/// descriptor itself never mutates capture or session data. `systemImage` is the
-/// *base* symbol — the active fill/check treatment is applied at render time, so
-/// the descriptor stays a value with no rendering concerns.
-nonisolated struct FooterActionDescriptor: Identifiable, Equatable {
-    /// Every real footer effect, in one place. The first three are the inline
-    /// feature launchers; the rest are contextual List Options that live in the
-    /// More menu.
-    enum Kind: String, CaseIterable {
-        case saveCapture
-        case newFocusSet
-        case noiseControl
-        case clearSessions
-        case restoreRemovedSessions
-        case advancedFilters
-        case autoSelectLatest
-    }
-
-    /// Where a descriptor is allowed to appear. Primary tools are the inline quick
-    /// launchers; list options are the contextual menu items.
-    enum Placement: String {
-        case primary
-        case listOptions
-    }
-
-    let kind: Kind
-    let title: String
-    let help: String
-    let systemImage: String
-    let placement: Placement
-    /// Stable rank used for ordering; primaries precede list options.
-    let priority: Int
-    let isEnabled: Bool
-    let isActive: Bool
-    let isDestructive: Bool
-
-    var id: Kind {
-        kind
-    }
+    case history
 }
 
 // MARK: - FooterTelemetry
@@ -144,116 +90,11 @@ nonisolated struct CaptureLoss: Equatable {
 
 // MARK: - SessionStatusBarModel
 
-/// Pure derivations for the footer: the ordered action descriptors, the ordered
-/// telemetry chips, and the center status string. Kept free of SwiftUI so all
-/// three are unit-testable and so every responsive presentation reads from one
-/// source of truth rather than re-deriving state per layout.
+/// Pure derivations for the footer's telemetry chips and center status string.
+/// Kept free of SwiftUI so both are unit-testable and every responsive
+/// presentation reads from one source of truth.
 nonisolated enum SessionStatusBarModel {
     // MARK: Internal
-
-    /// The footer's feature launchers and List Options, always in the same order:
-    /// Save Capture → New Focus Set → Noise Control, then Clear Current Sessions →
-    /// Advanced Filters → Auto Select Latest. Order and identity are stable so the
-    /// inline row, the More menu and the compact menu never disagree about which
-    /// control is which.
-    static func actions(
-        canSaveCapture: Bool,
-        canAddFocusSet: Bool,
-        isNoiseControlActive: Bool,
-        hasSessions: Bool,
-        removedSessionCount: Int,
-        activeFilterRuleCount: Int,
-        isAdvancedFilterVisible: Bool,
-        autoSelectLatest: Bool
-    )
-        -> [FooterActionDescriptor]
-    {
-        [
-            // Primary launchers — the three inline quick feature tools.
-            FooterActionDescriptor(
-                kind: .saveCapture,
-                title: "Save Capture",
-                help: "Save the complete current capture to a .pcapng file.",
-                systemImage: "square.and.arrow.down",
-                placement: .primary,
-                priority: 0,
-                // Nothing to save until frames have been retained.
-                isEnabled: canSaveCapture,
-                isActive: false,
-                isDestructive: false
-            ),
-            FooterActionDescriptor(
-                kind: .newFocusSet,
-                title: "New Focus Set",
-                help: "Create a focus set from the current advanced filter rules.",
-                systemImage: "scope",
-                placement: .primary,
-                priority: 1,
-                isEnabled: canAddFocusSet,
-                isActive: false,
-                isDestructive: false
-            ),
-            FooterActionDescriptor(
-                kind: .noiseControl,
-                title: "Noise Control",
-                help: "Mute noisy hosts or protocols so the list stops flooding.",
-                systemImage: "speaker.slash",
-                placement: .primary,
-                priority: 2,
-                // Always available: muting is useful before anything is captured.
-                isEnabled: true,
-                isActive: isNoiseControlActive,
-                isDestructive: false
-            ),
-
-            // Contextual List Options — the More menu.
-            FooterActionDescriptor(
-                kind: .clearSessions,
-                title: "Clear Capture Data…",
-                help: "Remove decoded sessions, retained packets, capture statistics, and throughput history.",
-                systemImage: "trash",
-                placement: .listOptions,
-                priority: 3,
-                // A disabled Clear is more honest than one that silently no-ops.
-                isEnabled: hasSessions,
-                isActive: false,
-                isDestructive: true
-            ),
-            FooterActionDescriptor(
-                kind: .restoreRemovedSessions,
-                title: "Restore Removed Sessions (\(removedSessionCount))",
-                help: "Restore every session removed from the current capture's views.",
-                systemImage: "arrow.uturn.backward",
-                placement: .listOptions,
-                priority: 4,
-                isEnabled: removedSessionCount > 0,
-                isActive: false,
-                isDestructive: false
-            ),
-            FooterActionDescriptor(
-                kind: .advancedFilters,
-                title: activeFilterRuleCount > 0 ? "Advanced Filters (on)" : "Advanced Filters",
-                help: "Show the advanced filter rule builder.",
-                systemImage: "line.3.horizontal.decrease.circle",
-                placement: .listOptions,
-                priority: 5,
-                isEnabled: true,
-                isActive: isAdvancedFilterVisible || activeFilterRuleCount > 0,
-                isDestructive: false
-            ),
-            FooterActionDescriptor(
-                kind: .autoSelectLatest,
-                title: "Auto Select Latest",
-                help: "Automatically select the newest session as it arrives.",
-                systemImage: "arrow.down.circle",
-                placement: .listOptions,
-                priority: 6,
-                isEnabled: true,
-                isActive: autoSelectLatest,
-                isDestructive: false
-            ),
-        ]
-    }
 
     /// The right-hand telemetry chips, ordered by importance and emitted only when
     /// their data exists: kernel/interface drops → helper-stage drops → session
@@ -414,6 +255,8 @@ nonisolated enum SessionStatusBarModel {
             return totalSessions == 0 ? "Capture overview · No sessions" : "Capture overview · \(totalSessions) sessions"
         case .flow:
             return totalSessions == 0 ? "Flow map · No sessions" : "Flow map · \(totalSessions) sessions"
+        case .history:
+            return totalSessions == 0 ? "Local History · No persisted sessions" : "Local History · \(totalSessions) persisted sessions"
         case .sessionList:
             break
         }
@@ -443,26 +286,37 @@ nonisolated enum SessionStatusBarModel {
     }
 }
 
+// MARK: - HistoryFooterModel
+
+/// Honest footer copy for the bounded History page. A trailing `+` means another
+/// keyset page exists; it never presents a loaded-page subtotal as a database-wide
+/// exact total.
+nonisolated enum HistoryFooterModel {
+    static func statusText(captureCount: Int, sessionCount: Int, hasMore: Bool) -> String {
+        guard captureCount > 0 else {
+            return "Local History · No captures"
+        }
+        let suffix = hasMore ? "+" : ""
+        let captureLabel = captureCount == 1 && !hasMore ? "capture" : "captures"
+        let sessionLabel = sessionCount == 1 && !hasMore ? "persisted session" : "persisted sessions"
+        return "\(captureCount.formatted())\(suffix) \(captureLabel) · "
+            + "\(sessionCount.formatted())\(suffix) \(sessionLabel)"
+    }
+}
+
 // MARK: - SessionStatusBar
 
-/// Bottom status bar showing the feature launchers, the session/capture summary,
-/// and health/telemetry. **Presentation-only**: it receives a pure snapshot,
-/// ordered descriptors and an `onAction` callback, and owns no coordinator and no
-/// workspace mutation. It lays out as one row in three zones — quick tools on the
-/// left, the summary centred, telemetry trailing — inside the shared
-/// `WorkspaceFooterBar`.
+/// Bottom status bar showing only the session/capture summary and health
+/// telemetry. **Presentation-only**: it receives a pure snapshot and owns no
+/// coordinator or workspace mutation. Commands belong to the session command bar.
 struct SessionStatusBar: View {
     // MARK: Internal
 
     let snapshot: FooterSnapshot
-    let descriptors: [FooterActionDescriptor]
-    let onAction: (FooterActionDescriptor.Kind) -> Void
 
     var body: some View {
         WorkspaceFooterBar(surface: .workspace) {
             HStack(spacing: 0) {
-                quickTools
-                Spacer(minLength: 24)
                 centerSummary
                 Spacer(minLength: 24)
                 telemetryRow
@@ -472,32 +326,6 @@ struct SessionStatusBar: View {
     }
 
     // MARK: Private
-
-    private var primaryDescriptors: [FooterActionDescriptor] {
-        descriptors.filter { $0.placement == .primary }
-    }
-
-    private var listOptionDescriptors: [FooterActionDescriptor] {
-        descriptors.filter { $0.placement == .listOptions }
-    }
-
-    @ViewBuilder private var quickTools: some View {
-        if descriptors.isEmpty {
-            // Non-session surfaces expose no actions — status/telemetry only.
-            EmptyView()
-        } else {
-            HStack(spacing: 6) {
-                ForEach(primaryDescriptors) { descriptor in
-                    FooterActionButton(descriptor: descriptor) {
-                        onAction(descriptor.kind)
-                    }
-                }
-                if !listOptionDescriptors.isEmpty {
-                    moreMenu(primary: [], options: listOptionDescriptors, help: "List options")
-                }
-            }
-        }
-    }
 
     private var centerSummary: some View {
         Text(snapshot.summary)
@@ -515,60 +343,6 @@ struct SessionStatusBar: View {
             }
         }
         .lineLimit(1)
-    }
-
-    private func moreMenu(
-        primary: [FooterActionDescriptor],
-        options: [FooterActionDescriptor],
-        help: String
-    )
-        -> some View
-    {
-        Menu {
-            ForEach(primary) { menuButton($0) }
-            if !primary.isEmpty, !options.isEmpty {
-                Divider()
-            }
-            if !options.isEmpty {
-                Section("List Options") {
-                    ForEach(options) { menuButton($0) }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: Theme.Icon.medium))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(help)
-        .accessibilityLabel(help)
-    }
-
-    @ViewBuilder
-    private func menuButton(_ descriptor: FooterActionDescriptor) -> some View {
-        if descriptor.kind == .autoSelectLatest {
-            Toggle(
-                isOn: Binding(
-                    get: { descriptor.isActive },
-                    set: { _ in onAction(descriptor.kind) }
-                )
-            ) {
-                Label(descriptor.title, systemImage: descriptor.systemImage)
-            }
-            .disabled(!descriptor.isEnabled)
-            .help(descriptor.help)
-        } else {
-            Button(role: descriptor.isDestructive ? .destructive : nil) {
-                onAction(descriptor.kind)
-            } label: {
-                // Active manager/filter states read as a check in compact menus.
-                Label(descriptor.title, systemImage: descriptor.isActive ? "checkmark" : descriptor.systemImage)
-            }
-            .disabled(!descriptor.isEnabled)
-            .help(descriptor.help)
-            .accessibilityValue(descriptor.isActive ? "Active" : "Inactive")
-        }
     }
 
     private func telemetryChip(_ item: FooterTelemetry) -> some View {
@@ -594,53 +368,6 @@ struct SessionStatusBar: View {
         case .error: Color(nsColor: .systemRed)
         case .live: Color(nsColor: .systemGreen)
         }
-    }
-}
-
-// MARK: - FooterActionButton
-
-/// One inline footer launcher rendered from a `FooterActionDescriptor`: a compact
-/// badge capsule pairing the SF Symbol with its title in white. The capsule fills
-/// with the accent colour when active, a secondary-label wash on hover, and a
-/// tertiary-label wash otherwise, dimming when disabled. Help and accessibility
-/// label come straight from the descriptor.
-private struct FooterActionButton: View {
-    // MARK: Internal
-
-    let descriptor: FooterActionDescriptor
-    let perform: () -> Void
-
-    var body: some View {
-        Button(action: perform) {
-            Label(descriptor.title, systemImage: descriptor.systemImage)
-                .font(Theme.Typography.badge)
-                .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(background, in: Capsule())
-                .opacity(descriptor.isEnabled ? 1 : 0.45)
-        }
-        .buttonStyle(.plain)
-        .disabled(!descriptor.isEnabled)
-        .onHover { isHovered = $0 }
-        .help(descriptor.help)
-        .accessibilityLabel(descriptor.title)
-        .accessibilityAddTraits(descriptor.isActive ? .isSelected : [])
-    }
-
-    // MARK: Private
-
-    @State private var isHovered = false
-
-    private var background: Color {
-        if descriptor.isActive {
-            return Color.accentColor
-        }
-        if isHovered, descriptor.isEnabled {
-            return Color(nsColor: .secondaryLabelColor).opacity(0.86)
-        }
-        return Color(nsColor: .tertiaryLabelColor)
     }
 }
 

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - IPEndpoint
 
-nonisolated struct IPEndpoint: Hashable, Comparable {
+nonisolated struct IPEndpoint: Hashable, Comparable, Sendable {
     let ip: String
     let port: UInt16
 
@@ -17,7 +17,7 @@ nonisolated struct IPEndpoint: Hashable, Comparable {
 
 // MARK: - FiveTuple
 
-nonisolated struct FiveTuple: Hashable {
+nonisolated struct FiveTuple: Hashable, Sendable {
     // MARK: Lifecycle
 
     init(proto: ProtocolKind, source: IPEndpoint, destination: IPEndpoint) {

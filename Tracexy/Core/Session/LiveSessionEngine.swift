@@ -26,11 +26,18 @@ import Foundation
 actor LiveSessionEngine {
     // MARK: Lifecycle
 
-    /// - Parameter decode: the per-frame decode step. Injectable so a test can
-    ///   prove each frame is decoded exactly once (e.g. by counting calls);
-    ///   defaults to the same decode `SessionBuilder` uses.
-    init(decode: @escaping Decode = { SessionBuilder.decodePacket($0, linkType: $1) }) {
+    /// - Parameters:
+    ///   - connectionConfiguration: bounds for the accumulator's connection table,
+    ///     injectable at engine initialization so a bounds test can force tiny caps.
+    ///   - decode: the per-frame decode step. Injectable so a test can prove each
+    ///     frame is decoded exactly once (e.g. by counting calls); defaults to the
+    ///     same decode `SessionBuilder` uses.
+    init(
+        connectionConfiguration: ConnectionTable.Configuration = ConnectionTable.Configuration(),
+        decode: @escaping Decode = { SessionBuilder.decodePacket($0, linkType: $1) }
+    ) {
         self.decode = decode
+        accumulator = SessionAccumulator(connectionConfiguration: connectionConfiguration)
     }
 
     // MARK: Internal
@@ -59,13 +66,48 @@ actor LiveSessionEngine {
     /// superseded epoch are ignored. Each frame is decoded exactly once here and
     /// never again — updating an existing session does not re-decode its earlier
     /// frames, and no earlier frame is retained to be re-decoded.
-    func ingest(_ frames: [CapturedFrame], linkType: UInt32, epoch: Int) {
+    ///
+    /// `locators`, when non-nil, must line up one-to-one with `frames`: locator
+    /// `i` becomes frame `i`'s opaque evidence pointer. A `nil` array means every
+    /// frame folds with a nil locator. `loss` is the stage-separated capture-loss
+    /// knowledge folded into every frame's connection provenance.
+    ///
+    /// - Returns: `true` for a current batch with nil or exactly-counted locators;
+    ///   `false` for a stale epoch (nothing folded) or a locator-count mismatch. On
+    ///   a mismatch every current frame is still decoded and folded exactly once
+    ///   with nil locators — the batch is never truncated or mis-paired — and the
+    ///   `false` return exposes the mismatch to the caller.
+    @discardableResult
+    func ingest(
+        _ frames: [CapturedFrame],
+        linkType: UInt32,
+        epoch: Int,
+        locators: [SessionEvidenceLocator]? = nil,
+        loss: CaptureLossKnowledge = .unknown
+    )
+        -> Bool
+    {
         guard epoch == self.epoch else {
-            return
+            return false
         }
-        for frame in frames {
-            accumulator.add(decode(frame, linkType))
+        // A provided locator array that does not match the batch is a contract
+        // violation by the caller; fold every frame with nil locators rather than
+        // dropping or mis-pairing any, and report the mismatch via the result.
+        let aligned = locators?.count == frames.count ? locators : nil
+        let matched = locators == nil || aligned != nil
+        for (index, frame) in frames.enumerated() {
+            let packet = decode(frame, linkType)
+            // Per-frame link type stays intrinsic-first (the frame's own DLT wins,
+            // else the source default); no bytes, URL or file identity enter state.
+            let context = SessionFrameContext(
+                capturedLength: frame.capturedLength,
+                linkType: frame.linkType ?? linkType,
+                locator: aligned?[index],
+                loss: loss
+            )
+            accumulator.add(packet, context: context)
         }
+        return matched
     }
 
     /// Summarize the accumulator in first-seen order. Returns `nil` when the epoch
@@ -79,10 +121,36 @@ actor LiveSessionEngine {
         return accumulator.summaries()
     }
 
+    /// A detailed snapshot: the session summaries plus the connection snapshot for
+    /// the same accepted frames, or `nil` when the epoch has moved on. Like
+    /// `snapshot(epoch:)` it decodes nothing, so repeated detailed snapshots never
+    /// re-decode — the live decode count stays exactly the frame count.
+    func detailedSnapshot(epoch: Int) -> SessionFoldSnapshot? {
+        guard epoch == self.epoch else {
+            return nil
+        }
+        return accumulator.foldSnapshot()
+    }
+
+    /// An investigation snapshot: the same fold `detailedSnapshot(epoch:)` produces,
+    /// wrapped with its passive connection analysis assessed once. Returns `nil` when
+    /// the epoch has moved on, under the same guard. Like the other snapshots it
+    /// decodes nothing, retains no history and touches no `@MainActor` state — it
+    /// folds the running accumulator once and constructs the wrapper immediately, so
+    /// repeated investigation snapshots never re-decode.
+    func investigationSnapshot(epoch: Int) -> InvestigationSnapshot? {
+        guard epoch == self.epoch else {
+            return nil
+        }
+        return InvestigationSnapshot(fold: accumulator.foldSnapshot())
+    }
+
     // MARK: Private
 
     private let decode: Decode
     /// The shared incremental accumulator — the same fold `SessionBuilder.build`
-    /// runs, so live snapshots and batch rebuilds stay byte-identical.
-    private var accumulator = SessionAccumulator()
+    /// runs, so live snapshots and batch rebuilds stay byte-identical. It also owns
+    /// the connection table folded in lock-step. Initialized with the injected
+    /// connection configuration.
+    private var accumulator: SessionAccumulator
 }

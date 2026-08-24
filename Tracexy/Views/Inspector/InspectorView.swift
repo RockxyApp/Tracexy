@@ -16,15 +16,8 @@ struct InspectorView: View {
         // selection is hidden for the newly-selected session.
         let visibleTabs = session.map { InspectorTab.visibleTabs(for: $0) } ?? []
         let activeTab = visibleTabs.contains(workspace.inspectorTab) ? workspace.inspectorTab : .timeline
-        VStack(spacing: 0) {
+        Group {
             if let session {
-                // One chrome row, not two: the facet tabs and the scope label
-                // share a line, so the pane spends its height on evidence.
-                tabStrip(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab, session: session)
-                if supportsFieldFilter(activeTab) {
-                    fieldFilterRow
-                }
-                Divider()
                 if activeTab == .layers {
                     layersInspector(session)
                 } else {
@@ -39,6 +32,23 @@ struct InspectorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .tracexyDenseScrollEdge()
+        .tracexySafeAreaBar(edge: .top) {
+            if let session {
+                VStack(spacing: 0) {
+                    // Facet tabs and scope remain one compact functional row.
+                    tabStrip(
+                        workspace: workspace,
+                        visibleTabs: visibleTabs,
+                        activeTab: activeTab,
+                        session: session
+                    )
+                    if supportsFieldFilter(activeTab) {
+                        fieldFilterRow
+                    }
+                }
+            }
+        }
         // Claim the full width here, on the pane itself.
         //
         // This used to happen by accident: a header row sat above both branches
@@ -51,11 +61,14 @@ struct InspectorView: View {
         // Layout intent belongs where it is meant, not as a side effect of a
         // spacer inside a subview that may or may not be rendered.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session evidence inspector")
+        .onAppear {
+            coordinator.loadSelectedSavedCaptureEvidence()
+        }
         .onChange(of: workspace.selectedSessionID) {
             selectedRange = nil
+            coordinator.loadSelectedSavedCaptureEvidence()
             // Reconcile the persisted tab so the picker never shows a hidden facet.
             if let session = coordinator.selectedSession,
                !InspectorTab.visibleTabs(for: session).contains(workspace.inspectorTab)
@@ -69,6 +82,7 @@ struct InspectorView: View {
 
     @State private var fieldQuery = ""
     @State private var selectedRange: Range<Int>?
+    @State private var followStreamDisplayMode: FollowStreamDisplayMode = .text
 
     private var fieldFilterRow: some View {
         HStack(spacing: 5) {
@@ -84,7 +98,44 @@ struct InspectorView: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(.background.secondary)
+        .tracexyContentSurface(in: Capsule(style: .continuous))
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+    }
+
+    private var followStreamLoading: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+            if let fraction = coordinator.followStreamFraction {
+                ProgressView(value: fraction)
+                    .accessibilityLabel("Following TCP stream")
+                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            HStack {
+                if let progress = coordinator.followStreamProgress {
+                    Text(
+                        "Scanned \(progress.bytesConsumed.formatted()) of "
+                            + "\(progress.totalBytes.formatted()) bytes"
+                    )
+                    .font(Theme.Typography.monoSmall)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text("Preparing stable local source…")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel") {
+                    coordinator.cancelFollowStream(clearResult: true)
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(Theme.Metrics.spacingM)
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
     }
 
     /// What the pane is currently describing, stated at the right of the tab row.
@@ -113,8 +164,7 @@ struct InspectorView: View {
                     .font(Theme.Typography.microMedium)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
+                    .tracexyChipStyle(tint: .accentColor, isActive: true)
             }
         }
     }
@@ -154,13 +204,25 @@ struct InspectorView: View {
 
     @ViewBuilder
     private func hexPane(_ session: SessionSummary) -> some View {
-        if !session.representativeBytes.isEmpty {
+        let bytes = coordinator.evidenceBytes(for: session)
+        if !bytes.isEmpty {
             ScrollView {
-                HexDumpView(bytes: session.representativeBytes, highlight: selectedRange)
+                HexDumpView(bytes: bytes, highlight: selectedRange)
                     .padding(Theme.Metrics.spacingL)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minWidth: 280)
+        } else if coordinator.isLoadingSelectedSessionEvidence {
+            ProgressView("Loading selected evidence…")
+                .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = coordinator.selectedSessionEvidenceError {
+            placeholder(error)
+                .padding(Theme.Metrics.spacingL)
+                .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            placeholder("No packet bytes are available for this session.")
+                .padding(Theme.Metrics.spacingL)
+                .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -198,7 +260,6 @@ struct InspectorView: View {
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 6)
-        .background(.background.secondary)
     }
 
     private func tabButtons(
@@ -214,13 +275,9 @@ struct InspectorView: View {
             } label: {
                 Text(tab.title)
                     .font(tab == activeTab ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                    .foregroundStyle(tab == activeTab ? Color.accentColor : Color.secondary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(tab == activeTab ? Color.accentColor.opacity(0.12) : Color.clear)
-                    )
+                    .tracexyChipStyle(tint: .accentColor, isActive: tab == activeTab)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -234,10 +291,179 @@ struct InspectorView: View {
         switch tab {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
+        case .stream: followStream(session)
         case .requests: requests(session)
         case .payload: payload(session)
-        case .hex: HexDumpView(bytes: session.representativeBytes, highlight: nil)
+        case .hex: rawEvidence(session)
         }
+    }
+
+    // MARK: Follow Stream
+
+    /// Explicit, local-only TCP stream reconstruction. Merely selecting the tab
+    /// never scans a capture or retains application bytes; the button is the user
+    /// action that activates the bounded coordinator workflow.
+    private func followStream(_ session: SessionSummary) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+            HStack(alignment: .center, spacing: Theme.Metrics.spacingM) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Follow TCP Stream")
+                        .font(Theme.Typography.bodyEmphasis)
+                    Text("Reads this local capture on demand. Nothing is sent or exported.")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Theme.Metrics.spacingM)
+                Picker("Display", selection: $followStreamDisplayMode) {
+                    ForEach(FollowStreamDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 132)
+            }
+
+            Label(
+                "Application data can contain credentials or personal information. Review it locally before copying.",
+                systemImage: "hand.raised"
+            )
+            .font(Theme.Typography.caption)
+            .foregroundStyle(.secondary)
+
+            if coordinator.isLoadingFollowStream {
+                followStreamLoading
+            } else if let error = coordinator.followStreamError {
+                followStreamEmptyState(message: error, session: session)
+            } else if let result = coordinator.followStreamResult,
+                      SessionBuilder.sessionID(for: result.tuple) == session.id
+            {
+                followStreamResult(result)
+            } else {
+                followStreamEmptyState(
+                    message: coordinator.followStreamUnavailableReason
+                        ?? "Reconstruct both TCP directions from the stable capture source.",
+                    session: session
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Follow TCP Stream")
+    }
+
+    private func followStreamEmptyState(message: String, session _: SessionSummary) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+            Text(message)
+                .font(Theme.Typography.body)
+                .foregroundStyle(.secondary)
+            Button("Follow Stream") {
+                coordinator.followSelectedTCPStream()
+            }
+            .controlSize(.small)
+            .disabled(coordinator.followStreamUnavailableReason != nil)
+            .help(coordinator.followStreamUnavailableReason ?? "Reconstruct this TCP stream")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Metrics.spacingM)
+        .tracexyContentSurface(
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
+        )
+    }
+
+    private func followStreamResult(_ result: FollowStreamResult) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
+            HStack(spacing: Theme.Metrics.spacingL) {
+                field("Matched Frames", result.matchedFrameCount.formatted())
+                field("Scanned Frames", result.scannedFrameCount.formatted())
+                field("Source", followStreamCompleteness(result.completeness))
+                Spacer(minLength: Theme.Metrics.spacingM)
+                Button("Refresh") {
+                    coordinator.followSelectedTCPStream()
+                }
+                .controlSize(.small)
+                .disabled(coordinator.followStreamUnavailableReason != nil)
+            }
+
+            let limitations = result.limitations.presentationLabels
+            if !limitations.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Observed limitations")
+                        .font(Theme.Typography.captionMedium)
+                        .foregroundStyle(.secondary)
+                    ForEach(limitations, id: \.self) { limitation in
+                        Label(limitation, systemImage: "info.circle")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
+                    followStreamDirection(
+                        result.aToB,
+                        title: "\(result.tuple.a.display) → \(result.tuple.b.display)"
+                    )
+                    followStreamDirection(
+                        result.bToA,
+                        title: "\(result.tuple.b.display) → \(result.tuple.a.display)"
+                    )
+                }
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                    followStreamDirection(
+                        result.aToB,
+                        title: "\(result.tuple.a.display) → \(result.tuple.b.display)"
+                    )
+                    followStreamDirection(
+                        result.bToA,
+                        title: "\(result.tuple.b.display) → \(result.tuple.a.display)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func followStreamDirection(
+        _ snapshot: FollowStreamDirectionSnapshot,
+        title: String
+    )
+        -> some View
+    {
+        let presentation = FollowStreamDirectionPresentation(
+            snapshot: snapshot,
+            mode: followStreamDisplayMode
+        )
+        return GroupBox {
+            VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                HStack {
+                    Text("\(snapshot.retainedByteCount.formatted()) retained bytes")
+                    if snapshot.observedOmittedByteCount > 0 {
+                        Text("· \(snapshot.observedOmittedByteCount.formatted()) omitted by reader bounds")
+                    }
+                    if presentation.viewOmittedByteCount > 0 {
+                        Text("· \(presentation.viewOmittedByteCount.formatted()) not shown")
+                    }
+                }
+                .font(Theme.Typography.micro)
+                .foregroundStyle(.secondary)
+
+                if presentation.body.isEmpty {
+                    placeholder("No application bytes were retained in this direction.")
+                } else {
+                    Text(presentation.body)
+                        .font(Theme.Typography.monoSmall)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(title)
+                .font(Theme.Typography.captionMedium)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: Requests
@@ -284,14 +510,32 @@ struct InspectorView: View {
     /// hex, and the fastest way to confirm what a body actually was.
     @ViewBuilder
     private func payload(_ session: SessionSummary) -> some View {
-        let text = printablePayload(session.representativeBytes)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let text = printablePayload(coordinator.evidenceBytes(for: session))
+        if coordinator.isLoadingSelectedSessionEvidence {
+            ProgressView("Loading selected evidence…")
+        } else if let error = coordinator.selectedSessionEvidenceError {
+            placeholder(error)
+        } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             placeholder("This packet carries no printable payload.")
         } else {
             Text(text)
                 .font(Theme.Typography.monoSmall)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func rawEvidence(_ session: SessionSummary) -> some View {
+        let bytes = coordinator.evidenceBytes(for: session)
+        if !bytes.isEmpty {
+            HexDumpView(bytes: bytes, highlight: nil)
+        } else if coordinator.isLoadingSelectedSessionEvidence {
+            ProgressView("Loading selected evidence…")
+        } else if let error = coordinator.selectedSessionEvidenceError {
+            placeholder(error)
+        } else {
+            placeholder("No packet bytes are available for this session.")
         }
     }
 
@@ -381,6 +625,13 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label).font(Theme.Typography.captionMedium).foregroundStyle(.secondary)
             Text(value).font(Theme.Typography.mono).textSelection(.enabled)
+        }
+    }
+
+    private func followStreamCompleteness(_ completeness: FollowStreamCompleteness) -> String {
+        switch completeness {
+        case .complete: "Complete file"
+        case .incompleteTruncatedTail: "Truncated tail"
         }
     }
 

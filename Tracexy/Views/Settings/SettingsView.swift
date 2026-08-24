@@ -2,10 +2,8 @@ import SwiftUI
 
 // MARK: - SettingsView
 
-/// The app's Settings window (⌘,). A native `TabView` whose `.tabItem`s render as
-/// the standard macOS Settings toolbar — SF Pro type + real SF Symbols throughout.
-/// Each pane uses `SettingsPane` / `SettingsCard` and shared
-/// `SettingsDisplayMetrics` for a consistent native layout.
+/// Native Settings split: a semantic sidebar provides stable navigation while
+/// the selected pane remains a dense, opaque content layer.
 struct SettingsView: View {
     // MARK: Lifecycle
 
@@ -16,28 +14,61 @@ struct SettingsView: View {
     // MARK: Internal
 
     var body: some View {
-        TabView {
-            GeneralSettingsView()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            CaptureSettingsView()
-                .tabItem { Label("Capture", systemImage: "antenna.radiowaves.left.and.right") }
-            HelperSettingsView()
-                .tabItem { Label("Helper", systemImage: "shield.lefthalf.filled") }
-            PrivacySettingsView()
-                .tabItem { Label("Privacy", systemImage: "hand.raised") }
-            MCPSettingsView()
-                .tabItem { Label("MCP & AI", systemImage: "sparkles") }
-            UpdatesSettingsView(updater: updater)
-                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
+        NavigationSplitView {
+            List(SettingsTab.allCases, selection: selection) { tab in
+                Label(tab.title, systemImage: tab.systemImage)
+                    .font(metrics.font(
+                        weight: selection.wrappedValue == tab ? .semibold : .regular
+                    ))
+                    .tag(tab)
+            }
+            .listStyle(.sidebar)
+            .tracexySoftScrollEdge()
+            .navigationSplitViewColumnWidth(
+                min: metrics.sidebarMinWidth,
+                ideal: metrics.sidebarIdealWidth,
+                max: metrics.sidebarMaxWidth
+            )
+            .navigationTitle("Settings")
+        } detail: {
+            selectedPane
+                .font(metrics.font())
+                .navigationTitle(selection.wrappedValue.title)
         }
-        .font(metrics.font())
-        .frame(width: metrics.windowWidth, height: metrics.windowHeight)
+        .frame(
+            minWidth: metrics.windowMinWidth,
+            idealWidth: metrics.windowIdealWidth,
+            maxWidth: .infinity,
+            minHeight: metrics.windowMinHeight,
+            idealHeight: metrics.windowIdealHeight,
+            maxHeight: .infinity
+        )
     }
 
     // MARK: Private
 
+    @AppStorage(SettingsKeys.selectedSettingsTab) private var selectedTab = SettingsTab.general.rawValue
+
     private let updater: AppUpdater
     private let metrics = SettingsDisplayMetrics.standard
+
+    private var selection: Binding<SettingsTab> {
+        Binding(
+            get: { SettingsTab(rawValue: selectedTab) ?? .general },
+            set: { selectedTab = $0.rawValue }
+        )
+    }
+
+    @ViewBuilder private var selectedPane: some View {
+        switch selection.wrappedValue {
+        case .general: GeneralSettingsView()
+        case .capture: CaptureSettingsView()
+        case .helper: HelperSettingsView()
+        case .privacy: PrivacySettingsView()
+        case .mcp: MCPSettingsView()
+        case .updates: UpdatesSettingsView(updater: updater)
+        }
+    }
 }
 
 #Preview {

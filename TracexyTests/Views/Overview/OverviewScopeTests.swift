@@ -8,8 +8,8 @@ struct OverviewScopeTests {
     // MARK: Internal
 
     @Test("Rollups follow the active filter rather than the whole capture")
-    func rollupsRespectTheFilter() throws {
-        let env = try makeLoadedCoordinator()
+    func rollupsRespectTheFilter() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
@@ -30,8 +30,8 @@ struct OverviewScopeTests {
     }
 
     @Test("Protocol counts follow the active filter too")
-    func protocolCountsRespectTheFilter() throws {
-        let env = try makeLoadedCoordinator()
+    func protocolCountsRespectTheFilter() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
@@ -56,8 +56,8 @@ struct OverviewScopeTests {
     }
 
     @Test("A saved capture reports unknown fidelity, never a clean one")
-    func savedCaptureHasNoFidelity() throws {
-        let env = try makeLoadedCoordinator()
+    func savedCaptureHasNoFidelity() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
 
         // A file carries no kernel accounting, so loss during the original
@@ -66,8 +66,8 @@ struct OverviewScopeTests {
     }
 
     @Test("Opening a saved file records truthful provenance and a real activity aggregation")
-    func savedCaptureExposesProvenance() throws {
-        let env = try makeLoadedCoordinator()
+    func savedCaptureExposesProvenance() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
@@ -92,8 +92,8 @@ struct OverviewScopeTests {
     }
 
     @Test("Live/new/clear boundaries drop the saved-file identity so it never outlives the capture")
-    func clearingDropsSavedProvenance() throws {
-        let env = try makeLoadedCoordinator()
+    func clearingDropsSavedProvenance() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
@@ -107,52 +107,51 @@ struct OverviewScopeTests {
         #expect(!coordinator.isViewingSavedCapture)
     }
 
-    @Test("Plaintext-HTTP finding states only the decoded fact, never exposure")
-    func plaintextHTTPFindingIsEvidenceHonest() throws {
-        let env = try makeLoadedCoordinator()
+    @Test("Findings project stable typed Core observations without session heuristics")
+    func findingsProjectCoreAnalysisOnly() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
-        // The sample capture carries one plaintext HTTP session (no TLS).
-        let httpSession = try #require(
-            coordinator.sessions.first {
-                $0.protocolStack.contains(.http) && !$0.protocolStack.contains(.tls)
-            },
-            "sample capture must contain a plaintext HTTP session"
+        let core = try #require(
+            coordinator.connectionAnalysisSnapshot.findings.first { $0.kind == .resetObserved },
+            "sample capture must retain its observed TCP reset"
         )
+        let finding = try #require(coordinator.findings.first { $0.id == core.id })
+        let sessionID = SessionBuilder.sessionID(for: core.tuple)
 
-        let finding = try #require(
-            coordinator.findings.first { $0.title == "Plaintext HTTP" },
-            "a plaintext HTTP session must produce a Plaintext HTTP finding"
-        )
+        #expect(finding.id == core.id)
         #expect(finding.severity == .warning)
-        #expect(finding.sessionID == httpSession.id)
-        #expect(finding.subtitle == "Unencrypted HTTP traffic to \(httpSession.host)")
+        #expect(finding.title == "TCP reset observed")
+        #expect(finding.sessionID == sessionID)
+        #expect(finding.coverage == core.coverage)
+        #expect(finding.citedObservationCount == core.citations.count)
+        #expect(finding.omittedCitationCount == core.omittedCitationCount)
 
-        // The old copy claimed credentials/PII were exposed — evidence we never
-        // gather. It must not reappear in any finding.
-        #expect(coordinator.findings.allSatisfy { !$0.subtitle.contains("credentials") })
-        #expect(coordinator.findings.allSatisfy { !$0.subtitle.contains("PII") })
+        // Plaintext HTTP, error status, empty DNS answers and latency no longer
+        // create presentation-layer findings without an accepted Core rule.
+        #expect(coordinator.findings.allSatisfy { $0.title != "Plaintext HTTP" })
+        #expect(coordinator.findings.allSatisfy { $0.title != "DNS returned no answer" })
+        #expect(coordinator.findings.allSatisfy { $0.title != "High DNS response time" })
     }
 
-    @Test("Security quick filter covers the same sessions as findings")
-    func securityQuickFilterMatchesFindingSessions() throws {
-        let env = try makeLoadedCoordinator()
+    @Test("Findings quick filter covers exactly the projected finding sessions")
+    func findingsQuickFilterMatchesFindingSessions() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
 
-        let findingSessionIDs = Set(coordinator.findings.compactMap(\.sessionID))
-        let matchingSessionIDs = Set(coordinator.sessions.filter {
-            MainContentCoordinator.securityCategoryMatches($0)
-        }.map(\.id))
+        let findingSessionIDs = coordinator.findingSessionIDs
+        coordinator.activeWorkspace.categoryFilters = [.security]
+        let matchingSessionIDs = Set(coordinator.visibleSessions.map(\.id))
 
         #expect(!findingSessionIDs.isEmpty)
         #expect(matchingSessionIDs == findingSessionIDs)
     }
 
     @Test("Removing sessions hides them across presentation surfaces and remains reversible")
-    func removedSessionsStayOutOfPresentation() throws {
-        let env = try makeLoadedCoordinator()
+    func removedSessionsStayOutOfPresentation() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         let target = try #require(coordinator.sessions.first)
@@ -187,8 +186,8 @@ struct OverviewScopeTests {
     }
 
     @Test("Capture boundaries discard removed-session presentation state")
-    func clearDiscardsRemovedSessions() throws {
-        let env = try makeLoadedCoordinator()
+    func clearDiscardsRemovedSessions() async throws {
+        let env = try await makeLoadedCoordinator()
         defer { env.teardown() }
         let coordinator = env.coordinator
         let target = try #require(coordinator.sessions.first)
@@ -211,7 +210,7 @@ struct OverviewScopeTests {
 
     /// Writes the sample frames to a real `.pcap` and opens it through
     /// `openSavedCapture`, the same path the sidebar uses.
-    private func makeLoadedCoordinator(function: String = #function) throws -> Environment {
+    private func makeLoadedCoordinator(function: String = #function) async throws -> Environment {
         let suiteName = "com.amunx.tracexy.tests.\(function).\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         let coordinator = MainContentCoordinator(
@@ -228,6 +227,7 @@ struct OverviewScopeTests {
         coordinator.openSavedCapture(
             SavedCapture(url: url, name: "sample", date: Date(), byteCount: frames.count)
         )
+        await coordinator.waitForSavedCaptureOpen()
         try #require(!coordinator.sessions.isEmpty, "opening the sample capture must produce sessions")
 
         return Environment(coordinator: coordinator) {

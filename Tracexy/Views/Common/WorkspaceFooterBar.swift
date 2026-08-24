@@ -2,23 +2,13 @@ import SwiftUI
 
 // MARK: - WorkspaceFooterSurface
 
-/// Which chrome surface a footer sits on. The bottom bars are deliberately
-/// *different* materials (see `Theme.Chrome`): the sidebar footer lives inside
-/// the source-list column and inherits that column's sidebar material, while the
-/// workspace status bar and the right Details footer sit over opaque content and
-/// use the window background so nothing bleeds up through them.
+/// Which workspace region owns a footer. The value stays at call sites because
+/// it documents layout ownership; the native glass itself samples the region
+/// behind it and therefore does not need a hand-painted region color.
 enum WorkspaceFooterSurface {
     case sidebar
     case workspace
-
-    // MARK: Internal
-
-    var background: Color {
-        switch self {
-        case .sidebar: Theme.Chrome.sidebarFooterBackground
-        case .workspace: Theme.Chrome.workspaceFooterBackground
-        }
-    }
+    case inspector
 }
 
 // MARK: - WorkspaceFooterBar
@@ -26,12 +16,10 @@ enum WorkspaceFooterSurface {
 /// The shared footer chrome for the sidebar, the workspace/session status bar and
 /// the right Details inspector.
 ///
-/// It owns exactly four things — the shared row height, the `chrome` type role,
-/// the semantic background for its surface, and the top hairline seam — so every
-/// bottom bar in the window meets on one baseline, reads in one typeface, and
-/// adapts to light/dark and contrast without hand-tuned colors. It carries **no**
-/// product actions; each call site places its own controls inside `content` and
-/// owns their horizontal layout.
+/// It owns the shared row height, the `chrome` type role, and the accessibility-
+/// aware glass policy so every bottom bar meets on one baseline and adapts to
+/// Light, Dark, Reduce Transparency and Increase Contrast. It carries **no**
+/// product actions; each call site owns its controls and horizontal layout.
 struct WorkspaceFooterBar<Content: View>: View {
     // MARK: Lifecycle
 
@@ -46,19 +34,26 @@ struct WorkspaceFooterBar<Content: View>: View {
     // MARK: Internal
 
     var body: some View {
-        content()
-            // `chrome` is the footer's base type role; call sites may override a
-            // specific label, but everything else inherits one consistent scale.
-            .font(Theme.Typography.chrome)
-            // Scaled off `.callout` (the size `chrome` resolves to) so all three
-            // pane footers grow in lockstep at accessibility text sizes and stay
-            // on one baseline. Dynamic Type is deliberately *not* capped.
-            .frame(height: footerHeight)
-            .frame(maxWidth: .infinity)
-            .background(surface.background)
-            .overlay(alignment: .top) {
-                Divider()
+        switch surface {
+        case .workspace:
+            TracexyGlassEffectGroup(spacing: Theme.Glass.functionalBarHorizontalInset) {
+                footerContent
+                    .tracexyGlassEffect(
+                        in: RoundedRectangle(
+                            cornerRadius: Theme.Glass.functionalBarCornerRadius,
+                            style: .continuous
+                        )
+                    )
             }
+            .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+            .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
+        case .sidebar,
+             .inspector:
+            // These panes are already semantic native Liquid Glass split items.
+            // A second glass island would sample glass from glass and flatten the
+            // system material, so their safe-area bars stay transparent.
+            footerContent
+        }
     }
 
     // MARK: Private
@@ -67,4 +62,11 @@ struct WorkspaceFooterBar<Content: View>: View {
 
     private let surface: WorkspaceFooterSurface
     private let content: () -> Content
+
+    private var footerContent: some View {
+        content()
+            .font(Theme.Typography.chrome)
+            .frame(height: footerHeight)
+            .frame(maxWidth: .infinity)
+    }
 }

@@ -1,5 +1,7 @@
 import SwiftUI
 
+// MARK: - TracexyApp
+
 @main
 struct TracexyApp: App {
     // MARK: Internal
@@ -27,6 +29,8 @@ struct TracexyApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            TracexySettingsCommands()
+
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
@@ -75,6 +79,7 @@ struct TracexyApp: App {
         }
         .defaultSize(width: 600, height: 420)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
 
         Window("Noise Control", id: Self.noiseControlWindowID) {
             NoiseControlWindow(coordinator: coordinator)
@@ -82,11 +87,15 @@ struct TracexyApp: App {
         }
         .defaultSize(width: 460, height: 560)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView(updater: updater)
                 .preferredColorScheme(colorScheme)
         }
+        .defaultSize(width: 900, height: 640)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unified(showsTitle: true))
     }
 
     // MARK: Private
@@ -97,7 +106,7 @@ struct TracexyApp: App {
     /// This is the composition root: the app's capacity limits are resolved
     /// once, here, and handed down. No type below this line asks what build it
     /// is running in.
-    @State private var coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+    @State private var coordinator = TracexyApp.composeCoordinator()
     @StateObject private var updater = AppUpdater.shared
 
     /// The user's General → Appearance preference, applied app-wide. `nil` follows
@@ -107,4 +116,37 @@ struct TracexyApp: App {
     private var colorScheme: ColorScheme? {
         AppAppearance(rawValue: appearance)?.colorScheme
     }
+
+    /// Resolve the terminal-history store for production. A directory/open/migration
+    /// failure is isolated here: the app and capture engine start regardless, and
+    /// History simply reports itself unavailable.
+    private static func composeCoordinator() -> MainContentCoordinator {
+        switch HistoryStoreFactory.production() {
+        case let .ready(store):
+            return MainContentCoordinator(policy: AppPolicyProvider.current, sessionStore: store)
+        case let .unavailable(reason):
+            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+            coordinator.historyError = reason
+            return coordinator
+        }
+    }
+}
+
+// MARK: - TracexySettingsCommands
+
+private struct TracexySettingsCommands: Commands {
+    // MARK: Internal
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+
+    // MARK: Private
+
+    @Environment(\.openWindow) private var openWindow
 }

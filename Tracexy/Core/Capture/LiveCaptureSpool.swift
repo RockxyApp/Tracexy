@@ -37,6 +37,12 @@ actor LiveCaptureSpool {
     enum Failure: Error, LocalizedError {
         case unavailable(String)
         case empty
+        /// The evidence locator's epoch or source token no longer matches this
+        /// spool — a locator from a superseded capture generation.
+        case staleEvidence
+        /// The locator's length/offset is out of bounds, overruns the current
+        /// file, or the exact read came up short/truncated.
+        case invalidEvidence(String)
 
         // MARK: Internal
 
@@ -44,11 +50,26 @@ actor LiveCaptureSpool {
             switch self {
             case let .unavailable(message): message
             case .empty: "The live capture spool has no frames."
+            case .staleEvidence: "The requested capture evidence is no longer available."
+            case let .invalidEvidence(message): "The capture evidence is invalid: \(message)"
             }
         }
     }
 
+    /// The typed outcome of an ``append(_:defaultLinkType:epoch:)``. A stale-epoch
+    /// append writes nothing and is reported distinctly from a current append,
+    /// which returns exactly one locator per input frame in order (empty for an
+    /// empty batch).
+    enum AppendResult: Sendable {
+        case staleEpoch
+        case appended([SessionEvidenceLocator])
+    }
+
     func reset(epoch: Int) throws {
+        // Invalidate all prior evidence *before* preparing the new file: no
+        // locator minted against the old source token can resolve once reset
+        // begins, and a failed preparation leaves no valid token behind.
+        sourceToken = nil
         try handle?.close()
         handle = nil
         if let url {
@@ -58,6 +79,7 @@ actor LiveCaptureSpool {
         url = nil
         interfaceIDs.removeAll(keepingCapacity: false)
         frameCount = 0
+        writeOffset = 0
         failure = nil
         do {
             try prepareFile()
@@ -65,15 +87,26 @@ actor LiveCaptureSpool {
             failure = error.localizedDescription
             throw error
         }
+        // The new file is valid: mint a fresh opaque token for the evidence
+        // locators appended into it.
+        sourceToken = UUID()
     }
 
-    func append(_ frames: [CapturedFrame], defaultLinkType: UInt32, epoch: Int) throws {
-        guard epoch == self.epoch, !frames.isEmpty else {
-            return
+    @discardableResult
+    func append(_ frames: [CapturedFrame], defaultLinkType: UInt32, epoch: Int) throws -> AppendResult {
+        guard epoch == self.epoch else {
+            // A superseded generation never writes; the caller distinguishes this
+            // from a real failure and offers the frames with nil locators.
+            return .staleEpoch
         }
-        guard failure == nil, let handle else {
+        guard !frames.isEmpty else {
+            return .appended([])
+        }
+        guard failure == nil, let handle, let token = sourceToken else {
             throw Failure.unavailable(failure ?? "The local capture spool is unavailable.")
         }
+        var locators: [SessionEvidenceLocator] = []
+        locators.reserveCapacity(frames.count)
         do {
             for frame in frames {
                 let linkType = frame.linkType ?? defaultLinkType
@@ -85,10 +118,26 @@ actor LiveCaptureSpool {
                         throw Failure.unavailable("Capture link type \(linkType) cannot be written to pcapng.")
                     }
                     interfaceID = UInt32(interfaceIDs.count)
-                    try handle.write(contentsOf: Self.interfaceDescriptionBlock(linkType: linkType))
+                    let idb = Self.interfaceDescriptionBlock(linkType: linkType)
+                    try handle.write(contentsOf: idb)
+                    // A newly emitted interface block advances the offset before the
+                    // enhanced block, so the locator points past it — not skewed.
+                    try advanceWriteOffset(by: idb.count)
                     interfaceIDs[linkType] = interfaceID
                 }
-                try handle.write(contentsOf: Self.enhancedPacketBlock(frame: frame, interfaceID: interfaceID))
+                let block = Self.enhancedPacketBlock(frame: frame, interfaceID: interfaceID)
+                // The absolute payload-byte offset of this frame's captured bytes
+                // inside its enhanced packet block (fixed prefix past the block and
+                // record headers). Independent of any link-type mix.
+                let (payloadOffset, payloadOverflow) = writeOffset.addingReportingOverflow(
+                    UInt64(Self.enhancedPacketPayloadPrefix)
+                )
+                guard !payloadOverflow else {
+                    throw Failure.unavailable("The local capture spool offset overflowed.")
+                }
+                try handle.write(contentsOf: block)
+                try advanceWriteOffset(by: block.count)
+                locators.append(SessionEvidenceLocator(sourceToken: token, offset: payloadOffset))
                 frameCount += 1
             }
         } catch {
@@ -96,6 +145,62 @@ actor LiveCaptureSpool {
             failure = message
             throw Failure.unavailable(message)
         }
+        return .appended(locators)
+    }
+
+    /// Read exactly the captured bytes an evidence locator points at, validated
+    /// against the current capture generation and file.
+    ///
+    /// Everything is checked before the read: the epoch and source token must be
+    /// the live ones, the length must be within `0...CapturedFrame.maxReasonableLength`,
+    /// and `offset + length` must neither overflow nor overrun the synchronized
+    /// current file size. The read happens through a *separate* read handle, so the
+    /// append handle's write offset is never disturbed, and no URL or file identity
+    /// is exposed. Every failure is a typed, controlled ``Failure`` — never a trap.
+    func read(_ locator: SessionEvidenceLocator, capturedLength: Int, epoch: Int) throws -> [UInt8] {
+        guard epoch == self.epoch else {
+            throw Failure.staleEvidence
+        }
+        guard let token = sourceToken, locator.sourceToken == token else {
+            throw Failure.staleEvidence
+        }
+        // Evidence written before a mid-append failure is still recoverable — the
+        // offset-vs-size check below bounds the read to bytes actually present — so
+        // this does not gate on `failure`, only on a usable file/handle.
+        guard let url, let handle else {
+            throw Failure.unavailable(failure ?? "The local capture spool is unavailable.")
+        }
+        guard capturedLength >= 0, capturedLength <= CapturedFrame.maxReasonableLength else {
+            throw Failure.invalidEvidence("captured length \(capturedLength) out of bounds")
+        }
+        let (end, overflow) = locator.offset.addingReportingOverflow(UInt64(capturedLength))
+        guard !overflow else {
+            throw Failure.invalidEvidence("evidence offset/length overflow")
+        }
+        // Flush the append handle so a read handle opened now sees every byte
+        // written so far, then bound the read against the synchronized size.
+        try handle.synchronize()
+        let readHandle = try FileHandle(forReadingFrom: url)
+        defer { try? readHandle.close() }
+        let size = try readHandle.seekToEnd()
+        guard end <= size else {
+            throw Failure.invalidEvidence("evidence overruns the current spool file")
+        }
+        try readHandle.seek(toOffset: locator.offset)
+        var collected = Data()
+        collected.reserveCapacity(capturedLength)
+        while collected.count < capturedLength {
+            guard let chunk = try readHandle.read(upToCount: capturedLength - collected.count),
+                  !chunk.isEmpty else
+            {
+                break
+            }
+            collected.append(chunk)
+        }
+        guard collected.count == capturedLength else {
+            throw Failure.invalidEvidence("short read of selected evidence")
+        }
+        return [UInt8](collected)
     }
 
     func capture() throws -> (linkType: UInt32, frames: [CapturedFrame]) {
@@ -122,6 +227,12 @@ actor LiveCaptureSpool {
 
     // MARK: Private
 
+    /// Byte length of an enhanced packet block's fixed prefix before the captured
+    /// payload: the 8-byte block header (type + total length) plus the 20-byte
+    /// fixed record fields (interface id, timestamp high/low, captured length,
+    /// original length). The payload bytes begin exactly here.
+    private static let enhancedPacketPayloadPrefix = 28
+
     private let directory: URL
     private var epoch = -1
     private var url: URL?
@@ -129,6 +240,14 @@ actor LiveCaptureSpool {
     private var interfaceIDs: [UInt32: UInt32] = [:]
     private var frameCount = 0
     private var failure: String?
+    /// The current file's fresh opaque evidence token, minted only after a valid
+    /// reset and cleared whenever the file is invalid. `nil` means no locator can
+    /// resolve.
+    private var sourceToken: UUID?
+    /// The next byte position the append handle will write, tracked so a locator's
+    /// payload offset is known before the block is written. Bounded counter state;
+    /// no locator array or ordinal map is retained.
+    private var writeOffset: UInt64 = 0
 
     private static func sectionHeaderBlock() -> Data {
         block(type: 0x0A0D0D0A) { body in
@@ -201,6 +320,14 @@ actor LiveCaptureSpool {
         return published || staging
     }
 
+    private func advanceWriteOffset(by byteCount: Int) throws {
+        let (next, overflow) = writeOffset.addingReportingOverflow(UInt64(byteCount))
+        guard !overflow else {
+            throw Failure.unavailable("The local capture spool offset overflowed.")
+        }
+        writeOffset = next
+    }
+
     private func prepareFile() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         removeInactiveOrphans()
@@ -231,8 +358,9 @@ actor LiveCaptureSpool {
             throw Failure.unavailable("Couldn’t lock the local capture spool.")
         }
 
+        let header = Self.sectionHeaderBlock()
         do {
-            try nextHandle.write(contentsOf: Self.sectionHeaderBlock())
+            try nextHandle.write(contentsOf: header)
             try FileManager.default.moveItem(at: stagingURL, to: finalURL)
         } catch {
             try? nextHandle.close() // releases the advisory lock
@@ -243,6 +371,8 @@ actor LiveCaptureSpool {
 
         url = finalURL
         handle = nextHandle
+        // The append offset starts past the section header block.
+        writeOffset = UInt64(header.count)
     }
 
     /// Best-effort recovery of spool files left by crashed instances. Scoped strictly

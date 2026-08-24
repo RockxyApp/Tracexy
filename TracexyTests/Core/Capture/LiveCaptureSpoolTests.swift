@@ -24,6 +24,141 @@ struct LiveCaptureSpoolTests {
         #expect(capture.frames.map(\.linkType) == [LinkType.ethernet, LinkType.raw])
     }
 
+    @Test("Append returns one ordered locator per frame; exact-read returns real bytes")
+    func appendLocatorsAndExactRead() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 5)
+        let a = frame(byte: 1, timestamp: 1, linkType: LinkType.ethernet)
+        let b = frame(byte: 2, timestamp: 2, linkType: LinkType.raw)
+        let c = frame(byte: 3, timestamp: 3, linkType: LinkType.ethernet)
+
+        let firstResult = try await spool.append([a, b], defaultLinkType: LinkType.ethernet, epoch: 5)
+        let secondResult = try await spool.append([c], defaultLinkType: LinkType.ethernet, epoch: 5)
+        let emptyResult = try await spool.append([], defaultLinkType: LinkType.ethernet, epoch: 5)
+
+        let first = try Self.appended(firstResult)
+        let second = try Self.appended(secondResult)
+        let empty = try Self.appended(emptyResult)
+
+        #expect(first.count == 2)
+        #expect(second.count == 1)
+        #expect(empty.isEmpty)
+
+        let all = first + second
+        // One source token spans the whole generation; offsets strictly increase
+        // in accepted order across the mixed link types and the new interface block.
+        #expect(Set(all.map(\.sourceToken)).count == 1)
+        let offsets = all.map(\.offset)
+        #expect(offsets == offsets.sorted())
+        #expect(Set(offsets).count == 3)
+
+        for (locator, source) in zip(all, [a, b, c]) {
+            let bytes = try await spool.read(locator, capturedLength: source.bytes.count, epoch: 5)
+            #expect(bytes == source.bytes)
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("Reset mints a new source token and invalidates prior evidence")
+    func resetInvalidatesEvidence() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 1)
+        let source = frame(byte: 9, timestamp: 1)
+        let old = try #require(try await Self.appended(
+            spool.append([source], defaultLinkType: LinkType.ethernet, epoch: 1)
+        ).first)
+        #expect(try await spool.read(old, capturedLength: source.bytes.count, epoch: 1) == source.bytes)
+
+        try await spool.reset(epoch: 2)
+        let new = try #require(try await Self.appended(
+            spool.append([source], defaultLinkType: LinkType.ethernet, epoch: 2)
+        ).first)
+
+        #expect(new.sourceToken != old.sourceToken)
+        // The old locator no longer resolves: its token is gone and its epoch moved.
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(old, capturedLength: source.bytes.count, epoch: 2)
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("A stale-epoch append is typed and writes nothing")
+    func staleAppendTypedNoWrite() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 3)
+        let result = try await spool.append(
+            [frame(byte: 1, timestamp: 1)], defaultLinkType: LinkType.ethernet, epoch: 2
+        )
+        guard case .staleEpoch = result else {
+            Issue.record("expected .staleEpoch, got \(result)")
+            return
+        }
+        // Nothing was written, so the spool still reports no frames.
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.capture()
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("Invalid evidence length, offset, token and epoch each fail without a trap")
+    func invalidEvidenceFailsTyped() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 4)
+        let source = frame(byte: 7, timestamp: 1)
+        let locator = try #require(try await Self.appended(
+            spool.append([source], defaultLinkType: LinkType.ethernet, epoch: 4)
+        ).first)
+
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(locator, capturedLength: -1, epoch: 4)
+        }
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(
+                locator, capturedLength: CapturedFrame.maxReasonableLength + 1, epoch: 4
+            )
+        }
+        let overrun = SessionEvidenceLocator(sourceToken: locator.sourceToken, offset: .max - 1)
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(overrun, capturedLength: source.bytes.count, epoch: 4)
+        }
+        let wrongToken = SessionEvidenceLocator(sourceToken: UUID(), offset: locator.offset)
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(wrongToken, capturedLength: source.bytes.count, epoch: 4)
+        }
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.read(locator, capturedLength: source.bytes.count, epoch: 99)
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("Exact-read does not disturb the append handle or later capture")
+    func readDoesNotDisturbAppend() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 6)
+        let a = frame(byte: 1, timestamp: 1, linkType: LinkType.ethernet)
+        let la = try #require(try await Self.appended(
+            spool.append([a], defaultLinkType: LinkType.ethernet, epoch: 6)
+        ).first)
+
+        // Read between appends, then keep appending.
+        _ = try await spool.read(la, capturedLength: a.bytes.count, epoch: 6)
+
+        let b = frame(byte: 2, timestamp: 2, linkType: LinkType.raw)
+        let lb = try #require(try await Self.appended(
+            spool.append([b], defaultLinkType: LinkType.ethernet, epoch: 6)
+        ).first)
+
+        #expect(try await spool.read(lb, capturedLength: b.bytes.count, epoch: 6) == b.bytes)
+        let capture = try await spool.capture()
+        #expect(capture.frames.map(\.bytes) == [a.bytes, b.bytes])
+        withExtendedLifetime(spool) {}
+    }
+
     @Test("Stale capture generations cannot append into a new spool")
     func staleEpochIgnored() async throws {
         let directory = Self.uniqueDirectory()
@@ -128,6 +263,18 @@ struct LiveCaptureSpoolTests {
     }
 
     // MARK: Private
+
+    private enum AppendExpectationError: Error {
+        case notAppended
+    }
+
+    /// Unwrap a successful append's locators, failing the test on a stale result.
+    private static func appended(_ result: LiveCaptureSpool.AppendResult) throws -> [SessionEvidenceLocator] {
+        guard case let .appended(locators) = result else {
+            throw AppendExpectationError.notAppended
+        }
+        return locators
+    }
 
     private static func writeThenRelease(in directory: URL) async throws {
         let spool = LiveCaptureSpool(directory: directory)

@@ -47,8 +47,6 @@ struct RootView: View {
             ContextDockView(coordinator: coordinator)
         }
         .ignoresSafeArea(.container, edges: .top)
-        .navigationTitle(coordinator.activeWorkspace.sidebarSelection.title)
-        .navigationSubtitle(TracexyIdentity.tagline)
         // The unified window toolbar — sidebar toggle, interface picker, capture
         // status, and the capture/inspector actions — is installed natively by
         // `NativeWorkspaceWindowChrome`, so the sidebar toggle can sit above the
@@ -90,8 +88,15 @@ struct RootView: View {
     /// semantics, and the equality guard means a native collapse publishes back exactly once.
     private var contextDockVisibility: Binding<Bool> {
         Binding(
-            get: { coordinator.isContextDockVisible },
+            get: {
+                coordinator.activeWorkspace.sidebarSelection == .history
+                    ? false
+                    : coordinator.isContextDockVisible
+            },
             set: { newValue in
+                guard coordinator.activeWorkspace.sidebarSelection != .history else {
+                    return
+                }
                 if coordinator.isContextDockVisible != newValue {
                     coordinator.toggleContextDock()
                 }
@@ -139,44 +144,40 @@ struct MainDetailView: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let footerSurface = statusSurface(for: workspace.sidebarSelection)
-        // The status bar is a fixed full-width footer below every surface,
-        // pinned across Sessions and Overview alike. It is presentation-only: this
-        // view derives the pure snapshot/descriptors from the coordinator and
-        // wires the real callbacks, so the footer never touches workspace state.
-        VStack(spacing: 0) {
-            surface(workspace)
-            SessionStatusBar(
-                snapshot: footerSnapshot(workspace, surface: footerSurface),
-                descriptors: footerDescriptors(workspace, surface: footerSurface),
-                onAction: { performFooterAction($0, workspace) }
-            )
-        }
-        // Selection is the trigger for revealing the panels, and it has two
-        // sources: `coordinator.select(_:)` (the dock's related cards) and the
-        // tables, which write `selectedSessionID` straight through their own
-        // binding. Watching the state itself catches both — hooking only the
-        // method left clicking a row unable to bring the inspector back, which
-        // is the most ordinary thing a user does here.
-        .onChange(of: workspace.selectedSessionID) { _, newValue in
-            if newValue != nil {
-                coordinator.revealPanelsForSelection()
+        surface(workspace)
+            .tracexySafeAreaBar(edge: .bottom) {
+                SessionStatusBar(snapshot: footerSnapshot(workspace, surface: footerSurface))
             }
-        }
-        .confirmationDialog(
-            "Clear all capture data?",
-            isPresented: $showsClearConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clear Capture Data", role: .destructive) {
-                coordinator.clearSessions()
+            // Selection is the trigger for revealing the panels, and it has two
+            // sources: `coordinator.select(_:)` (the dock's related cards) and the
+            // tables, which write `selectedSessionID` straight through their own
+            // binding. Watching the state itself catches both — hooking only the
+            // method left clicking a row unable to bring the inspector back, which
+            // is the most ordinary thing a user does here.
+            .onChange(of: workspace.selectedSessionID) { _, newValue in
+                // Raw Follow Stream bytes are explicitly selection-scoped. Table
+                // bindings bypass `coordinator.select(_:)`, so this root observer is
+                // the authoritative retirement boundary for both selection paths.
+                coordinator.cancelFollowStream(clearResult: true)
+                if newValue != nil {
+                    coordinator.revealPanelsForSelection()
+                }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This removes decoded sessions, retained packets, capture statistics, "
-                    + "and throughput history. Save the capture first if you need it later."
-            )
-        }
+            .confirmationDialog(
+                "Clear all capture data?",
+                isPresented: $showsClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Clear Capture Data", role: .destructive) {
+                    coordinator.clearSessions()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This removes decoded sessions, retained packets, capture statistics, "
+                        + "and throughput history. Save the capture first if you need it later."
+                )
+            }
     }
 
     // MARK: Private
@@ -186,6 +187,7 @@ struct MainDetailView: View {
     /// the presentation-only status bar.
     @Environment(\.openWindow) private var openWindow
     @State private var showsClearConfirmation = false
+    @State private var showsInvestigationEditor = false
 
     /// Bridges the native evidence split's presentation to the workspace's inspector
     /// layout. Routing the setter through `toggleInspectorBottom()` preserves the
@@ -206,15 +208,31 @@ struct MainDetailView: View {
     /// split. The inspector item collapses and expands in place rather than swapping the
     /// whole subtree, so table selection and scroll position survive every toggle.
     private var sessionArea: some View {
-        NativeBottomInspectorSplitView(
-            isInspectorPresented: bottomInspectorPresented,
-            autosaveName: bottomInspectorAutosaveName,
-            primaryMinimumHeight: Theme.Metrics.sessionTableMinHeight,
-            inspectorMinimumHeight: Theme.Metrics.bottomInspectorMinHeight
-        ) {
-            SessionCenterView(coordinator: coordinator)
-        } inspector: {
-            InspectorView(coordinator: coordinator)
+        let workspace = coordinator.activeWorkspace
+        return TracexyGlassEffectGroup(spacing: Theme.Metrics.spacingM) {
+            NativeBottomInspectorSplitView(
+                isInspectorPresented: bottomInspectorPresented,
+                autosaveName: bottomInspectorAutosaveName,
+                primaryMinimumHeight: Theme.Metrics.sessionTableMinHeight,
+                inspectorMinimumHeight: Theme.Metrics.bottomInspectorMinHeight
+            ) {
+                SessionCenterView(coordinator: coordinator)
+            } inspector: {
+                InspectorView(coordinator: coordinator)
+            }
+            .tracexyDenseScrollEdge()
+            .tracexySafeAreaBar(edge: .top) {
+                SessionCommandBar(
+                    descriptors: sessionCommandDescriptors(workspace),
+                    onAction: { performSessionCommand($0, workspace) }
+                )
+                .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
+                    InvestigationQueryEditorView(
+                        coordinator: coordinator,
+                        workspace: workspace
+                    )
+                }
+            }
         }
     }
 
@@ -225,6 +243,8 @@ struct MainDetailView: View {
         case .overview: OverviewView(coordinator: coordinator)
         // Where traffic is going, geographically.
         case .flow: FlowMapView(coordinator: coordinator)
+        // Terminal local summaries, independent from the active capture table.
+        case .history: HistoryView(coordinator: coordinator)
         default: sessionArea
         }
     }
@@ -236,6 +256,7 @@ struct MainDetailView: View {
         switch selection {
         case .overview: .overview
         case .flow: .flow
+        case .history: .history
         default: .sessionList
         }
     }
@@ -245,6 +266,20 @@ struct MainDetailView: View {
     /// latest throughput sample and only while capturing — the coordinator is not
     /// edited to derive it.
     private func footerSnapshot(_ workspace: WorkspaceState, surface: StatusSurface) -> FooterSnapshot {
+        if case .history = surface {
+            let sessionCount = coordinator.historyCaptures.reduce(0) { partial, capture in
+                partial + capture.sessionCount
+            }
+            return FooterSnapshot(
+                summary: HistoryFooterModel.statusText(
+                    captureCount: coordinator.historyCaptures.count,
+                    sessionCount: sessionCount,
+                    hasMore: coordinator.historyCaptureCursor != nil
+                ),
+                telemetry: [],
+                captureStartedAt: nil
+            )
+        }
         let stats = coordinator.captureStatistics
         // The first sample uses a startup-clamped interval and is intentionally
         // not presented as a trustworthy live rate. The second sample has a
@@ -282,28 +317,31 @@ struct MainDetailView: View {
         )
     }
 
-    /// The ordered footer descriptors — feature launchers and List Options — only
-    /// on session-list surfaces. Every other surface shows status/telemetry only.
-    private func footerDescriptors(_ workspace: WorkspaceState, surface: StatusSurface) -> [FooterActionDescriptor] {
-        guard surface.showsSessionControls else {
-            return []
-        }
-        return SessionStatusBarModel.actions(
+    private func sessionCommandDescriptors(_ workspace: WorkspaceState) -> [SessionCommandDescriptor] {
+        SessionCommandBarModel.commands(
+            isFollowingLive: workspace.isFollowingLiveSessions,
+            hasVisibleSessions: !coordinator.visibleSessions.isEmpty,
+            hasCaptureData: !coordinator.sessions.isEmpty,
             canSaveCapture: coordinator.canSaveCapture,
             canAddFocusSet: coordinator.canAddFocusSet,
             isNoiseControlActive: coordinator.isNoiseControlActive,
-            hasSessions: !coordinator.sessions.isEmpty,
             removedSessionCount: coordinator.removedSessionCount,
             activeFilterRuleCount: workspace.activeFilterRules.count,
             isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
-            autoSelectLatest: workspace.autoSelectLatest
+            isInvestigationActive: workspace.hasActiveInvestigationQuery
         )
     }
 
-    /// Maps a footer descriptor's identity to its real effect. These are the
-    /// existing coordinator/workspace callbacks; the footer wires nothing new.
-    private func performFooterAction(_ kind: FooterActionDescriptor.Kind, _ workspace: WorkspaceState) {
+    private func performSessionCommand(_ kind: SessionCommandKind, _ workspace: WorkspaceState) {
         switch kind {
+        case .followLive:
+            coordinator.toggleFollowingLiveSessions()
+        case .jumpToLatest:
+            coordinator.jumpToLatestVisibleSession()
+        case .investigate:
+            showsInvestigationEditor = true
+        case .clearCapture:
+            showsClearConfirmation = true
         case .saveCapture:
             coordinator.saveCurrentCapture()
         case .newFocusSet:
@@ -311,8 +349,6 @@ struct MainDetailView: View {
             openWindow(id: TracexyApp.focusSetEditorWindowID)
         case .noiseControl:
             openWindow(id: TracexyApp.noiseControlWindowID)
-        case .clearSessions:
-            showsClearConfirmation = true
         case .restoreRemovedSessions:
             coordinator.restoreRemovedSessions()
         case .advancedFilters:
@@ -320,8 +356,6 @@ struct MainDetailView: View {
             // builder directly beneath them.
             workspace.isFilterBarVisible = true
             workspace.isAdvancedFilterVisible.toggle()
-        case .autoSelectLatest:
-            workspace.autoSelectLatest.toggle()
         }
     }
 }
@@ -337,24 +371,42 @@ struct CaptureStatusView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: statusShadowColor, radius: 4)
-                Text(statusText)
-                    .font(Theme.Typography.bodyMedium)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if updater.updateStatusSummary != nil {
-                    Text("|")
-                        .font(Theme.Typography.badge)
+            Button {
+                showsReadiness.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: statusShadowColor, radius: 4)
+                    Text(statusText)
+                        .font(Theme.Typography.bodyMedium)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(Theme.Typography.micro)
                         .foregroundStyle(.tertiary)
+                    if updater.updateStatusSummary != nil {
+                        Text("|")
+                            .font(Theme.Typography.badge)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .padding(.leading, 14)
             .padding(.trailing, updater.updateStatusSummary == nil ? 14 : 7)
             .frame(height: Theme.Metrics.toolbarControlHeight)
+            .help(statusHelp)
+            .accessibilityLabel("Capture Readiness")
+            .accessibilityValue(statusText)
+            .popover(isPresented: $showsReadiness, arrowEdge: .bottom) {
+                CaptureReadinessPopover(
+                    coordinator: coordinator,
+                    isPresented: $showsReadiness
+                )
+            }
 
             if let summary = updater.updateStatusSummary {
                 Button {
@@ -374,13 +426,13 @@ struct CaptureStatusView: View {
             }
         }
         .frame(height: Theme.Metrics.toolbarControlHeight)
-        .help(statusHelp)
+        .tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))
     }
 
     // MARK: Private
 
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var updater = AppUpdater.shared
+    @State private var showsReadiness = false
 
     private var statusText: String {
         "\(TracexyIdentity.productName) | \(coordinator.captureInterface) | \(coordinator.captureDisplayState.title)"
@@ -398,14 +450,6 @@ struct CaptureStatusView: View {
         ]
         .compactMap { $0 }
         .joined(separator: "\n")
-    }
-
-    private var updateBadgeBackground: Color {
-        Color(nsColor: .systemGray).opacity(colorScheme == .dark ? 0.62 : 0.82)
-    }
-
-    private var updateBadgeStroke: Color {
-        Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06)
     }
 
     private var statusColor: Color {
@@ -428,18 +472,10 @@ struct CaptureStatusView: View {
     private func updateBadge(_ title: String) -> some View {
         Text(title)
             .font(Theme.Typography.toolbarBadge)
-            .foregroundStyle(.white)
             .lineLimit(1)
             .padding(.horizontal, Theme.Metrics.updateBadgeHorizontalPadding)
             .frame(height: Theme.Metrics.updateBadgeHeight)
-            .background {
-                Capsule(style: .continuous).fill(updateBadgeBackground)
-            }
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(updateBadgeStroke, lineWidth: Theme.Metrics.updateBadgeStrokeWidth)
-            }
-            .contentShape(Capsule(style: .continuous))
+            .tracexyChipStyle(tint: .accentColor, isActive: true)
     }
 
     private func updateHelp(_ summary: AppUpdater.UpdateStatusSummary) -> String {

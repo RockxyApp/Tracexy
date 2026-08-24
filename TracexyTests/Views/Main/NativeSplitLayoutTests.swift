@@ -178,7 +178,7 @@ struct NativeSplitLayoutTests {
     }
 
     @MainActor
-    @Test("Trailing actions separate capture, export, and the inspector group")
+    @Test("Trailing export menu stays visible beside the grouped capture and inspector actions")
     func nativeActionGroupStructure() {
         let controller = makeToolbarController()
         let toolbar = NativeWorkspaceToolbar(
@@ -195,28 +195,16 @@ struct NativeSplitLayoutTests {
             return
         }
 
-        let installedIDs = toolbar.managedToolbar.items.map(\.itemIdentifier)
-        guard let captureIndex = installedIDs.firstIndex(of: NativeWorkspaceToolbar.captureActionIdentifier),
-              let spacingIndex = installedIDs.firstIndex(of: .space),
-              let exportIndex = installedIDs.firstIndex(of: NativeWorkspaceToolbar.sessionExportIdentifier),
-              let inspectorIndex = installedIDs.firstIndex(of: NativeWorkspaceToolbar.actionsIdentifier) else
-        {
-            Issue.record("Trailing toolbar items were not installed")
-            return
-        }
-        #expect(captureIndex < spacingIndex)
-        #expect(spacingIndex < exportIndex)
-        #expect(exportIndex < inspectorIndex)
-
-        // Only the two inspector actions stay grouped; capture is independent and
-        // the bordered export control is a native menu toolbar item.
         let group = actionsItem as? NSToolbarItemGroup
         #expect(group != nil)
-        #expect(group?.subitems.count == 2)
-        #expect(group?.subitems.map(\.label) == ["Bottom Inspector", "Inspector"])
+        #expect(group?.subitems.count == 3)
+        #expect(group?.subitems.map(\.label) == ["Start", "Bottom Inspector", "Inspector"])
 
-        let exportItem = toolbar.managedToolbar.items[exportIndex] as? NSMenuToolbarItem
-        #expect(exportItem?.isBordered == true)
+        let exportItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.sessionExportIdentifier
+        }) as? NSMenuToolbarItem
+        #expect(exportItem != nil)
+        #expect(exportItem?.isBordered == false)
         #expect(exportItem?.showsIndicator == true)
         #expect(exportItem?.menu.items.map(\.title) == [
             "Export Session",
@@ -237,9 +225,13 @@ struct NativeSplitLayoutTests {
         let window = NSWindow(contentViewController: controller)
         window.toolbar = toolbar.managedToolbar
 
-        guard let captureItem = toolbar.managedToolbar.items.first(where: {
-            $0.itemIdentifier == NativeWorkspaceToolbar.captureActionIdentifier
-        }) else {
+        guard let group = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.actionsIdentifier
+        }) as? NSToolbarItemGroup,
+            let captureItem = group.subitems.first(where: {
+                $0.itemIdentifier == NativeWorkspaceToolbar.captureActionIdentifier
+            }) else
+        {
             Issue.record("Capture toolbar item was not installed")
             return
         }

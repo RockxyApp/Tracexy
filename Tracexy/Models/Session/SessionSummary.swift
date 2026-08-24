@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - SessionStatus
 
-/// Health classification for a session, driving color + Security filtering.
+/// Health classification for a session, driving row color and the exact Errors filter.
 nonisolated enum SessionStatus: String, CaseIterable, Hashable {
     case ok
     case warning
@@ -44,6 +44,15 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     var sourceEndpoint: String
     var destinationEndpoint: String
 
+    /// Typed source/destination endpoints projected from the same ``FiveTuple`` fold
+    /// that rendered ``sourceEndpoint``/``destinationEndpoint``. These retain the exact
+    /// client/server ``IPEndpoint`` (canonical IP text plus numeric port) so a typed
+    /// query can parse the address through `inet_pton` rather than re-parsing display
+    /// copy. Optional with a `nil` default so hand-built summaries and existing call
+    /// sites need no mechanical change; the accumulator always publishes them.
+    var sourceEndpointValue: IPEndpoint?
+    var destinationEndpointValue: IPEndpoint?
+
     /// The decoded stack, outer→inner, e.g. [.tcp, .tls, .http2].
     var protocolStack: [ProtocolKind]
     var status: SessionStatus
@@ -61,6 +70,15 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     var sni: String?
     var dnsQuery: String?
     var dnsAnswers: [String] = []
+    /// DNS answer-record occurrences not published because a retention cap was
+    /// reached (per-packet decode cap and/or the session publication cap). This is
+    /// not presented as exact unique cardinality after the retained list fills.
+    var dnsAnswersOmittedCount: Int = 0
+
+    /// Whether any DNS answers were omitted from ``dnsAnswers`` due to a cap.
+    nonisolated var dnsAnswersTruncated: Bool {
+        dnsAnswersOmittedCount > 0
+    }
 
     /// The innermost (most specific) protocol — used for sidebar bucketing.
     nonisolated var primaryProtocol: ProtocolKind {

@@ -145,29 +145,33 @@ struct SessionCategoryFilterTests {
         #expect(!MainContentCoordinator.categoryFilterMatches(makeSession(status: .ok), categories: categories))
     }
 
-    @Test("Security includes every evidence-backed finding source")
-    func securityIncludesFindingSources() {
+    @Test("Findings matches only exact typed-finding session membership")
+    func findingsUsesExactMembership() {
         let categories: Set<SessionFilterCategory> = [.security]
-        #expect(MainContentCoordinator.categoryFilterMatches(makeSession(status: .error), categories: categories))
-        #expect(MainContentCoordinator.categoryFilterMatches(makeSession(status: .warning), categories: categories))
+        let member = makeSession(status: .ok)
+        let heuristicOnly = makeSession(
+            protocols: [.tcp, .http],
+            status: .error,
+            dnsQuery: "missing.example",
+            latencyMilliseconds: 401
+        )
+        let ids: Set<UUID> = [member.id]
+
         #expect(MainContentCoordinator.categoryFilterMatches(
-            makeSession(protocols: [.tcp, .http]),
-            categories: categories
+            member,
+            categories: categories,
+            findingSessionIDs: ids
         ))
-        #expect(MainContentCoordinator.categoryFilterMatches(
-            makeSession(protocols: [.udp, .dns], dnsQuery: "missing.example"),
-            categories: categories
+        #expect(!MainContentCoordinator.categoryFilterMatches(
+            heuristicOnly,
+            categories: categories,
+            findingSessionIDs: ids
         ))
-        #expect(MainContentCoordinator.categoryFilterMatches(
-            makeSession(latencyMilliseconds: 401),
-            categories: categories
-        ))
-        #expect(!MainContentCoordinator.categoryFilterMatches(makeSession(), categories: categories))
     }
 
     @MainActor
-    @Test("Security quick-filter routing preserves complementary filters")
-    func securityFilterUsesSessionWorkflow() {
+    @Test("Findings quick-filter routing preserves complementary filters")
+    func findingsFilterUsesSessionWorkflow() {
         let coordinator = MainContentCoordinator()
         let workspace = coordinator.activeWorkspace
         workspace.sidebarSelection = .overview
@@ -175,7 +179,7 @@ struct SessionCategoryFilterTests {
         workspace.hostFilter = "api.example.com"
         workspace.isFilterBarVisible = false
 
-        coordinator.showSecuritySessions()
+        coordinator.showFindingSessions()
 
         #expect(workspace.sidebarSelection == .sessions)
         #expect(workspace.categoryFilters == [.tcp, .security])

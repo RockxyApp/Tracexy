@@ -6,9 +6,9 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
-    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, in that order")
+    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
     func monitorOrder() {
-        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow])
+        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow, .history])
     }
 
     @Test("Toolbar update badge keeps the approved capsule geometry")
@@ -50,12 +50,105 @@ struct WorkspacePresentationContractTests {
         #expect(!details.contains("List {"))
         #expect(!details.contains(".listStyle"))
 
-        #expect(table.contains("Color(nsColor: .controlBackgroundColor)"))
-        #expect(table.contains("Color(nsColor: .textBackgroundColor)"))
-        #expect(table.contains("lineWidth: 0.5"))
+        #expect(table.contains(".tracexyContentSurface("))
+        #expect(!table.contains("Color(nsColor: .textBackgroundColor)"))
         #expect(table.contains("struct ContextInspectorFieldRow"))
         #expect(table.contains("struct ContextInspectorInsightRow"))
         #expect(table.contains("struct ContextInspectorFullRow"))
+    }
+
+    @Test("Shared workspace chrome adopts the Liquid Glass policy without replacing native data controls")
+    func workspaceUsesSharedGlassPolicy() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+        let commandBar = try readProjectFile("Tracexy/Views/Sessions/SessionCommandBar.swift")
+        let filters = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+        let sessions = try readProjectFile("Tracexy/Views/Sessions/SessionCenterView.swift")
+        let footer = try readProjectFile("Tracexy/Views/Common/WorkspaceFooterBar.swift")
+
+        #expect(root.contains("TracexyGlassEffectGroup"))
+        #expect(commandBar.contains("TracexyGlassEffectGroup"))
+        #expect(commandBar.contains(".tracexyGlassButtonStyle()"))
+        #expect(!commandBar.contains(".tracexyFunctionalBar()"))
+        #expect(filters.contains(".tracexyFunctionalBar()"))
+        #expect(footer.contains(".tracexyGlassEffect("))
+        #expect(sessions.contains("Table("))
+        #expect(!sessions.contains("LazyVGrid"))
+    }
+
+    @Test("Glass bars never contain a second glass button layer")
+    func glassHierarchyHasOneFunctionalLayer() throws {
+        for (path, source) in try productionViewSources()
+            where source.contains(".tracexyFunctionalBar()")
+        {
+            #expect(
+                !source.contains(".tracexyGlassButtonStyle("),
+                "\(path) must choose one glass parent or glass controls, never both"
+            )
+        }
+    }
+
+    @Test("Production views use the shared typography scale for visible text")
+    func productionTextUsesSharedTypography() throws {
+        for (path, source) in try productionViewSources() {
+            for (offset, line) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+                where line.contains(".font(")
+            {
+                let isSharedTextRole = line.contains("Theme.Typography")
+                    || line.contains("metrics.")
+                let isSharedIconRole = line.contains(".font(.system(size: Theme.Icon")
+                let isAppIconMonogram = path.hasSuffix("Sidebar/AppIconView.swift")
+                    && line.contains(".font(.system(size: max(")
+                #expect(
+                    isSharedTextRole || isSharedIconRole || isAppIconMonogram,
+                    "\(path):\(offset + 1) bypasses the shared type or icon scale"
+                )
+            }
+        }
+    }
+
+    @Test("Every workspace edge uses semantic safe-area chrome")
+    func workspaceEdgesUseSafeAreaChrome() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let details = try readProjectFile("Tracexy/Views/Inspector/ContextDockView.swift")
+        let evidence = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+        let sessions = try readProjectFile("Tracexy/Views/Sessions/SessionCenterView.swift")
+
+        #expect(root.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(root.contains(".tracexySafeAreaBar(edge: .bottom)"))
+        #expect(sidebar.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(sidebar.contains(".tracexySafeAreaBar(edge: .bottom)"))
+        #expect(details.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(details.contains(".tracexySafeAreaBar(edge: .bottom)"))
+        #expect(evidence.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(sessions.contains(".tracexySafeAreaBar(edge: .top)"))
+    }
+
+    @Test("Navigation and Settings retain native split semantics")
+    func navigationUsesNativeSplitSemantics() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let settings = try readProjectFile("Tracexy/Views/Settings/SettingsView.swift")
+
+        #expect(app.contains(".windowToolbarStyle(.unified)"))
+        #expect(app.contains(".windowStyle(.hiddenTitleBar)"))
+        #expect(sidebar.contains(".listStyle(.sidebar)"))
+        #expect(sidebar.contains("WorkspaceModeSegmentedControl("))
+        #expect(settings.contains("NavigationSplitView"))
+        #expect(settings.contains(".listStyle(.sidebar)"))
+        #expect(!settings.contains("TabView(selection:"))
+    }
+
+    @Test("Main toolbar keeps workspace titles out and the capture picker in its native slot")
+    func mainToolbarOwnsWorkspaceContext() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+        let chrome = try readProjectFile("Tracexy/Views/Common/NativeWorkspaceWindowChrome.swift")
+
+        #expect(!root.contains(".navigationTitle("))
+        #expect(!root.contains(".navigationSubtitle("))
+        #expect(chrome.contains("window.title = TracexyIdentity.current.displayName"))
+        #expect(chrome.contains("window.titleVisibility = .hidden"))
+        #expect(chrome.contains("Self.sidebarTrackingSeparatorIdentifier,\n            Self.interfacePickerIdentifier"))
     }
 
     @Test("Session search keeps the native control rhythm with Tracexy field semantics")
@@ -84,8 +177,8 @@ struct WorkspacePresentationContractTests {
         #expect(!filterBar.contains(".searchable"))
     }
 
-    @Test("Security is a toolbar-only quick filter over the scalable session workflow")
-    func securityUsesSessionQuickFilter() throws {
+    @Test("Findings is a toolbar-only quick filter over the scalable session workflow")
+    func findingsUsesSessionQuickFilter() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
         let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
         let sidebarItems = try readProjectFile("Tracexy/Models/UI/SidebarItem.swift")
@@ -95,7 +188,35 @@ struct WorkspacePresentationContractTests {
         #expect(!sidebar.contains("securityQuickFilterRow"))
         #expect(!sidebarItems.contains("case security"))
         #expect(!sidebarItems.contains(".security]"))
-        #expect(filters.contains("systemImage: category == .security ? \"exclamationmark.shield\" : nil"))
+        #expect(filters.contains("systemImage: category == .security ? \"list.bullet.clipboard\" : nil"))
+    }
+
+    @Test("Investigation uses native typed controls and never moves into the telemetry footer")
+    func investigationOwnsTypedSessionChrome() throws {
+        let query = try readProjectFile("Tracexy/Views/Sessions/InvestigationQueryView.swift")
+        let commands = try readProjectFile("Tracexy/Views/Sessions/SessionCommandBar.swift")
+        let footer = try readProjectFile("Tracexy/Views/Sessions/SessionStatusBar.swift")
+
+        #expect(commands.contains("case investigate"))
+        #expect(query.contains("Picker(\"Field\""))
+        #expect(query.contains(".accessibilityLabel(\"Investigation field\")"))
+        #expect(query.contains("DatePicker(\"From\""))
+        #expect(query.contains("A missing retained finding is never treated as proof"))
+        #expect(query.contains(".accessibilityLabel(\"Investigation query editor\")"))
+        #expect(!footer.contains("Investigate"))
+        #expect(!footer.contains("Investigation"))
+    }
+
+    @Test("Planned MCP and AI settings never imply a service is active")
+    func plannedMCPSettingsAreTruthful() throws {
+        let source = try readProjectFile("Tracexy/Views/Settings/MCPSettingsView.swift")
+
+        #expect(source.contains("No server is running"))
+        #expect(source.contains("Tracexy does not open a port or expose capture data"))
+        #expect(source.contains("No provider receives sessions or evidence"))
+        #expect(!source.contains("@AppStorage"))
+        #expect(!source.contains("Enable in-app MCP server"))
+        #expect(!source.contains("Expose sessions to AI clients"))
     }
 
     @Test("Saved captures expose native context actions and recoverable removal")
@@ -138,6 +259,18 @@ struct WorkspacePresentationContractTests {
         #expect(!visibility.contains("sessions.removeAll"))
     }
 
+    @Test("Capture data auto-expands Protocols, Apps, and Domains without following filters")
+    func captureDataAutoExpandsSidebarGroups() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+
+        #expect(sidebar.contains(".onChange(of: coordinator.sessions.isEmpty, initial: true)"))
+        #expect(sidebar.contains("protocolsExpanded = true"))
+        #expect(sidebar.contains("appsExpanded = true"))
+        #expect(sidebar.contains("domainsExpanded = true"))
+        #expect(!sidebar.contains("ipsExpanded = true"))
+        #expect(!sidebar.contains(".onChange(of: coordinator.visibleSessions.count"))
+    }
+
     @Test("AI Assistant uses a truthful conversation shell")
     func assistantUsesConversationShell() throws {
         let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")
@@ -164,6 +297,28 @@ struct WorkspacePresentationContractTests {
     private func readProjectFile(_ relativePath: String) throws -> String {
         let root = try resolveProjectRoot()
         return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    private func productionViewSources() throws -> [(path: String, source: String)] {
+        let root = try resolveProjectRoot()
+        let views = root.appendingPathComponent("Tracexy/Views", isDirectory: true)
+        let enumerator = try #require(FileManager.default.enumerator(
+            at: views,
+            includingPropertiesForKeys: nil
+        ))
+        return try enumerator.compactMap { item in
+            guard let url = item as? URL, url.pathExtension == "swift" else {
+                return nil
+            }
+            let relativePath = url.path.replacingOccurrences(
+                of: root.path + "/Tracexy/Views/",
+                with: ""
+            )
+            return try (
+                path: relativePath,
+                source: String(contentsOf: url, encoding: .utf8)
+            )
+        }
     }
 
     private func resolveProjectRoot() throws -> URL {

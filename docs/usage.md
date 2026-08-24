@@ -14,10 +14,19 @@ The helper streams raw frames to the app in batches; the app decodes them, group
 and refreshes the list a few times a second while capturing. The list is ordered oldest→newest and stays
 stable as traffic arrives: sessions you are already looking at keep their positions and update in place
 (their byte counts, duration, and status), while a genuinely new session appears at the bottom rather
-than pushing the whole table down. **Auto-select latest** (in the status bar) follows the newest session
-by time regardless of where it sits. The live buffer is bounded (older frames are dropped once it is
-full), so a long capture stays memory-stable but is not a complete archive. If the helper is not yet
-approved, Tracexy tells you to approve it in System Settings → Login Items and press Start again.
+than pushing the whole table down. **Follow Live** in the Sessions command strip keeps the newest visible
+session selected; selecting another row, navigating with the keyboard, scrolling the history, or turning
+the control off yields that follow behavior. **Jump to Latest** is a one-time jump and never changes the
+Follow Live setting. Both actions honor the current filters. The in-memory inspection window is bounded,
+while accepted live frames are also written to a local disk-backed spool for complete save/export. If
+the helper is not yet approved, Tracexy tells you to approve it in System Settings → Login Items and
+press Start again.
+
+The centered capture status in the toolbar opens **Capture Readiness**. It reports the selected
+interface, helper or direct-capture path, BPF filter, packet snapshot and promiscuous settings, bounded
+memory window, interface drops, helper drops, and frames outside the in-memory window. Unknown and
+stopped values are labelled explicitly instead of being presented as zero. The popover also links
+directly to Capture and Helper settings for recovery.
 
 **Settings → Helper** shows the registration, reachability, bundled version, and installed version.
 From there you can install, update, uninstall, or recheck the helper. If a registered helper stops
@@ -38,8 +47,33 @@ run it in Terminal, restart your Mac, then install the helper again from Setting
 ## Opening saved captures
 
 Open a `.pcap` (classic libpcap) or `.pcapng` file from disk — no helper or admin rights required.
-Tracexy sniffs the file format, reads its frames, and runs them through the same decode → session
-pipeline as live capture. This is the most predictable way to exercise the full pipeline.
+Tracexy sniffs the file format and streams bounded frame reads through the same decode → session fold
+off the main UI actor. The current workspace remains usable while byte progress is shown; sessions are
+published once, only after the complete accepted input has been folded. A truncated final record keeps
+complete earlier sessions and shows an explicit warning, while malformed or cancelled opens replace no
+existing workspace state.
+
+Only the recent raw-frame inspection window stays in memory. Session summaries cover the whole opened
+file, and the Inspector reopens exactly one representative frame by validated file offset when a saved
+session is selected. Opening another file, clearing, or starting live capture retires stale progress,
+results, and selected-evidence reads.
+
+## Local History
+
+**History** keeps bounded terminal capture summaries in a local SQLite database. A live capture appears
+only after it has stopped and its final accepted session fold is ready; an opened saved capture appears
+only after the open has completed successfully. History never presents an active-capture dot, live rate,
+or guessed total. Its footer reports only the capture and session summaries currently persisted.
+
+Each entry records its local start/end time, whether it came from live capture or a saved file, whether
+the result was complete, and bounded session metadata such as process, normalized display host,
+endpoints, protocol stack, status, duration and byte totals. The display host can be derived from a DNS
+name or TLS SNI, as in the live Sessions table. History does not store capture-file paths, packet bytes,
+decoded trees, dedicated DNS/SNI evidence, findings or evidence locators. Address masking follows the
+Privacy setting at write time.
+
+Use **Refresh** to reload the newest summaries. **Clear…** requires confirmation and removes only the
+local History database rows; it does not clear the current capture or delete saved capture files.
 
 ## Sidebar sources
 
@@ -49,13 +83,19 @@ Removing a source hides only that sidebar row and persists the presentation pref
 deletes captured sessions or packet evidence. Secondary-click the Apps, Domains, or IP Addresses
 category to restore every hidden row in that category.
 
+At launch, **Protocols**, **Apps**, and **Domains** remain compact until the first decoded session
+arrives, then open automatically so live capture data is visible without extra clicks. This happens
+only once for the current data lifetime: manually collapsing a group afterwards is respected while
+more sessions arrive. Clearing or starting another live capture resets the session list and re-arms
+the behavior.
+
 ## Overview
 
 **Overview** is the first destination under **Monitor**, followed by **Sessions** and **Flow Map**. It
 summarizes the current capture without replacing the session workflow: capture identity, frames,
 sessions, traffic, duration, activity, storage, top talkers, protocol mix, observed sources, and a
 compact findings severity summary are kept in one native dashboard. Overview never duplicates the
-finding evidence list; its security summary links to the existing filtered Sessions workflow.
+finding evidence list; its analysis summary links to the existing filtered Sessions workflow.
 
 For a live capture, the activity chart shows measured throughput and the storage card distinguishes
 kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
@@ -63,7 +103,8 @@ Window trimming does not remove accumulated sessions or frames from the disk-bac
 never reported as capture-source loss.
 For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
 capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
-what was missed when it was recorded.
+what was missed when it was recorded. Frames outside the local inspection window remain in the source
+file and in the decoded session/activity totals; window eviction is not reported as capture loss.
 
 ## Sessions
 
@@ -79,6 +120,14 @@ normalized) so both directions of a conversation land in one session. Each sessi
 
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
+
+The command strip above the filters owns immediate investigation actions: **Follow Live**, **Jump to
+Latest**, **Investigate**, **Clear Capture Data**, **Save Capture**, **New Focus Set**, and **Noise
+Control**. At narrower window widths, the same labelled actions move into **More Session Actions**
+rather than becoming ambiguous icon-only controls. Restoring removed sessions and opening advanced
+filters live in that same overflow. The bottom status bar is intentionally read-only: it reports the
+visible/selected session summary and source, loss, retention, and memory telemetry; it does not mutate
+the capture or filters.
 
 Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
 controls. The same menu is available from the session row's **Export** submenu. **Export Session**
@@ -123,14 +172,17 @@ lowers the confidence and shows the competing names rather than silently guessin
 ## Focus sets and filtering
 
 The filter area above the session list has two rows. The **protocol/category pills** narrow by
-protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN), by evidence-backed **Security**
-findings, and by exact status (**Errors**). Selected protocol pills combine with OR, selected
+protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN), by evidence-backed **Findings**,
+and by exact status (**Errors**). Selected protocol pills combine with OR, selected
 investigation pills combine with OR, and the two groups combine with AND — so choosing *TCP* and
 *Errors* shows TCP sessions that failed. *Errors* means exactly an error; a warning is not swept in.
-*Security* includes sessions that produce a decoded finding: warning/error status, plaintext HTTP, an
-unanswered DNS query, or measured latency above the finding threshold.
+*Findings* includes exactly the sessions referenced by the typed Core analysis snapshots: observed TCP
+reset, retransmission, segment overlap or out-of-order delivery, plus the neutral observation that a
+retained UDP-DNS message set its TC bit. Status, plaintext HTTP, an unanswered DNS query and latency do
+not create findings on their own. Finding identity is stable, and Details reports bounded citation and
+coverage information without claiming whole-capture completeness.
 
-**Security** lives only in this filter bar; it is not a separate sidebar destination. The table keeps
+**Findings** lives only in this filter bar; it is not a separate sidebar destination. The table keeps
 all of its columns, search, advanced rules, grouping, row context actions, selection, and inspector,
 so large finding sets can be narrowed and investigated rather than opened one row at a time.
 
@@ -148,10 +200,24 @@ Contains, Is, Starts With, Ends With, Does Not Contain, Is Not, and Regex; an in
 matches nothing. A build allows up to a fixed number of advanced rules (12 by default); the add buttons
 disable at that limit.
 
+**Investigate** opens a separate capture-local typed query editor. Its bounded rows can match process,
+host, exact IP address, CIDR block, port range, protocol, status, finding kind, start-time range, total
+bytes, or retained evidence. Choose **All** or **Any** across rows and optionally negate an individual
+row. **Apply** validates the complete draft first; an invalid row keeps its field-level error visible
+and does not replace the previous accepted query or result.
+
+An accepted Investigation query composes with the existing pills, search, sidebar scopes, mute rules,
+and advanced filters. Its removable chip reports the current matched count. Evidence-dependent queries
+also report how many sessions are **incomplete**: those sessions are not counted as matches, and a
+missing retained finding is never treated as proof that no finding exists. Investigation state belongs
+only to the current capture/workspace. Clearing it, resetting filters, or replacing/clearing the capture
+retires the query; it is not saved into a Focus Set.
+
 Save a named rule set as a **focus set** to reapply later; applying one loads its rules into the active
 workspace's advanced filter, clamped to the rule limit. Focus sets persist across launches. **Reset
-Filters** clears the pills, the search text, sidebar host/process/IP scopes, and the advanced rules, and
-hides the builder (it does not touch Noise Control). Each **workspace tab** is an independent
+Filters** clears the pills, the search text, sidebar host/process/IP scopes, the active Investigation
+query, and the advanced rules, and hides the builder (it does not touch Noise Control). Each
+**workspace tab** is an independent
 investigation with its own filter, selection, and inspector layout.
 
 ## Inspector
@@ -160,7 +226,21 @@ Selecting a session opens the bottom evidence inspector. It shows the decoded
 protocol **layers** and fields for the representative packet, and a **hex** pane whose byte ranges line
 up with those fields — click a field to highlight the bytes it came from. Right-click a layer or field
 to copy its visible summary, name, value, or combined name/value text without retyping it. When a
-session carries an application-layer exchange (HTTP, DNS, STUN), a requests facet is offered.
+session carries an application-layer exchange (HTTP, DNS, STUN), a requests facet is offered. For an
+opened capture, only the selected session's representative bytes are loaded; changing selection retires
+the previous read and file replacement/truncation is rejected rather than displaying bytes from a stale
+offset.
+
+For TCP sessions, the **Stream** facet offers an explicit **Follow Stream** action. Opening the facet
+alone does not scan or retain application bytes. After activation, Tracexy locally rescans an
+identity-checked saved capture, or an immutable temporary copy of a fully stopped live capture, and
+shows the two canonical directions independently in Text or Hex form. Retransmissions do not duplicate
+bytes; gaps, out-of-order segments, conflicting overlaps, capture/source truncation, and reader/display
+bounds remain visible as separate limitations. Each direction is bounded by the reader and the UI
+formats at most another 64 KiB; omitted counts stay explicit. A growing live spool is never scanned:
+stop capture and let its final ingest finish first. Follow Stream sends and exports nothing, but the
+local application data it reveals may contain credentials or personal information. Changing selection,
+opening/starting/clearing a capture, or cancelling retires the selection-scoped result.
 
 **STUN** is recognized by its RFC 5389 magic cookie on any port (it rides on ephemeral ICE ports, not
 a well-known one), so the traffic a capture would otherwise show as bare UDP is surfaced with its

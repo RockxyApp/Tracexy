@@ -44,6 +44,45 @@ enum SettingsKeys {
     }
 }
 
+// MARK: - SettingsTab
+
+enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
+    case general
+    case capture
+    case helper
+    case privacy
+    case mcp
+    case updates
+
+    // MARK: Internal
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .general: String(localized: "General")
+        case .capture: String(localized: "Capture")
+        case .helper: String(localized: "Helper")
+        case .privacy: String(localized: "Privacy")
+        case .mcp: String(localized: "MCP & AI")
+        case .updates: String(localized: "Updates")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .capture: "antenna.radiowaves.left.and.right"
+        case .helper: "shield.lefthalf.filled"
+        case .privacy: "hand.raised"
+        case .mcp: "sparkles"
+        case .updates: "arrow.down.circle"
+        }
+    }
+}
+
 // MARK: - AppAppearance
 
 /// The user's appearance preference, applied app-wide via `.preferredColorScheme`.

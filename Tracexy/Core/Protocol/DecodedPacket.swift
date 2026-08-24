@@ -114,6 +114,28 @@ nonisolated struct DecodedPacket {
     var sni: String?
     var dnsQuery: String?
     var dnsAnswers: [String]
+    /// Number of valid DNS answer-record occurrences decoded beyond the per-packet
+    /// retention cap. This is an occurrence count, not exact unique cardinality;
+    /// exact uniqueness for an unbounded stream would itself require unbounded state.
+    var dnsAnswersOmittedCount: Int = 0
+    /// Typed, decode-derived facts for a TCP segment, read from exact header
+    /// offsets. `nil` for non-TCP packets. Session logic reads control bits from
+    /// here rather than string-matching a rendered field.
+    var tcpFacts: TCPSegmentFacts?
+    /// Typed, decode-derived DNS fixed-header facts, read once from exact offsets.
+    /// `nil` for non-DNS packets or when the fixed 12-byte header was incomplete.
+    /// These are neutral wire facts only — no finding, name/answer values or raw bytes.
+    var dnsFacts: DNSMessageFacts?
+    /// Typed ICMP/ICMPv6 family/type/code facts. `nil` for non-ICMP packets or when
+    /// both fixed bytes were not present. Family is the already-known IP protocol.
+    var icmpFacts: ICMPMessageFacts?
+    /// Neutral, decode-derived TLS record facts, one per recognized record in this
+    /// packet's coalesced TLS payload. Bounded to the same 32-record walk as the
+    /// renderer; these are numeric wire facts only — no policy label, SNI, or payload.
+    var tlsRecords: [TLSRecordFact] = []
+    /// `true` when the 32-record TLS walk stopped with a further recognizable record
+    /// header still present, so `tlsRecords` is an explicit truncation, not exhaustion.
+    var tlsRecordsTruncated: Bool = false
     var sourceEndpoint: IPEndpoint?
     var destinationEndpoint: IPEndpoint?
     /// Sequence number of the first TCP payload byte and its captured bytes.
