@@ -157,9 +157,33 @@ nonisolated enum PcapReader {
     }
 
     /// Convenience: read and parse a classic `.pcap` file from a URL.
+    ///
+    /// Unlike ``read(_:)`` — which parses a byte array already resident in memory
+    /// and is kept behaviourally frozen — this path streams the file one record at
+    /// a time through ``PcapStreamReader`` so a large capture is never loaded whole.
+    /// A truncated tail (a partial final record header or payload) is *not* an
+    /// error here: the reader stops and every complete prior frame is returned,
+    /// matching the legacy array reader's tolerant final-record behaviour. Genuinely
+    /// corrupt metadata (bad magic, an over-limit captured length, `orig < incl`,
+    /// or an impossible timestamp fraction) still throws a controlled error.
     static func read(contentsOf url: URL) throws -> (linkType: UInt32, frames: [CapturedFrame]) {
-        let data = try Data(contentsOf: url)
-        return try read([UInt8](data))
+        let reader = try PcapStreamReader(contentsOf: url)
+        var frames: [CapturedFrame] = []
+        loop: while true {
+            switch try reader.next() {
+            case let .frame(event):
+                frames.append(CapturedFrame(
+                    bytes: event.bytes,
+                    timestamp: event.reference.timestamp,
+                    originalLength: event.reference.originalLength
+                ))
+            case .end:
+                // Clean EOF, a partial record header, or a partial payload all stop
+                // the walk while preserving the complete frames read so far.
+                break loop
+            }
+        }
+        return (reader.metadata.linkType, frames)
     }
 
     // MARK: Private
@@ -171,7 +195,7 @@ nonisolated enum PcapReader {
 // MARK: - MagicFormat
 
 /// The byte order and timestamp resolution implied by a global header's magic.
-nonisolated private struct MagicFormat {
+nonisolated struct MagicFormat {
     // MARK: Lifecycle
 
     init?(rawMagic: UInt32) {

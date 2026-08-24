@@ -95,6 +95,82 @@ struct CaptureActivityTests {
         #expect(activity.buckets.reduce(0) { $0 + $1.frameCount } == 8)
     }
 
+    // MARK: - Incremental accumulator
+
+    @Test("The incremental accumulator aggregates to nothing for an empty capture")
+    func accumulatorEmpty() {
+        let accumulator = CaptureActivityAccumulator()
+        let activity = accumulator.activity()
+        #expect(activity.isEmpty)
+        #expect(activity.totalFrames == 0)
+        #expect(activity.totalBytes == 0)
+        #expect(activity.duration == 0)
+        #expect(activity.bucketWidth == 0)
+    }
+
+    @Test("Many frames sharing one instant collapse into one bucket without dividing by zero")
+    func accumulatorSingleInstant() {
+        var accumulator = CaptureActivityAccumulator()
+        for _ in 0 ..< 4 {
+            accumulator.add(timestamp: Self.base, originalLength: 100)
+        }
+        let activity = accumulator.activity()
+        #expect(activity.buckets.count == 1)
+        #expect(activity.duration == 0)
+        #expect(activity.bucketWidth == 0)
+        #expect(activity.totalFrames == 4)
+        #expect(activity.totalBytes == 400)
+    }
+
+    @Test("The incremental accumulator stays within the cap while totals and duration stay exact")
+    func accumulatorBoundedWithExactTotals() {
+        var accumulator = CaptureActivityAccumulator(maxBuckets: 8)
+        var expectedBytes = 0
+        for index in 0 ..< 500 {
+            let bytes = index + 1
+            expectedBytes += bytes
+            accumulator.add(timestamp: Self.base.addingTimeInterval(Double(index) * 0.1), originalLength: bytes)
+        }
+        let activity = accumulator.activity()
+        #expect(activity.buckets.count <= 8)
+        #expect(activity.totalFrames == 500)
+        #expect(activity.totalBytes == expectedBytes)
+        // 499 steps of 0.1 s.
+        #expect(abs(activity.duration - 49.9) < 1e-6)
+        // Every frame and byte is conserved across the merges.
+        #expect(activity.buckets.reduce(0) { $0 + $1.frameCount } == 500)
+        #expect(activity.buckets.reduce(0) { $0 + $1.byteCount } == expectedBytes)
+    }
+
+    @Test("Incremental accumulation is deterministic for an identical frame sequence")
+    func accumulatorDeterministic() {
+        func run() -> CaptureActivity {
+            var accumulator = CaptureActivityAccumulator(maxBuckets: 6)
+            for index in 0 ..< 60 {
+                accumulator.add(timestamp: Self.base.addingTimeInterval(Double(index) * 0.5), originalLength: index)
+            }
+            return accumulator.activity()
+        }
+        let first = run()
+        let second = run()
+        #expect(first == second)
+    }
+
+    @Test("Incremental and batch aggregation agree on the exact totals and duration")
+    func accumulatorMatchesBatchTotals() {
+        let frames = (0 ..< 120).map { index in frame(atOffset: Double(index) * 0.25, bytes: index * 3) }
+        let batch = CaptureActivityBuilder.build(frames: frames, maxBuckets: 10)
+        var accumulator = CaptureActivityAccumulator(maxBuckets: 10)
+        for frame in frames {
+            accumulator.add(timestamp: frame.timestamp, originalLength: frame.originalLength)
+        }
+        let incremental = accumulator.activity()
+        #expect(incremental.totalFrames == batch.totalFrames)
+        #expect(incremental.totalBytes == batch.totalBytes)
+        #expect(abs(incremental.duration - batch.duration) < 1e-6)
+        #expect(incremental.buckets.count <= 10)
+    }
+
     // MARK: Private
 
     private static let base = Date(timeIntervalSince1970: 1_700_000_000)

@@ -12,6 +12,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+## [0.4.1] - 2026-08-19
+
+### Fixed
+
+- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
+
+## [0.4.0] - 2026-08-19
+
+### Added
+
+- Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
+
+### Fixed
+
+- Strengthen privileged capture-helper authentication against process-identity races.
+- Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
+
+## [0.3.0] - 2026-08-17
+
+### Added
+
+- Add a capture summary dashboard with traffic activity, protocol mix, top talkers, and evidence-based findings.
+- Add native session search, decoded-evidence copy actions, source management, and reversible session removal.
+- Add deeper STUN, TLS-record, and QUIC long-header inspection, plus segmented TCP/DNS/TLS/HTTP recovery.
+
+### Changed
+
+- Preserve packet timestamps, lengths, link types, and capture-loss accounting across live capture and export, with configurable snap length, promiscuous mode, and BPF filters.
+- Keep sustained captures responsive with bounded disk spooling and incremental session updates.
+
+## [0.2.0] - 2026-08-13
+
+### Added
+
+- Add Tracexy demo captures
+- Add update badge and inspector detail tables
+- Add session export actions
+
+### Fixed
+
+- Harden live frame ingestion
+
+### Changed
+
+- Refine session search and assistant dock
+- Streamline security investigation
+
 ## [0.1.4] - 2026-08-06
 
 ### Changed

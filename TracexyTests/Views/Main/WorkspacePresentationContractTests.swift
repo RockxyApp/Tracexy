@@ -6,9 +6,9 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
-    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, in that order")
+    @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
     func monitorOrder() {
-        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow])
+        #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow, .history])
     }
 
     @Test("Toolbar update badge keeps the approved capsule geometry")
@@ -58,7 +58,7 @@ struct WorkspacePresentationContractTests {
         #expect(table.contains("struct ContextInspectorFullRow"))
     }
 
-    @Test("Session search keeps the Rockxy control rhythm with Tracexy field semantics")
+    @Test("Session search keeps the native control rhythm with Tracexy field semantics")
     func sessionSearchUsesResponsiveNativeControls() throws {
         let source = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
 
@@ -84,8 +84,8 @@ struct WorkspacePresentationContractTests {
         #expect(!filterBar.contains(".searchable"))
     }
 
-    @Test("Security is a toolbar-only quick filter over the scalable session workflow")
-    func securityUsesSessionQuickFilter() throws {
+    @Test("Findings is a toolbar-only quick filter over the scalable session workflow")
+    func findingsUsesSessionQuickFilter() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
         let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
         let sidebarItems = try readProjectFile("Tracexy/Models/UI/SidebarItem.swift")
@@ -95,7 +95,35 @@ struct WorkspacePresentationContractTests {
         #expect(!sidebar.contains("securityQuickFilterRow"))
         #expect(!sidebarItems.contains("case security"))
         #expect(!sidebarItems.contains(".security]"))
-        #expect(filters.contains("systemImage: category == .security ? \"exclamationmark.shield\" : nil"))
+        #expect(filters.contains("systemImage: category == .security ? \"list.bullet.clipboard\" : nil"))
+    }
+
+    @Test("Investigation uses native typed controls and never moves into the telemetry footer")
+    func investigationOwnsTypedSessionChrome() throws {
+        let query = try readProjectFile("Tracexy/Views/Sessions/InvestigationQueryView.swift")
+        let commands = try readProjectFile("Tracexy/Views/Sessions/SessionCommandBar.swift")
+        let footer = try readProjectFile("Tracexy/Views/Sessions/SessionStatusBar.swift")
+
+        #expect(commands.contains("case investigate"))
+        #expect(query.contains("Picker(\"Field\""))
+        #expect(query.contains(".accessibilityLabel(\"Investigation field\")"))
+        #expect(query.contains("DatePicker(\"From\""))
+        #expect(query.contains("A missing retained finding is never treated as proof"))
+        #expect(query.contains(".accessibilityLabel(\"Investigation query editor\")"))
+        #expect(!footer.contains("Investigate"))
+        #expect(!footer.contains("Investigation"))
+    }
+
+    @Test("Planned MCP and AI settings never imply a service is active")
+    func plannedMCPSettingsAreTruthful() throws {
+        let source = try readProjectFile("Tracexy/Views/Settings/MCPSettingsView.swift")
+
+        #expect(source.contains("No server is running"))
+        #expect(source.contains("Tracexy does not open a port or expose capture data"))
+        #expect(source.contains("No provider receives sessions or evidence"))
+        #expect(!source.contains("@AppStorage"))
+        #expect(!source.contains("Enable in-app MCP server"))
+        #expect(!source.contains("Expose sessions to AI clients"))
     }
 
     @Test("Saved captures expose native context actions and recoverable removal")

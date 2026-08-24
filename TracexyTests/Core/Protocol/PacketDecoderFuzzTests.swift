@@ -52,6 +52,35 @@ struct PacketDecoderFuzzTests {
         }
     }
 
+    @Test("no DNS prefix before the complete fixed header retains facts, and none crash")
+    func dnsFixedHeaderPrefixesRetainNoFacts() {
+        let frame = PacketBuilder.dnsQueryFrame(name: "api.example.com", src: "192.168.1.42", dst: "1.1.1.1")
+        // Ethernet(14) + IPv4(20) + UDP(8) + DNS fixed header(12) = 54 bytes before facts exist.
+        let fixedHeaderEnd = 14 + 20 + 8 + 12
+        for length in 0 ... frame.count {
+            let packet = decode(Array(frame.prefix(length)), linkType: LinkType.ethernet)
+            if length < fixedHeaderEnd {
+                #expect(packet.dnsFacts == nil)
+            }
+        }
+        // The complete frame does retain the fixed-header facts.
+        #expect(decode(frame, linkType: LinkType.ethernet).dnsFacts != nil)
+    }
+
+    @Test("no ICMP prefix before both type and code bytes retains facts, and none crash")
+    func icmpPrefixesRetainNoFacts() {
+        let frame = PacketBuilder.icmpEchoRequestFrame(src: "192.168.1.10", dst: "8.8.8.8")
+        // Ethernet(14) + IPv4(20) + ICMP type/code(2) = 36 bytes before facts exist.
+        let bothBytesEnd = 14 + 20 + 2
+        for length in 0 ... frame.count {
+            let packet = decode(Array(frame.prefix(length)), linkType: LinkType.ethernet)
+            if length < bothBytesEnd {
+                #expect(packet.icmpFacts == nil)
+            }
+        }
+        #expect(decode(frame, linkType: LinkType.ethernet).icmpFacts != nil)
+    }
+
     @Test("the empty frame decodes to an empty-but-valid packet")
     func emptyFrame() {
         for linkType in linkTypes {

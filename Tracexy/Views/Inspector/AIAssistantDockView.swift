@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - AIAssistantDockView
 
-/// A Rockxy-aligned conversation shell for Tracexy's future assistant.
+/// A native conversation shell for Tracexy's future assistant.
 ///
 /// The hierarchy is deliberately production-shaped — conversation header,
 /// compact attached context, transcript, and a pinned composer — while the

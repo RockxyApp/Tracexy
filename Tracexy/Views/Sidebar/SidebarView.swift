@@ -893,7 +893,7 @@ private struct DomainRow: View {
 // MARK: - SidebarSourceContextMenu
 
 /// Shared native actions for dynamic source rows. Static navigation groups stay
-/// intentionally quiet (as in Rockxy); rows representing actual apps, hosts,
+/// intentionally quiet; rows representing actual apps, hosts,
 /// domains, and IPs expose the actions that help an investigation continue.
 private struct SidebarSourceContextMenu: View {
     let value: String

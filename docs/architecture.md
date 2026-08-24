@@ -103,9 +103,8 @@ These are design intent — do not write code, or read these docs, as if they ex
 
 - a **decoder registry** with dispatch-table handoff between protocols (replacing the current monolithic
   decoder);
-- a full **stateful connection table** with general TCP **reassembly** (today's grouping includes only
-  bounded per-direction prefix reassembly for initial TLS/HTTP/DNS metadata and otherwise folds packets into
-  per-tuple summaries, incrementally on the live path, but tracks no connection state or byte streams);
-- an **analysis / security** engine deriving latency, errors, and findings;
-- **persistent storage** (a SQLite session store with large-payload offload);
+- general TCP **stream/record reassembly** beyond the bounded lifecycle/sequence connection table,
+  first-record metadata probes, and explicit on-demand Follow Stream reader already in source;
+- deeper **analysis / security** policy beyond the selected evidence-linked TCP and datagram findings;
+- raw capture/evidence persistence beyond the implemented terminal-summary SQLite History store;
 - an **MCP / AI** integration.

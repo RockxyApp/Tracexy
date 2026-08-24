@@ -5,12 +5,13 @@ import Foundation
 enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     // Evidence only. What the selection *means* — verdicts, baselines, findings,
     // related sessions — belongs to the Context Dock, and used to be duplicated
-    // here as Summary and Security tabs.
+    // here as Summary and Findings tabs.
     //
     // Timeline opens first: for a correlated action it is the one view a packet
     // analyser cannot draw, since its engine has no shared axis across
     // conversations of different protocols.
     case timeline
+    case stream
     case layers
     case requests
     case payload
@@ -25,6 +26,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     nonisolated var title: String {
         switch self {
         case .timeline: "Timeline"
+        case .stream: "Stream"
         case .layers: "Layers"
         case .requests: "Requests"
         case .payload: "Payload"
@@ -35,6 +37,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     nonisolated var systemImage: String {
         switch self {
         case .timeline: "chart.bar.xaxis"
+        case .stream: "arrow.left.arrow.right.square"
         case .layers: "square.stack.3d.up"
         case .requests: "arrow.left.arrow.right"
         case .payload: "doc.plaintext"
@@ -51,6 +54,9 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     /// decode cannot keep.
     static func visibleTabs(for session: SessionSummary) -> [InspectorTab] {
         var tabs: [InspectorTab] = [.timeline]
+        if session.protocolStack.contains(.tcp) {
+            tabs.append(.stream)
+        }
         if !session.decodedLayers.isEmpty {
             tabs.append(.layers)
         }
@@ -109,7 +115,7 @@ enum InspectorLayout: String, CaseIterable, Identifiable, Hashable {
 ///
 /// - **Details** gathers everything the app can *say* about the selection:
 ///   identity, verdict, layer facts, host baseline, related actions, grouping
-///   evidence and security findings, in one vertically scrollable read.
+///   evidence and analysis findings, in one vertically scrollable read.
 /// - **AI Assistant** is a production-shaped conversation shell for a future
 ///   assistant. It carries the current selection as compact attached context and
 ///   pins a disabled composer below an empty transcript; it is not connected to

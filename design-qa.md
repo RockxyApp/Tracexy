@@ -4,9 +4,9 @@ Date: 2026-08-12
 
 ## Source visual truth
 
-- Search/filter reference: native Rockxy search row captured in its no-traffic state.
-- AI Assistant reference: native Rockxy assistant dock captured in its no-selection state.
-- Both references are native Rockxy captures at 1292 × 768 pixels in their no-traffic/no-selection states.
+- Search/filter reference: native desktop search row captured in its no-traffic state.
+- AI Assistant reference: native desktop assistant dock captured in its no-selection state.
+- Both references are native desktop captures at 1292 × 768 pixels in their no-traffic/no-selection states.
 - Session-export reference: two attached dark-mode captures, a 98 × 86 native share-menu control and
   a 268 × 166 menu containing `Export Session`, `Export as pcap`, and `Export as pcapng`.
 
@@ -40,7 +40,7 @@ Date: 2026-08-12
 - Image and icon fidelity: there are no raster assets in either target region. All icons are native SF Symbols; no placeholder art, custom SVG, or improvised glyph was introduced.
 - Export icon fidelity: the implementation uses the native `square.and.arrow.up` symbol inside an
   `NSMenuToolbarItem`; the system supplies the border, hover state, disabled state, and disclosure chevron.
-- Copy and content: Tracexy retains its session-specific `All Fields` semantics and the requested `Add Field` copy. Assistant copy is product-specific and explicitly states that no backend/model is connected instead of imitating working Rockxy capabilities.
+- Copy and content: Tracexy retains its session-specific `All Fields` semantics and the requested `Add Field` copy. Assistant copy is product-specific and explicitly states that no backend/model is connected instead of implying unavailable capabilities.
 
 ## Findings and comparison history
 

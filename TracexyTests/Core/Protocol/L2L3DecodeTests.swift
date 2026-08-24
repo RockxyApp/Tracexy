@@ -35,6 +35,31 @@ struct L2L3DecodeTests {
     }
 
     @Test
+    func icmpFactsPinFamilyTypeCode() {
+        // IPv4 Echo Request: family ipv4, type 8, code 0.
+        let v4 = PacketBuilder.icmpEchoRequestFrame(src: "192.168.1.10", dst: "8.8.8.8")
+        let v4Facts = try? #require(decode(v4).icmpFacts)
+        if let v4Facts {
+            #expect(v4Facts.family == .ipv4)
+            #expect(v4Facts.type == 8)
+            #expect(v4Facts.code == 0)
+        }
+
+        // ICMPv6 Echo Request (type 128, code 0) over IPv6 (next header 58).
+        let v6 = PacketBuilder.ethernetIPv6(
+            nextHeader: 58,
+            src: [0xFE80], dst: [0xFE80, 0, 0, 0, 0, 0, 0, 1],
+            payload: [128, 0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01]
+        )
+        let v6Facts = try? #require(decode(v6).icmpFacts)
+        if let v6Facts {
+            #expect(v6Facts.family == .ipv6)
+            #expect(v6Facts.type == 128)
+            #expect(v6Facts.code == 0)
+        }
+    }
+
+    @Test
     func dnsMXRecordDecodes() {
         let frame = PacketBuilder.dnsResponseMXFrame(name: "example.com", src: "8.8.8.8", dst: "192.168.1.10")
         let packet = decode(frame)

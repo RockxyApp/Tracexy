@@ -26,6 +26,13 @@ struct SessionCenterView: View {
             // alone and never re-run this body (which drives the Table).
             LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
             Divider()
+            if coordinator.isOpeningSavedCapture {
+                savedCaptureOpeningNotice
+                Divider()
+            } else if let warning = coordinator.savedCaptureWarning {
+                savedCaptureWarningNotice(warning)
+                Divider()
+            }
             // List-first (Wireshark/Proxyman): the table is the spine and takes the
             // remaining height.
             //
@@ -57,9 +64,46 @@ struct SessionCenterView: View {
         // rather than left to whichever child happens to be greedy, so an empty
         // list or a hidden filter bar can never shrink the column.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: visibilityFingerprint(workspace)) { _, _ in
+            coordinator.reconcileLiveFollowing(in: workspace)
+        }
     }
 
     // MARK: Private
+
+    private struct VisibilityFingerprint: Equatable {
+        let sidebarSelection: SidebarItem
+        let filterText: String
+        let searchField: SessionSearchField
+        let isSearchEnabled: Bool
+        let categoryFilters: Set<SessionFilterCategory>
+        let hostFilter: String?
+        let processFilter: String?
+        let ipFilter: String?
+        let filterRules: [SessionFilterRule]
+    }
+
+    private var savedCaptureOpeningNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "doc.badge.clock")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Opening capture…")
+                    .font(Theme.Typography.bodyEmphasis)
+                if let fraction = coordinator.savedCaptureOpenFraction {
+                    ProgressView(value: fraction)
+                        .accessibilityValue(Text(fraction, format: .percent))
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.06))
+    }
 
     @ViewBuilder private var emptyState: some View {
         if let error = coordinator.captureError {
@@ -96,9 +140,9 @@ struct SessionCenterView: View {
             }
         } else if coordinator.activeWorkspace.categoryFilters.contains(.security) {
             ContentUnavailableView {
-                Label("No Security Findings", systemImage: "checkmark.shield")
+                Label("No Findings", systemImage: "checkmark.seal")
             } description: {
-                Text("No sessions match the active Security filter and the other filters above.")
+                Text("No sessions match the active Findings filter and the other filters above.")
             }
         } else {
             ContentUnavailableView.search
@@ -116,6 +160,20 @@ struct SessionCenterView: View {
         }
     }
 
+    private func savedCaptureWarningNotice(_ warning: String) -> some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(warning)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.06))
+    }
+
     private func sessionTable(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
         Table(sessions, selection: Binding(
             get: { workspace.selectedSessionID },
@@ -127,6 +185,7 @@ struct SessionCenterView: View {
             // assert (and a crash under the debugger). No-op when unchanged.
             set: { newValue in
                 if workspace.selectedSessionID != newValue {
+                    coordinator.userDidNavigateSessionHistory()
                     workspace.selectedSessionID = newValue
                 }
             }
@@ -181,6 +240,11 @@ struct SessionCenterView: View {
         .contextMenu(forSelectionType: SessionSummary.ID.self) { ids in
             rowContextMenu(ids: ids, sessions: sessions)
         }
+        .background {
+            SessionHistoryScrollObserver {
+                coordinator.userDidNavigateSessionHistory()
+            }
+        }
     }
 
     /// Correlated view: one row per action, its sessions nested beneath.
@@ -200,12 +264,14 @@ struct SessionCenterView: View {
             set: { newValue in
                 guard let newValue else {
                     if workspace.selectedSessionID != nil {
+                        coordinator.userDidNavigateSessionHistory()
                         workspace.selectedSessionID = nil
                     }
                     return
                 }
                 let resolved = rows.first { $0.id == newValue }?.representativeSessionID ?? newValue
                 if workspace.selectedSessionID != resolved {
+                    coordinator.userDidNavigateSessionHistory()
                     workspace.selectedSessionID = resolved
                 }
             }
@@ -273,6 +339,11 @@ struct SessionCenterView: View {
         }
         .contextMenu(forSelectionType: SessionRow.ID.self) { ids in
             groupedRowContextMenu(ids: ids, rows: rows)
+        }
+        .background {
+            SessionHistoryScrollObserver {
+                coordinator.userDidNavigateSessionHistory()
+            }
         }
     }
 
@@ -528,6 +599,20 @@ struct SessionCenterView: View {
             .padding(.vertical, 2)
             .background(Theme.color(for: proto).opacity(0.18), in: Capsule())
             .foregroundStyle(Theme.color(for: proto))
+    }
+
+    private func visibilityFingerprint(_ workspace: WorkspaceState) -> VisibilityFingerprint {
+        VisibilityFingerprint(
+            sidebarSelection: workspace.sidebarSelection,
+            filterText: workspace.filterText,
+            searchField: workspace.searchField,
+            isSearchEnabled: workspace.isSearchEnabled,
+            categoryFilters: workspace.categoryFilters,
+            hostFilter: workspace.hostFilter,
+            processFilter: workspace.processFilter,
+            ipFilter: workspace.ipFilter,
+            filterRules: workspace.filterRules
+        )
     }
 
     /// The session under the cursor, matched by id rather than read from the

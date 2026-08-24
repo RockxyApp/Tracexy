@@ -4,7 +4,7 @@ import Foundation
 
 /// A category tab in the session filter bar:
 /// protocol categories form one group (a session matches if it matches *any*
-/// active protocol), and investigation categories (Security / Errors) form an
+/// active protocol), and investigation categories (Findings / Errors) form an
 /// independent group.
 enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
     case dns
@@ -44,7 +44,8 @@ enum SessionFilterCategory: String, CaseIterable, Identifiable, Hashable {
         case .quic: "QUIC"
         case .websocket: "WebSocket"
         case .stun: "STUN"
-        case .security: "Security"
+        // Keep the raw discriminator for persisted-workspace compatibility.
+        case .security: "Findings"
         case .errors: "Errors"
         }
     }

@@ -13,8 +13,8 @@ protocol TracexyHelperProtocol {
     /// The helper re-validates the configuration and compiles any BPF against
     /// libpcap *before* replying, so an out-of-bounds value or a bad filter
     /// expression fails closed with a clear message and no capture is reported
-    /// started. This is protocol v3 — the immutable `CaptureConfiguration` command
-    /// surface replaced v2's bare `interface: String`. The app fails closed against
+    /// started. This is protocol v4 — the immutable `CaptureConfiguration` command
+    /// surface replaced v3's bare `interface: String`. The app fails closed against
     /// an older helper (`getHelperInfo` classifies the protocol mismatch) rather
     /// than downgrading the start request.
     func startCapture(configuration: CaptureConfiguration, withReply reply: @escaping (Bool, String) -> Void)

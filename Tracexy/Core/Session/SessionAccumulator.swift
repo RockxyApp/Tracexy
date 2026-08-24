@@ -18,6 +18,30 @@ import Foundation
 /// first-non-empty-wins — because the incremental and batch paths must stay
 /// indistinguishable.
 nonisolated struct SessionAccumulator {
+    // MARK: Lifecycle
+
+    /// - Parameters:
+    ///   - connectionConfiguration: bounds for the owned ``ConnectionTable``.
+    ///     Injectable so bounds tests can force tiny caps; the default matches the
+    ///     table's own production default. `reset` rebuilds the table with the same
+    ///     configuration.
+    ///   - datagramConfiguration: bounds for the owned ``DatagramEvidenceTable``,
+    ///     injectable on the same terms. `reset` rebuilds it with this configuration.
+    ///   - tlsConfiguration: bounds for the owned ``TLSEvidenceTable``, injectable on
+    ///     the same terms. `reset` rebuilds it with this configuration.
+    init(
+        connectionConfiguration: ConnectionTable.Configuration = ConnectionTable.Configuration(),
+        datagramConfiguration: DatagramEvidenceTable.Configuration = DatagramEvidenceTable.Configuration(),
+        tlsConfiguration: TLSEvidenceTable.Configuration = TLSEvidenceTable.Configuration()
+    ) {
+        self.connectionConfiguration = connectionConfiguration
+        self.datagramConfiguration = datagramConfiguration
+        self.tlsConfiguration = tlsConfiguration
+        connections = ConnectionTable(configuration: connectionConfiguration)
+        datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
+        tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+    }
+
     // MARK: Internal
 
     /// Distinct five-tuples currently accumulated. This grows with the number of
@@ -27,19 +51,78 @@ nonisolated struct SessionAccumulator {
         order.count
     }
 
-    /// Fold DNS learning plus one decoded packet's per-session state. Decodes
-    /// nothing and stores no packet array — only the running summary state.
-    mutating func add(_ packet: DecodedPacket) {
-        SessionBuilder.learnResolved(from: packet, into: &resolved)
-        guard let key = packet.fiveTuple else {
-            return
+    /// A session-only fold of one already-decoded packet's per-frame metadata. It
+    /// performs **no** cross-frame TCP reassembly — that is owned by the connection
+    /// table and reaches session state only through ``add(_:context:)``. This
+    /// compatibility seam has no production caller (batch/live/saved all use the
+    /// context overload); it exists for focused tests of the session-only fold.
+    ///
+    /// - Returns: the folded packet's session id **only when this packet became
+    ///   that session's representative** — either the first packet of a new
+    ///   session, or a later packet that displaced the prior representative by
+    ///   decoded-layer richness. Returns `nil` for a packet with no five-tuple, or
+    ///   one that folded in without changing the representative. This is a
+    ///   format-neutral selection signal: a streaming loader can map the id to the
+    ///   current frame's evidence reference without retaining a per-frame index, and
+    ///   Session imports no Capture types. `@discardableResult` so folds that ignore
+    ///   it are unchanged.
+    @discardableResult
+    mutating func add(_ packet: DecodedPacket) -> UUID? {
+        foldSession(packet, hasReassembledApplication: false)
+    }
+
+    /// The common production fold shared by batch, live and saved paths. Assigns
+    /// exactly one one-based capture ordinal in accepted-frame order, folds the
+    /// existing session state and the owned connection table once each, and returns
+    /// the same representative-session selection signal `add(_:)` reports.
+    ///
+    /// The ordinal is assigned per *accepted frame*, before any tuple/TCP filtering,
+    /// so a non-TCP or tupleless frame still consumes its ordinal and capture order
+    /// stays exact. The provenance's timestamp and original length come from the
+    /// decoded packet (truthful per-frame values); the captured length, link type,
+    /// optional locator and loss come from the format-neutral `context`.
+    @discardableResult
+    mutating func add(_ packet: DecodedPacket, context: SessionFrameContext) -> UUID? {
+        let provenance = SessionFrameProvenance(
+            ordinal: FrameOrdinal(nextOrdinal),
+            timestamp: packet.timestamp,
+            capturedLength: context.capturedLength,
+            originalLength: packet.originalLength,
+            linkType: context.linkType,
+            locator: context.locator
+        )
+        // A capture cannot realistically exhaust UInt64 ordinals, but malformed
+        // test input or a future long-lived source must still never wrap back to
+        // zero and collide with earlier connection identities. Saturate at the
+        // representable horizon; reset starts a new capture at one.
+        if nextOrdinal < UInt64.max {
+            nextOrdinal += 1
         }
-        if states[key] == nil {
-            order.append(key)
-            states[key] = State(first: packet)
+        // Connection → metadata → session (mandatory order). Fold the connection
+        // table once — the single owner of TCP ordering and first-record recovery —
+        // then apply any returned application metadata to a local packet copy, then
+        // fold session state once. Neither side is double-folded.
+        let outcome = connections.ingest(packet, provenance: provenance, loss: context.loss)
+        var enriched = packet
+        let hasReassembledApplication: Bool
+        if let application = outcome.application {
+            Self.apply(application, to: &enriched)
+            hasReassembledApplication = true
         } else {
-            states[key]?.merge(packet)
+            hasReassembledApplication = false
         }
+        // Offer the enriched frame and the same provenance/loss to the datagram
+        // table once, between the connection/application fold and the session fold.
+        // The table retains only UDP DNS / ICMP facts and excludes-counts any
+        // TCP-DNS fact (per-frame or the reassembled `dnsFacts` `apply` propagated).
+        datagrams.offer(enriched, provenance: provenance, loss: context.loss)
+        // Offer the *original* per-frame packet (its direct `tlsRecords` cite exactly
+        // this frame) plus the connection's reassembled application handoff to the TLS
+        // table, before the session fold. The table retains direct records only and
+        // excludes-counts any multi-frame recovered records the handoff carries; the
+        // recovered facts are never propagated onto `enriched`/the representative.
+        tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
+        return foldSession(enriched, hasReassembledApplication: hasReassembledApplication)
     }
 
     /// Emit summaries in first-seen five-tuple order. Pure; decodes nothing and
@@ -49,12 +132,36 @@ nonisolated struct SessionAccumulator {
         order.compactMap { states[$0]?.summary(key: $0, resolved: resolved) }
     }
 
-    /// Clears every accumulated session and the DNS map. Called at capture
-    /// boundaries.
+    /// A first-observed-ordered snapshot of the owned connection table for the
+    /// frames folded so far. Pure; decodes nothing.
+    func connectionSnapshot() -> ConnectionTable.Snapshot {
+        connections.snapshot()
+    }
+
+    /// The additive common-fold snapshot: the unchanged session summaries, the
+    /// connection snapshot and the datagram evidence for the same accepted frames.
+    /// Pure; decodes nothing. Each owned table is snapshotted exactly once here.
+    func foldSnapshot() -> SessionFoldSnapshot {
+        SessionFoldSnapshot(
+            sessions: summaries(),
+            connections: connections.snapshot(),
+            datagramEvidence: datagrams.snapshot(),
+            tlsEvidence: tlsEvidence.snapshot()
+        )
+    }
+
+    /// Clears every accumulated session, the DNS map, the connection table, the
+    /// datagram evidence table and the TLS evidence table, and restarts the capture
+    /// ordinal at 1. Called at capture boundaries so table state and the ordinal reset
+    /// together; each table is rebuilt from its preserved configuration.
     mutating func reset() {
         order.removeAll(keepingCapacity: false)
         states.removeAll(keepingCapacity: false)
         resolved.removeAll(keepingCapacity: false)
+        connections = ConnectionTable(configuration: connectionConfiguration)
+        datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
+        tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+        nextOrdinal = 1
     }
 
     // MARK: Private
@@ -65,6 +172,68 @@ nonisolated struct SessionAccumulator {
     private var states: [FiveTuple: State] = [:]
     /// IP → hostname learned from DNS responses, accumulated across the capture.
     private var resolved: [String: String] = [:]
+
+    /// The single owned connection table folded in lock-step with the session
+    /// state. Rebuilt from `connectionConfiguration` on `reset`.
+    private var connections: ConnectionTable
+    private let connectionConfiguration: ConnectionTable.Configuration
+    /// The single owned datagram evidence table, folded once per accepted frame
+    /// beside the connection table. Rebuilt from `datagramConfiguration` on `reset`.
+    private var datagrams: DatagramEvidenceTable
+    private let datagramConfiguration: DatagramEvidenceTable.Configuration
+    /// The single owned TLS evidence table, folded once per accepted frame beside the
+    /// connection and datagram tables. Rebuilt from `tlsConfiguration` on `reset`.
+    private var tlsEvidence: TLSEvidenceTable
+    private let tlsConfiguration: TLSEvidenceTable.Configuration
+    /// The one-based capture ordinal handed to the next common-path frame, in
+    /// accepted-frame order. Independent of batch chunking and of timestamp order.
+    private var nextOrdinal: UInt64 = 1
+
+    /// Apply the connection table's bounded first-record application metadata to a
+    /// local packet copy. This is the exact enrichment the session-owned reassembler
+    /// used to perform inline, moved to the single connection owner: the reassembled
+    /// application layers replace any same-protocol per-frame layer and carry no
+    /// frame byte ranges (their bytes span multiple frames).
+    private static func apply(_ metadata: PacketDecoder.ReassembledTCPApplication, to packet: inout DecodedPacket) {
+        packet.appProtocol = metadata.appProtocol
+        packet.sni = metadata.sni ?? packet.sni
+        packet.dnsQuery = metadata.dnsQuery ?? packet.dnsQuery
+        if !metadata.dnsAnswers.isEmpty {
+            packet.dnsAnswers = metadata.dnsAnswers
+        }
+        // Propagate any reassembled DNS fixed-header facts transiently onto this
+        // local copy. Session state ignores `dnsFacts`, so summaries/digests are
+        // unchanged; it exists solely so the datagram table can excluded-count a
+        // reassembled TCP-DNS fact whose frame the prefix probe did not fully cite.
+        packet.dnsFacts = metadata.dnsFacts ?? packet.dnsFacts
+        packet.dnsAnswersOmittedCount = max(packet.dnsAnswersOmittedCount, metadata.dnsAnswersOmittedCount)
+        packet.layers.removeAll { $0.proto == metadata.appProtocol }
+        packet.layers.append(contentsOf: metadata.layers)
+    }
+
+    // MARK: Private session fold
+
+    /// Fold DNS learning plus one packet's per-session state, updating the richest
+    /// representative. `hasReassembledApplication` is `true` only when the packet was
+    /// enriched by the connection table's first-record probe, so a reassembly-driven
+    /// application handoff can displace a representative even without a strictly
+    /// larger layer count.
+    private mutating func foldSession(_ packet: DecodedPacket, hasReassembledApplication: Bool) -> UUID? {
+        SessionBuilder.learnResolved(from: packet, into: &resolved)
+        guard let key = packet.fiveTuple else {
+            return nil
+        }
+        let becameRepresentative: Bool
+        if var state = states[key] {
+            becameRepresentative = state.merge(packet, hasReassembledApplication: hasReassembledApplication)
+            states[key] = state
+        } else {
+            order.append(key)
+            states[key] = State(first: packet)
+            becameRepresentative = true
+        }
+        return becameRepresentative ? SessionBuilder.sessionID(for: key) : nil
+    }
 }
 
 // MARK: SessionAccumulator.State
@@ -75,15 +244,14 @@ private extension SessionAccumulator {
     nonisolated struct State {
         // MARK: Lifecycle
 
+        /// The packet is already enriched (or not) before it reaches session state:
+        /// the connection table's first-record probe applies any reassembled
+        /// application metadata upstream, so this fold never reassembles.
         init(first packet: DecodedPacket) {
-            var enriched = packet
             earliest = packet
             latestTime = packet.timestamp
             rich = packet
-            _ = enrichFromTCPStream(&enriched)
-            earliest = enriched
-            rich = enriched
-            fold(enriched)
+            fold(packet)
         }
 
         // MARK: Internal
@@ -91,9 +259,16 @@ private extension SessionAccumulator {
         /// Fold a subsequent packet of the same five-tuple. `merge` also updates
         /// the representatives; the first packet is folded via `fold` directly
         /// from `init`, where the representatives are already seeded.
-        mutating func merge(_ incoming: DecodedPacket) {
-            var packet = incoming
-            let hasReassembledApplication = enrichFromTCPStream(&packet)
+        ///
+        /// - Parameter hasReassembledApplication: whether the connection table's
+        ///   first-record probe enriched this packet, so a richer application
+        ///   handoff can displace the representative even without a larger layer
+        ///   count.
+        /// - Returns: `true` when this packet displaced the richest representative
+        ///   (by layer count, or by reassembly-driven application richness), so a
+        ///   caller can map the session id to this packet's frame reference.
+        @discardableResult
+        mutating func merge(_ packet: DecodedPacket, hasReassembledApplication: Bool) -> Bool {
             // Earliest packet: a strictly-smaller timestamp wins, so equal
             // timestamps keep the first-seen packet — matching `sorted.first`.
             if packet.timestamp < earliest.timestamp {
@@ -106,12 +281,15 @@ private extension SessionAccumulator {
             }
             // Richest representative: only a strictly-greater layer count wins, so
             // ties keep the first-seen packet — matching `packets.max(by:)`.
+            var becameRepresentative = false
             if rich.layers.count < packet.layers.count
                 || (hasReassembledApplication && applicationRichness(packet) > applicationRichness(rich))
             {
                 rich = packet
+                becameRepresentative = true
             }
             fold(packet)
+            return becameRepresentative
         }
 
         func summary(key: FiveTuple, resolved: [String: String]) -> SessionSummary {
@@ -145,6 +323,8 @@ private extension SessionAccumulator {
                 host: host,
                 sourceEndpoint: client?.display ?? "—",
                 destinationEndpoint: server?.display ?? "—",
+                sourceEndpointValue: client,
+                destinationEndpointValue: server,
                 protocolStack: protocolStack,
                 status: status,
                 latencyMilliseconds: latency,
@@ -154,11 +334,16 @@ private extension SessionAccumulator {
                 representativeBytes: rich.rawBytes,
                 sni: sni,
                 dnsQuery: dnsQuery,
-                dnsAnswers: dnsAnswers
+                dnsAnswers: dnsAnswers,
+                dnsAnswersOmittedCount: dnsAnswersOmittedCount
             )
         }
 
         // MARK: Private
+
+        /// Largest number of unique DNS answers a session publishes, in first-seen
+        /// order. Beyond this, further unique answers are counted, not stored.
+        private static let dnsAnswerPublicationCap = 64
 
         /// Earliest packet by timestamp (first-seen tie-break) — drives direction
         /// (client/server) and the session start.
@@ -178,7 +363,13 @@ private extension SessionAccumulator {
         private var sni: String?
         private var dnsQuery: String?
         private var processName: String?
+        /// Unique published answers in first-seen order, bounded by the publication
+        /// cap. Dedup scans this bounded list, so no unbounded Set is retained.
         private var dnsAnswers: [String] = []
+        /// Answer-record occurrences omitted because a decode/publication cap was
+        /// reached. This does not claim exact unique cardinality after the retained
+        /// list fills, which would require unbounded state.
+        private var dnsAnswersOmittedCount = 0
 
         /// Earliest DNS query (no answers) / response (with answers) instants, for
         /// the DNS handshake latency. Min timestamp, first-seen tie-break.
@@ -186,11 +377,6 @@ private extension SessionAccumulator {
         private var dnsResponseTime: Date?
 
         private var anyTCPRST = false
-
-        /// At most one 16 KiB prefix per direction. Once a complete first
-        /// application record/header is classified, the bytes are released and
-        /// only the decoded metadata remains in the summary state.
-        private var tcpDirections: [IPEndpoint: TCPDirectionState] = [:]
 
         private var status: SessionStatus {
             // Only observed evidence sets status. An explicit TCP RST is a real
@@ -209,71 +395,10 @@ private extension SessionAccumulator {
             return response.timeIntervalSince(query) * 1_000
         }
 
+        /// A reset is decided from the typed control bits, never a rendered "Flags"
+        /// string — a display value can never spoof a real RST.
         private static func hasTCPRST(_ packet: DecodedPacket) -> Bool {
-            packet.layers.contains { layer in
-                layer.proto == .tcp && (layer.fields.first { $0.name == "Flags" }?.value.contains("RST") ?? false)
-            }
-        }
-
-        /// Reassembles only enough of one TCP direction to classify its first
-        /// TLS/HTTP/DNS record. The connection/session seam owns ordering state;
-        /// the protocol decoder stays stateless and receives a bounded prefix.
-        private mutating func enrichFromTCPStream(_ packet: inout DecodedPacket) -> Bool {
-            guard packet.transport == .tcp,
-                  let source = packet.sourceEndpoint,
-                  let destination = packet.destinationEndpoint,
-                  let sequence = packet.tcpPayloadSequence,
-                  !packet.tcpPayloadBytes.isEmpty else
-            {
-                return false
-            }
-
-            var direction = tcpDirections[source] ?? TCPDirectionState()
-            guard !direction.finished else {
-                return false
-            }
-            var output = direction.reassembler.ingest(sequence: sequence, payload: packet.tcpPayloadBytes)
-            var metadata = PacketDecoder.decodeReassembledTCPPayload(
-                output.contiguous,
-                sourcePort: source.port,
-                destinationPort: destination.port
-            )
-
-            // A capture may begin in the middle of an existing byte stream. If
-            // this packet is independently recognizable at its own boundary but
-            // the earlier anchor was opaque, re-anchor here instead of retaining
-            // an undecodable prefix until the bound is exhausted.
-            if metadata == nil, packet.appProtocol != nil,
-               output.contiguous.count != packet.tcpPayloadBytes.count
-            {
-                direction.reassembler.reset()
-                output = direction.reassembler.ingest(sequence: sequence, payload: packet.tcpPayloadBytes)
-                metadata = PacketDecoder.decodeReassembledTCPPayload(
-                    output.contiguous,
-                    sourcePort: source.port,
-                    destinationPort: destination.port
-                )
-            }
-
-            guard let metadata else {
-                tcpDirections[source] = direction
-                return false
-            }
-            packet.appProtocol = metadata.appProtocol
-            packet.sni = metadata.sni ?? packet.sni
-            packet.dnsQuery = metadata.dnsQuery ?? packet.dnsQuery
-            if !metadata.dnsAnswers.isEmpty {
-                packet.dnsAnswers = metadata.dnsAnswers
-            }
-            packet.layers.removeAll { $0.proto == metadata.appProtocol }
-            packet.layers.append(contentsOf: metadata.layers)
-
-            if metadata.isComplete || direction.reassembler.didOverflow {
-                direction.reassembler.reset()
-                direction.finished = true
-            }
-            tcpDirections[source] = direction
-            return true
+            packet.tcpFacts?.flags.contains(.rst) ?? false
         }
 
         private func applicationRichness(_ packet: DecodedPacket) -> Int {
@@ -301,7 +426,22 @@ private extension SessionAccumulator {
             if processName == nil, let name = packet.processName, !name.isEmpty {
                 processName = name
             }
-            dnsAnswers.append(contentsOf: packet.dnsAnswers)
+            // Publish unique answers in first-seen order, deduped against the
+            // bounded published list (never an unbounded Set). A duplicate is
+            // deduplication, not an omission. After the list fills, each unretained
+            // answer occurrence is counted; records dropped at decode time are
+            // folded in too.
+            for answer in packet.dnsAnswers {
+                if dnsAnswers.contains(answer) {
+                    continue
+                }
+                if dnsAnswers.count < Self.dnsAnswerPublicationCap {
+                    dnsAnswers.append(answer)
+                } else {
+                    dnsAnswersOmittedCount += 1
+                }
+            }
+            dnsAnswersOmittedCount += packet.dnsAnswersOmittedCount
 
             if packet.appProtocol == .dns {
                 if packet.dnsAnswers.isEmpty {
@@ -324,10 +464,5 @@ private extension SessionAccumulator {
             }
             return candidate < stored ? candidate : stored
         }
-    }
-
-    nonisolated struct TCPDirectionState {
-        var reassembler = TCPStreamReassembler()
-        var finished = false
     }
 }

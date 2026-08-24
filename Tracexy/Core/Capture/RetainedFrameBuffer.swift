@@ -15,7 +15,11 @@ import Foundation
 /// Distinct from the helper's `BoundedFrameBuffer`: that one *drains* frames to
 /// the app and counts capture-source loss; this one *keeps* frames for the user
 /// to save and counts only the local retention tail it had to trim.
-nonisolated struct RetainedFrameBuffer {
+///
+/// `Sendable` so the off-main saved-capture loader can hand a completed tail
+/// window back across the task boundary as part of its single final result: every
+/// stored member (frames, counts) is itself a value type of `Sendable` contents.
+nonisolated struct RetainedFrameBuffer: Sendable {
     // MARK: Lifecycle
 
     init(capacity: Int) {

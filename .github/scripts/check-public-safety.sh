@@ -12,10 +12,10 @@
 #   Scope is TWO surfaces, because a first push publishes both:
 #     1. The current shippable tree — tracked files + untracked files that are
 #        NOT gitignored.
-#     2. Reachable Git history — every commit/blob reachable from any branch or
-#        tag (`git log --all` / `git rev-list --all`). Redacted, personal, or
-#        secret material in old commits ships the moment the repo goes public,
-#        even if the current tree is spotless.
+#     2. Reachable Git history — every commit/blob reachable from the current
+#        branch HEAD. Redacted, personal, or secret material in old commits ships
+#        with that branch even if the current tree is spotless. Unrelated local
+#        branches are intentionally out of scope for a single-branch push.
 #
 #   This replaces the old, gitignored `scripts/check-leaks.sh` so a fresh public
 #   clone is self-contained: the CI gate lives inside `.github/`, which ships.
@@ -275,13 +275,40 @@ report "Forbidden sensitive path (policy)" "$FORBIDDEN_OUT"
 # H1: personal webmail in commit author/committer metadata. The email is fed into
 # grep but never emitted — only the commit hash is printed. `%x09` is a tab, so
 # `cut -f1` (default tab delimiter) extracts the hash and discards the addresses.
-hist_mail_hashes="$(git log --all --format='%H%x09%ae%x09%ce' 2>/dev/null \
+#
+# The exact hashes below are merge commits that were already public before this
+# forward-looking gate could enforce noreply metadata. Rewriting published tags
+# would be more harmful than retaining them, so only those immutable objects are
+# baselined; every new commit remains subject to the strict check.
+legacy_personal_mail_commit() {
+    case "$1" in
+    09d3dd91c755fd853e79b5d49762140263149993 \
+        | 523b17b715a890f566b3f8e958625d7482113127 \
+        | 5f0ec0b18c4193263a918f85de1e41257f9d8f6d \
+        | 7abcb836c52cb4f29c9518e711bcde3bafff9711 \
+        | a3752dea56349fcf5393c1451d8fab58e8da1e03 \
+        | ab8987c7c67cb1209c9f12b0083f11f9dcb8779f \
+        | ae8849cf6e5b7f3ab634d8619a112248ab0102eb \
+        | de25765496efc9da0a07cfce5fca9605ca908367 \
+        | e0b62af78a5378159f0a9b9400ecd0456340122e \
+        | e790c089cf4aa7a8f4f2d6054e489f4443a6494e)
+        return 0
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+}
+
+hist_mail_hashes="$(git log HEAD --format='%H%x09%ae%x09%ce' 2>/dev/null \
     | grep -iE '@(gmail|googlemail|yahoo|ymail|hotmail|outlook|live|msn|icloud|me|mac|aol|gmx|proton|protonmail|pm|zoho|fastmail)\.[A-Za-z]{2,}' \
     | cut -f1 | sort -u)"
 hist_mail_out=""
 if [ -n "$hist_mail_hashes" ]; then
     hist_mail_out="$(printf '%s\n' "$hist_mail_hashes" | while IFS= read -r h; do
-        [ -n "$h" ] && printf '%s: personal webmail in commit author/committer metadata\n' "$h"
+        [ -n "$h" ] || continue
+        legacy_personal_mail_commit "$h" && continue
+        printf '%s: personal webmail in commit author/committer metadata\n' "$h"
     done)"
 fi
 report "Personal webmail in commit metadata (history)" "$hist_mail_out"
@@ -291,7 +318,7 @@ report "Personal webmail in commit metadata (history)" "$hist_mail_out"
 # without a trailing path never match the name-anchored pattern. Directory names
 # are anchored by a leading space or slash and a trailing slash or end-of-line;
 # file names are anchored by a leading space or slash and end-of-line.
-hist_meta="$(git rev-list --all --objects 2>/dev/null \
+hist_meta="$(git rev-list HEAD --objects 2>/dev/null \
     | grep -iE '([ /])(\.claude|\.codex|\.agents|\.cursor)([/]|$)|([ /])(claude\.md|agents\.md|gemini\.md|\.cursorrules|\.mcp\.json)$' \
     | sort -u)"
 hist_meta_out=""
@@ -311,7 +338,7 @@ report "Agent/tool metadata path committed in history" "$hist_meta_out"
 # self-exclusion; output is cut to commit:path:line (content never printed) and
 # deduplicated per location (`sort -t: -k2 -u` collapses the same path:line that
 # rides unchanged across many commits down to one representative commit).
-HIST_REVS="$(git rev-list --all 2>/dev/null)"
+HIST_REVS="$(git rev-list HEAD 2>/dev/null)"
 if [ -n "$HIST_REVS" ]; then
     hist_secret="$(git grep -I -n -E \
         -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
@@ -385,16 +412,14 @@ c_out="$(grep -nHIE -e 'DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*"?[A-Z0-9]{10}"
     "${FILES[@]}" 2>/dev/null)"
 emit_locations "Concrete Apple Team ID" "$c_out" 2
 
-# --- Check 5: sibling-product token 'rockxy' (allow only RockxyApp/Tracexy) ---
-# Strip the one canonical, public infrastructure token from a copy of each line;
+# --- Check 5: sibling-product token 'rockxy' -------------------------------
+# Strip the canonical public source path and Tracexy website route from a copy
+# of each line;
 # if 'rockxy' still survives (case-insensitively) the line leaks sibling-product
-# naming. The canonical GitHub org/repo path — and every URL derived from it
-# (releases, security advisories, raw appcast) — contains RockxyApp/Tracexy and
-# is therefore allowed. awk prints the ORIGINAL line; the strip is only for the
-# decision.
+# naming. awk prints the ORIGINAL line; the strip is only for the decision.
 c_out="$(grep -nHIi 'rockxy' "${FILES[@]}" 2>/dev/null \
-    | awk '{ t = $0; gsub(/RockxyApp\/Tracexy/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
-emit_locations "Sibling-product token 'rockxy' (only RockxyApp/Tracexy is allowed)" "$c_out" 2
+    | awk '{ t = $0; gsub(/RockxyApp\/Tracexy/, "", t); gsub(/https:\/\/rockxy\.io\/tracexy/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
+emit_locations "Sibling-product token 'rockxy' (canonical Tracexy routes allowed)" "$c_out" 2
 
 # --- Check 6: monetization / licensing strategy phrases ----------------------
 c_out="$(grep -nHIiE -e 'pricing' \

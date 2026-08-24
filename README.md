@@ -24,6 +24,18 @@
 
 ---
 
+<!-- BEGIN GENERATED: latest-release -->
+## Latest Tagged Release
+
+**v0.4.1** — 2026-08-19
+
+### Fixed
+
+- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+<!-- END GENERATED: latest-release -->
+
 Tracexy is an open-source network intelligence app built specifically for macOS. It captures traffic
 passively and turns frames into explainable sessions and correlated activities: which process
 contacted which host, which protocols appeared, how much data moved, and what evidence supports the
@@ -34,9 +46,9 @@ bytes are the answer, but they do not dominate the workspace.
 
 > [!IMPORTANT]
 > Tracexy is under active MVP development. Live capture, capture-file IO, bounds-checked decoding,
-> session grouping, filtering, correlation, and the native investigation workspace are implemented
-> and tested. Stateful reassembly, persistent storage, deeper analysis, enforced export redaction,
-> and AI/MCP integration remain future work.
+> bounded connection evidence, selected analysis, terminal local History, protected session export,
+> filtering, correlation, and the native investigation workspace are implemented and tested. General
+> TCP reassembly, deep protocol analysis, automatic retention, and AI/MCP transport remain future work.
 
 ## See Tracexy in action
 
@@ -71,7 +83,7 @@ bytes are the answer, but they do not dominate the workspace.
 <p align="center"><em>Inspect decoded protocol fields alongside the raw bytes that support them.</em></p>
 
 <p align="center">
-  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second walkthrough on Rockxy Web →</a>
+  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second Tracexy walkthrough →</a>
 </p>
 
 ## Why Tracexy
@@ -93,23 +105,25 @@ bytes are the answer, but they do not dominate the workspace.
 
 | Area | Available now |
 |---|---|
-| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; classic PCAP read/write; PCAPNG read |
+| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; classic PCAP and PCAPNG read/write |
 | **Decode** | Ethernet, loopback and tunnel framing; ARP; IPv4/IPv6; ICMP/ICMPv6; TCP/UDP; DNS, TLS, HTTP/1, and QUIC summaries |
-| **Sessions** | Direction-normalized five-tuple grouping, byte and timing summaries, status derivation, and higher-level activity correlation |
-| **Investigation** | Overview, session table, flow map, scoped search, structured filters, grouping, context menus, decoded fields, and hex evidence |
+| **Sessions** | Direction-normalized five-tuple grouping, byte/timing summaries, bounded TCP lifecycle and sequence evidence, and higher-level activity correlation |
+| **Investigation** | Overview, session table, flow map, scoped search, typed queries, evidence-linked findings, bounded Follow Stream, decoded fields, and hex evidence |
+| **History** | Local SQLite terminal capture/session summaries with bounded reads, explicit refresh, confirmed clear, and no packet-payload persistence |
+| **Automation core** | Read-only one-page History projections with minimum disclosure, deterministic JSON, and spreadsheet-safe RFC-4180 CSV; no executable or network transport |
 | **Workspace** | Native sidebar, independent workspace tabs, vertical or bottom inspector layouts, status/footer surfaces, Focus Sets, and Noise Control |
 | **Attribution** | Best-effort process ownership from `pktap` metadata with a local socket-to-process fallback |
 
 ## Protocol coverage
 
-Application-layer decoding is intentionally summary-level in the current MVP. It identifies a
-conversation from data visible in an individual frame; it does not reconstruct an encrypted or
-segmented stream.
+Application-layer decoding is intentionally metadata-focused in the current MVP. The always-on fold
+recovers only bounded initial TLS/HTTP/DNS metadata; an explicit Follow Stream action can rescan a
+stable saved or stopped source without turning the capture path into an unbounded stream store.
 
 | Layer | Coverage | Important limits |
 |---|---|---|
 | **Link / network** | Ethernet II, BSD loopback/null, raw/tunnel IP, ARP, IPv4 options, IPv6 extension headers, ICMP/ICMPv6 | Partial decode is returned for malformed or truncated input |
-| **Transport** | TCP flags and common option TLVs; UDP endpoints | No TCP stream reassembly |
+| **Transport** | TCP flags/options, lifecycle and bounded sequence evidence; UDP endpoints | No general always-on TCP stream/record analyzer |
 | **DNS** | Questions, compression pointers, and common answer records including A, AAAA, CNAME, MX, TXT, SRV, and SOA | No DNSSEC analysis |
 | **TLS** | Record and handshake metadata, offered/chosen versions, cipher information, SNI, and ALPN | No decryption, certificates, or application data |
 | **HTTP/1** | Request-line recognition and the `Host` header | No full headers, response parsing, bodies, chunking, or decompression |
@@ -122,13 +136,12 @@ See the [source-grounded protocol matrix](docs/protocol-support.md) for exact fi
 These are deliberate statements of present capability, not hidden roadmap promises:
 
 - No TLS or QUIC decryption.
-- No TCP reassembly or stateful connection engine.
+- No general always-on TCP reassembly or typed record-analyzer framework; connection evidence and explicit bounded Follow Stream are narrower mechanisms.
 - No deep HTTP/2, HTTP/3, or WebSocket decoder.
-- No persistent capture database.
-- No durable security-analysis engine.
-- No MCP or AI data path.
-- Privacy preferences for redaction, IP masking, credential stripping, and retention are stored, but
-  the export-redaction and auto-clear pipelines that would enforce them are not implemented yet.
+- History persists terminal capture/session summaries, not a raw-packet capture database.
+- Findings are selected evidence-linked local observations, not a comprehensive durable security engine.
+- A transport-neutral read-only History automation core exists, but there is no CLI target, MCP server, listener, provider, or AI data path.
+- Protected `.tracexysession` export enforces payload/metadata protections; raw pcap/pcapng stays byte-preserving. Automatic retention cleanup is not implemented.
 
 ## Privacy and security
 
@@ -139,8 +152,9 @@ payloads. Tracexy treats them as sensitive by default.
 - Live capture starts when the user presses **Start**. If the user explicitly enables
   **Auto-start capture on launch**, that preference starts capture when the app opens.
 - Opening `.pcap` or `.pcapng` files does not require the privileged helper or administrator access.
-- Saving a capture currently writes raw captured frames. Redact sensitive data yourself before
-  sharing; the Settings redaction preferences do not sanitize exports yet.
+- Raw pcap/pcapng export preserves captured bytes and requires acknowledgement while protections are
+  enabled. Protected `.tracexysession` export omits raw frames and sensitive decoded metadata according
+  to the selected Privacy settings.
 - Live capture crosses a narrow, typed XPC boundary with code-signing checks around the privileged
   helper.
 - Signed update checks are separate from capture data and never include captured traffic.

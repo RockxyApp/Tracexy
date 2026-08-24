@@ -133,7 +133,7 @@ struct ContextDockView: View {
     // MARK: Details
 
     /// Everything the app can *say* about the selection, in compact diagnostics tables:
-    /// identity, verdict, layer facts, host baseline, related actions, security
+    /// identity, verdict, layer facts, host baseline, related actions, analysis
     /// findings and grouping evidence. Identity stays mounted as the selection
     /// header while rounded, two-column tables own the diagnostic groups below.
     /// The derivations and actions are unchanged; only their presentation moved.
@@ -189,7 +189,7 @@ struct ContextDockView: View {
 
                         if !findings(for: session).isEmpty {
                             ContextInspectorTable(title: "Flagged Here") {
-                                securityFindings(for: session)
+                                analysisFindings(for: session)
                             }
                         }
 
@@ -236,13 +236,13 @@ struct ContextDockView: View {
         }
     }
 
-    // MARK: Security findings
+    // MARK: Analysis findings
 
     /// What was flagged on this selection, folded into Details rather than living
     /// on its own tab. Absent when nothing was flagged — the same rule the other
     /// sections follow, so the read never carries an empty box.
     @ViewBuilder
-    private func securityFindings(for session: SessionSummary) -> some View {
+    private func analysisFindings(for session: SessionSummary) -> some View {
         let items = findings(for: session)
         if !items.isEmpty {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, finding in
