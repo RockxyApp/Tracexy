@@ -413,13 +413,13 @@ c_out="$(grep -nHIE -e 'DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*"?[A-Z0-9]{10}"
 emit_locations "Concrete Apple Team ID" "$c_out" 2
 
 # --- Check 5: sibling-product token 'rockxy' -------------------------------
-# Strip the canonical public source path and Tracexy website route from a copy
-# of each line;
-# if 'rockxy' still survives (case-insensitively) the line leaks sibling-product
-# naming. awk prints the ORIGINAL line; the strip is only for the decision.
+# Strip approved public product references from a copy of each line. Product
+# names are allowed in the explicit public ecosystem section and in canonical
+# public repository links; private sibling-product internals remain forbidden.
+# awk prints the ORIGINAL line; the strip is only for the decision.
 c_out="$(grep -nHIi 'rockxy' "${FILES[@]}" 2>/dev/null \
-    | awk '{ t = $0; gsub(/RockxyApp\/Tracexy/, "", t); gsub(/https:\/\/rockxy\.io\/tracexy/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
-emit_locations "Sibling-product token 'rockxy' (canonical Tracexy routes allowed)" "$c_out" 2
+    | awk '{ t = $0; gsub(/RockxyApp\/(Tracexy|Rockxy|Shieldxy)/, "", t); gsub(/https:\/\/rockxy\.io\/tracexy/, "", t); gsub(/Rockxy Ecosystem/, "", t); gsub(/\[Rockxy ecosystem\]/, "", t); gsub(/\[Rockxy\]/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
+emit_locations "Sibling-product token 'rockxy' (approved public ecosystem references allowed)" "$c_out" 2
 
 # --- Check 6: monetization / licensing strategy phrases ----------------------
 c_out="$(grep -nHIiE -e 'pricing' \
