@@ -5,10 +5,11 @@
 <h1 align="center">Tracexy</h1>
 
 <p align="center">
-  <strong>Native macOS network intelligence, organized around sessions—not packet noise.</strong>
+  <strong>The AGPL-licensed public source edition of Tracexy for macOS.</strong>
 </p>
 
 <p align="center">
+  Native macOS network intelligence, organized around sessions—not packet noise.<br>
   Capture live traffic or open a saved capture, then investigate hosts, processes, protocols,
   timing, and raw packet evidence in one local-first workspace.
 </p>
@@ -17,8 +18,8 @@
   <a href="https://github.com/RockxyApp/Tracexy/actions/workflows/build.yml"><img src="https://github.com/RockxyApp/Tracexy/actions/workflows/build.yml/badge.svg" alt="Build and validation status" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14 or later" />
   <img src="https://img.shields.io/badge/Swift-5-orange" alt="Swift 5" />
-  <img src="https://img.shields.io/badge/status-MVP-8A63D2" alt="MVP status" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-green" alt="AGPL-3.0 license" /></a>
+  <img src="https://img.shields.io/badge/status-stable-2E8B57" alt="Stable status" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/source-AGPL--3.0--or--later-green" alt="AGPL-3.0-or-later source license" /></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="Pull requests welcome" /></a>
 </p>
 
@@ -53,16 +54,35 @@ The main experience is session-first. Raw protocol fields and hex remain one cli
 bytes are the answer, but they do not dominate the workspace.
 
 > [!IMPORTANT]
-> Tracexy is under active MVP development. Live capture, capture-file IO, bounds-checked decoding,
-> bounded connection evidence, selected analysis, terminal local History, protected session export,
-> filtering, correlation, and the native investigation workspace are implemented and tested. General
-> TCP reassembly, deep protocol analysis, automatic retention, and AI/MCP transport remain future work.
+> This repository contains Tracexy's public source edition under
+> [AGPL-3.0-or-later](LICENSE). Builds made solely from this repository are AGPL builds.
+> The official Community DMG is a signed release artifact built from this public source checkout;
+> it does not represent a separate closed-source edition or a different license. Third-party
+> components remain under their own licenses; see [Licensing](#licensing) below.
+
+## Part of the Rockxy Ecosystem
+
+Tracexy is part of the [Rockxy ecosystem](https://github.com/RockxyApp/Rockxy), a family of native,
+local-first tools for understanding and controlling software and network behavior. The products
+have distinct jobs and separate repositories, while sharing a focus on transparent evidence,
+explicit data boundaries, and native platform experiences:
+
+- **[Rockxy](https://github.com/RockxyApp/Rockxy)** — intercept, inspect, and modify HTTP, HTTPS,
+  WebSocket, GraphQL, and other application traffic.
+- **Tracexy** — passively capture network traffic and organize it into explainable sessions,
+  protocol observations, and evidence-linked investigation workflows.
+- **[Shieldxy](https://github.com/RockxyApp/Shieldxy)** — application-aware network security,
+  connection control, and policy-oriented visibility.
+
+Tracexy complements the ecosystem rather than replacing any one tool: the application-level
+debugger focuses on traffic control, while Tracexy focuses on passive network intelligence across
+interfaces, processes, protocols, and session relationships.
 
 ## See Tracexy in action
 
 <p align="center">
   <a href="https://rockxy.io/tracexy#demo">
-    <img src="docs/media/tracexy-demo/overview.webp" alt="Tracexy live capture workspace with session list, traffic graph, decoded packet fields, and raw bytes" width="100%" />
+    <img src="docs/media/Tracexy-Light-050.png" alt="Tracexy live capture workspace with session list, traffic graph, decoded packet fields, and raw bytes" width="100%" />
   </a>
 </p>
 
@@ -71,28 +91,20 @@ bytes are the answer, but they do not dominate the workspace.
 </p>
 
 <p align="center">
-  <img src="docs/media/tracexy-demo/interface-picker.webp" alt="Tracexy interface picker showing Wi-Fi, Ethernet, Thunderbolt, tunnel, VPN, and loopback sources" width="100%" />
+  <img src="docs/media/Tracexy-Capturing-Option-050.png" alt="Tracexy interface picker showing Wi-Fi, Ethernet, Thunderbolt, tunnel, VPN, and loopback sources" width="100%" />
 </p>
 <p align="center"><em>Choose the interface and start from the traffic surface that matters.</em></p>
 
 <p align="center">
-  <img src="docs/media/tracexy-demo/capture-settings.webp" alt="Tracexy capture settings for interface selection, BPF filters, snap length, and packet retention" width="100%" />
+  <img src="docs/media/Tracexy-Settings-050.png" alt="Tracexy capture settings for interface selection, BPF filters, snap length, and packet retention" width="100%" />
 </p>
 <p align="center"><em>Control capture scope, filters, packet detail, and retention before traffic leaves the wire.</em></p>
-
-<p align="center">
-  <img src="docs/media/tracexy-demo/source-tree.webp" alt="Tracexy source tree grouping captured sessions by application and address" width="496" />
-</p>
-<p align="center"><em>Navigate from applications to domains and IP addresses without losing the session context.</em></p>
 
 <p align="center">
   <img src="docs/media/tracexy-demo/packet-inspector.webp" alt="Tracexy packet inspector showing decoded protocol fields beside raw hexadecimal bytes" width="100%" />
 </p>
 <p align="center"><em>Inspect decoded protocol fields alongside the raw bytes that support them.</em></p>
 
-<p align="center">
-  <a href="https://rockxy.io/tracexy#demo">Watch the full 45-second Tracexy walkthrough →</a>
-</p>
 
 ## Why Tracexy
 
@@ -124,7 +136,7 @@ bytes are the answer, but they do not dominate the workspace.
 
 ## Protocol coverage
 
-Application-layer decoding is intentionally metadata-focused in the current MVP. The always-on fold
+Application-layer decoding is intentionally metadata-focused in the current implementation. The always-on fold
 recovers only bounded initial TLS/HTTP/DNS metadata; an explicit Follow Stream action can rescan a
 stable saved or stopped source without turning the capture path into an unbounded stream store.
 
@@ -262,6 +274,43 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 For decoder work, include normal, truncated, and malformed-input coverage. Captures attached to an
 issue must be reviewed and redacted first.
 
-## License
+## Licensing
 
-Tracexy is available under the [GNU Affero General Public License v3.0](LICENSE).
+### Tracexy source
+
+The source in this repository is licensed under the
+[GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later)](LICENSE).
+AGPL is a strong copyleft license: you may run, study, modify, and redistribute Tracexy,
+including commercially, as long as you follow its conditions.
+
+In practical terms, redistributed modified versions must keep the license and required notices,
+identify meaningful changes, and provide the corresponding source under AGPL terms. If a modified
+version offers network interaction, AGPL section 13 also requires users who interact with it over
+the network to be offered access to the corresponding source. The full legal terms, including the
+no-warranty provisions, are in [LICENSE](LICENSE).
+
+A build made solely from this repository is therefore an AGPL build. AGPL does not grant rights to
+the Tracexy name, logo, or other trademarks.
+
+### Public source and official Community DMG
+
+The public GitHub repository is the source of truth for Tracexy's Community release channel. The
+official DMG published on [GitHub Releases](https://github.com/RockxyApp/Tracexy/releases) is built
+from that public checkout using the Release configuration, then:
+
+- signed with a Developer ID certificate and hardened runtime;
+- packaged as a drag-to-Applications macOS DMG;
+- notarized with Apple's notary service; and
+- published with a checksum and a Sparkle signature for the public update feed.
+
+The DMG is therefore an authenticated and notarized distribution of the public AGPL source, not a
+closed-source or separately licensed Tracexy binary. A local build from the repository remains
+valid under AGPL-3.0-or-later, but it will have its own signing identity, notarization state,
+update-feed behavior, and release provenance.
+
+### Third-party and platform components
+
+Tracexy may link to third-party libraries and Apple system components, including the Sparkle update
+framework. Those components are not relicensed by this repository and remain subject to their own
+license terms and notices. Before distributing a build, review the licenses bundled by Xcode and the
+dependency metadata in [`Package.resolved`](Tracexy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved).
