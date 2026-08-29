@@ -5,13 +5,17 @@
 <h1 align="center">Tracexy</h1>
 
 <p align="center">
-  <strong>The AGPL-licensed public source edition of Tracexy for macOS.</strong>
+  <strong>A native, session-first Wireshark alternative for macOS.</strong>
 </p>
 
 <p align="center">
   Native macOS network intelligence, organized around sessions—not packet noise.<br>
   Capture live traffic or open a saved capture, then investigate hosts, processes, protocols,
   timing, and raw packet evidence in one local-first workspace.
+</p>
+
+<p align="center">
+  <sub>The AGPL-licensed public source edition of Tracexy for macOS.</sub>
 </p>
 
 <p align="center">
