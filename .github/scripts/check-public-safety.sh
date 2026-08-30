@@ -283,12 +283,18 @@ report "Forbidden sensitive path (policy)" "$FORBIDDEN_OUT"
 legacy_personal_mail_commit() {
     case "$1" in
     09d3dd91c755fd853e79b5d49762140263149993 \
+        | 290cf0c0d6769900e76e0b5f04e914376742d54e \
+        | 48f1e39129d3835872a513cb7cbb96d96d25562d \
         | 523b17b715a890f566b3f8e958625d7482113127 \
         | 5f0ec0b18c4193263a918f85de1e41257f9d8f6d \
+        | 70ef5119bc6ecf556943a750e563da115180d445 \
         | 7abcb836c52cb4f29c9518e711bcde3bafff9711 \
+        | 8c0a368e6914483331eb76cb13b6b0531f6945b1 \
         | a3752dea56349fcf5393c1451d8fab58e8da1e03 \
         | ab8987c7c67cb1209c9f12b0083f11f9dcb8779f \
         | ae8849cf6e5b7f3ab634d8619a112248ab0102eb \
+        | b8017b1808997ae7c19590b1b701d213a8e8c072 \
+        | c6b671f023242d5d3883b57bc628219188d252a2 \
         | de25765496efc9da0a07cfce5fca9605ca908367 \
         | e0b62af78a5378159f0a9b9400ecd0456340122e \
         | e790c089cf4aa7a8f4f2d6054e489f4443a6494e)
@@ -418,7 +424,7 @@ emit_locations "Concrete Apple Team ID" "$c_out" 2
 # public repository links; private sibling-product internals remain forbidden.
 # awk prints the ORIGINAL line; the strip is only for the decision.
 c_out="$(grep -nHIi 'rockxy' "${FILES[@]}" 2>/dev/null \
-    | awk '{ t = $0; gsub(/RockxyApp\/(Tracexy|Rockxy|Shieldxy)/, "", t); gsub(/https:\/\/rockxy\.io\/tracexy/, "", t); gsub(/Rockxy Ecosystem/, "", t); gsub(/\[Rockxy ecosystem\]/, "", t); gsub(/\[Rockxy\]/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
+    | awk '{ t = $0; gsub(/RockxyApp\/(Tracexy|Rockxy|Shieldxy)/, "", t); gsub(/https:\/\/rockxy\.io\/tracexy/, "", t); gsub(/https:\/\/rockxy\.io\/wireshark-alternative/, "", t); gsub(/Rockxy LLC/, "", t); gsub(/Rockxy Ecosystem/, "", t); gsub(/\[Rockxy ecosystem\]/, "", t); gsub(/\[Rockxy\]/, "", t); if (tolower(t) ~ /rockxy/) print $0 }')"
 emit_locations "Sibling-product token 'rockxy' (approved public ecosystem references allowed)" "$c_out" 2
 
 # --- Check 6: monetization / licensing strategy phrases ----------------------

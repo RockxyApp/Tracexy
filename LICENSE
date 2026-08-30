@@ -235,7 +235,9 @@ If your software can interact with users remotely through a computer network, yo
 You should also get your employer (if you work as a programmer) or school, if any, to sign a "copyright disclaimer" for the program, if necessary. For more information on this, and how to apply and follow the GNU AGPL, see <http://www.gnu.org/licenses/>.
 
 
-Copyright 2026 Tracexy Contributors
+Tracexy is a native, session-first Network Intelligence Platform for macOS.
+
+Copyright 2026 Rockxy LLC and Tracexy contributors.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -249,3 +251,17 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Additional notice:
+
+This public source edition is licensed under AGPL-3.0-or-later. Rockxy LLC
+may also offer Tracexy, official binaries, support, hosted services,
+enterprise integrations, or downstream distributions under separate commercial
+terms. Those separate terms apply only to the copy, service, or distribution
+that presents them; they do not remove or restrict the AGPL rights granted for
+this public source edition.
+
+The AGPL license does not grant permission to use the Tracexy or Rockxy LLC
+names, logos, icons, domains, trade dress, or other trademarks to identify a
+modified or redistributed product, except for truthful nominative reference
+permitted by law.
