@@ -6,10 +6,10 @@ import Foundation
 /// inference layered on top of decoding, never part of it, so it can be revised,
 /// switched off, or disagreed with without touching the capture path.
 ///
-/// The evidence is weighted rather than keyed on a single field. A single
-/// grouping key (TCP Viewer uses TLS SNI) fails on everything that is not TLS,
-/// loses DNS entirely, and cannot express doubt. Here each link carries the
-/// reason it was made, and contested attributions stay contested.
+/// The evidence is weighted rather than keyed on a single field. A TLS-only
+/// grouping key fails on everything that is not TLS, loses DNS entirely, and
+/// cannot express doubt. Here each link carries the reason it was made, and
+/// contested attributions stay contested.
 enum ActivityBuilder {
     // MARK: Internal
 

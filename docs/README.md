@@ -15,6 +15,7 @@ This documentation describes what is actually in the source today, and clearly m
 | [Architecture](architecture.md) | The capture → protocol → session → UI pipeline, repository map, boundaries |
 | [Protocol support](protocol-support.md) | The accurate, per-layer decode matrix and its limits |
 | [Privacy & security](privacy-and-security.md) | Local-first posture, the privileged helper, and the trust boundary |
+| [Competitor comparison](comparison.md) | Source-backed comparison with packet-analysis alternatives |
 
 ## Status at a glance
 
@@ -25,9 +26,9 @@ protected session export, terminal-summary SQLite History, and a native SwiftUI/
 workspace with typed queries and explicit bounded Follow Stream.
 
 **Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record
-metadata, HTTP/1 headers, QUIC long-header metadata, and STUN attributes. TCP prefix recovery is
-bounded to initial TLS/HTTP/DNS metadata; the connection table does not provide a general always-on
-stream/record analyzer.
+metadata, HTTP/1 request-line and Host header recognition, QUIC long-header metadata, and STUN
+attributes. TCP prefix recovery is bounded to initial TLS/HTTP/DNS metadata; the connection table
+does not provide a general always-on stream/record analyzer.
 Protected `.tracexysession` export enforces the Privacy settings by omitting raw frames and sensitive
 decoded metadata. Raw pcap/pcapng remains evidence-preserving and is never presented as redacted.
 
