@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/RockxyApp/Tracexy/security/advisories/new
+    about: Use a private GitHub Security Advisory for vulnerabilities.
+  - name: Read the security policy
+    url: https://github.com/RockxyApp/Tracexy/blob/develop/SECURITY.md
+    about: Review scope, disclosure expectations, and safe testing rules.

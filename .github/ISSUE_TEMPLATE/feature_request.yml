@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a Tracexy capability or workflow improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please frame the problem first. Tracexy is session-first and local-first; requests that add export, AI, automation, helper, or capture behavior need explicit privacy and security boundaries.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What investigation or workflow is hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Tracexy do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Capture
+        - Protocol decoding
+        - Sessions
+        - Evidence or findings
+        - Query and filtering
+        - Follow Stream
+        - History
+        - Export or privacy controls
+        - Automation
+        - UI or workflow
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Privacy and security boundaries
+      description: Note any raw traffic, credentials, external services, privileged helper changes, or retained data involved.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention existing workflows or tools you compared, if any.
+    validations:
+      required: false

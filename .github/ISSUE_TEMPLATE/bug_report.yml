@@ -1,0 +1,86 @@
+name: Bug report
+description: Report a reproducible Tracexy defect that is not a security vulnerability.
+title: "fix: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Tracexy. Do not include secrets, credentials, private hostnames, or raw captures you have not reviewed. Security vulnerabilities belong in GitHub Security Advisories, not public issues.
+  - type: input
+    id: version
+    attributes:
+      label: Tracexy version or commit
+      description: Use the app version, tagged release, or commit SHA.
+      placeholder: "v0.5.0 or abc1234"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.6"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Live capture
+        - Helper installation or recovery
+        - Saved PCAP or PCAPNG open
+        - Packet decoder
+        - Sessions or connection evidence
+        - Findings or Investigation queries
+        - Follow Stream
+        - History
+        - Export or privacy controls
+        - UI or workflow
+        - Updates
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest capture setup or saved-file action that reproduces the issue.
+      placeholder: |
+        1. Open...
+        2. Start capture on...
+        3. Select...
+        4. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Paste logs, screenshots, crash excerpts, or minimal fixture details after removing secrets and private traffic.
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I reviewed attachments for secrets, private hostnames, credentials, and packet payloads.
+          required: true
+        - label: I understand raw pcap/pcapng files can contain sensitive traffic.
+          required: true
