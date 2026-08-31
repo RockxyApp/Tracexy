@@ -21,9 +21,13 @@ final class MainContentCoordinator {
     init(
         policy: (any AppPolicy)? = nil,
         layoutPreferences: WorkspaceLayoutPreferences? = nil,
-        sessionStore: SessionStore? = nil
+        sessionStore: SessionStore? = nil,
+        isHistoryDemoMode: Bool = false,
+        historyNow: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.sessionStore = sessionStore
+        self.isHistoryDemoMode = isHistoryDemoMode
+        self.historyNow = historyNow
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         focusGate = FocusPolicyGate(
@@ -236,6 +240,26 @@ final class MainContentCoordinator {
     /// opened saved capture; it is never on the live 0.8-second publication path.
     let sessionStore: SessionStore?
 
+    /// True only for the explicit synthetic History launch path. Production
+    /// composition always leaves this false and never sees the demo fixture.
+    let isHistoryDemoMode: Bool
+
+    /// Guards the root launch task from reseeding if SwiftUI remounts the view.
+    var hasPreparedHistoryDemo = false
+
+    /// Injectable wall clock for History age policy. Production uses `Date()`;
+    /// integration tests freeze it so cutoff behavior never depends on timing.
+    let historyNow: @Sendable () -> Date
+
+    /// The currently effective Auto-clear preference. The composition root sets
+    /// it from persisted defaults at launch; Settings updates it synchronously
+    /// before requesting another bounded retention pass.
+    var historyAutoClear: AutoClear = .never
+
+    /// A retention-specific recoverable failure. It is separate from general
+    /// History read/write errors so Settings can explain the exact failed action.
+    var historyRetentionError: String?
+
     /// Durable identity of the *running* live capture, minted once on confirmed
     /// backend start. It is never keyed on the capture generation (which repeats
     /// across launches). Cleared/retired at every clear/new/start boundary and
@@ -281,12 +305,16 @@ final class MainContentCoordinator {
     /// so selecting a capture never cancels capture-list paging and vice versa.
     var historySessionRequestID = 0
     var historySessionTask: Task<Void, Never>?
-    /// At most one terminal write may be scheduled per capture; this handle lets
-    /// tests await the exact write without timing sleeps.
-    var historyWriteTask: Task<Void, Never>?
-    /// Identifies the tail of the serialized terminal-write chain. Only the tail
-    /// may clear the handle and refresh the read model.
-    var historyWriteRequestID = 0
+    /// Serialized tail for every History mutation: terminal writes, automatic
+    /// retention and explicit clear. Keeping one queue prevents a late write from
+    /// reviving rows after a clear or racing a preference-triggered cleanup.
+    var historyMutationTask: Task<Void, Never>?
+    /// Identifies the current mutation tail. Only the tail clears the handle and
+    /// refreshes the read model after all earlier mutations have settled.
+    var historyMutationRequestID = 0
+    /// Invalidates a queued automatic retention pass when the user changes the
+    /// preference again before that pass reaches the store actor.
+    var historyRetentionRequestID = 0
 
     // MARK: Focus Sets
 
@@ -1155,27 +1183,6 @@ final class MainContentCoordinator {
             return
         }
         performStopCapture()
-    }
-
-    /// Top talkers by total bytes, for the dashboard.
-    func topHosts(limit: Int = 5) -> [(host: String, bytes: Int)] {
-        var totals: [String: Int] = [:]
-        for session in visibleSessions {
-            totals[session.host, default: 0] += session.totalBytes
-        }
-        return totals.sorted { $0.value > $1.value }
-            .prefix(limit)
-            .map { (host: $0.key, bytes: $0.value) }
-    }
-
-    func count(for proto: ProtocolKind) -> Int {
-        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
-    }
-
-    /// Whether a session matches a single quick-filter chip. Finding membership
-    /// comes from the already-published Core snapshots, not summary heuristics.
-    func matches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        Self.categoryMatches(session, category: category, findingSessionIDs: findingSessionIDs)
     }
 
     // MARK: Private

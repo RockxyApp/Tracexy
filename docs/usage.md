@@ -75,6 +75,13 @@ Privacy setting at write time.
 Use **Refresh** to reload the newest summaries. **Clear…** requires confirmation and removes only the
 local History database rows; it does not clear the current capture or delete saved capture files.
 
+**Settings → Privacy → Auto-clear** can keep History forever or remove entries whose capture end time
+is older than 15 minutes, 1 hour, or 24 hours. Cleanup runs at launch, after a completed live or saved
+capture is accepted into History, and immediately when the setting changes; there is no background
+timer. An entry ending exactly at the cutoff is retained. This policy affects only local History rows,
+so an older saved capture can disappear from History while remaining open in the current workspace and
+unchanged on disk.
+
 ## Sidebar sources
 
 The **Sources** groups in Browse are derived from the current capture. Secondary-click an app,

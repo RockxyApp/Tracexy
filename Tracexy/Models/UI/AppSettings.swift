@@ -332,6 +332,34 @@ enum AutoClear: String, CaseIterable, Identifiable {
         case .hours24: String(localized: "After 24 hours")
         }
     }
+
+    /// The retention window this choice represents, or `nil` for `.never` (no
+    /// automatic clearing). The coordinator — never this type or the store — turns
+    /// a non-`nil` interval into a `HistoryRetentionPolicy`.
+    var retentionInterval: TimeInterval? {
+        switch self {
+        case .never: nil
+        case .minutes15: 900
+        case .hour1: 3_600
+        case .hours24: 86_400
+        }
+    }
+}
+
+// MARK: - HistoryRetentionSettingsResolver
+
+/// Resolves the persisted History Auto-clear choice from injected `UserDefaults`.
+/// An absent key (fresh install, before the picker has been touched) or an unknown
+/// persisted value fails closed to `.never`, so corrupt or stale defaults can never
+/// trigger deletion. Pure and deterministic, so the mapping is unit-testable without
+/// the shared store.
+enum HistoryRetentionSettingsResolver {
+    static func autoClear(defaults: UserDefaults = .standard) -> AutoClear {
+        guard let raw = defaults.string(forKey: SettingsKeys.autoClear) else {
+            return .never
+        }
+        return AutoClear(rawValue: raw) ?? .never
+    }
 }
 
 // MARK: - AppInfo

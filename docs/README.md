@@ -22,8 +22,9 @@ This documentation describes what is actually in the source today, and clearly m
 **Implemented:** live libpcap capture through a signed helper, PCAP/PCAPNG read/write and disk-backed
 live-save, interface discovery, a bounds-checked packet decoder, incremental five-tuple sessions, a
 bounded TCP connection/evidence table, selected evidence-linked findings, deterministic replay,
-protected session export, terminal-summary SQLite History, and a native SwiftUI/AppKit investigation
-workspace with typed queries and explicit bounded Follow Stream.
+protected session export, terminal-summary SQLite History with boundary-triggered automatic retention,
+and a native SwiftUI/AppKit investigation workspace with typed queries and explicit bounded Follow
+Stream.
 
 **Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record
 metadata, HTTP/1 request-line and Host header recognition, QUIC long-header metadata, and STUN
@@ -33,8 +34,8 @@ Protected `.tracexysession` export enforces the Privacy settings by omitting raw
 decoded metadata. Raw pcap/pcapng remains evidence-preserving and is never presented as redacted.
 
 **Planned / not yet implemented:** a decoder registry with dispatch-table handoff, general TCP
-stream/record reassembly, deeper protocol/security policy, raw capture persistence, automatic History
-retention, an MCP/AI bridge, and packet-rewriting redaction for raw capture formats. The existing
+stream/record reassembly, deeper protocol/security policy, raw capture persistence, an MCP/AI bridge,
+and packet-rewriting redaction for raw capture formats. The existing
 read-only automation core has no executable or network transport. Do not treat these as present.
 
 When the source and these docs disagree, the source is correct — please open an issue or a fix.

@@ -562,6 +562,10 @@ extension SessionStore {
     /// deterministic oldest-first order and the exact deleted session count summed
     /// from each selected capture's stored `session_count` — never from
     /// `sqlite3_changes()`, which omits foreign-key cascade deletes.
+    ///
+    /// Cancellation is honored before begin and before each delete, so a
+    /// mid-retention cancellation rolls the transaction back and preserves every
+    /// capture untouched.
     func applyRetention(_ policy: HistoryRetentionPolicy) throws -> HistoryRetentionOutcome {
         guard !configuration.readOnly else {
             throw HistoryStoreError.readOnly
@@ -605,6 +609,9 @@ extension SessionStore {
         var deletedIDs: [UUID] = []
         var deletedSessions = 0
         for index in 0 ..< prefix {
+            // Honor cancellation between deletes: a mid-retention cancellation
+            // throws and the surrounding transaction rolls back every prior delete.
+            try checkCancellation()
             try Self.checkFault(faultHook, .retentionDelete(index: index))
             let candidate = candidates[index]
             delete.reset()

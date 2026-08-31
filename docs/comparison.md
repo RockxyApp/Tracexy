@@ -70,7 +70,7 @@ These are current source claims:
 | Sessions | Canonical five-tuple grouping, endpoint projections, timing/byte summaries, bounded connection evidence |
 | Findings | Selected evidence-linked TCP and datagram findings; no general durable security-analysis engine |
 | Follow Stream | On-demand bounded TCP follow for identity-checked saved or fully stopped sources |
-| History | Local terminal capture/session summaries in SQLite; no raw packet persistence |
+| History | Local terminal capture/session summaries in SQLite with boundary-triggered Auto-clear; no raw packet persistence |
 | Automation | Read-only bounded History projection to deterministic JSON or spreadsheet-safe CSV; no listener, provider, executable target, or MCP server |
 | Exports | Raw PCAP/PCAPNG stays byte-preserving; protected `.tracexysession` export omits raw frames and sensitive decoded metadata |
 
@@ -84,7 +84,7 @@ Do not present these as shipped:
 - TLS analysis or decrypted HTTPS payload visibility;
 - general always-on TCP stream or record reassembly;
 - user-visible connection/TLS evidence navigation beyond current views;
-- automatic History retention cleanup;
+- a periodic background History retention scheduler;
 - production replay UI/runner;
 - CLI transport, TracexyMCP, or AI data transport; and
 - packet-rewriting redaction for raw PCAP or PCAPNG.

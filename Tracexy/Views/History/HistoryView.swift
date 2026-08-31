@@ -83,8 +83,8 @@ struct HistoryView: View {
 
     var body: some View {
         Group {
-            if let historyError = coordinator.historyError,
-               captureState == .content
+            if let historyError = coordinator.historyNotice,
+               presentsHistoryNotice
             {
                 VStack(spacing: 0) {
                     recoverableNotice(historyError)
@@ -136,6 +136,13 @@ struct HistoryView: View {
         )
     }
 
+    /// A recoverable mutation notice belongs above both populated and empty
+    /// History. Loading/failure/unavailable states already own their whole-surface
+    /// explanation and must not duplicate it in a banner.
+    private var presentsHistoryNotice: Bool {
+        captureState == .content || captureState == .empty
+    }
+
     private var sessionState: HistorySessionSurfaceState {
         HistorySessionSurfaceState.resolve(
             selectedCaptureID: coordinator.selectedHistoryCaptureID,
@@ -159,6 +166,12 @@ struct HistoryView: View {
                 Text("Terminal capture summaries stored locally")
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
+            }
+            if coordinator.isHistoryDemoMode {
+                Label("Synthetic demo data", systemImage: "testtube.2")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Isolated in-memory data created by the --dum-data launch mode")
             }
             Spacer()
             Button("Refresh", systemImage: "arrow.clockwise") {
@@ -389,7 +402,7 @@ struct HistoryView: View {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             Text(message).font(Theme.Typography.caption).lineLimit(2)
             Spacer()
-            Button("Dismiss") { coordinator.historyError = nil }
+            Button("Dismiss") { coordinator.dismissHistoryNotice() }
                 .buttonStyle(.plain)
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
