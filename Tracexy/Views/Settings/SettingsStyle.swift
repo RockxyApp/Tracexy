@@ -501,6 +501,7 @@ struct SettingsDetailRow: View {
 // MARK: - SettingsMessageTone
 
 enum SettingsMessageTone {
+    case info
     case success
     case warning
     case failure
@@ -509,6 +510,7 @@ enum SettingsMessageTone {
 
     var symbol: String {
         switch self {
+        case .info: "info.circle.fill"
         case .success: "checkmark.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         case .failure: "xmark.octagon.fill"
@@ -517,6 +519,7 @@ enum SettingsMessageTone {
 
     var tint: Color {
         switch self {
+        case .info: .blue
         case .success: .green
         case .warning: .orange
         case .failure: .red

@@ -18,6 +18,27 @@ extension MainContentCoordinator {
         removedSessionIDs.intersection(Set(sessions.map(\.id))).count
     }
 
+    /// Top talkers by total bytes, for the dashboard.
+    func topHosts(limit: Int = 5) -> [(host: String, bytes: Int)] {
+        var totals: [String: Int] = [:]
+        for session in visibleSessions {
+            totals[session.host, default: 0] += session.totalBytes
+        }
+        return totals.sorted { $0.value > $1.value }
+            .prefix(limit)
+            .map { (host: $0.key, bytes: $0.value) }
+    }
+
+    func count(for proto: ProtocolKind) -> Int {
+        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
+    }
+
+    /// Whether a session matches a single quick-filter chip. Finding membership
+    /// comes from the already-published Core snapshots, not summary heuristics.
+    func matches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
+        Self.categoryMatches(session, category: category, findingSessionIDs: findingSessionIDs)
+    }
+
     /// Sessions visible in an arbitrary workspace. Live following uses this seam
     /// for inactive workspaces too, so a batch never applies the active tab's
     /// filters to another tab's selection.

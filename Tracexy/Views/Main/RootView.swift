@@ -109,6 +109,11 @@ struct RootView: View {
     /// setting is the single source of truth for auto-start in both development
     /// and normal launches.
     private func launchSetup() async {
+        if coordinator.isHistoryDemoMode {
+            await coordinator.prepareHistoryDemo()
+            return
+        }
+
         let shouldAutoStart = UserDefaults.standard.bool(
             forKey: SettingsKeys.autoStartCapture
         )
