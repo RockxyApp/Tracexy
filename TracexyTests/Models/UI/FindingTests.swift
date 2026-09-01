@@ -43,6 +43,7 @@ struct FindingTests {
         #expect(finding.coverage == .omittedEvidence)
         #expect(finding.citedObservationCount == 1)
         #expect(finding.omittedCitationCount == 2)
+        #expect(finding.citedFrames == [provenance])
         #expect(finding
             .subtitle ==
             "TC bit observed · resolver.example · 1 cited observation · 2 omitted · bounded evidence omitted")

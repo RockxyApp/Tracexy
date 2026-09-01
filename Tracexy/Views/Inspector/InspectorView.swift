@@ -14,40 +14,35 @@ struct InspectorView: View {
         // Progressive disclosure: only the facets relevant to this session are
         // shown, and the active tab falls back to Timeline if the persisted
         // selection is hidden for the newly-selected session.
-        let visibleTabs = session.map { InspectorTab.visibleTabs(for: $0) } ?? []
+        let visibleTabs = session.map { resolvedVisibleTabs(for: $0) } ?? []
         let activeTab = visibleTabs.contains(workspace.inspectorTab) ? workspace.inspectorTab : .timeline
-        Group {
+        VStack(spacing: 0) {
             if let session {
-                if activeTab == .layers {
-                    layersInspector(session)
+                inspectorChrome(
+                    workspace: workspace,
+                    visibleTabs: visibleTabs,
+                    activeTab: activeTab,
+                    session: session
+                )
+            }
+            Group {
+                if let session {
+                    if activeTab == .layers {
+                        layersInspector(session)
+                    } else {
+                        ScrollView {
+                            content(tab: activeTab, session: session)
+                                .padding(Theme.Metrics.spacingL)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
                 } else {
-                    ScrollView {
-                        content(tab: activeTab, session: session)
-                            .padding(Theme.Metrics.spacingL)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            } else {
-                ContentUnavailableView("No Session Selected", systemImage: "rectangle.dashed")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .tracexyDenseScrollEdge()
-        .tracexySafeAreaBar(edge: .top) {
-            if let session {
-                VStack(spacing: 0) {
-                    // Facet tabs and scope remain one compact functional row.
-                    tabStrip(
-                        workspace: workspace,
-                        visibleTabs: visibleTabs,
-                        activeTab: activeTab,
-                        session: session
-                    )
-                    if supportsFieldFilter(activeTab) {
-                        fieldFilterRow
-                    }
+                    ContentUnavailableView("No Session Selected", systemImage: "rectangle.dashed")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .tracexyDenseScrollEdge()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         // Claim the full width here, on the pane itself.
         //
@@ -71,7 +66,7 @@ struct InspectorView: View {
             coordinator.loadSelectedSavedCaptureEvidence()
             // Reconcile the persisted tab so the picker never shows a hidden facet.
             if let session = coordinator.selectedSession,
-               !InspectorTab.visibleTabs(for: session).contains(workspace.inspectorTab)
+               !resolvedVisibleTabs(for: session).contains(workspace.inspectorTab)
             {
                 workspace.inspectorTab = .timeline
             }
@@ -84,12 +79,78 @@ struct InspectorView: View {
     @State private var selectedRange: Range<Int>?
     @State private var followStreamDisplayMode: FollowStreamDisplayMode = .text
 
-    private var fieldFilterRow: some View {
+    private var selectedEvidence: SessionEvidenceSelection? {
+        guard let selection = coordinator.evidenceProjection.selection,
+              selection.sessionID == coordinator.activeWorkspace.selectedSessionID else
+        {
+            return nil
+        }
+        return selection
+    }
+
+    private var selectedCitedFrame: SelectedFrameEvidence? {
+        guard case let .loaded(evidence) = coordinator.citedFrame.state,
+              evidence.sessionID == coordinator.activeWorkspace.selectedSessionID else
+        {
+            return nil
+        }
+        return evidence
+    }
+
+    private var citedFrameStateIsActive: Bool {
+        if case .idle = coordinator.citedFrame.state {
+            return false
+        }
+        return true
+    }
+
+    private var citedFrameScopeRow: some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            Image(systemName: "scope")
+                .foregroundStyle(.secondary)
+            switch coordinator.citedFrame.state {
+            case .idle:
+                EmptyView()
+            case .unavailable:
+                Text("Exact cited frame unavailable")
+            case let .loading(provenance):
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Loading cited frame \(provenance.ordinal.rawValue.formatted())…")
+            case let .loaded(evidence):
+                Text("Cited frame \(evidence.provenance.ordinal.rawValue.formatted())")
+                    .font(Theme.Typography.captionMedium)
+                Text("· \(evidence.bytes.count.formatted()) captured bytes")
+                    .foregroundStyle(.secondary)
+            case let .failed(message):
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: Theme.Metrics.spacingM)
+            Button("Clear Citation") {
+                coordinator.cancelCitedFrame()
+            }
+            .controlSize(.small)
+        }
+        .font(Theme.Typography.caption)
+        .padding(.horizontal, Theme.Metrics.spacingM)
+        .padding(.vertical, 5)
+        .background(.quaternary.opacity(0.35))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Cited frame scope")
+    }
+
+    /// Decode-tree filtering is a compact Layers utility, not another full-width
+    /// sticky row. Keeping it inside the tab chrome preserves the scarce vertical
+    /// viewport when an exact citation also needs its own visible scope row.
+    private var layerFilterControl: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: Theme.Icon.small))
             TextField("Filter key or value", text: $fieldQuery)
                 .textFieldStyle(.plain)
                 .font(Theme.Typography.caption)
+                .accessibilityLabel("Filter decoded fields")
             if !fieldQuery.isEmpty {
                 Button { fieldQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -99,7 +160,7 @@ struct InspectorView: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
         .tracexyContentSurface(in: Capsule(style: .continuous))
-        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+        .frame(minWidth: 180, idealWidth: 240, maxWidth: 280)
     }
 
     private var followStreamLoading: some View {
@@ -136,6 +197,34 @@ struct InspectorView: View {
         .tracexyContentSurface(
             in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
         )
+    }
+
+    /// The bottom inspector hosts AppKit-backed split content. Native
+    /// `safeAreaBar` allows that content to continue underneath the bar, but
+    /// nested split scroll views do not consume the propagated inset and their
+    /// scrollbars end up behind the chrome. Keep this header in normal layout so
+    /// the decode and hex panes begin strictly below it.
+    private func inspectorChrome(
+        workspace: WorkspaceState,
+        visibleTabs: [InspectorTab],
+        activeTab: InspectorTab,
+        session: SessionSummary
+    )
+        -> some View
+    {
+        VStack(spacing: 0) {
+            tabStrip(
+                workspace: workspace,
+                visibleTabs: visibleTabs,
+                activeTab: activeTab,
+                session: session
+            )
+            if activeTab != .evidence, citedFrameStateIsActive {
+                citedFrameScopeRow
+            }
+            Divider()
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     /// What the pane is currently describing, stated at the right of the tab row.
@@ -175,8 +264,20 @@ struct InspectorView: View {
     /// the horizontal space deliberately.
     @ViewBuilder
     private func layersInspector(_ session: SessionSummary) -> some View {
-        let layers = filterLayers(session.decodedLayers, query: fieldQuery)
-        if session.decodedLayers.isEmpty {
+        let sourceLayers = selectedCitedFrame?.layers ?? session.decodedLayers
+        let layers = filterLayers(sourceLayers, query: fieldQuery)
+        if case .loading = coordinator.citedFrame.state {
+            ProgressView("Loading cited frame…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if case .unavailable = coordinator.citedFrame.state {
+            placeholder("This observation has no exact source locator. No replacement frame was loaded.")
+                .padding(Theme.Metrics.spacingL)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if case let .failed(message) = coordinator.citedFrame.state {
+            placeholder(message)
+                .padding(Theme.Metrics.spacingL)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if sourceLayers.isEmpty {
             placeholder("No decode available for this session.")
                 .padding(Theme.Metrics.spacingL)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -204,7 +305,7 @@ struct InspectorView: View {
 
     @ViewBuilder
     private func hexPane(_ session: SessionSummary) -> some View {
-        let bytes = coordinator.evidenceBytes(for: session)
+        let bytes = evidenceBytes(for: session)
         if !bytes.isEmpty {
             ScrollView {
                 HexDumpView(bytes: bytes, highlight: selectedRange)
@@ -240,23 +341,22 @@ struct InspectorView: View {
     )
         -> some View
     {
-        // Wide: tabs and the scope pill share one row. Compact: the tabs scroll
-        // horizontally and the scope drops to a second row, so neither clips when
-        // the pane is narrow (e.g. while the right inspector is also open).
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 2) {
-                tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
-                Spacer(minLength: Theme.Metrics.spacingL)
-                scopeLabel(session)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
-                        tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
+        // Tabs and the optional Layers filter always share one horizontally
+        // scrollable row. The scope stays visible at the trailing edge, so even
+        // compact panes add no extra sticky row above an exact citation.
+        HStack(spacing: Theme.Metrics.spacingM) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
+                    if activeTab == .layers {
+                        layerFilterControl
+                            .padding(.leading, Theme.Metrics.spacingS)
                     }
                 }
-                scopeLabel(session)
             }
+            .layoutPriority(1)
+            scopeLabel(session)
+                .frame(minWidth: 140, idealWidth: 240, maxWidth: 320, alignment: .trailing)
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 6)
@@ -291,10 +391,50 @@ struct InspectorView: View {
         switch tab {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
+        case .evidence: sessionEvidence(session)
         case .stream: followStream(session)
         case .requests: requests(session)
         case .payload: payload(session)
         case .hex: rawEvidence(session)
+        }
+    }
+
+    // MARK: Connection and TLS evidence
+
+    @ViewBuilder
+    private func sessionEvidence(_ session: SessionSummary) -> some View {
+        if let selection = selectedEvidence {
+            SessionEvidenceTimelineView(
+                selection: selection,
+                selectedFrameOrdinal: selectedCitedFrame?.provenance.ordinal,
+                isLoadingFrame: {
+                    if case .loading = coordinator.citedFrame.state {
+                        return true
+                    }
+                    return false
+                }(),
+                frameError: {
+                    if case let .failed(message) = coordinator.citedFrame.state {
+                        return message
+                    }
+                    return nil
+                }(),
+                frameUnavailable: {
+                    if case .unavailable = coordinator.citedFrame.state {
+                        return true
+                    }
+                    return false
+                }(),
+                inspectFrame: { provenance in
+                    coordinator.inspectCitedFrame(sessionID: session.id, provenance: provenance)
+                    coordinator.activeWorkspace.inspectorTab = .layers
+                    selectedRange = nil
+                }
+            )
+        } else if coordinator.evidenceProjection.task != nil {
+            ProgressView("Preparing retained evidence…")
+        } else {
+            placeholder("No retained connection or direct-frame TLS evidence is available for this session.")
         }
     }
 
@@ -510,8 +650,14 @@ struct InspectorView: View {
     /// hex, and the fastest way to confirm what a body actually was.
     @ViewBuilder
     private func payload(_ session: SessionSummary) -> some View {
-        let text = printablePayload(coordinator.evidenceBytes(for: session))
-        if coordinator.isLoadingSelectedSessionEvidence {
+        let text = printablePayload(evidenceBytes(for: session))
+        if case .loading = coordinator.citedFrame.state {
+            ProgressView("Loading cited frame…")
+        } else if case .unavailable = coordinator.citedFrame.state {
+            placeholder("This observation has no exact source locator. No replacement frame was loaded.")
+        } else if case let .failed(message) = coordinator.citedFrame.state {
+            placeholder(message)
+        } else if coordinator.isLoadingSelectedSessionEvidence {
             ProgressView("Loading selected evidence…")
         } else if let error = coordinator.selectedSessionEvidenceError {
             placeholder(error)
@@ -527,8 +673,14 @@ struct InspectorView: View {
 
     @ViewBuilder
     private func rawEvidence(_ session: SessionSummary) -> some View {
-        let bytes = coordinator.evidenceBytes(for: session)
-        if !bytes.isEmpty {
+        let bytes = evidenceBytes(for: session)
+        if case .loading = coordinator.citedFrame.state {
+            ProgressView("Loading cited frame…")
+        } else if case .unavailable = coordinator.citedFrame.state {
+            placeholder("This observation has no exact source locator. No replacement frame was loaded.")
+        } else if case let .failed(message) = coordinator.citedFrame.state {
+            placeholder(message)
+        } else if !bytes.isEmpty {
             HexDumpView(bytes: bytes, highlight: nil)
         } else if coordinator.isLoadingSelectedSessionEvidence {
             ProgressView("Loading selected evidence…")
@@ -692,9 +844,25 @@ struct InspectorView: View {
     // Plain-language verdict for the top of the Summary tab, e.g.
     // "TLS to api.example.com · 142 ms · 2 protocols · OK".
 
-    /// The "Filter key or value" field applies to the decode tree.
-    private func supportsFieldFilter(_ tab: InspectorTab) -> Bool {
-        tab == .layers
+    private func resolvedVisibleTabs(for session: SessionSummary) -> [InspectorTab] {
+        let hasEvidence = selectedEvidence.map { selection in
+            !selection.isEmpty
+                || selection.connectionCoverage.omittedSummaryCount > 0
+                || selection.connectionCoverage.countersOverflowed
+                || selection.tlsCoverage.capacityReached
+                || selection.tlsCoverage.countersOverflowed
+                || selection.tlsCoverage.omittedObservationCount > 0
+                || selection.tlsCoverage.excludedReassembledRecordCount > 0
+        } ?? false
+        var tabs = InspectorTab.visibleTabs(for: session, hasSessionEvidence: hasEvidence)
+        if citedFrameStateIsActive, !tabs.contains(.layers), let evidenceIndex = tabs.firstIndex(of: .evidence) {
+            tabs.insert(.layers, at: tabs.index(after: evidenceIndex))
+        }
+        return tabs
+    }
+
+    private func evidenceBytes(for session: SessionSummary) -> [UInt8] {
+        selectedCitedFrame?.bytes ?? coordinator.evidenceBytes(for: session)
     }
 
     /// Prunes the decode tree to layers/fields matching the field-filter query.

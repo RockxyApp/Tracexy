@@ -238,6 +238,17 @@ opened capture, only the selected session's representative bytes are loaded; cha
 the previous read and file replacement/truncation is rejected rather than displaying bytes from a stale
 offset.
 
+When retained TCP connection or direct-frame TLS observations exist, the **Evidence** facet merges them
+on the capture's frame-order axis. Reused five-tuples remain separate connection incarnations, while TLS
+records stay explicitly shared at session scope when the retained facts cannot attribute them to one
+incarnation. Per-connection omissions, truncation, loss knowledge and bounds remain visible; global
+capture omissions are labelled capture-level and are never assigned to the selected session. Selecting
+a citation reads exactly that one frame from the current local saved file or live spool and opens its
+decoded Layers view with a visible **Cited frame** scope. A missing locator, superseded live-spool source,
+replaced or truncated file, or mismatched source fails visibly and never falls back to a representative packet.
+Changing session, workspace, capture, or source clears the cited bytes. This finite single-frame read is
+allowed during active live capture and is separate from Follow Stream's stable-source requirements.
+
 For TCP sessions, the **Stream** facet offers an explicit **Follow Stream** action. Opening the facet
 alone does not scan or retain application bytes. After activation, Tracexy locally rescans an
 identity-checked saved capture, or an immutable temporary copy of a fully stopped live capture, and
@@ -267,10 +278,11 @@ a general connection/reassembly engine. When a record remains incomplete, its ca
 lengths are labelled honestly, for example "4096 declared, 40 captured (fragment)". Encrypted TLS
 records carry no plaintext exchange, so a TLS-only session offers no requests facet.
 
-The right-hand **Details** dock uses compact two-column tables for assessment, decoded layer facts,
-host baseline, related actions, findings, and grouping evidence. Technical values are selectable and
-monospaced; related-action rows remain clickable so an investigation can move between sessions without
-leaving the dock.
+The right-hand **Details** dock uses compact two-column tables for assessment, connection/TLS evidence
+coverage, decoded layer facts, host baseline, related actions, findings, and grouping evidence. Its
+connection/TLS sections summarize scope and link to the chronological Evidence facet rather than
+duplicating the full event list. Technical values are selectable and monospaced; related-action rows
+remain clickable, and evidence-backed finding citations can open their exact local frame.
 
 The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
 an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant

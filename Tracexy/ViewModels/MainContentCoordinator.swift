@@ -23,11 +23,15 @@ final class MainContentCoordinator {
         layoutPreferences: WorkspaceLayoutPreferences? = nil,
         sessionStore: SessionStore? = nil,
         isHistoryDemoMode: Bool = false,
-        historyNow: @escaping @Sendable () -> Date = { Date() }
+        historyNow: @escaping @Sendable () -> Date = { Date() },
+        liveCaptureSpool: LiveCaptureSpool? = nil
     ) {
         self.sessionStore = sessionStore
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
+        self.liveCaptureSpool = liveCaptureSpool ?? LiveCaptureSpool(
+            directoryName: TracexyIdentity.current.appSupportDirectoryName
+        )
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         focusGate = FocusPolicyGate(
@@ -213,6 +217,16 @@ final class MainContentCoordinator {
     var selectedSessionEvidenceRequestID = 0
     var selectedSessionEvidenceTask: Task<Void, Never>?
 
+    // MARK: Evidence navigation (U2D1)
+
+    // The selected session's presentation-neutral connection/TLS projection and the
+    // one explicitly cited frame, each with its own request/task pipeline. Native
+    // inspector surfaces consume these bounded values without rescanning the immutable
+    // snapshot. Both are retired at every selection/capture/source boundary so stale
+    // evidence can never outlive the selection or source it described.
+    var evidenceProjection = EvidenceProjectionPipeline()
+    var citedFrame = CitedFramePipeline()
+
     /// Explicit, selection-scoped Follow Stream state. Raw application bytes enter
     /// coordinator memory only after the user requests this operation and are
     /// retired at every selection/capture/source boundary.
@@ -349,9 +363,7 @@ final class MainContentCoordinator {
 
     /// Complete local raw-frame retention for save/export. The in-memory frame
     /// window remains bounded independently for responsive UI.
-    let liveCaptureSpool = LiveCaptureSpool(
-        directoryName: TracexyIdentity.current.appSupportDirectoryName
-    )
+    let liveCaptureSpool: LiveCaptureSpool
     /// Serializes engine access so batches fold in arrival order even though each
     /// call hops onto the engine actor, and so a boundary reset is ordered ahead
     /// of the ingests that follow it.
@@ -369,21 +381,19 @@ final class MainContentCoordinator {
     /// The immutable passive connection-table snapshot for the current capture,
     /// published in lock-step with ``sessions`` behind the same generation guard.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is additive
-    /// evidence adopted alongside the session summaries and reset to an empty
-    /// snapshot at every capture boundary so stale connection state can never
-    /// outlive the capture it described.
+    /// It is additive evidence adopted alongside the session summaries and reset
+    /// to an empty snapshot at every capture boundary so stale connection state
+    /// can never outlive the capture it described.
     private(set) var connectionSnapshot = ConnectionTable.Snapshot.empty
 
     /// The immutable passive connection *analysis* for the current capture,
     /// published in lock-step with ``connectionSnapshot`` and ``sessions`` behind
     /// the same generation guard, and only ever through ``adoptInvestigation``.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is the exact
-    /// N3A2a assessment of ``connectionSnapshot`` — never re-derived on the main
-    /// actor — adopted alongside the session summaries and reset to the empty
-    /// analysis at every capture boundary so stale findings can never outlive the
-    /// capture they described.
+    /// This is the exact N3A2a assessment of ``connectionSnapshot`` — never
+    /// re-derived on the main actor — adopted alongside the session summaries and
+    /// reset to the empty analysis at every capture boundary so stale findings can
+    /// never outlive the capture they described.
     private(set) var connectionAnalysisSnapshot = ConnectionAnalysisSnapshot.empty
 
     /// The immutable passive *datagram* analysis for the current capture, published
@@ -391,11 +401,10 @@ final class MainContentCoordinator {
     /// ``sessions`` behind the same generation guard, and only ever through
     /// ``adoptInvestigation``.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is the exact
-    /// N3B3a assessment of the same fold's datagram evidence — never re-derived on
-    /// the main actor — adopted alongside the connection evidence/analysis and reset
-    /// to the empty analysis at every capture boundary so stale findings can never
-    /// outlive the capture they described.
+    /// This is the exact N3B3a assessment of the same fold's datagram evidence —
+    /// never re-derived on the main actor — adopted alongside the connection
+    /// evidence/analysis and reset to the empty analysis at every capture boundary
+    /// so stale findings can never outlive the capture they described.
     private(set) var datagramAnalysisSnapshot = DatagramAnalysisSnapshot.empty
 
     /// The complete immutable query input matching the currently published sessions
@@ -782,6 +791,7 @@ final class MainContentCoordinator {
         cancelFollowStream(clearResult: true)
         activeWorkspace.selectedSessionID = session.id
         loadSelectedSavedCaptureEvidence()
+        evidenceNavigationDidChangeSelection()
         revealPanelsForSelection()
     }
 
@@ -805,6 +815,7 @@ final class MainContentCoordinator {
         connectionAnalysisSnapshot = snapshot.connectionAnalysis
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
         refreshActiveInvestigationQueries()
+        refreshSelectedSessionEvidenceProjection()
     }
 
     // MARK: Search
