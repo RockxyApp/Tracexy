@@ -57,6 +57,42 @@ struct WorkspacePresentationContractTests {
         #expect(table.contains("struct ContextInspectorFullRow"))
     }
 
+    @Test("Connection and TLS navigation keeps literal evidence below and compact context at right")
+    func evidenceNavigationKeepsInspectorOwnership() throws {
+        let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+        let timeline = try readProjectFile("Tracexy/Views/Inspector/SessionEvidenceTimelineView.swift")
+        let details = try readProjectFile("Tracexy/Views/Inspector/ContextDockView.swift")
+        let summary = try readProjectFile("Tracexy/Views/Inspector/SessionEvidenceContextSummaryView.swift")
+
+        #expect(inspector.contains("case .evidence: sessionEvidence(session)"))
+        #expect(inspector.contains("Cited frame"))
+        #expect(inspector.contains("coordinator.cancelCitedFrame()"))
+        #expect(timeline.contains("Capture-level:"))
+        #expect(timeline.contains("No replacement frame was loaded"))
+        #expect(details.contains("SessionEvidenceContextSummaryView"))
+        #expect(summary.contains("Button(\"Open Evidence\")"))
+        #expect(!summary.contains("SessionEvidenceItem.timeline"))
+    }
+
+    @Test("Layers keeps decode filtering compact when a cited-frame scope is visible")
+    func citedLayersKeepVerticalViewport() throws {
+        let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+
+        #expect(inspector.contains("private var layerFilterControl: some View"))
+        #expect(inspector.contains("if activeTab == .layers"))
+        #expect(inspector.contains(".frame(minWidth: 180, idealWidth: 240, maxWidth: 280)"))
+        #expect(inspector.contains(".frame(minWidth: 140, idealWidth: 240, maxWidth: 320, alignment: .trailing)"))
+        #expect(inspector.contains(".accessibilityLabel(\"Filter decoded fields\")"))
+        #expect(inspector.contains("ScrollView(.horizontal, showsIndicators: false)"))
+        #expect(inspector.contains("compact panes add no extra sticky row"))
+        #expect(inspector.contains("private func inspectorChrome("))
+        #expect(inspector.contains("the decode and hex panes begin strictly below it"))
+        #expect(inspector.contains(".background(Color(nsColor: .windowBackgroundColor))"))
+        #expect(!inspector.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(!inspector.contains("fieldFilterRow"))
+        #expect(!inspector.contains("supportsFieldFilter"))
+    }
+
     @Test("Shared workspace chrome adopts the Liquid Glass policy without replacing native data controls")
     func workspaceUsesSharedGlassPolicy() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
@@ -120,7 +156,8 @@ struct WorkspacePresentationContractTests {
         #expect(sidebar.contains(".tracexySafeAreaBar(edge: .bottom)"))
         #expect(details.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(details.contains(".tracexySafeAreaBar(edge: .bottom)"))
-        #expect(evidence.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(evidence.contains("private func inspectorChrome("))
+        #expect(!evidence.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(sessions.contains(".tracexySafeAreaBar(edge: .top)"))
     }
 

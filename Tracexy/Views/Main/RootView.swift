@@ -47,6 +47,9 @@ struct RootView: View {
             ContextDockView(coordinator: coordinator)
         }
         .ignoresSafeArea(.container, edges: .top)
+        .onChange(of: coordinator.workspaces.activeWorkspaceID) {
+            coordinator.evidenceNavigationDidChangeSelection()
+        }
         // The unified window toolbar — sidebar toggle, interface picker, capture
         // status, and the capture/inspector actions — is installed natively by
         // `NativeWorkspaceWindowChrome`, so the sidebar toggle can sit above the
@@ -164,6 +167,7 @@ struct MainDetailView: View {
                 // bindings bypass `coordinator.select(_:)`, so this root observer is
                 // the authoritative retirement boundary for both selection paths.
                 coordinator.cancelFollowStream(clearResult: true)
+                coordinator.evidenceNavigationDidChangeSelection()
                 if newValue != nil {
                     coordinator.revealPanelsForSelection()
                 }

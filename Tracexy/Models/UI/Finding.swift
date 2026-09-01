@@ -15,6 +15,10 @@ struct Finding: Identifiable, Hashable {
     let coverage: AnalysisCoverage
     let citedObservationCount: Int
     let omittedCitationCount: UInt64
+    /// Exact bounded frame provenance copied from Core citations, in citation
+    /// order. The presentation layer keeps no bytes and invents no fallback: an
+    /// absent locator remains visibly unavailable when the user asks to inspect it.
+    let citedFrames: [SessionFrameProvenance]
 }
 
 // MARK: Finding projection
@@ -33,6 +37,7 @@ extension Finding {
         coverage = finding.coverage
         citedObservationCount = finding.citations.count
         omittedCitationCount = finding.omittedCitationCount
+        citedFrames = finding.citations.flatMap(\.provenance)
         subtitle = Self.subtitle(
             context: host,
             citedObservationCount: citedObservationCount,
@@ -51,6 +56,7 @@ extension Finding {
         coverage = finding.coverage
         citedObservationCount = finding.citations.count
         omittedCitationCount = finding.omittedCitationCount
+        citedFrames = finding.citations.map(\.provenance)
         subtitle = Self.subtitle(
             context: "TC bit observed · \(host)",
             citedObservationCount: citedObservationCount,

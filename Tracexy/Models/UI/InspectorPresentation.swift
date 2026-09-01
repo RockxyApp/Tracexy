@@ -11,6 +11,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     // analyser cannot draw, since its engine has no shared axis across
     // conversations of different protocols.
     case timeline
+    case evidence
     case stream
     case layers
     case requests
@@ -26,6 +27,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     nonisolated var title: String {
         switch self {
         case .timeline: "Timeline"
+        case .evidence: "Evidence"
         case .stream: "Stream"
         case .layers: "Layers"
         case .requests: "Requests"
@@ -37,6 +39,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     nonisolated var systemImage: String {
         switch self {
         case .timeline: "chart.bar.xaxis"
+        case .evidence: "point.3.connected.trianglepath.dotted"
         case .stream: "arrow.left.arrow.right.square"
         case .layers: "square.stack.3d.up"
         case .requests: "arrow.left.arrow.right"
@@ -52,8 +55,16 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     /// learns once — the evidence tabs describe what this session literally
     /// contains, so a facet with no bytes behind it would be a promise the
     /// decode cannot keep.
-    static func visibleTabs(for session: SessionSummary) -> [InspectorTab] {
+    static func visibleTabs(
+        for session: SessionSummary,
+        hasSessionEvidence: Bool = false
+    )
+        -> [InspectorTab]
+    {
         var tabs: [InspectorTab] = [.timeline]
+        if hasSessionEvidence {
+            tabs.append(.evidence)
+        }
         if session.protocolStack.contains(.tcp) {
             tabs.append(.stream)
         }
