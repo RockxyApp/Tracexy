@@ -1,68 +1,55 @@
-# Design QA — Rockxy-style expanded session filters
+# Design QA — single native toolbar status surface
 
 ## Evidence
 
-- Source visual truth: attached
-  `codex-clipboard-14500abe-29e4-45aa-93d6-2a855bc47447.png`.
-- Rebuilt implementation screenshot: `tracexy-expanded-filter-rockxy-style-window.jpg`
-  in the external runtime QA capture folder.
-- Focused implementation crop: `tracexy-expanded-filter-rockxy-style.jpg` in the same
+- Defect reference: attached
+  `codex-clipboard-d14047f7-dd92-4d21-8af5-810927475be0.png`.
+- Rebuilt implementation screenshot: `tracexy-status-single-surface-window.jpg` in the
   external runtime QA capture folder.
-- Combined source/implementation comparison:
-  `tracexy-expanded-filter-rockxy-style-comparison.png` in the same external runtime QA
-  capture folder.
-- Viewport: native macOS window, 1299 × 768 screenshot pixels, Light appearance.
-- Source pixels: 1938 × 263 at Retina density; normalized source: 969 × 132.
-  Focused implementation pixels: 1090 × 88; normalized comparison width: 969.
-- State: empty Sessions workspace with the advanced filter visible and three enabled,
-  blank rules, matching the reference's expanded three-row state.
+- Focused implementation crop: `tracexy-status-single-surface.png` in the same folder.
+- Combined before/after comparison: `tracexy-status-single-surface-comparison.png` in
+  the same folder.
+- Viewport: native macOS window, 1299 × 768 screenshot pixels, Dark appearance.
+- Defect-reference pixels: 474 × 98. Focused implementation pixels: 480 × 80.
+- State: empty Sessions workspace, Wi-Fi (`en0`) selected, capture stopped.
 
 ## Findings
 
-- No actionable P0, P1, or P2 mismatch remains for the expanded-filter request.
-- Spacing and layout rhythm: the editor is now the third full-width surface in the same
-  glass group, with the shared 16-point radius and 7-point shelf cadence. Its columns,
-  12-point row inset, 10-point row spacing, and 8/4-point top rhythm match Rockxy while
-  retaining Tracexy's narrow-window `ViewThatFits` fallback.
-- Fonts and typography: native SF roles remain intact; repeated row actions use compact
-  medium-weight SF Symbols, while Where, AND/OR, field, operator, value, and Presets stay
-  explicit text-bearing controls.
-- Colors and tokens: checkbox, segmented selection, semantic disabled opacity, and the
-  neutral Tracexy material all use shared system tokens. Rockxy's blue sampling cast is
-  product-background context, not a hard-coded color copied into Tracexy.
-- Image quality and asset fidelity: all visible symbols are native SF Symbols and remain
-  sharp at the captured density; no raster approximations or custom drawings were added.
-- Copy and content: Tracexy correctly uses session fields such as Host rather than
-  importing Rockxy's proxy-specific URL vocabulary. The Rockxy shortcut footer is
-  intentionally omitted because Tracexy does not yet implement its row-selection
-  commands; advertising those shortcuts would be false UI.
+- No actionable P0, P1, or P2 mismatch remains for the overlapping status surfaces.
+- Surface ownership: the unified native `NSToolbar` now owns the only visible capsule;
+  the hosted SwiftUI status content supplies hit geometry but no second glass material.
+- Fonts and typography: Tracexy, interface, and capture-state labels retain the existing
+  semantic toolbar typography and single-line truncation behavior.
+- Spacing and layout rhythm: the centered status remains balanced between flexible
+  toolbar regions, with the dot, separators, text, and caret retaining their approved
+  spacing.
+- Colors and tokens: the stopped dot remains tertiary and receives no semantic glow;
+  the native toolbar controls material, border, elevation, and appearance adaptation.
+- Interaction and accessibility: activating Capture Readiness still opens its popover;
+  the status value remains `Tracexy | en0 | Stopped`, and the update badge remains a
+  separate action when present.
 
 ## Full-view comparison
 
-The rebuilt native window confirms the advanced editor expands below the protocol shelf
-without nesting another material, shifting the sidebar anchor, clipping the session
-viewport, or disturbing the command/search rows.
+The rebuilt native window confirms the correction is isolated to the centered status
+item. Sidebar, session command shelf, protocol filters, table viewport, and trailing
+toolbar actions remain in place.
 
 ## Focused comparison
 
-The density-normalized combined comparison confirms the same rule hierarchy and visual
-grammar: checkbox, Where/connector, field, operator, flexible value, compact glass minus
-and plus actions, and the single first-row Presets menu. The different field names and
-missing shortcut footer are intentional product/behavior constraints.
+The combined comparison shows the prior nested inner/outer glass outlines and the
+rebuilt result with one restrained native toolbar capsule.
 
 ## Comparison history
 
-- Pass 1: source and implementation inspection found the Tracexy editor was an opaque
-  content card outside the shared shelf group, with borderless row mutation icons.
-- Pass 2: the editor moved into the shared glass container as a third rounded surface;
-  plus/minus adopted small native glass actions, and the columns were aligned to the
-  Rockxy row rhythm while retaining Tracexy's stronger cap and single-row safeguards.
-- Pass 3: the rebuilt application was exercised from Add Field through a three-row state.
-  The focused comparison and accessibility tree show no remaining P0/P1/P2 issue.
+- Pass 1: the defect capture exposed a SwiftUI interactive glass capsule nested inside
+  an AppKit unified toolbar item, producing two dim outlines and duplicated elevation.
+- Pass 2: the explicit SwiftUI glass layer was removed while preserving a capsule
+  content shape. The rebuilt Dark appearance capture and live popover activation confirm
+  one native surface and unchanged behavior.
 
 ## Follow-up polish
 
-- P3: add a compact shortcut footer only after Tracexy has a truthful focused-rule
-  command model; separately repeat the capture in Dark Mode and Increased Contrast.
+- None for this scoped correction.
 
 final result: passed

@@ -116,7 +116,7 @@ enum Theme {
         static let toolbarControlHeight: CGFloat = 32
         /// The label frame inside a small native glass button. Native button
         /// insets expand this to a comfortable pointer target; keeping the inner
-        /// square at Rockxy's 27pt rhythm prevents toolbar glyphs from looking
+        /// square at the approved 27pt rhythm prevents toolbar glyphs from looking
         /// oversized beside the picker and search field.
         static let sessionShelfControlLength: CGFloat = 27
         static let updateBadgeHeight: CGFloat = 24
@@ -254,7 +254,7 @@ enum Theme {
     /// Keeping these values together prevents each screen from inventing its own
     /// translucency, border and corner-radius recipe.
     enum Glass {
-        // Sessions uses Rockxy's two-surface control-shelf geometry: generous
+        // Sessions uses the approved two-surface control-shelf geometry: generous
         // outer breathing room, one shared sampling group and a softer 16pt
         // continuous corner. Keep these separate from generic functional bars
         // so inspector and footer chrome retain their denser native metrics.

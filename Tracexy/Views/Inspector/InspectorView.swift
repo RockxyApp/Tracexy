@@ -256,7 +256,7 @@ struct InspectorView: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
-    /// A protocol-neutral counterpart to Rockxy's URL bar. It describes only
+    /// A protocol-neutral selected-session identity bar. It describes only
     /// identity Tracexy actually observed: health, protocol, process/host and
     /// endpoints. A URL is never synthesized for DNS, TLS or transport sessions.
     private func sessionIdentityBar(_ session: SessionSummary) -> some View {

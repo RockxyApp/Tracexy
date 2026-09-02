@@ -161,7 +161,7 @@ enum SessionCommandBarModel {
 
 // MARK: - SessionCommandBar
 
-/// Rockxy-inspired embedded command cluster. Its immediate vocabulary and order
+/// Embedded command cluster. Its immediate vocabulary and order
 /// never change with width: Follow Live, Jump Latest, a divider, Clear Capture,
 /// then More. Less-frequent or domain-specific actions live in labelled sections
 /// of the stable overflow menu beside the search controls.

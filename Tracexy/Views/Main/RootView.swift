@@ -433,7 +433,10 @@ struct CaptureStatusView: View {
             }
         }
         .frame(height: Theme.Metrics.toolbarControlHeight)
-        .tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))
+        // The unified NSToolbar owns the environmental material and elevation.
+        // Keep only the capsule hit geometry here so the hosted SwiftUI content
+        // never draws a second translucent surface over the native toolbar.
+        .contentShape(Capsule(style: .continuous))
     }
 
     // MARK: Private

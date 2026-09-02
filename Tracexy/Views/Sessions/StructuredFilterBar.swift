@@ -228,7 +228,7 @@ struct StructuredFilterBar: View {
                 Label("Clear Rules", systemImage: "trash")
             }
         } label: {
-            Label("Presets", systemImage: "chevron.down").labelStyle(.titleAndIcon)
+            Text("Presets")
         }
         .menuStyle(.borderlessButton)
         .controlSize(.small)

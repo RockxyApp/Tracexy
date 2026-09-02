@@ -134,6 +134,8 @@ struct WorkspacePresentationContractTests {
         #expect(structuredFilters.contains(".tracexyGlassButtonStyle()"))
         #expect(structuredFilters.contains(".disabled(workspace.filterRules.count <= 1)"))
         #expect(structuredFilters.contains("workspace.filterRules.count >= maxRules"))
+        #expect(structuredFilters.contains("Text(\"Presets\")"))
+        #expect(!structuredFilters.contains("Label(\"Presets\", systemImage: \"chevron.down\")"))
         #expect(!structuredFilters.contains(".tracexyContentSurface("))
         #expect(!sessions.contains("StructuredFilterBar(coordinator: coordinator)"))
         #expect(footer.contains(".tracexyGlassEffect("))
@@ -218,6 +220,20 @@ struct WorkspacePresentationContractTests {
         #expect(chrome.contains("Self.sidebarTrackingSeparatorIdentifier,\n            Self.interfacePickerIdentifier"))
     }
 
+    @Test("Capture status uses the native toolbar as its only visible surface")
+    func captureStatusUsesSingleNativeSurface() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+
+        #expect(root.contains("struct CaptureStatusView: View"))
+        #expect(root.contains("showsReadiness.toggle()"))
+        #expect(root.contains(".contentShape(Capsule(style: .continuous))"))
+        #expect(root.contains(".popover(isPresented: $showsReadiness"))
+        #expect(root.contains(".help(statusHelp)"))
+        #expect(root.contains(".accessibilityLabel(\"Capture Readiness\")"))
+        #expect(root.contains(".accessibilityValue(statusText)"))
+        #expect(!root.contains(".tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))"))
+    }
+
     @Test("Session search keeps the native control rhythm with Tracexy field semantics")
     func sessionSearchUsesResponsiveNativeControls() throws {
         let source = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
@@ -242,7 +258,7 @@ struct WorkspacePresentationContractTests {
     }
 
     @Test("The evidence inspector exposes selected identity, segmented footer and an auxiliary window")
-    func evidenceInspectorUsesRockxyInspiredRegionsWithoutInventingURLs() throws {
+    func evidenceInspectorUsesApprovedRegionsWithoutInventingURLs() throws {
         let app = try readProjectFile("Tracexy/TracexyApp.swift")
         let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
 
