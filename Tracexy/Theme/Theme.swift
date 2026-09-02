@@ -99,7 +99,10 @@ enum Theme {
         // Minimum heights bound the native evidence-split divider; there is no
         // artificial maximum, so the divider drags freely to any height the two
         // minimums allow.
-        static let bottomInspectorMinHeight: CGFloat = 220
+        /// The selected-session identity strip, facet strip and read-only footer
+        /// remain visible without squeezing the evidence body below a useful
+        /// inspection height.
+        static let bottomInspectorMinHeight: CGFloat = 260
         static let sessionTableMinWidth: CGFloat = 420
         static let sessionTableMinHeight: CGFloat = 240
 

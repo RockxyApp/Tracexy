@@ -17,7 +17,8 @@ enum SessionCommandKind: String, CaseIterable {
 // MARK: - SessionCommandDescriptor
 
 /// Value-typed command presentation shared by every responsive command-strip
-/// width. The footer never consumes this catalog; it is telemetry-only.
+/// width. Standard macOS actions can use compact symbols while domain-specific
+/// actions keep labels. The footer never consumes this catalog; it is telemetry-only.
 struct SessionCommandDescriptor: Identifiable, Equatable {
     enum Placement {
         case immediate
@@ -82,7 +83,7 @@ enum SessionCommandBarModel {
                 title: isInvestigationActive ? "Investigate (on)" : "Investigate",
                 systemImage: "scope",
                 help: "Build a capture-local query from typed session and evidence fields.",
-                placement: .immediate,
+                placement: .overflow,
                 priority: 2,
                 isEnabled: hasCaptureData,
                 isActive: isInvestigationActive,
@@ -104,7 +105,7 @@ enum SessionCommandBarModel {
                 title: "Save Capture",
                 systemImage: "square.and.arrow.down",
                 help: "Save the complete current capture to a .pcapng file.",
-                placement: .immediate,
+                placement: .overflow,
                 priority: 4,
                 isEnabled: canSaveCapture,
                 isActive: false,
@@ -115,7 +116,7 @@ enum SessionCommandBarModel {
                 title: "New Focus Set",
                 systemImage: "scope",
                 help: "Create a focus set from the current advanced filter rules.",
-                placement: .immediate,
+                placement: .overflow,
                 priority: 5,
                 isEnabled: canAddFocusSet,
                 isActive: false,
@@ -126,7 +127,7 @@ enum SessionCommandBarModel {
                 title: "Noise Control",
                 systemImage: "speaker.slash",
                 help: "Mute noisy hosts or protocols so the list stops flooding.",
-                placement: .immediate,
+                placement: .overflow,
                 priority: 6,
                 isEnabled: true,
                 isActive: isNoiseControlActive,
@@ -160,10 +161,10 @@ enum SessionCommandBarModel {
 
 // MARK: - SessionCommandBar
 
-/// Immediate investigation controls above the filter stack. Each width variant
-/// reads the same ordered catalog and moves hidden commands into the same
-/// structured overflow menu, preserving intent rather than degrading to
-/// unlabeled icon-only state.
+/// Rockxy-inspired embedded command cluster. Its immediate vocabulary and order
+/// never change with width: Follow Live, Jump Latest, a divider, Clear Capture,
+/// then More. Less-frequent or domain-specific actions live in labelled sections
+/// of the stable overflow menu beside the search controls.
 struct SessionCommandBar: View {
     // MARK: Internal
 
@@ -171,38 +172,45 @@ struct SessionCommandBar: View {
     let onAction: (SessionCommandKind) -> Void
 
     var body: some View {
-        TracexyGlassEffectGroup(spacing: Theme.Metrics.spacingS) {
-            ViewThatFits(in: .horizontal) {
-                commandRow(immediateCount: 6)
-                commandRow(immediateCount: 4)
-                commandRow(immediateCount: 2)
-                commandRow(immediateCount: 1)
-            }
+        HStack(spacing: Theme.Metrics.spacingM) {
+            commandButton(.followLive)
+            commandButton(.jumpToLatest)
+            Divider()
+                .frame(height: 20)
+            commandButton(.clearCapture)
+            moreMenu
         }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingS)
-        .fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     // MARK: Private
 
-    private var immediateDescriptors: [SessionCommandDescriptor] {
-        descriptors.filter { $0.placement == .immediate }
-    }
-
-    private var overflowDescriptors: [SessionCommandDescriptor] {
-        descriptors.filter { $0.placement == .overflow }
-    }
-
-    private func commandRow(immediateCount: Int) -> some View {
-        let visible = Array(immediateDescriptors.prefix(immediateCount))
-        let hidden = Array(immediateDescriptors.dropFirst(immediateCount)) + overflowDescriptors
-        return HStack(spacing: Theme.Metrics.spacingM) {
-            ForEach(visible) { descriptor in
-                commandButton(descriptor)
+    private var moreMenu: some View {
+        Menu {
+            Section("Analysis") {
+                menuItems([.investigate, .advancedFilters, .newFocusSet])
             }
-            Spacer(minLength: Theme.Metrics.spacingL)
-            moreMenu(hidden)
+            Section("Capture Data") {
+                menuItems([.saveCapture])
+            }
+            Section("View") {
+                menuItems([.noiseControl, .restoreRemovedSessions])
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: Theme.Icon.medium))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More session actions")
+        .accessibilityLabel("More Session Actions")
+    }
+
+    @ViewBuilder
+    private func commandButton(_ kind: SessionCommandKind) -> some View {
+        if let descriptor = descriptor(kind) {
+            commandButton(descriptor)
         }
     }
 
@@ -213,13 +221,10 @@ struct SessionCommandBar: View {
                 get: { descriptor.isActive },
                 set: { _ in onAction(descriptor.id) }
             )) {
-                Label(descriptor.title, systemImage: descriptor.systemImage)
-                    .font(Theme.Typography.chromeAction)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                commandLabel(descriptor)
             }
             .toggleStyle(.button)
-            .tracexyGlassButtonStyle()
+            .buttonStyle(.borderless)
             .controlSize(.small)
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
@@ -229,12 +234,9 @@ struct SessionCommandBar: View {
             Button {
                 onAction(descriptor.id)
             } label: {
-                Label(descriptor.title, systemImage: descriptor.systemImage)
-                    .font(Theme.Typography.chromeAction)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                commandLabel(descriptor)
             }
-            .tracexyGlassButtonStyle()
+            .buttonStyle(.borderless)
             .controlSize(.small)
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
@@ -243,20 +245,12 @@ struct SessionCommandBar: View {
         }
     }
 
-    private func moreMenu(_ hidden: [SessionCommandDescriptor]) -> some View {
-        Menu {
-            ForEach(hidden) { descriptor in
+    private func menuItems(_ kinds: [SessionCommandKind]) -> some View {
+        ForEach(kinds, id: \.self) { kind in
+            if let descriptor = descriptor(kind) {
                 menuItem(descriptor)
             }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: Theme.Icon.medium))
         }
-        .tracexyGlassButtonStyle()
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("More session actions")
-        .accessibilityLabel("More Session Actions")
     }
 
     @ViewBuilder
@@ -282,5 +276,16 @@ struct SessionCommandBar: View {
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
         }
+    }
+
+    private func commandLabel(_ descriptor: SessionCommandDescriptor) -> some View {
+        Image(systemName: descriptor.systemImage)
+            .font(.system(size: Theme.Icon.large))
+            .frame(minWidth: 20)
+            .symbolVariant(descriptor.isActive ? .fill : .none)
+    }
+
+    private func descriptor(_ kind: SessionCommandKind) -> SessionCommandDescriptor? {
+        descriptors.first { $0.id == kind }
     }
 }

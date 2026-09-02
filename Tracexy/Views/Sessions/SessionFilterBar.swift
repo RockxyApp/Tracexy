@@ -2,16 +2,16 @@ import SwiftUI
 
 // MARK: - SessionFilterBar
 
-/// The session filter area above the table. Two native rows, mirroring the
-/// interaction architecture used across the app's sibling products:
+/// The session control shelf above the table. Two rounded functional surfaces,
+/// mirroring the interaction architecture used across the app's sibling
+/// products without importing their proxy-specific vocabulary:
 ///
-///   1. a horizontally-scrolling **protocol/category pill row** ("All" + the
-///      protocol group + the independent investigation group), with a trailing
-///      "Reset Filters" action when anything is active;
-///   2. a **search row** — an enable checkbox, a field-scope dropdown, a rounded
-///      search field with a clear button, an "Add Field" button that drives the
-///      advanced rule builder, a disclosure showing the active rule count, and
-///      the Group By menu.
+///   1. a stable **command + search row** — fixed immediate commands, a divider,
+///      field-scope search, Add Field, advanced disclosure, and Group By. At a
+///      narrow width the same two clusters stack without changing command order;
+///   2. an adaptive **protocol/category pill row** ("All" + the protocol group
+///      + the independent investigation group). Narrow widths move lower-priority
+///      protocols into a labelled overflow menu instead of clipping or scrolling.
 ///
 /// Every field here is a Tracexy session attribute. There is deliberately no
 /// URL, HTTP method/status-code, header, body, mapping, proxy, or interception
@@ -21,16 +21,26 @@ struct SessionFilterBar: View {
 
     @Bindable var coordinator: MainContentCoordinator
 
+    let commandDescriptors: [SessionCommandDescriptor]
+    let onCommandAction: (SessionCommandKind) -> Void
+
     var body: some View {
         let workspace = coordinator.activeWorkspace
-        VStack(spacing: 0) {
-            categoryRow(workspace)
-                .padding(.vertical, 5)
-            Divider()
-            searchRow(workspace)
-                .padding(.vertical, 5)
+        let shape = RoundedRectangle(
+            cornerRadius: Theme.Glass.functionalBarCornerRadius,
+            style: .continuous
+        )
+        TracexyGlassEffectGroup(spacing: Theme.Glass.functionalBarVerticalInset) {
+            VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
+                commandAndSearchRow(workspace)
+                    .tracexyGlassEffect(in: shape)
+                categoryRow(workspace)
+                    .padding(.vertical, 5)
+                    .tracexyGlassEffect(in: shape)
+            }
         }
-        .tracexyFunctionalBar()
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+        .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
         .fixedSize(horizontal: false, vertical: true)
         // ⌘F focus. `.task(id:)` fires both on first appear and on every token
         // change, so a press that *mounts* this bar (coming from Overview/Flow)
@@ -61,46 +71,13 @@ struct SessionFilterBar: View {
 
     private func categoryRow(_ workspace: WorkspaceState) -> some View {
         HStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isInvestigationFilter }
-                    FilterPillButton(title: "All", isActive: !hasProtocolFilter) {
-                        workspace.categoryFilters = workspace.categoryFilters.filter(\.isInvestigationFilter)
-                    }
-                    .accessibilityLabel("All protocols")
-                    .accessibilityAddTraits(!hasProtocolFilter ? [.isSelected] : [])
-
-                    ForEach(SessionFilterCategory.protocolFilters) { category in
-                        let isActive = workspace.categoryFilters.contains(category)
-                        FilterPillButton(title: category.title, isActive: isActive) {
-                            toggle(category, in: workspace)
-                        }
-                        .accessibilityLabel(category.title)
-                        .accessibilityAddTraits(isActive ? [.isSelected] : [])
-                        .accessibilityHint(isActive ? "Active filter" : "Inactive filter")
-                    }
-
-                    Divider()
-                        .frame(height: 16)
-                        .padding(.horizontal, 4)
-
-                    ForEach(SessionFilterCategory.investigationFilters) { category in
-                        let isActive = workspace.categoryFilters.contains(category)
-                        FilterPillButton(
-                            title: category.title,
-                            systemImage: category == .security ? "list.bullet.clipboard" : nil,
-                            tint: .accentColor,
-                            isActive: isActive
-                        ) {
-                            toggle(category, in: workspace)
-                        }
-                        .accessibilityLabel(category.title)
-                        .accessibilityAddTraits(isActive ? [.isSelected] : [])
-                        .accessibilityHint(isActive ? "Active filter" : "Inactive filter")
-                    }
-                }
-                .padding(.horizontal, 8)
+            ViewThatFits(in: .horizontal) {
+                categoryTier(workspace, visibleProtocolCount: SessionFilterCategory.protocolFilters.count)
+                categoryTier(workspace, visibleProtocolCount: 7)
+                categoryTier(workspace, visibleProtocolCount: 5)
+                categoryTier(workspace, visibleProtocolCount: 3)
             }
+            .layoutPriority(1)
 
             if workspace.hasActiveInvestigationQuery || workspace.isEvaluatingInvestigationQuery {
                 InvestigationQueryChip(
@@ -114,26 +91,139 @@ struct SessionFilterBar: View {
                 Button {
                     reset(workspace)
                 } label: {
-                    Label("Reset Filters", systemImage: "arrow.clockwise")
+                    ViewThatFits(in: .horizontal) {
+                        Label("Reset Filters", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
                 .buttonStyle(.borderless)
                 .font(Theme.Typography.chromeAction)
                 .foregroundStyle(.secondary)
-                .padding(.trailing, 8)
                 .help("Clear all session filters")
                 .accessibilityLabel("Reset filters")
             }
         }
+        .padding(.horizontal, 8)
+    }
+
+    private func categoryTier(_ workspace: WorkspaceState, visibleProtocolCount: Int) -> some View {
+        let protocols = Array(SessionFilterCategory.protocolFilters.prefix(visibleProtocolCount))
+        let hasProtocolFilter = workspace.categoryFilters.contains { !$0.isInvestigationFilter }
+        return HStack(spacing: 2) {
+            FilterPillButton(title: "All", isActive: !hasProtocolFilter) {
+                workspace.categoryFilters = workspace.categoryFilters.filter(\.isInvestigationFilter)
+            }
+            .accessibilityLabel("All protocols")
+            .accessibilityAddTraits(!hasProtocolFilter ? [.isSelected] : [])
+
+            ForEach(protocols) { category in
+                categoryPill(category, workspace: workspace)
+            }
+
+            filterOverflowMenu(workspace, visibleProtocols: protocols)
+                .padding(.horizontal, 4)
+
+            Divider()
+                .frame(height: 16)
+                .padding(.horizontal, 4)
+
+            ForEach(SessionFilterCategory.investigationFilters) { category in
+                categoryPill(category, workspace: workspace)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func categoryPill(_ category: SessionFilterCategory, workspace: WorkspaceState) -> some View {
+        let isActive = workspace.categoryFilters.contains(category)
+        return FilterPillButton(
+            title: category.title,
+            systemImage: category == .security ? "list.bullet.clipboard" : nil,
+            tint: category.protocolKind.map { Theme.color(for: $0) } ?? .accentColor,
+            isActive: isActive
+        ) {
+            toggle(category, in: workspace)
+        }
+        .accessibilityLabel(category.title)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityHint(isActive ? "Active filter" : "Inactive filter")
+    }
+
+    private func filterOverflowMenu(
+        _ workspace: WorkspaceState,
+        visibleProtocols: [SessionFilterCategory]
+    )
+        -> some View
+    {
+        let visible = Set(visibleProtocols)
+        let hiddenProtocols = SessionFilterCategory.protocolFilters.filter { !visible.contains($0) }
+        let hasHiddenActiveFilter = hiddenProtocols.contains { workspace.categoryFilters.contains($0) }
+        return Menu {
+            Section("Protocols") {
+                Button("All Protocols", systemImage: "line.3.horizontal.decrease") {
+                    workspace.categoryFilters = workspace.categoryFilters.filter(\.isInvestigationFilter)
+                }
+                ForEach(hiddenProtocols) { category in
+                    Toggle(category.title, isOn: Binding(
+                        get: { workspace.categoryFilters.contains(category) },
+                        set: { _ in toggle(category, in: workspace) }
+                    ))
+                }
+            }
+            Section("Investigation") {
+                ForEach(SessionFilterCategory.investigationFilters) { category in
+                    Toggle(category.title, isOn: Binding(
+                        get: { workspace.categoryFilters.contains(category) },
+                        set: { _ in toggle(category, in: workspace) }
+                    ))
+                }
+            }
+        } label: {
+            Image(systemName: hasHiddenActiveFilter ? "ellipsis.circle.fill" : "ellipsis.circle")
+                .font(.system(size: Theme.Icon.medium))
+                .foregroundStyle(hasHiddenActiveFilter ? Color.accentColor : Color.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More session filters")
+        .accessibilityLabel("More session filters")
+        .accessibilityValue(hasHiddenActiveFilter ? "Hidden filters active" : "No hidden filters active")
     }
 
     // MARK: Search row
+
+    private func commandAndSearchRow(_ workspace: WorkspaceState) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                SessionCommandBar(
+                    descriptors: commandDescriptors,
+                    onAction: onCommandAction
+                )
+                Divider()
+                    .frame(height: 22)
+                searchRow(workspace)
+                    .layoutPriority(1)
+            }
+
+            VStack(alignment: .leading, spacing: Theme.Glass.functionalBarVerticalInset) {
+                SessionCommandBar(
+                    descriptors: commandDescriptors,
+                    onAction: onCommandAction
+                )
+                Divider()
+                searchRow(workspace)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+    }
 
     private func searchRow(_ workspace: WorkspaceState) -> some View {
         ViewThatFits(in: .horizontal) {
             searchRowContent(workspace, pickerWidth: 130, showsAddFieldTitle: true)
             searchRowContent(workspace, pickerWidth: 100, showsAddFieldTitle: false)
         }
-        .padding(.horizontal, 8)
     }
 
     /// The whole search row participates in the responsive decision. This keeps

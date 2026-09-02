@@ -8,6 +8,8 @@ struct InspectorView: View {
 
     @Bindable var coordinator: MainContentCoordinator
 
+    var allowsDetaching = true
+
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let session = coordinator.selectedSession
@@ -43,6 +45,9 @@ struct InspectorView: View {
             }
             .tracexyDenseScrollEdge()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let session {
+                inspectorFooter(session: session, activeTab: activeTab)
+            }
         }
         // Claim the full width here, on the pane itself.
         //
@@ -78,6 +83,7 @@ struct InspectorView: View {
     @State private var fieldQuery = ""
     @State private var selectedRange: Range<Int>?
     @State private var followStreamDisplayMode: FollowStreamDisplayMode = .text
+    @Environment(\.openWindow) private var openWindow
 
     private var selectedEvidence: SessionEvidenceSelection? {
         guard let selection = coordinator.evidenceProjection.selection,
@@ -199,6 +205,11 @@ struct InspectorView: View {
         )
     }
 
+    private var footerDivider: some View {
+        Divider()
+            .frame(height: 18)
+    }
+
     /// The bottom inspector hosts AppKit-backed split content. Native
     /// `safeAreaBar` allows that content to continue underneath the bar, but
     /// nested split scroll views do not consume the propagated inset and their
@@ -212,49 +223,153 @@ struct InspectorView: View {
     )
         -> some View
     {
-        VStack(spacing: 0) {
-            tabStrip(
+        VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
+            sessionIdentityBar(session)
+                .tracexyGlassEffect(
+                    in: RoundedRectangle(
+                        cornerRadius: Theme.Glass.functionalBarCornerRadius,
+                        style: .continuous
+                    )
+                )
+            InspectorFacetBar(
                 workspace: workspace,
                 visibleTabs: visibleTabs,
-                activeTab: activeTab,
-                session: session
+                activeTab: activeTab
+            ) {
+                layerFilterControl
+            }
+            .tracexyContentSurface(
+                in: RoundedRectangle(
+                    cornerRadius: Theme.Metrics.cornerRadius,
+                    style: .continuous
+                )
             )
             if activeTab != .evidence, citedFrameStateIsActive {
                 citedFrameScopeRow
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous))
             }
-            Divider()
         }
+        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
+        .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
         .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottom) { Divider() }
     }
 
-    /// What the pane is currently describing, stated at the right of the tab row.
-    ///
-    /// The scope pill is the important half: when the selection resolves to a
-    /// correlated action, the timeline below spans *four conversations*, and
-    /// without saying so the pane would look like it was mis-reporting a single
-    /// session's duration.
-    @ViewBuilder
-    private func scopeLabel(_ session: SessionSummary) -> some View {
-        let activity = coordinator.activity(containing: session)
-        HStack(spacing: 6) {
+    /// A protocol-neutral counterpart to Rockxy's URL bar. It describes only
+    /// identity Tracexy actually observed: health, protocol, process/host and
+    /// endpoints. A URL is never synthesized for DNS, TLS or transport sessions.
+    private func sessionIdentityBar(_ session: SessionSummary) -> some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            ViewThatFits(in: .horizontal) {
+                sessionIdentityContent(session, showsEndpoints: true)
+                sessionIdentityContent(session, showsEndpoints: false)
+            }
+            .layoutPriority(1)
+
+            activityScopeBadge(session)
+
+            if allowsDetaching {
+                Button {
+                    openWindow(id: TracexyApp.sessionInspectorWindowID)
+                } label: {
+                    Image(systemName: "macwindow.on.rectangle")
+                        .font(.system(size: Theme.Icon.large))
+                }
+                .buttonStyle(.borderless)
+                .help("Open Session Inspector in a new window")
+                .accessibilityLabel("Open Session Inspector in a new window")
+            }
+        }
+        .padding(.horizontal, Theme.Metrics.spacingM)
+        .padding(.vertical, 7)
+    }
+
+    private func sessionIdentityContent(_ session: SessionSummary, showsEndpoints: Bool) -> some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Label(session.status.label, systemImage: session.status.systemImage)
+                .font(Theme.Typography.badge)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .tracexyChipStyle(tint: Theme.color(for: session.status), isActive: true)
+
+            Text(session.primaryProtocol.label)
+                .font(Theme.Typography.badge)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .tracexyChipStyle(tint: Theme.color(for: session.primaryProtocol), isActive: true)
+
             if let process = session.processName {
                 Text(process)
-                    .font(Theme.Typography.bodyEmphasis)
+                    .font(Theme.Typography.bodyMedium)
+                    .lineLimit(1)
                 Image(systemName: "arrow.right")
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(.secondary)
             }
-            Text(activity?.title ?? session.host)
-                .font(Theme.Typography.bodyEmphasis)
+
+            Text(selectedIdentity(for: session))
+                .font(Theme.Typography.mono)
+                .foregroundStyle(Color.cyan)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if let activity, activity.sessions.count > 1 {
-                Text("whole action")
-                    .font(Theme.Typography.microMedium)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .tracexyChipStyle(tint: .accentColor, isActive: true)
+                .textSelection(.enabled)
+
+            if showsEndpoints {
+                Spacer(minLength: Theme.Metrics.spacingM)
+                Text("\(session.sourceEndpoint) → \(session.destinationEndpoint)")
+                    .font(Theme.Typography.monoSmall)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
             }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    /// The evidence pane owns a small, read-only footer of its own. Logical
+    /// regions are divided inside one rounded surface; no nested glass cards are
+    /// introduced and no capture/filter command moves into this status area.
+    private func inspectorFooter(session: SessionSummary, activeTab: InspectorTab) -> some View {
+        WorkspaceFooterBar(surface: .workspace) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                Label("Selected", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .font(Theme.Typography.chromeAction)
+                footerDivider
+                Text(activeTab.title)
+                    .font(Theme.Typography.chromeAction)
+                footerDivider
+                Text(session.protocolStack.map(\.label).joined(separator: " · "))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: Theme.Metrics.spacingL)
+                Text(
+                    "\(ByteCountFormatter.string(fromByteCount: Int64(session.totalBytes), countStyle: .binary)) total"
+                )
+                .font(Theme.Typography.chromeSecondary)
+                .foregroundStyle(.secondary)
+                footerDivider
+                Text(session.duration.formatted(.number.precision(.fractionLength(3))) + " s")
+                    .font(Theme.Typography.chromeSecondary.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, Theme.Metrics.spacingL)
+        }
+    }
+
+    @ViewBuilder
+    private func activityScopeBadge(_ session: SessionSummary) -> some View {
+        let activity = coordinator.activity(containing: session)
+        if let activity, activity.sessions.count > 1 {
+            Label("Whole action", systemImage: "rectangle.3.group")
+                .font(Theme.Typography.microMedium)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .tracexyChipStyle(tint: .accentColor, isActive: true)
+                .help("This inspector summarizes all \(activity.sessions.count) sessions in the correlated action")
         }
     }
 
@@ -324,65 +439,6 @@ struct InspectorView: View {
             placeholder("No packet bytes are available for this session.")
                 .padding(Theme.Metrics.spacingL)
                 .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-    }
-
-    /// Named tabs, not icons.
-    ///
-    /// The evidence facets are close enough in kind (Layers · Requests · Payload
-    /// · Hex are all "the bytes, at four zoom levels") that a glyph cannot
-    /// separate them — an icon-only strip made the user click to find out which
-    /// was which. Words cost a few points of height and remove the guessing.
-    private func tabStrip(
-        workspace: WorkspaceState,
-        visibleTabs: [InspectorTab],
-        activeTab: InspectorTab,
-        session: SessionSummary
-    )
-        -> some View
-    {
-        // Tabs and the optional Layers filter always share one horizontally
-        // scrollable row. The scope stays visible at the trailing edge, so even
-        // compact panes add no extra sticky row above an exact citation.
-        HStack(spacing: Theme.Metrics.spacingM) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    tabButtons(workspace: workspace, visibleTabs: visibleTabs, activeTab: activeTab)
-                    if activeTab == .layers {
-                        layerFilterControl
-                            .padding(.leading, Theme.Metrics.spacingS)
-                    }
-                }
-            }
-            .layoutPriority(1)
-            scopeLabel(session)
-                .frame(minWidth: 140, idealWidth: 240, maxWidth: 320, alignment: .trailing)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingM)
-        .padding(.vertical, 6)
-    }
-
-    private func tabButtons(
-        workspace: WorkspaceState,
-        visibleTabs: [InspectorTab],
-        activeTab: InspectorTab
-    )
-        -> some View
-    {
-        ForEach(visibleTabs) { tab in
-            Button {
-                workspace.inspectorTab = tab
-            } label: {
-                Text(tab.title)
-                    .font(tab == activeTab ? Theme.Typography.bodyEmphasis : Theme.Typography.body)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .tracexyChipStyle(tint: .accentColor, isActive: tab == activeTab)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(tab == activeTab ? .isSelected : [])
-            .help(tab.title)
         }
     }
 
@@ -778,6 +834,16 @@ struct InspectorView: View {
             Text(label).font(Theme.Typography.captionMedium).foregroundStyle(.secondary)
             Text(value).font(Theme.Typography.mono).textSelection(.enabled)
         }
+    }
+
+    private func selectedIdentity(for session: SessionSummary) -> String {
+        if let query = session.dnsQuery, !query.isEmpty {
+            return query
+        }
+        if let sni = session.sni, !sni.isEmpty {
+            return sni
+        }
+        return session.host
     }
 
     private func followStreamCompleteness(_ completeness: FollowStreamCompleteness) -> String {

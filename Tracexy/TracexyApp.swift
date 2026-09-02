@@ -8,6 +8,7 @@ struct TracexyApp: App {
 
     static let focusSetEditorWindowID = "focus-set-editor"
     static let noiseControlWindowID = "noise-control"
+    static let sessionInspectorWindowID = "session-inspector"
 
     var body: some Scene {
         WindowGroup {
@@ -89,6 +90,11 @@ struct TracexyApp: App {
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
 
+        SessionInspectorWindowScene(
+            coordinator: coordinator,
+            colorScheme: colorScheme
+        )
+
         Window("Settings", id: "settings") {
             SettingsView(
                 updater: updater,
@@ -168,6 +174,34 @@ struct TracexyApp: App {
             coordinator.historyError = reason
             coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
             return coordinator
+        }
+    }
+}
+
+// MARK: - SessionInspectorWindowScene
+
+/// An opt-in auxiliary inspector that follows the main window's current
+/// selection. It mirrors macOS inspector semantics: choosing another session
+/// updates the panel, while the primary workspace and bottom split stay intact.
+private struct SessionInspectorWindowScene: Scene {
+    let coordinator: MainContentCoordinator
+    let colorScheme: ColorScheme?
+
+    var body: some Scene {
+        let base = Window("Session Inspector", id: TracexyApp.sessionInspectorWindowID) {
+            InspectorView(coordinator: coordinator, allowsDetaching: false)
+                .frame(minWidth: 640, minHeight: 400)
+                .preferredColorScheme(colorScheme)
+        }
+        .commandsRemoved()
+        .defaultSize(width: 1_040, height: 680)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
         }
     }
 }

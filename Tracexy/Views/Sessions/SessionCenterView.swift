@@ -8,6 +8,9 @@ struct SessionCenterView: View {
 
     @Bindable var coordinator: MainContentCoordinator
 
+    let commandDescriptors: [SessionCommandDescriptor]
+    let onCommandAction: (SessionCommandKind) -> Void
+
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let sessions = coordinator.visibleSessions
@@ -116,7 +119,11 @@ struct SessionCenterView: View {
     private func sessionControlShelf(_ workspace: WorkspaceState) -> some View {
         VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
             if workspace.isFilterBarVisible {
-                SessionFilterBar(coordinator: coordinator)
+                SessionFilterBar(
+                    coordinator: coordinator,
+                    commandDescriptors: commandDescriptors,
+                    onCommandAction: onCommandAction
+                )
                 if workspace.isAdvancedFilterVisible {
                     StructuredFilterBar(coordinator: coordinator)
                 }
