@@ -6,6 +6,31 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.6.0</title>
+            <pubDate>Wed, 02 Sep 2026 12:04:26 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.6.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.6.0 (build 11)
+
+## Added
+
+- Navigate retained connection and TLS evidence to the exact cited local frame.
+- Open the selected session in an auxiliary Inspector window that follows the workspace selection.
+
+## Changed
+
+- Refine session controls, status, and inspector layout for a clearer native Liquid Glass workspace.
+
+## Fixed
+
+- Enforce the selected automatic History retention at launch, after a capture is stored, and when the setting changes.
+- Remove duplicated workspace chrome and correct session-control and footer alignment.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.6.0/Tracexy-0.6.0-11.dmg" length="8070542" type="application/octet-stream" sparkle:edSignature="7/+7V7aLiOqJscoxLmj6aSBmBd8QR8EPGM5vqqtJMD3//xSUh+0uveud3UHHLPcb3C8tymatEaRZ7mwEQN7UAQ=="/>
+        </item>
+        <item>
             <title>0.5.0</title>
             <pubDate>Mon, 24 Aug 2026 22:35:54 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.5.0</sparkle:fullReleaseNotesLink>
@@ -42,26 +67,6 @@
 - Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.4.1/Tracexy-0.4.1-9.dmg" length="6519016" type="application/octet-stream" sparkle:edSignature="Fy/VSqPSygws/KeXtorEnqQp5xCua3ByIjiB2hSGzGaA5kv6ZfYBYuZYW9VFfTDrq3brrx229JzZ/t2TYBwlAA=="/>
-        </item>
-        <item>
-            <title>0.4.0</title>
-            <pubDate>Wed, 19 Aug 2026 10:37:37 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.4.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>8</sparkle:version>
-            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.4.0 (build 8)
-
-## Added
-
-- Protect native session exports with Privacy settings, omitting raw packet bytes and sensitive decoded metadata by default; raw pcap/pcapng exports now require explicit confirmation while a protection is enabled.
-
-## Fixed
-
-- Strengthen privileged capture-helper authentication against process-identity races.
-- Remove temporary capture files left by interrupted sessions without touching active captures or unrelated data.
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.4.0/Tracexy-0.4.0-8.dmg" length="6518436" type="application/octet-stream" sparkle:edSignature="jiE28sGwI3vp/zBaxt/Ud8COCCJPEVk58SUm4qesaN4SdKChz7cOz6M4VqVkY1GZTUxqy+bx5jHho0HvRvV5Dw=="/>
         </item>
     </channel>
 </rss>
