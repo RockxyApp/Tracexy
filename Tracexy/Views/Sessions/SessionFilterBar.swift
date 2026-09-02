@@ -27,20 +27,28 @@ struct SessionFilterBar: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let shape = RoundedRectangle(
-            cornerRadius: Theme.Glass.functionalBarCornerRadius,
+            cornerRadius: Theme.Glass.sessionShelfCornerRadius,
             style: .continuous
         )
-        TracexyGlassEffectGroup(spacing: Theme.Glass.functionalBarVerticalInset) {
-            VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
+        TracexyGlassEffectGroup(spacing: Theme.Glass.sessionShelfSectionSpacing) {
+            VStack(spacing: Theme.Glass.sessionShelfSectionSpacing) {
                 commandAndSearchRow(workspace)
                     .tracexyGlassEffect(in: shape)
                 categoryRow(workspace)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 4)
                     .tracexyGlassEffect(in: shape)
+
+                if workspace.isAdvancedFilterVisible {
+                    StructuredFilterBar(coordinator: coordinator)
+                        .tracexyGlassEffect(in: shape)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
         }
-        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
-        .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
+        .padding(.horizontal, Theme.Glass.sessionShelfOuterPadding)
+        .padding(.top, Theme.Glass.sessionShelfOuterPadding)
+        .padding(.bottom, Theme.Glass.sessionShelfBottomPadding)
+        .animation(.easeInOut(duration: 0.18), value: workspace.isAdvancedFilterVisible)
         .fixedSize(horizontal: false, vertical: true)
         // ⌘F focus. `.task(id:)` fires both on first appear and on every token
         // change, so a press that *mounts* this bar (coming from Overview/Flow)
@@ -198,7 +206,7 @@ struct SessionFilterBar: View {
 
     private func commandAndSearchRow(_ workspace: WorkspaceState) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Metrics.spacingM) {
+            HStack(spacing: Theme.Metrics.controlSpacing) {
                 SessionCommandBar(
                     descriptors: commandDescriptors,
                     onAction: onCommandAction
@@ -209,17 +217,18 @@ struct SessionFilterBar: View {
                     .layoutPriority(1)
             }
 
-            VStack(alignment: .leading, spacing: Theme.Glass.functionalBarVerticalInset) {
+            VStack(alignment: .leading, spacing: 0) {
                 SessionCommandBar(
                     descriptors: commandDescriptors,
                     onAction: onCommandAction
                 )
                 Divider()
+                    .opacity(0.55)
                 searchRow(workspace)
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -314,9 +323,11 @@ struct SessionFilterBar: View {
     /// The trailing controls: Add Field, the active-rule disclosure, and Group
     /// By. The outer responsive row decides whether Add Field keeps its title.
     private func actionCluster(_ workspace: WorkspaceState, showsAddFieldTitle: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Theme.Metrics.spacingM) {
             addFieldButton(workspace, showsTitle: showsAddFieldTitle)
             advancedDisclosure(workspace)
+            Divider()
+                .frame(height: 18)
             groupByMenu(workspace)
         }
         .font(Theme.Typography.chromeAction)
@@ -334,9 +345,7 @@ struct SessionFilterBar: View {
                 Image(systemName: "plus")
             }
         }
-        // This action already sits on the filter shelf's single glass surface.
-        // Keep it borderless so controls do not become glass-on-glass islands.
-        .buttonStyle(.borderless)
+        .tracexyGlassButtonStyle()
         .controlSize(.small)
         .disabled(disabled)
         .help(disabled
@@ -362,7 +371,7 @@ struct SessionFilterBar: View {
                     .font(Theme.Typography.micro)
             }
         }
-        .buttonStyle(.borderless)
+        .tracexyGlassButtonStyle()
         .controlSize(.small)
         .help(count > 0
             ? "\(count) advanced rule\(count == 1 ? "" : "s") active — click to \(isOn ? "hide" : "show") the builder"
@@ -391,9 +400,15 @@ struct SessionFilterBar: View {
             Image(systemName: "square.grid.3x1.below.line.grid.1x2")
                 .font(.system(size: Theme.Icon.medium))
                 .foregroundStyle(isGrouped ? Color.accentColor : Color.secondary)
+                .frame(
+                    width: Theme.Metrics.sessionShelfControlLength,
+                    height: Theme.Metrics.sessionShelfControlLength
+                )
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
         .menuIndicator(.hidden)
+        .tracexyGlassButtonStyle()
+        .controlSize(.small)
         .fixedSize()
         .help(isGrouped
             ? "Grouping by \(workspace.sessionGrouping.title) — click to change"

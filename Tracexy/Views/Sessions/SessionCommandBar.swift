@@ -175,8 +175,7 @@ struct SessionCommandBar: View {
         HStack(spacing: Theme.Metrics.spacingM) {
             commandButton(.followLive)
             commandButton(.jumpToLatest)
-            Divider()
-                .frame(height: 20)
+            commandDivider
             commandButton(.clearCapture)
             moreMenu
         }
@@ -198,13 +197,24 @@ struct SessionCommandBar: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: Theme.Icon.medium))
+                .font(.system(size: Theme.Icon.medium, weight: .medium))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .frame(
+                    width: Theme.Metrics.sessionShelfControlLength,
+                    height: Theme.Metrics.sessionShelfControlLength
+                )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More session actions")
         .accessibilityLabel("More Session Actions")
+    }
+
+    private var commandDivider: some View {
+        Divider()
+            .frame(height: 16)
+            .padding(.horizontal, 4)
     }
 
     @ViewBuilder
@@ -224,8 +234,18 @@ struct SessionCommandBar: View {
                 commandLabel(descriptor)
             }
             .toggleStyle(.button)
-            .buttonStyle(.borderless)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
+            .overlay {
+                if descriptor.isActive {
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.accentColor.opacity(Theme.Glass.activeStrokeOpacity),
+                            lineWidth: 1
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
             .accessibilityLabel(descriptor.title)
@@ -236,7 +256,7 @@ struct SessionCommandBar: View {
             } label: {
                 commandLabel(descriptor)
             }
-            .buttonStyle(.borderless)
+            .tracexyGlassButtonStyle()
             .controlSize(.small)
             .disabled(!descriptor.isEnabled)
             .help(descriptor.help)
@@ -280,8 +300,11 @@ struct SessionCommandBar: View {
 
     private func commandLabel(_ descriptor: SessionCommandDescriptor) -> some View {
         Image(systemName: descriptor.systemImage)
-            .font(.system(size: Theme.Icon.large))
-            .frame(minWidth: 20)
+            .font(.system(size: Theme.Icon.medium, weight: .medium))
+            .frame(
+                width: Theme.Metrics.sessionShelfControlLength,
+                height: Theme.Metrics.sessionShelfControlLength
+            )
             .symbolVariant(descriptor.isActive ? .fill : .none)
     }
 

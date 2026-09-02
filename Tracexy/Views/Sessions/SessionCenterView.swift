@@ -124,9 +124,6 @@ struct SessionCenterView: View {
                     commandDescriptors: commandDescriptors,
                     onCommandAction: onCommandAction
                 )
-                if workspace.isAdvancedFilterVisible {
-                    StructuredFilterBar(coordinator: coordinator)
-                }
             }
             LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
         }
