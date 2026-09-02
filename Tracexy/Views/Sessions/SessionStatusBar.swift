@@ -317,9 +317,8 @@ struct SessionStatusBar: View {
 
     var body: some View {
         WorkspaceFooterBar(surface: .workspace) {
-            HStack(spacing: 0) {
+            CenteredStatusFooterLayout(spacing: Theme.Metrics.spacingL) {
                 centerSummary
-                Spacer(minLength: 24)
                 telemetryRow
             }
             .padding(.horizontal, Theme.Metrics.spacingL)
@@ -394,6 +393,59 @@ struct SessionStatusBar: View {
         case .error: Color(nsColor: .systemRed)
         case .live: Color(nsColor: .systemGreen)
         }
+    }
+}
+
+// MARK: - CenteredStatusFooterLayout
+
+/// Keeps the read-only session summary on the true horizontal centerline while
+/// telemetry remains trailing. The summary receives a symmetric safe width
+/// based on the telemetry footprint, so the two regions never collide at narrow
+/// window sizes.
+private struct CenteredStatusFooterLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache _: inout ()
+    )
+        -> CGSize
+    {
+        guard subviews.count == 2 else {
+            return .zero
+        }
+        let summary = subviews[0].sizeThatFits(.unspecified)
+        let telemetry = subviews[1].sizeThatFits(.unspecified)
+        return CGSize(
+            width: proposal.width ?? summary.width + (telemetry.width + spacing) * 2,
+            height: proposal.height ?? max(summary.height, telemetry.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache _: inout ()
+    ) {
+        guard subviews.count == 2 else {
+            return
+        }
+        let telemetry = subviews[1].sizeThatFits(.unspecified)
+        let summaryWidth = max(0, bounds.width - (telemetry.width + spacing) * 2)
+        let summaryProposal = ProposedViewSize(width: summaryWidth, height: bounds.height)
+
+        subviews[0].place(
+            at: CGPoint(x: bounds.midX, y: bounds.midY),
+            anchor: .center,
+            proposal: summaryProposal
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.midY),
+            anchor: .trailing,
+            proposal: ProposedViewSize(width: telemetry.width, height: bounds.height)
+        )
     }
 }
 

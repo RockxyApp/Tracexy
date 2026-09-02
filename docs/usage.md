@@ -133,9 +133,10 @@ Latest**, a divider, **Clear Capture Data**, and **More Session Actions**. The o
 narrower widths; the cluster and search controls stack when needed. Domain and less-frequent actions —
 **Investigate**, **Advanced Filters**, **New Focus Set**, **Save Capture**, **Noise Control**, and
 restoring removed sessions — use labelled sections inside the More menu. Every icon-only command keeps
-an explicit help label and accessibility name. The bottom status bar is intentionally read-only: it
-reports the visible/selected session summary and source, loss, retention, and memory telemetry; it does
-not mutate the capture or filters.
+an explicit help label and accessibility name. Both rounded shelves span the workspace while their
+commands and protocol filters stay anchored to the sidebar edge. The bottom status bar is intentionally
+read-only: only the visible/selected session summary is centered; source, loss, retention, and memory
+telemetry remains trailing. It does not mutate the capture or filters.
 
 Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
 controls. The same menu is available from the session row's **Export** submenu. **Export Session**
@@ -243,10 +244,12 @@ offset.
 The selected-session strip keeps the current status, primary protocol, observed process or host, and
 source-to-destination endpoints visible above the inspector facets. A correlated multi-session action
 is labelled there with one non-wrapping **Whole action** badge; selection context never competes with
-the facet tabs. Facet labels stay on one line, preserve their source order, and move lower-priority
-facets into a More menu while keeping the active facet directly visible. Tracexy does not manufacture a URL
-for transport, DNS, TLS, or other sessions that did not yield one as typed evidence. The trailing
-window button opens the same selection-aware inspector in a resizable auxiliary window; it follows the
+the facet tabs. Both rows span the inspector and keep identity and facet labels anchored to the sidebar
+edge; fixed utilities remain trailing. Facet labels stay on one line, preserve their source order, and
+move lower-priority facets into a More menu while keeping the active facet directly visible. Tracexy
+does not manufacture a URL for transport, DNS, TLS, or other sessions that did not yield one as typed
+evidence. The trailing window button opens the same selection-aware inspector in a resizable auxiliary
+window; it follows the
 row selected in the main workspace. On macOS 15 and later, this transient window is excluded from state
 restoration so it does not reopen empty after relaunch. A read-only rounded footer
 partitions the active facet, protocol stack, byte total, and duration without moving capture or filter

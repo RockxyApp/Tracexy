@@ -251,6 +251,7 @@ struct InspectorView: View {
         }
         .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
         .padding(.vertical, Theme.Glass.functionalBarVerticalInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
     }
@@ -265,6 +266,8 @@ struct InspectorView: View {
                 sessionIdentityContent(session, showsEndpoints: false)
             }
             .layoutPriority(1)
+
+            Spacer(minLength: Theme.Metrics.spacingM)
 
             activityScopeBadge(session)
 
@@ -282,6 +285,7 @@ struct InspectorView: View {
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func sessionIdentityContent(_ session: SessionSummary, showsEndpoints: Bool) -> some View {

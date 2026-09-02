@@ -79,6 +79,8 @@ struct SessionFilterBar: View {
             }
             .layoutPriority(1)
 
+            Spacer(minLength: Theme.Metrics.spacingM)
+
             if workspace.hasActiveInvestigationQuery || workspace.isEvaluatingInvestigationQuery {
                 InvestigationQueryChip(
                     coordinator: coordinator,
@@ -104,6 +106,7 @@ struct SessionFilterBar: View {
             }
         }
         .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func categoryTier(_ workspace: WorkspaceState, visibleProtocolCount: Int) -> some View {
@@ -217,6 +220,7 @@ struct SessionFilterBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func searchRow(_ workspace: WorkspaceState) -> some View {

@@ -88,6 +88,8 @@ struct WorkspacePresentationContractTests {
         #expect(facets.contains("private func directlyVisibleTabs("))
         #expect(facets.contains("ViewThatFits(in: .horizontal)"))
         #expect(facets.contains(".fixedSize(horizontal: true, vertical: false)"))
+        #expect(facets.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(facets.contains("Spacer(minLength: Theme.Metrics.spacingM)"))
         #expect(inspector.contains("private func activityScopeBadge("))
         #expect(!inspector.contains("ScrollView(.horizontal, showsIndicators: false)"))
         #expect(!inspector.contains("scopeLabel("))
@@ -215,6 +217,8 @@ struct WorkspacePresentationContractTests {
         #expect(source.contains(".accessibilityLabel(\"Search field\")"))
         #expect(source.contains(".accessibilityLabel(\"Add field\")"))
         #expect(source.contains("categoryTier(workspace, visibleProtocolCount:"))
+        #expect(source.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(source.contains("Spacer(minLength: Theme.Metrics.spacingM)"))
         #expect(source.contains("\"ellipsis.circle.fill\""))
         #expect(source.contains(".accessibilityLabel(\"More session filters\")"))
         #expect(!source.contains("ScrollView(.horizontal, showsIndicators: false)"))
@@ -230,6 +234,7 @@ struct WorkspacePresentationContractTests {
         #expect(inspector.contains("Label(\"Whole action\", systemImage: \"rectangle.3.group\")"))
         #expect(inspector.contains("session.sourceEndpoint) → \\(session.destinationEndpoint"))
         #expect(inspector.contains("private func inspectorFooter("))
+        #expect(inspector.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
         #expect(inspector.contains("WorkspaceFooterBar(surface: .workspace)"))
         #expect(inspector.contains("macwindow.on.rectangle"))
         #expect(inspector.contains("TracexyApp.sessionInspectorWindowID"))
@@ -238,6 +243,16 @@ struct WorkspacePresentationContractTests {
         #expect(app.contains("Window(\"Session Inspector\""))
         #expect(app.contains("InspectorView(coordinator: coordinator, allowsDetaching: false)"))
         #expect(app.contains("restorationBehavior(.disabled)"))
+    }
+
+    @Test("Workspace footer centers only the selected-session summary")
+    func sessionFooterUsesIndependentCenterAndTrailingRegions() throws {
+        let footer = try readProjectFile("Tracexy/Views/Sessions/SessionStatusBar.swift")
+
+        #expect(footer.contains("CenteredStatusFooterLayout(spacing:"))
+        #expect(footer.contains("at: CGPoint(x: bounds.midX, y: bounds.midY)"))
+        #expect(footer.contains("at: CGPoint(x: bounds.maxX, y: bounds.midY)"))
+        #expect(!footer.contains("Spacer(minLength: 24)"))
     }
 
     @Test("Command-F focuses the existing Sessions search without adding a new search surface")

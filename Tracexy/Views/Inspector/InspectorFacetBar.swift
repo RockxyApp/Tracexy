@@ -23,11 +23,13 @@ struct InspectorFacetBar<Accessory: View>: View {
             .layoutPriority(1)
 
             if activeTab == .layers {
+                Spacer(minLength: Theme.Metrics.spacingM)
                 accessory()
             }
         }
         .padding(.horizontal, Theme.Metrics.spacingM)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Private
