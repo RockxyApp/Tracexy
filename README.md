@@ -32,19 +32,21 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.5.0** — 2026-08-24
+**v0.6.0** — 2026-09-02
 
 ### Added
 
-- Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
-- Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
-- Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
+- Navigate retained connection and TLS evidence to the exact cited local frame.
+- Open the selected session in an auxiliary Inspector window that follows the workspace selection.
+
+### Fixed
+
+- Enforce the selected automatic History retention at launch, after a capture is stored, and when the setting changes.
+- Remove duplicated workspace chrome and correct session-control and footer alignment.
 
 ### Changed
 
-- Stream large saved captures off the main UI path and keep complete live-capture session summaries through disk-backed spooling.
-- Refresh the native workspace and Settings with adaptive macOS materials, accessible opaque data surfaces, and responsive window chrome.
-- Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
+- Refine session controls, status, and inspector layout for a clearer native Liquid Glass workspace.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
