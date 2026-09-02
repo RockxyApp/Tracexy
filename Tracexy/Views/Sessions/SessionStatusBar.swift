@@ -63,6 +63,7 @@ nonisolated struct FooterTelemetry: Identifiable, Equatable {
 nonisolated struct FooterSnapshot: Equatable {
     let summary: String
     let telemetry: [FooterTelemetry]
+    let hasSelection: Bool
     /// Present only while a capture is running, so the view can drive the live
     /// duration timer without owning capture state.
     let captureStartedAt: Date?
@@ -316,9 +317,8 @@ struct SessionStatusBar: View {
 
     var body: some View {
         WorkspaceFooterBar(surface: .workspace) {
-            HStack(spacing: 0) {
+            CenteredStatusFooterLayout(spacing: Theme.Metrics.spacingL) {
                 centerSummary
-                Spacer(minLength: 24)
                 telemetryRow
             }
             .padding(.horizontal, Theme.Metrics.spacingL)
@@ -327,19 +327,44 @@ struct SessionStatusBar: View {
 
     // MARK: Private
 
+    /// Health, activity and retention are distinct evidence classes. Dividing
+    /// them inside one rounded footer surface improves scan order without
+    /// merging their meanings or creating nested glass cards.
+    private var telemetryGroups: [[FooterTelemetry]] {
+        let healthKinds: Set<FooterTelemetry.Kind> = [.packetDrops, .helperDrops, .sessionErrors]
+        let retentionKinds: Set<FooterTelemetry.Kind> = [.retentionTruncation]
+        return [
+            snapshot.telemetry.filter { healthKinds.contains($0.kind) },
+            snapshot.telemetry.filter { !healthKinds.contains($0.kind) && !retentionKinds.contains($0.kind) },
+            snapshot.telemetry.filter { retentionKinds.contains($0.kind) },
+        ]
+        .filter { !$0.isEmpty }
+    }
+
     private var centerSummary: some View {
         Text(snapshot.summary)
-            .font(Theme.Typography.chromeSecondary)
-            .foregroundStyle(.secondary)
+            .font(snapshot.hasSelection ? Theme.Typography.chromeAction : Theme.Typography.chromeSecondary)
+            .foregroundStyle(snapshot.hasSelection ? Color.accentColor : Color.secondary)
             .lineLimit(1)
             .truncationMode(.tail)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .tracexyChipStyle(tint: .accentColor, isActive: snapshot.hasSelection)
             .layoutPriority(2)
     }
 
     private var telemetryRow: some View {
-        HStack(spacing: 8) {
-            ForEach(snapshot.telemetry) { item in
-                telemetryChip(item)
+        HStack(spacing: Theme.Metrics.spacingM) {
+            ForEach(Array(telemetryGroups.enumerated()), id: \.offset) { index, group in
+                if index > 0 {
+                    Divider()
+                        .frame(height: 18)
+                }
+                HStack(spacing: Theme.Metrics.spacingM) {
+                    ForEach(group) { item in
+                        telemetryChip(item)
+                    }
+                }
             }
         }
         .lineLimit(1)
@@ -368,6 +393,59 @@ struct SessionStatusBar: View {
         case .error: Color(nsColor: .systemRed)
         case .live: Color(nsColor: .systemGreen)
         }
+    }
+}
+
+// MARK: - CenteredStatusFooterLayout
+
+/// Keeps the read-only session summary on the true horizontal centerline while
+/// telemetry remains trailing. The summary receives a symmetric safe width
+/// based on the telemetry footprint, so the two regions never collide at narrow
+/// window sizes.
+private struct CenteredStatusFooterLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache _: inout ()
+    )
+        -> CGSize
+    {
+        guard subviews.count == 2 else {
+            return .zero
+        }
+        let summary = subviews[0].sizeThatFits(.unspecified)
+        let telemetry = subviews[1].sizeThatFits(.unspecified)
+        return CGSize(
+            width: proposal.width ?? summary.width + (telemetry.width + spacing) * 2,
+            height: proposal.height ?? max(summary.height, telemetry.height)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal _: ProposedViewSize,
+        subviews: Subviews,
+        cache _: inout ()
+    ) {
+        guard subviews.count == 2 else {
+            return
+        }
+        let telemetry = subviews[1].sizeThatFits(.unspecified)
+        let summaryWidth = max(0, bounds.width - (telemetry.width + spacing) * 2)
+        let summaryProposal = ProposedViewSize(width: summaryWidth, height: bounds.height)
+
+        subviews[0].place(
+            at: CGPoint(x: bounds.midX, y: bounds.midY),
+            anchor: .center,
+            proposal: summaryProposal
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.midY),
+            anchor: .trailing,
+            proposal: ProposedViewSize(width: telemetry.width, height: bounds.height)
+        )
     }
 }
 

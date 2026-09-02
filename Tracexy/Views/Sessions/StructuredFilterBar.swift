@@ -31,21 +31,13 @@ struct StructuredFilterBar: View {
             rowsViewport(rules: rules, workspace: workspace)
         }
         .padding(.bottom, 6)
-        .tracexyContentSurface(
-            in: RoundedRectangle(
-                cornerRadius: Theme.Glass.functionalBarCornerRadius,
-                style: .continuous
-            )
-        )
-        .padding(.horizontal, Theme.Glass.functionalBarHorizontalInset)
-        .padding(.bottom, Theme.Glass.functionalBarVerticalInset)
     }
 
     // MARK: Private
 
     private static let enableToggleWidth: CGFloat = 22
-    private static let connectorWidth: CGFloat = 78
-    private static let fieldWidth: CGFloat = 130
+    private static let connectorWidth: CGFloat = 76
+    private static let fieldWidth: CGFloat = 138
     private static let operatorWidth: CGFloat = 138
     /// Above this many rows the builder scrolls instead of growing taller.
     private static let visibleRowCap = 5
@@ -193,9 +185,10 @@ struct StructuredFilterBar: View {
         Button {
             removeRule(workspace, id: rule.wrappedValue.id)
         } label: {
-            Image(systemName: "minus").font(.system(size: Theme.Icon.small))
+            Image(systemName: "minus")
+                .font(.system(size: Theme.Icon.medium, weight: .medium))
         }
-        .buttonStyle(.borderless)
+        .tracexyGlassButtonStyle()
         .controlSize(.small)
         .disabled(workspace.filterRules.count <= 1)
         .help("Remove this rule")
@@ -207,9 +200,10 @@ struct StructuredFilterBar: View {
         return Button {
             addRule(workspace, afterID: rule.wrappedValue.id)
         } label: {
-            Image(systemName: "plus").font(.system(size: Theme.Icon.small))
+            Image(systemName: "plus")
+                .font(.system(size: Theme.Icon.medium, weight: .medium))
         }
-        .buttonStyle(.borderless)
+        .tracexyGlassButtonStyle()
         .controlSize(.small)
         .disabled(atCap)
         .help(atCap
@@ -234,7 +228,7 @@ struct StructuredFilterBar: View {
                 Label("Clear Rules", systemImage: "trash")
             }
         } label: {
-            Label("Presets", systemImage: "chevron.down").labelStyle(.titleAndIcon)
+            Text("Presets")
         }
         .menuStyle(.borderlessButton)
         .controlSize(.small)

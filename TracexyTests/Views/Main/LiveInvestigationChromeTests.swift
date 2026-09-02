@@ -23,7 +23,16 @@ struct LiveInvestigationChromeTests {
         #expect(Set(commands.map(\.id)) == Set(SessionCommandKind.allCases))
         #expect(commands.map(\.priority) == Array(0 ... 8))
         #expect(commands.filter(\.isDestructive).map(\.id) == [.clearCapture])
+        #expect(commands.filter { $0.placement == .immediate }.map(\.id) == [
+            .followLive,
+            .jumpToLatest,
+            .clearCapture,
+        ])
         #expect(commands.filter { $0.placement == .overflow }.map(\.id) == [
+            .investigate,
+            .saveCapture,
+            .newFocusSet,
+            .noiseControl,
             .restoreRemovedSessions,
             .advancedFilters,
         ])

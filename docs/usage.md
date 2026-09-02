@@ -128,13 +128,15 @@ normalized) so both directions of a conversation land in one session. Each sessi
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
 
-The command strip above the filters owns immediate investigation actions: **Follow Live**, **Jump to
-Latest**, **Investigate**, **Clear Capture Data**, **Save Capture**, **New Focus Set**, and **Noise
-Control**. At narrower window widths, the same labelled actions move into **More Session Actions**
-rather than becoming ambiguous icon-only controls. Restoring removed sessions and opening advanced
-filters live in that same overflow. The bottom status bar is intentionally read-only: it reports the
-visible/selected session summary and source, loss, retention, and memory telemetry; it does not mutate
-the capture or filters.
+The first rounded control shelf keeps a stable icon cluster beside search: **Follow Live**, **Jump to
+Latest**, a divider, **Clear Capture Data**, and **More Session Actions**. The order does not change at
+narrower widths; the cluster and search controls stack when needed. Domain and less-frequent actions —
+**Investigate**, **Advanced Filters**, **New Focus Set**, **Save Capture**, **Noise Control**, and
+restoring removed sessions — use labelled sections inside the More menu. Every icon-only command keeps
+an explicit help label and accessibility name. Both rounded shelves span the workspace while their
+commands and protocol filters stay anchored to the sidebar edge. The bottom status bar is intentionally
+read-only: only the visible/selected session summary is centered; source, loss, retention, and memory
+telemetry remains trailing. It does not mutate the capture or filters.
 
 Select a session to enable the toolbar's **Export** menu beside the independent **Start** and inspector
 controls. The same menu is available from the session row's **Export** submenu. **Export Session**
@@ -178,7 +180,8 @@ lowers the confidence and shows the competing names rather than silently guessin
 
 ## Focus sets and filtering
 
-The filter area above the session list has two rows. The **protocol/category pills** narrow by
+The control area above the session list has two rounded surfaces. The first combines the stable command
+cluster with search; the second owns the **protocol/category pills**, which narrow by
 protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN), by evidence-backed **Findings**,
 and by exact status (**Errors**). Selected protocol pills combine with OR, selected
 investigation pills combine with OR, and the two groups combine with AND — so choosing *TCP* and
@@ -193,7 +196,7 @@ coverage information without claiming whole-capture completeness.
 all of its columns, search, advanced rules, grouping, row context actions, selection, and inspector,
 so large finding sets can be narrowed and investigated rather than opened one row at a time.
 
-The **search row** below has an on/off checkbox, a field-scope menu (**All Fields**, Host, Client,
+The **search cluster** in the first surface has an on/off checkbox, a field-scope menu (**All Fields**, Host, Client,
 Protocol, Source, Destination, Summary — default All Fields), a search box with a clear button, an
 **Add Field** button, and the **Group By** menu. All Fields searches the host, client process, protocol
 labels, both endpoints, the info summary, and DNS answers. Turning the search off keeps the typed text
@@ -237,6 +240,20 @@ session carries an application-layer exchange (HTTP, DNS, STUN), a requests face
 opened capture, only the selected session's representative bytes are loaded; changing selection retires
 the previous read and file replacement/truncation is rejected rather than displaying bytes from a stale
 offset.
+
+The selected-session strip keeps the current status, primary protocol, observed process or host, and
+source-to-destination endpoints visible above the inspector facets. A correlated multi-session action
+is labelled there with one non-wrapping **Whole action** badge; selection context never competes with
+the facet tabs. Both rows span the inspector and keep identity and facet labels anchored to the sidebar
+edge; fixed utilities remain trailing. Facet labels stay on one line, preserve their source order, and
+move lower-priority facets into a More menu while keeping the active facet directly visible. Tracexy
+does not manufacture a URL for transport, DNS, TLS, or other sessions that did not yield one as typed
+evidence. The trailing window button opens the same selection-aware inspector in a resizable auxiliary
+window; it follows the
+row selected in the main workspace. On macOS 15 and later, this transient window is excluded from state
+restoration so it does not reopen empty after relaunch. A read-only rounded footer
+partitions the active facet, protocol stack, byte total, and duration without moving capture or filter
+actions into the evidence area.
 
 When retained TCP connection or direct-frame TLS observations exist, the **Evidence** facet merges them
 on the capture's frame-order axis. Reused five-tuples remain separate connection incarnations, while TLS

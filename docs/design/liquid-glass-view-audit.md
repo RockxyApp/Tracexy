@@ -27,7 +27,7 @@ Audited 2026-08-24 against the production `Tracexy/Views` tree and every app sce
 | `Overview/OverviewView.swift` | Native safe-area header and hard scroll edge; no decorative rounded glass behind its title. | Dashboard metrics and findings stay readable content surfaces. |
 | `Sessions/SessionCenterView.swift` | Safe-area filter/control shelf with hard scroll edge. | Native `Table`, empty states and progress notices remain content. |
 | `Sessions/SessionCommandBar.swift` | Adjacent native glass controls share one container; no glass parent behind glass buttons. | No data content. |
-| `Sessions/SessionFilterBar.swift` | One functional filter shelf; native search/pickers plus semantic chips. | Advanced rule values remain standard controls. |
+| `Sessions/SessionFilterBar.swift` | One shared command/filter glass group with separate command, category, and expanded-rule surfaces; native search/pickers plus semantic chips. | Advanced rule values remain standard controls; only repeated row mutation actions use compact glass buttons. |
 | `Sessions/StructuredFilterBar.swift` | Glass add/remove actions and functional preset controls. | Dense rule rows remain opaque content surfaces. |
 | `Sessions/SessionStatusBar.swift` | Read-only telemetry in the workspace glass footer. | No fabricated metrics; semantic colors remain system colors. |
 | `Sessions/InvestigationQueryView.swift` | Safe-area glass header and action footer. | Query rows remain opaque because they carry dense editable data. |
@@ -71,6 +71,8 @@ Audited 2026-08-24 against the production `Tracexy/Views` tree and every app sce
 
 - New functional bars must first prove why a standard toolbar, sidebar, inspector or safe-area bar is insufficient.
 - Never add glass behind packet bytes, table rows, decoded fields, stream payload, settings prose or other dense content.
-- Never nest `glassEffect` or place glass buttons on a custom glass parent; use `TracexyGlassEffectGroup` for adjacent controls.
+- Never nest custom `glassEffect` surfaces. A deliberate control shelf may place native glass buttons
+  inside the same `TracexyGlassEffectGroup`; do not wrap that shelf in `tracexyFunctionalBar()` or add
+  another custom glass-card layer.
 - Every visible text font must resolve through `Theme.Typography` (or the Settings adapter backed by it); direct per-view sizes are reserved for SF Symbols and the app-icon monogram.
 - Every new production view must be added to this inventory and exercised in Light, Dark, Reduce Transparency and Increase Contrast paths.

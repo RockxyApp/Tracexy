@@ -218,31 +218,27 @@ struct MainDetailView: View {
     /// whole subtree, so table selection and scroll position survive every toggle.
     private var sessionArea: some View {
         let workspace = coordinator.activeWorkspace
-        return TracexyGlassEffectGroup(spacing: Theme.Metrics.spacingM) {
-            NativeBottomInspectorSplitView(
-                isInspectorPresented: bottomInspectorPresented,
-                autosaveName: bottomInspectorAutosaveName,
-                primaryMinimumHeight: Theme.Metrics.sessionTableMinHeight,
-                inspectorMinimumHeight: Theme.Metrics.bottomInspectorMinHeight
-            ) {
-                SessionCenterView(coordinator: coordinator)
-            } inspector: {
-                InspectorView(coordinator: coordinator)
-            }
-            .tracexyDenseScrollEdge()
-            .tracexySafeAreaBar(edge: .top) {
-                SessionCommandBar(
-                    descriptors: sessionCommandDescriptors(workspace),
-                    onAction: { performSessionCommand($0, workspace) }
+        return NativeBottomInspectorSplitView(
+            isInspectorPresented: bottomInspectorPresented,
+            autosaveName: bottomInspectorAutosaveName,
+            primaryMinimumHeight: Theme.Metrics.sessionTableMinHeight,
+            inspectorMinimumHeight: Theme.Metrics.bottomInspectorMinHeight
+        ) {
+            SessionCenterView(
+                coordinator: coordinator,
+                commandDescriptors: sessionCommandDescriptors(workspace),
+                onCommandAction: { performSessionCommand($0, workspace) }
+            )
+            .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
+                InvestigationQueryEditorView(
+                    coordinator: coordinator,
+                    workspace: workspace
                 )
-                .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
-                    InvestigationQueryEditorView(
-                        coordinator: coordinator,
-                        workspace: workspace
-                    )
-                }
             }
+        } inspector: {
+            InspectorView(coordinator: coordinator)
         }
+        .tracexyDenseScrollEdge()
     }
 
     @ViewBuilder
@@ -286,6 +282,7 @@ struct MainDetailView: View {
                     hasMore: coordinator.historyCaptureCursor != nil
                 ),
                 telemetry: [],
+                hasSelection: false,
                 captureStartedAt: nil
             )
         }
@@ -322,6 +319,7 @@ struct MainDetailView: View {
         return FooterSnapshot(
             summary: summary,
             telemetry: telemetry,
+            hasSelection: workspace.selectedSessionID != nil,
             captureStartedAt: coordinator.captureStartedAt
         )
     }
@@ -435,7 +433,10 @@ struct CaptureStatusView: View {
             }
         }
         .frame(height: Theme.Metrics.toolbarControlHeight)
-        .tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))
+        // The unified NSToolbar owns the environmental material and elevation.
+        // Keep only the capsule hit geometry here so the hosted SwiftUI content
+        // never draws a second translucent surface over the native toolbar.
+        .contentShape(Capsule(style: .continuous))
     }
 
     // MARK: Private
