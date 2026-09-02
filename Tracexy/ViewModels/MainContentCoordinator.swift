@@ -21,9 +21,17 @@ final class MainContentCoordinator {
     init(
         policy: (any AppPolicy)? = nil,
         layoutPreferences: WorkspaceLayoutPreferences? = nil,
-        sessionStore: SessionStore? = nil
+        sessionStore: SessionStore? = nil,
+        isHistoryDemoMode: Bool = false,
+        historyNow: @escaping @Sendable () -> Date = { Date() },
+        liveCaptureSpool: LiveCaptureSpool? = nil
     ) {
         self.sessionStore = sessionStore
+        self.isHistoryDemoMode = isHistoryDemoMode
+        self.historyNow = historyNow
+        self.liveCaptureSpool = liveCaptureSpool ?? LiveCaptureSpool(
+            directoryName: TracexyIdentity.current.appSupportDirectoryName
+        )
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         focusGate = FocusPolicyGate(
@@ -209,6 +217,16 @@ final class MainContentCoordinator {
     var selectedSessionEvidenceRequestID = 0
     var selectedSessionEvidenceTask: Task<Void, Never>?
 
+    // MARK: Evidence navigation (U2D1)
+
+    // The selected session's presentation-neutral connection/TLS projection and the
+    // one explicitly cited frame, each with its own request/task pipeline. Native
+    // inspector surfaces consume these bounded values without rescanning the immutable
+    // snapshot. Both are retired at every selection/capture/source boundary so stale
+    // evidence can never outlive the selection or source it described.
+    var evidenceProjection = EvidenceProjectionPipeline()
+    var citedFrame = CitedFramePipeline()
+
     /// Explicit, selection-scoped Follow Stream state. Raw application bytes enter
     /// coordinator memory only after the user requests this operation and are
     /// retired at every selection/capture/source boundary.
@@ -235,6 +253,26 @@ final class MainContentCoordinator {
     /// could not open one). It is written to exactly once per terminated live or
     /// opened saved capture; it is never on the live 0.8-second publication path.
     let sessionStore: SessionStore?
+
+    /// True only for the explicit synthetic History launch path. Production
+    /// composition always leaves this false and never sees the demo fixture.
+    let isHistoryDemoMode: Bool
+
+    /// Guards the root launch task from reseeding if SwiftUI remounts the view.
+    var hasPreparedHistoryDemo = false
+
+    /// Injectable wall clock for History age policy. Production uses `Date()`;
+    /// integration tests freeze it so cutoff behavior never depends on timing.
+    let historyNow: @Sendable () -> Date
+
+    /// The currently effective Auto-clear preference. The composition root sets
+    /// it from persisted defaults at launch; Settings updates it synchronously
+    /// before requesting another bounded retention pass.
+    var historyAutoClear: AutoClear = .never
+
+    /// A retention-specific recoverable failure. It is separate from general
+    /// History read/write errors so Settings can explain the exact failed action.
+    var historyRetentionError: String?
 
     /// Durable identity of the *running* live capture, minted once on confirmed
     /// backend start. It is never keyed on the capture generation (which repeats
@@ -281,12 +319,16 @@ final class MainContentCoordinator {
     /// so selecting a capture never cancels capture-list paging and vice versa.
     var historySessionRequestID = 0
     var historySessionTask: Task<Void, Never>?
-    /// At most one terminal write may be scheduled per capture; this handle lets
-    /// tests await the exact write without timing sleeps.
-    var historyWriteTask: Task<Void, Never>?
-    /// Identifies the tail of the serialized terminal-write chain. Only the tail
-    /// may clear the handle and refresh the read model.
-    var historyWriteRequestID = 0
+    /// Serialized tail for every History mutation: terminal writes, automatic
+    /// retention and explicit clear. Keeping one queue prevents a late write from
+    /// reviving rows after a clear or racing a preference-triggered cleanup.
+    var historyMutationTask: Task<Void, Never>?
+    /// Identifies the current mutation tail. Only the tail clears the handle and
+    /// refreshes the read model after all earlier mutations have settled.
+    var historyMutationRequestID = 0
+    /// Invalidates a queued automatic retention pass when the user changes the
+    /// preference again before that pass reaches the store actor.
+    var historyRetentionRequestID = 0
 
     // MARK: Focus Sets
 
@@ -321,9 +363,7 @@ final class MainContentCoordinator {
 
     /// Complete local raw-frame retention for save/export. The in-memory frame
     /// window remains bounded independently for responsive UI.
-    let liveCaptureSpool = LiveCaptureSpool(
-        directoryName: TracexyIdentity.current.appSupportDirectoryName
-    )
+    let liveCaptureSpool: LiveCaptureSpool
     /// Serializes engine access so batches fold in arrival order even though each
     /// call hops onto the engine actor, and so a boundary reset is ordered ahead
     /// of the ingests that follow it.
@@ -341,21 +381,19 @@ final class MainContentCoordinator {
     /// The immutable passive connection-table snapshot for the current capture,
     /// published in lock-step with ``sessions`` behind the same generation guard.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is additive
-    /// evidence adopted alongside the session summaries and reset to an empty
-    /// snapshot at every capture boundary so stale connection state can never
-    /// outlive the capture it described.
+    /// It is additive evidence adopted alongside the session summaries and reset
+    /// to an empty snapshot at every capture boundary so stale connection state
+    /// can never outlive the capture it described.
     private(set) var connectionSnapshot = ConnectionTable.Snapshot.empty
 
     /// The immutable passive connection *analysis* for the current capture,
     /// published in lock-step with ``connectionSnapshot`` and ``sessions`` behind
     /// the same generation guard, and only ever through ``adoptInvestigation``.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is the exact
-    /// N3A2a assessment of ``connectionSnapshot`` — never re-derived on the main
-    /// actor — adopted alongside the session summaries and reset to the empty
-    /// analysis at every capture boundary so stale findings can never outlive the
-    /// capture they described.
+    /// This is the exact N3A2a assessment of ``connectionSnapshot`` — never
+    /// re-derived on the main actor — adopted alongside the session summaries and
+    /// reset to the empty analysis at every capture boundary so stale findings can
+    /// never outlive the capture they described.
     private(set) var connectionAnalysisSnapshot = ConnectionAnalysisSnapshot.empty
 
     /// The immutable passive *datagram* analysis for the current capture, published
@@ -363,11 +401,10 @@ final class MainContentCoordinator {
     /// ``sessions`` behind the same generation guard, and only ever through
     /// ``adoptInvestigation``.
     ///
-    /// Non-visual in this package: no View reads or displays it. It is the exact
-    /// N3B3a assessment of the same fold's datagram evidence — never re-derived on
-    /// the main actor — adopted alongside the connection evidence/analysis and reset
-    /// to the empty analysis at every capture boundary so stale findings can never
-    /// outlive the capture they described.
+    /// This is the exact N3B3a assessment of the same fold's datagram evidence —
+    /// never re-derived on the main actor — adopted alongside the connection
+    /// evidence/analysis and reset to the empty analysis at every capture boundary
+    /// so stale findings can never outlive the capture they described.
     private(set) var datagramAnalysisSnapshot = DatagramAnalysisSnapshot.empty
 
     /// The complete immutable query input matching the currently published sessions
@@ -754,6 +791,7 @@ final class MainContentCoordinator {
         cancelFollowStream(clearResult: true)
         activeWorkspace.selectedSessionID = session.id
         loadSelectedSavedCaptureEvidence()
+        evidenceNavigationDidChangeSelection()
         revealPanelsForSelection()
     }
 
@@ -777,6 +815,7 @@ final class MainContentCoordinator {
         connectionAnalysisSnapshot = snapshot.connectionAnalysis
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
         refreshActiveInvestigationQueries()
+        refreshSelectedSessionEvidenceProjection()
     }
 
     // MARK: Search
@@ -1155,27 +1194,6 @@ final class MainContentCoordinator {
             return
         }
         performStopCapture()
-    }
-
-    /// Top talkers by total bytes, for the dashboard.
-    func topHosts(limit: Int = 5) -> [(host: String, bytes: Int)] {
-        var totals: [String: Int] = [:]
-        for session in visibleSessions {
-            totals[session.host, default: 0] += session.totalBytes
-        }
-        return totals.sorted { $0.value > $1.value }
-            .prefix(limit)
-            .map { (host: $0.key, bytes: $0.value) }
-    }
-
-    func count(for proto: ProtocolKind) -> Int {
-        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
-    }
-
-    /// Whether a session matches a single quick-filter chip. Finding membership
-    /// comes from the already-published Core snapshots, not summary heuristics.
-    func matches(_ session: SessionSummary, category: SessionFilterCategory) -> Bool {
-        Self.categoryMatches(session, category: category, findingSessionIDs: findingSessionIDs)
     }
 
     // MARK: Private

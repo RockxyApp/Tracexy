@@ -8,6 +8,7 @@ struct TracexyApp: App {
 
     static let focusSetEditorWindowID = "focus-set-editor"
     static let noiseControlWindowID = "noise-control"
+    static let sessionInspectorWindowID = "session-inspector"
 
     var body: some Scene {
         WindowGroup {
@@ -89,9 +90,20 @@ struct TracexyApp: App {
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
 
+        SessionInspectorWindowScene(
+            coordinator: coordinator,
+            colorScheme: colorScheme
+        )
+
         Window("Settings", id: "settings") {
-            SettingsView(updater: updater)
-                .preferredColorScheme(colorScheme)
+            SettingsView(
+                updater: updater,
+                historyRetentionError: coordinator.historyRetentionError,
+                isHistoryDemoMode: coordinator.isHistoryDemoMode,
+                onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }
+            )
+            .defaultAppStorage(Self.settingsDefaults)
+            .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 900, height: 640)
         .windowResizability(.contentMinSize)
@@ -99,6 +111,18 @@ struct TracexyApp: App {
     }
 
     // MARK: Private
+
+    /// Demo settings never share the production defaults domain. If Foundation
+    /// cannot create the dedicated suite, demo composition fails closed instead
+    /// of silently writing through `.standard`.
+    private static let isHistoryDemoMode = HistoryDemoLaunchMode.isEnabled()
+    private static let historyDemoDefaults: UserDefaults? = isHistoryDemoMode
+        ? HistoryDemoLaunchMode.freshSettingsDefaults()
+        : nil
+
+    private static var settingsDefaults: UserDefaults {
+        historyDemoDefaults ?? .standard
+    }
 
     /// The single shared coordinator, owned by the app so every scene (main
     /// window + editor/manager windows) reads and mutates the same state.
@@ -121,13 +145,63 @@ struct TracexyApp: App {
     /// failure is isolated here: the app and capture engine start regardless, and
     /// History simply reports itself unavailable.
     private static func composeCoordinator() -> MainContentCoordinator {
+        if isHistoryDemoMode {
+            guard historyDemoDefaults != nil else {
+                let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+                coordinator.historyError = "Synthetic History couldn’t start because its isolated settings store is unavailable."
+                return coordinator
+            }
+            do {
+                return try MainContentCoordinator(
+                    policy: AppPolicyProvider.current,
+                    sessionStore: SessionStore(),
+                    isHistoryDemoMode: true
+                )
+            } catch {
+                let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+                coordinator.historyError = "Synthetic History couldn’t start — \(error.localizedDescription)"
+                return coordinator
+            }
+        }
+
         switch HistoryStoreFactory.production() {
         case let .ready(store):
-            return MainContentCoordinator(policy: AppPolicyProvider.current, sessionStore: store)
+            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current, sessionStore: store)
+            coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
+            return coordinator
         case let .unavailable(reason):
             let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
             coordinator.historyError = reason
+            coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
             return coordinator
+        }
+    }
+}
+
+// MARK: - SessionInspectorWindowScene
+
+/// An opt-in auxiliary inspector that follows the main window's current
+/// selection. It mirrors macOS inspector semantics: choosing another session
+/// updates the panel, while the primary workspace and bottom split stay intact.
+private struct SessionInspectorWindowScene: Scene {
+    let coordinator: MainContentCoordinator
+    let colorScheme: ColorScheme?
+
+    var body: some Scene {
+        let base = Window("Session Inspector", id: TracexyApp.sessionInspectorWindowID) {
+            InspectorView(coordinator: coordinator, allowsDetaching: false)
+                .frame(minWidth: 640, minHeight: 400)
+                .preferredColorScheme(colorScheme)
+        }
+        .commandsRemoved()
+        .defaultSize(width: 1_040, height: 680)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
         }
     }
 }

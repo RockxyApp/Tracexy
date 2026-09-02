@@ -87,6 +87,7 @@ enum Theme {
         static let footerBarHeight: CGFloat = 34
         static let cornerRadius: CGFloat = 8
         static let spacingS: CGFloat = 4
+        static let controlSpacing: CGFloat = 6
         static let spacingM: CGFloat = 8
         static let spacingL: CGFloat = 12
 
@@ -99,7 +100,10 @@ enum Theme {
         // Minimum heights bound the native evidence-split divider; there is no
         // artificial maximum, so the divider drags freely to any height the two
         // minimums allow.
-        static let bottomInspectorMinHeight: CGFloat = 220
+        /// The selected-session identity strip, facet strip and read-only footer
+        /// remain visible without squeezing the evidence body below a useful
+        /// inspection height.
+        static let bottomInspectorMinHeight: CGFloat = 260
         static let sessionTableMinWidth: CGFloat = 420
         static let sessionTableMinHeight: CGFloat = 240
 
@@ -107,9 +111,14 @@ enum Theme {
         static let pillCornerRadius: CGFloat = 6
         static let chipCornerRadius: CGFloat = 4
 
-        // Center toolbar status + software-update badge: one 32pt native control
-        // with a 24pt continuous capsule inset.
+        /// Center toolbar status + software-update badge: one 32pt native control
+        /// with a 24pt continuous capsule inset.
         static let toolbarControlHeight: CGFloat = 32
+        /// The label frame inside a small native glass button. Native button
+        /// insets expand this to a comfortable pointer target; keeping the inner
+        /// square at the approved 27pt rhythm prevents toolbar glyphs from looking
+        /// oversized beside the picker and search field.
+        static let sessionShelfControlLength: CGFloat = 27
         static let updateBadgeHeight: CGFloat = 24
         static let updateBadgeHorizontalPadding: CGFloat = 9
         static let updateBadgeStrokeWidth: CGFloat = 0.75
@@ -245,6 +254,14 @@ enum Theme {
     /// Keeping these values together prevents each screen from inventing its own
     /// translucency, border and corner-radius recipe.
     enum Glass {
+        // Sessions uses the approved two-surface control-shelf geometry: generous
+        // outer breathing room, one shared sampling group and a softer 16pt
+        // continuous corner. Keep these separate from generic functional bars
+        // so inspector and footer chrome retain their denser native metrics.
+        static let sessionShelfCornerRadius: CGFloat = 16
+        static let sessionShelfOuterPadding: CGFloat = 10
+        static let sessionShelfSectionSpacing: CGFloat = 7
+        static let sessionShelfBottomPadding: CGFloat = 4
         static let functionalBarCornerRadius: CGFloat = 12
         static let functionalBarHorizontalInset: CGFloat = 7
         static let functionalBarVerticalInset: CGFloat = 5
@@ -255,6 +272,7 @@ enum Theme {
 
         static let neutralFillOpacity = 0.06
         static let hoverFillOpacity = 0.10
+        static let activeStrokeOpacity = 0.55
         static let semanticFillOpacity = 0.14
         static let semanticHoverFillOpacity = 0.20
         static let semanticStrokeOpacity = 0.34

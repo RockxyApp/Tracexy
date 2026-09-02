@@ -255,6 +255,10 @@ extension MainContentCoordinator {
         isLoadingSelectedSessionEvidence = false
         selectedSessionEvidenceError = nil
 
+        // A capture/source/clear/new-open boundary also retires the evidence-navigation
+        // projection and any raw cited-frame state so neither outlives its source.
+        clearEvidenceNavigation()
+
         if clearPublishedEvidence {
             savedCaptureEvidence = [:]
             savedCaptureEvidenceURL = nil
@@ -415,6 +419,9 @@ extension MainContentCoordinator {
         selectSidebarItem(.sessions)
         followLatestVisibleSession(acceptedSessionIDs: Set(sessions.map(\.id)))
         loadSelectedSavedCaptureEvidence()
+        // The auto-followed selection was set after `adoptInvestigation` above, so
+        // rebuild the projection for whatever row Follow Live landed on.
+        refreshSelectedSessionEvidenceProjection()
 
         // The single saved History write hook: only after both the request and
         // start-generation guards above passed and the result was atomically

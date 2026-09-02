@@ -497,6 +497,55 @@ struct SessionStoreTests {
         #expect(try await store.captures(after: nil, limit: 500).captures.count == 2)
     }
 
+    @Test("Cancellation mid-retention rolls back every prior delete")
+    func retentionCancellationRollsBack() async throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        // Fire on the third armed gate call: pre-begin, the index-0 check (after
+        // which capture 0 is deleted), then the index-1 check cancels.
+        let gate = CancellationGate(cancelOnCall: 3)
+        let store = try SessionStore(configuration: .init(
+            location: .file(url),
+            isCancelled: { gate.shouldCancel() }
+        ))
+        let captures = try await Self.seedCaptures(store, endedAtSessionCounts: [
+            (1_000, 2), (1_001, 3), (1_002, 1),
+        ])
+        gate.arm()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await store.applyRetention(HistoryRetentionPolicy(maxCaptureCount: 0))
+        }
+
+        // At least one delete ran before cancellation, but the transaction rolled
+        // back, so every capture survives untouched.
+        let remaining = try await store.captures(after: nil, limit: 500)
+        #expect(Set(remaining.captures.map(\.record.captureID)) == Set(captures))
+    }
+
+    @Test("A retention fault after at least one delete rolls back the whole batch")
+    func retentionFaultRollsBack() async throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let faulting = FaultBox()
+        let store = try SessionStore(configuration: .init(
+            location: .file(url),
+            faultInjection: { faulting.code(for: $0) }
+        ))
+        let captures = try await Self.seedCaptures(store, endedAtSessionCounts: [
+            (1_000, 2), (1_001, 3), (1_002, 1),
+        ])
+
+        // Delete index 0 succeeds; the fault fires at index 1, mid-transaction.
+        faulting.arm(stage: .retentionDelete(index: 1), code: 13)
+        await #expect(throws: HistoryStoreError.diskFull) {
+            _ = try await store.applyRetention(HistoryRetentionPolicy(maxCaptureCount: 0))
+        }
+
+        let remaining = try await store.captures(after: nil, limit: 500)
+        #expect(Set(remaining.captures.map(\.record.captureID)) == Set(captures))
+    }
+
     // MARK: Internal — handle cleanup
 
     @Test("Data persists across store instances, proving the handle is released")

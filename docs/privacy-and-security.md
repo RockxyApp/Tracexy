@@ -27,8 +27,10 @@ fields with a fixed placeholder. The document records the applied protections as
 metadata. A version-1 document with packet bytes is produced only when every protection is disabled.
 
 These controls do not sanitize raw pcap/pcapng files. Use the warning as a hard trust boundary: export
-those formats only when you intend to handle the result as sensitive evidence. Automatic retention
-cleanup remains planned; the Auto-clear choice currently records intent only.
+those formats only when you intend to handle the result as sensitive evidence. The **Auto-clear**
+choice applies only to bounded summaries in the local History database. Tracexy enforces it at launch,
+after accepting a terminal capture into History, and when the choice changes; it never deletes raw
+pcap/pcapng files, the live spool, exports, or the current workspace.
 
 ## The privileged helper and trust boundary
 
@@ -40,7 +42,7 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   command execution, shell, or file access. Frames are drained as typed `NSSecureCoding` objects
   (`FrameBatchMessage`/`CapturedFrameMessage`) with the secure-coding class allow-list configured on
   both endpoints; the app validates every field defensively and rejects malformed metadata rather than
-  trusting it. This is protocol **v2** — an older v1 helper is classified incompatible and Start is
+  trusting it. This is protocol **v4** — an older helper is classified incompatible and Start is
   gated with an update prompt, never silently downgraded to an untyped drain.
 - **Bidirectional code-sign validation.** The helper validates every connecting caller (signing-team
   match with a certificate-chain fallback, plus a bundle-identity allowlist checked against the

@@ -161,6 +161,16 @@ actor LiveCaptureSpool {
         guard epoch == self.epoch else {
             throw Failure.staleEvidence
         }
+        return try readCurrentSource(locator, capturedLength: capturedLength)
+    }
+
+    /// Read one locator from the spool source that is current now, regardless of
+    /// the coordinator generation used to publish it. Stopping a capture advances
+    /// the coordinator generation without replacing the spool; the opaque source
+    /// token remains the authority for whether a locator still belongs here.
+    /// A reset mints a new token, so evidence from every superseded spool still
+    /// fails as stale before any offset is read.
+    func readCurrentSource(_ locator: SessionEvidenceLocator, capturedLength: Int) throws -> [UInt8] {
         guard let token = sourceToken, locator.sourceToken == token else {
             throw Failure.staleEvidence
         }

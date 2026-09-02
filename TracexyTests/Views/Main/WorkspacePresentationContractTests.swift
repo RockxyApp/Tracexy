@@ -57,19 +57,87 @@ struct WorkspacePresentationContractTests {
         #expect(table.contains("struct ContextInspectorFullRow"))
     }
 
+    @Test("Connection and TLS navigation keeps literal evidence below and compact context at right")
+    func evidenceNavigationKeepsInspectorOwnership() throws {
+        let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+        let timeline = try readProjectFile("Tracexy/Views/Inspector/SessionEvidenceTimelineView.swift")
+        let details = try readProjectFile("Tracexy/Views/Inspector/ContextDockView.swift")
+        let summary = try readProjectFile("Tracexy/Views/Inspector/SessionEvidenceContextSummaryView.swift")
+
+        #expect(inspector.contains("case .evidence: sessionEvidence(session)"))
+        #expect(inspector.contains("Cited frame"))
+        #expect(inspector.contains("coordinator.cancelCitedFrame()"))
+        #expect(timeline.contains("Capture-level:"))
+        #expect(timeline.contains("No replacement frame was loaded"))
+        #expect(details.contains("SessionEvidenceContextSummaryView"))
+        #expect(summary.contains("Button(\"Open Evidence\")"))
+        #expect(!summary.contains("SessionEvidenceItem.timeline"))
+    }
+
+    @Test("Layers keeps decode filtering compact when a cited-frame scope is visible")
+    func citedLayersKeepVerticalViewport() throws {
+        let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+        let facets = try readProjectFile("Tracexy/Views/Inspector/InspectorFacetBar.swift")
+
+        #expect(inspector.contains("private var layerFilterControl: some View"))
+        #expect(facets.contains("if activeTab == .layers"))
+        #expect(inspector.contains(".frame(minWidth: 180, idealWidth: 240, maxWidth: 280)"))
+        #expect(inspector.contains(".accessibilityLabel(\"Filter decoded fields\")"))
+        #expect(inspector.contains("InspectorFacetBar("))
+        #expect(facets.contains("private func tabTier("))
+        #expect(facets.contains("private func directlyVisibleTabs("))
+        #expect(facets.contains("ViewThatFits(in: .horizontal)"))
+        #expect(facets.contains(".fixedSize(horizontal: true, vertical: false)"))
+        #expect(facets.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(facets.contains("Spacer(minLength: Theme.Metrics.spacingM)"))
+        #expect(inspector.contains("private func activityScopeBadge("))
+        #expect(!inspector.contains("ScrollView(.horizontal, showsIndicators: false)"))
+        #expect(!inspector.contains("scopeLabel("))
+        #expect(!facets.contains("private func tabButtons("))
+        #expect(inspector.contains("private func inspectorChrome("))
+        #expect(inspector.contains("the decode and hex panes begin strictly below it"))
+        #expect(inspector.contains(".background(Color(nsColor: .windowBackgroundColor))"))
+        #expect(!inspector.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(!inspector.contains("fieldFilterRow"))
+        #expect(!inspector.contains("supportsFieldFilter"))
+    }
+
     @Test("Shared workspace chrome adopts the Liquid Glass policy without replacing native data controls")
     func workspaceUsesSharedGlassPolicy() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
         let commandBar = try readProjectFile("Tracexy/Views/Sessions/SessionCommandBar.swift")
         let filters = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
+        let structuredFilters = try readProjectFile("Tracexy/Views/Sessions/StructuredFilterBar.swift")
         let sessions = try readProjectFile("Tracexy/Views/Sessions/SessionCenterView.swift")
         let footer = try readProjectFile("Tracexy/Views/Common/WorkspaceFooterBar.swift")
 
-        #expect(root.contains("TracexyGlassEffectGroup"))
-        #expect(commandBar.contains("TracexyGlassEffectGroup"))
+        #expect(root.contains("commandDescriptors: sessionCommandDescriptors(workspace)"))
+        #expect(root.contains("onCommandAction: { performSessionCommand($0, workspace) }"))
+        #expect(!commandBar.contains("TracexyGlassEffectGroup"))
+        #expect(!commandBar.contains(".tracexyGlassEffect"))
         #expect(commandBar.contains(".tracexyGlassButtonStyle()"))
+        #expect(commandBar.contains(".font(.system(size: Theme.Icon.medium, weight: .medium))"))
+        #expect(commandBar.contains("Theme.Metrics.sessionShelfControlLength"))
         #expect(!commandBar.contains(".tracexyFunctionalBar()"))
-        #expect(filters.contains(".tracexyFunctionalBar()"))
+        #expect(filters.contains("TracexyGlassEffectGroup"))
+        #expect(filters.contains(".tracexyGlassEffect(in: shape)"))
+        #expect(filters.contains("SessionCommandBar("))
+        #expect(filters.contains("private func commandAndSearchRow("))
+        #expect(filters.contains("Theme.Glass.sessionShelfCornerRadius"))
+        #expect(filters.contains("Theme.Glass.sessionShelfSectionSpacing"))
+        #expect(filters.contains("Theme.Glass.sessionShelfOuterPadding"))
+        #expect(filters.contains(".tracexyGlassButtonStyle()"))
+        #expect(filters.contains("StructuredFilterBar(coordinator: coordinator)"))
+        #expect(filters.contains(".transition(.move(edge: .top).combined(with: .opacity))"))
+        #expect(!filters.contains(".tracexyFunctionalBar()"))
+        #expect(structuredFilters.contains("ViewThatFits(in: .horizontal)"))
+        #expect(structuredFilters.contains(".tracexyGlassButtonStyle()"))
+        #expect(structuredFilters.contains(".disabled(workspace.filterRules.count <= 1)"))
+        #expect(structuredFilters.contains("workspace.filterRules.count >= maxRules"))
+        #expect(structuredFilters.contains("Text(\"Presets\")"))
+        #expect(!structuredFilters.contains("Label(\"Presets\", systemImage: \"chevron.down\")"))
+        #expect(!structuredFilters.contains(".tracexyContentSurface("))
+        #expect(!sessions.contains("StructuredFilterBar(coordinator: coordinator)"))
         #expect(footer.contains(".tracexyGlassEffect("))
         #expect(sessions.contains("Table("))
         #expect(!sessions.contains("LazyVGrid"))
@@ -114,13 +182,14 @@ struct WorkspacePresentationContractTests {
         let evidence = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
         let sessions = try readProjectFile("Tracexy/Views/Sessions/SessionCenterView.swift")
 
-        #expect(root.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(!root.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(root.contains(".tracexySafeAreaBar(edge: .bottom)"))
         #expect(sidebar.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(sidebar.contains(".tracexySafeAreaBar(edge: .bottom)"))
         #expect(details.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(details.contains(".tracexySafeAreaBar(edge: .bottom)"))
-        #expect(evidence.contains(".tracexySafeAreaBar(edge: .top)"))
+        #expect(evidence.contains("private func inspectorChrome("))
+        #expect(!evidence.contains(".tracexySafeAreaBar(edge: .top)"))
         #expect(sessions.contains(".tracexySafeAreaBar(edge: .top)"))
     }
 
@@ -151,17 +220,72 @@ struct WorkspacePresentationContractTests {
         #expect(chrome.contains("Self.sidebarTrackingSeparatorIdentifier,\n            Self.interfacePickerIdentifier"))
     }
 
+    @Test("Capture status uses the native toolbar as its only visible surface")
+    func captureStatusUsesSingleNativeSurface() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+
+        #expect(root.contains("struct CaptureStatusView: View"))
+        #expect(root.contains("showsReadiness.toggle()"))
+        #expect(root.contains(".contentShape(Capsule(style: .continuous))"))
+        #expect(root.contains(".popover(isPresented: $showsReadiness"))
+        #expect(root.contains(".help(statusHelp)"))
+        #expect(root.contains(".accessibilityLabel(\"Capture Readiness\")"))
+        #expect(root.contains(".accessibilityValue(statusText)"))
+        #expect(!root.contains(".tracexyGlassEffect(interactive: true, in: Capsule(style: .continuous))"))
+    }
+
     @Test("Session search keeps the native control rhythm with Tracexy field semantics")
     func sessionSearchUsesResponsiveNativeControls() throws {
         let source = try readProjectFile("Tracexy/Views/Sessions/SessionFilterBar.swift")
 
         #expect(source.contains("ViewThatFits(in: .horizontal)"))
+        #expect(source.contains("private func commandAndSearchRow("))
+        #expect(source.contains("SessionCommandBar("))
+        #expect(source.contains("Theme.Glass.sessionShelfCornerRadius"))
+        #expect(source.contains("Theme.Glass.sessionShelfOuterPadding"))
         #expect(source.contains("pickerWidth: 130, showsAddFieldTitle: true"))
         #expect(source.contains("pickerWidth: 100, showsAddFieldTitle: false"))
         #expect(source.contains(".frame(minWidth: 220, maxWidth: .infinity)"))
         #expect(source.contains("Label(\"Add Field\", systemImage: \"plus\")"))
         #expect(source.contains(".accessibilityLabel(\"Search field\")"))
         #expect(source.contains(".accessibilityLabel(\"Add field\")"))
+        #expect(source.contains("categoryTier(workspace, visibleProtocolCount:"))
+        #expect(source.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(source.contains("Spacer(minLength: Theme.Metrics.spacingM)"))
+        #expect(source.contains("\"ellipsis.circle.fill\""))
+        #expect(source.contains(".accessibilityLabel(\"More session filters\")"))
+        #expect(!source.contains("ScrollView(.horizontal, showsIndicators: false)"))
+    }
+
+    @Test("The evidence inspector exposes selected identity, segmented footer and an auxiliary window")
+    func evidenceInspectorUsesApprovedRegionsWithoutInventingURLs() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let inspector = try readProjectFile("Tracexy/Views/Inspector/InspectorView.swift")
+
+        #expect(inspector.contains("private func sessionIdentityBar("))
+        #expect(inspector.contains("private func activityScopeBadge("))
+        #expect(inspector.contains("Label(\"Whole action\", systemImage: \"rectangle.3.group\")"))
+        #expect(inspector.contains("session.sourceEndpoint) → \\(session.destinationEndpoint"))
+        #expect(inspector.contains("private func inspectorFooter("))
+        #expect(inspector.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        #expect(inspector.contains("WorkspaceFooterBar(surface: .workspace)"))
+        #expect(inspector.contains("macwindow.on.rectangle"))
+        #expect(inspector.contains("TracexyApp.sessionInspectorWindowID"))
+        #expect(!inspector.contains("https://\\(session.host)"))
+        #expect(app.contains("static let sessionInspectorWindowID = \"session-inspector\""))
+        #expect(app.contains("Window(\"Session Inspector\""))
+        #expect(app.contains("InspectorView(coordinator: coordinator, allowsDetaching: false)"))
+        #expect(app.contains("restorationBehavior(.disabled)"))
+    }
+
+    @Test("Workspace footer centers only the selected-session summary")
+    func sessionFooterUsesIndependentCenterAndTrailingRegions() throws {
+        let footer = try readProjectFile("Tracexy/Views/Sessions/SessionStatusBar.swift")
+
+        #expect(footer.contains("CenteredStatusFooterLayout(spacing:"))
+        #expect(footer.contains("at: CGPoint(x: bounds.midX, y: bounds.midY)"))
+        #expect(footer.contains("at: CGPoint(x: bounds.maxX, y: bounds.midY)"))
+        #expect(!footer.contains("Spacer(minLength: 24)"))
     }
 
     @Test("Command-F focuses the existing Sessions search without adding a new search surface")

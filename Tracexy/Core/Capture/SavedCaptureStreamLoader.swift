@@ -96,6 +96,54 @@ nonisolated enum CaptureEvidenceReader {
     }
 }
 
+// MARK: - CitedFrameReferenceError
+
+/// Why an exact cited-frame reference could not be constructed for a saved source.
+/// Both cases are controlled, presentation-neutral failures: neither carries a path
+/// or the internal source token, so error text derived from them exposes neither.
+nonisolated enum CitedFrameReferenceError: Error, Equatable {
+    /// The provenance carried no locator, so there is no exact frame to cite. A
+    /// caller treats this as an explicit unavailable state, never a fallback read.
+    case missingLocator
+    /// The locator's source token was not minted from the currently adopted file
+    /// identity — a locator from a different or replaced source.
+    case sourceTokenMismatch
+}
+
+extension SavedCaptureStreamLoader {
+    /// Build the exact ``CaptureEvidenceReference`` for one cited frame, but only
+    /// after validating that the provenance locator's source token was minted from
+    /// `identity` (the currently adopted file). The frame coordinates come straight
+    /// from the provenance the fold already retained.
+    ///
+    /// This validates *source identity* only; the byte-level identity/length/overrun
+    /// checks still happen in ``CaptureEvidenceReader/read(_:from:maxCapturedLength:)``
+    /// when the reference is read, so a replaced, truncated or short file is caught
+    /// there. Constructs no reference and reads nothing on a wrong token or an
+    /// absent locator.
+    static func citedEvidenceReference(
+        for provenance: SessionFrameProvenance,
+        matching identity: PcapFileIdentity
+    )
+        throws -> CaptureEvidenceReference
+    {
+        guard let locator = provenance.locator else {
+            throw CitedFrameReferenceError.missingLocator
+        }
+        guard locator.sourceToken == sourceToken(for: identity) else {
+            throw CitedFrameReferenceError.sourceTokenMismatch
+        }
+        return CaptureEvidenceReference(
+            identity: identity,
+            payloadOffset: locator.offset,
+            capturedLength: provenance.capturedLength,
+            originalLength: provenance.originalLength,
+            timestamp: provenance.timestamp,
+            linkType: provenance.linkType
+        )
+    }
+}
+
 // MARK: - CaptureLoadCompleteness
 
 /// Whether the saved-open walk reached the file's end cleanly, or stopped on a
@@ -221,6 +269,22 @@ nonisolated final class SavedCaptureStreamLoader {
         let isCancelled: @Sendable () -> Bool
     }
 
+    /// A deterministic, opaque source token derived only from the opened file's
+    /// identity. Two loads of the same unchanged file yield the same token; a
+    /// replaced or resized file yields a different one. It carries no path and no
+    /// bytes — it only lets a consumer holding the same capture-local identity
+    /// correlate an evidence locator's offset back to this file.
+    ///
+    /// Internal so an evidence consumer holding the currently adopted file identity
+    /// can validate that a locator's source token was minted from *this* file before
+    /// resolving it (see ``citedEvidenceReference(for:matching:)``).
+    static func sourceToken(for identity: PcapFileIdentity) -> UUID {
+        SessionBuilder.stableID(
+            "savedsource|\(identity.size)|\(identity.device)|\(identity.inode)"
+                + "|\(identity.modifiedAt?.timeIntervalSince1970 ?? -1)"
+        )
+    }
+
     /// Fold the entire file into one result.
     ///
     /// - Parameter onProgress: coalesced, monotonic byte-progress callbacks. Never
@@ -297,18 +361,6 @@ nonisolated final class SavedCaptureStreamLoader {
 
     private let configuration: Configuration
     private let reader: CaptureStreamReader
-
-    /// A deterministic, opaque source token derived only from the opened file's
-    /// identity. Two loads of the same unchanged file yield the same token; a
-    /// replaced or resized file yields a different one. It carries no path and no
-    /// bytes — it only lets a consumer holding the same capture-local identity
-    /// correlate an evidence locator's offset back to this file.
-    private static func sourceToken(for identity: PcapFileIdentity) -> UUID {
-        SessionBuilder.stableID(
-            "savedsource|\(identity.size)|\(identity.device)|\(identity.inode)"
-                + "|\(identity.modifiedAt?.timeIntervalSince1970 ?? -1)"
-        )
-    }
 
     /// Drive the reader to its terminal, folding each frame exactly once. Kept
     /// separate so `load` reads as open → walk → finalize.

@@ -50,6 +50,138 @@ struct HistoryIntegrationTests {
         #expect(coordinator.historyCaptureCursor == nil)
     }
 
+    // MARK: Synthetic demo composition
+
+    @Test("Demo preparation seeds the injected store and opens History")
+    func demoPreparationSeedsAndNavigates() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = try SessionStore()
+        let coordinator = MainContentCoordinator(
+            sessionStore: store,
+            isHistoryDemoMode: true,
+            historyNow: { now }
+        )
+
+        await coordinator.prepareHistoryDemo()
+        await coordinator.waitForHistory()
+
+        #expect(coordinator.hasPreparedHistoryDemo)
+        #expect(coordinator.activeWorkspace.sidebarSelection == .history)
+        #expect(coordinator.historyAvailability == .loaded)
+        #expect(coordinator.historyCaptures.count == 4)
+        #expect(coordinator.historyCaptures.map(\.sessionCount) == [3, 2, 4, 2])
+        #expect(coordinator.historyAutoClear == .never)
+    }
+
+    @Test("Demo preparation is inert outside the explicit launch mode")
+    func demoPreparationCannotTouchProductionComposition() async throws {
+        let store = try SessionStore()
+        let existing = Self.historyCapture(startedAt: 1_000, endedAt: 2_000)
+        try await store.replaceCapture(existing, sessions: [])
+        let coordinator = MainContentCoordinator(sessionStore: store)
+
+        await coordinator.prepareHistoryDemo()
+
+        #expect(!coordinator.hasPreparedHistoryDemo)
+        #expect(coordinator.activeWorkspace.sidebarSelection == .sessions)
+        #expect(try await store.capture(id: existing.captureID) != nil)
+    }
+
+    // MARK: Automatic retention lifecycle
+
+    @Test("Launch retention deletes only captures strictly older than the deterministic cutoff")
+    func launchRetentionUsesStrictCutoff() async throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let store = try SessionStore()
+        let old = Self.historyCapture(startedAt: 1_098, endedAt: 1_099)
+        let exact = Self.historyCapture(startedAt: 1_099, endedAt: 1_100)
+        let recent = Self.historyCapture(startedAt: 1_100, endedAt: 1_101)
+        for capture in [old, exact, recent] {
+            try await store.replaceCapture(capture, sessions: [])
+        }
+
+        let coordinator = MainContentCoordinator(sessionStore: store, historyNow: { now })
+        coordinator.configureHistoryAutoClear(.minutes15)
+        await coordinator.waitForHistory()
+
+        #expect(try await store.capture(id: old.captureID) == nil)
+        #expect(try await store.capture(id: exact.captureID) != nil)
+        #expect(try await store.capture(id: recent.captureID) != nil)
+        #expect(coordinator.historyCaptures.map(\.id) == [recent.captureID, exact.captureID])
+    }
+
+    @Test("Changing Auto-clear applies immediately while Never invalidates queued cleanup")
+    func preferenceChangeAppliesAndNeverInvalidatesQueuedWork() async throws {
+        let now = Date(timeIntervalSince1970: 5_000)
+        let store = try SessionStore()
+        let first = Self.historyCapture(startedAt: 999, endedAt: 1_000)
+        try await store.replaceCapture(first, sessions: [])
+        let coordinator = MainContentCoordinator(sessionStore: store, historyNow: { now })
+
+        // Both calls occur on MainActor before the queued task can resolve its
+        // guarded policy. `.never` therefore makes the stale 15-minute pass inert.
+        coordinator.configureHistoryAutoClear(.minutes15)
+        coordinator.configureHistoryAutoClear(.never)
+        await coordinator.waitForHistory()
+        #expect(try await store.capture(id: first.captureID) != nil)
+
+        coordinator.configureHistoryAutoClear(.hour1)
+        await coordinator.waitForHistory()
+        #expect(try await store.capture(id: first.captureID) == nil)
+    }
+
+    @Test("A terminal write commits before the current Auto-clear policy prunes History")
+    func terminalWriteThenRetentionOrdering() async throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let store = try SessionStore()
+        let coordinator = MainContentCoordinator(sessionStore: store, historyNow: { now })
+        coordinator.configureHistoryAutoClear(.minutes15)
+        await coordinator.waitForHistory()
+
+        let old = Self.historyCapture(startedAt: 999, endedAt: 1_000)
+        try await store.replaceCapture(old, sessions: [])
+        let recentID = UUID()
+        coordinator.scheduleHistoryWrite(
+            store: store,
+            input: HistoryRecordProjection.Input(
+                captureID: recentID,
+                startedAt: 1_499,
+                endedAt: 1_500,
+                sourceKind: .live,
+                completeness: .complete,
+                sessions: [Self.summary()],
+                maskIPAddresses: false
+            )
+        )
+        await coordinator.waitForHistory()
+
+        #expect(try await store.capture(id: old.captureID) == nil)
+        #expect(try await store.capture(id: recentID) != nil)
+        #expect(coordinator.historyCaptures.map(\.id) == [recentID])
+    }
+
+    @Test("Retention failure stays History-specific and preserves the selected preference")
+    func retentionFailureIsVisibleAndIsolated() async throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let writer = try SessionStore(configuration: .init(location: .file(url)))
+        let reader = try SessionStore(configuration: .init(location: .file(url), readOnly: true))
+        let coordinator = MainContentCoordinator(
+            sessionStore: reader,
+            historyNow: { Date(timeIntervalSince1970: 2_000) }
+        )
+
+        coordinator.configureHistoryAutoClear(.minutes15)
+        await coordinator.waitForHistory()
+
+        #expect(coordinator.historyAutoClear == .minutes15)
+        #expect(coordinator.historyRetentionError?.contains("Auto-clear couldn’t update") == true)
+        #expect(coordinator.historyNotice == coordinator.historyRetentionError)
+        #expect(coordinator.captureError == nil)
+        #expect(coordinator.sessions.isEmpty)
+        withExtendedLifetime(writer) {}
+    }
+
     // MARK: Live terminal mapping
 
     @Test("A terminal live publication persists exactly one live capture and refreshes the read model")
@@ -200,7 +332,7 @@ struct HistoryIntegrationTests {
 
         #expect(try await store.capture(id: firstID) != nil)
         #expect(try await store.capture(id: secondID) != nil)
-        #expect(coordinator.historyWriteTask == nil)
+        #expect(coordinator.historyMutationTask == nil)
         #expect(coordinator.historyCaptures.count == 2)
     }
 
@@ -365,6 +497,30 @@ struct HistoryIntegrationTests {
         #expect(try await store.captures(after: nil, limit: 500).captures.isEmpty)
     }
 
+    @Test("Explicit clear waits for a pending terminal write and removes its committed row")
+    func clearSerializesAfterPendingWrite() async throws {
+        let store = try SessionStore()
+        let coordinator = MainContentCoordinator(sessionStore: store)
+        coordinator.scheduleHistoryWrite(
+            store: store,
+            input: HistoryRecordProjection.Input(
+                captureID: UUID(),
+                startedAt: 1,
+                endedAt: 2,
+                sourceKind: .live,
+                completeness: .complete,
+                sessions: [Self.summary()],
+                maskIPAddresses: false
+            )
+        )
+        coordinator.clearAllHistory()
+        await coordinator.waitForHistory()
+
+        #expect(try await store.captures(after: nil, limit: 500).captures.isEmpty)
+        #expect(coordinator.historyCaptures.isEmpty)
+        #expect(coordinator.historyAvailability == .loaded)
+    }
+
     @Test("Selecting a capture loads its bounded ordinal session page")
     func selectionLoadsSessions() async throws {
         let store = try SessionStore()
@@ -511,6 +667,22 @@ struct HistoryIntegrationTests {
             latencyMilliseconds: 12.5,
             bytesUp: 100,
             bytesDown: 200
+        )
+    }
+
+    private static func historyCapture(
+        captureID: UUID = UUID(),
+        startedAt: Double,
+        endedAt: Double
+    )
+        -> HistoryCaptureRecord
+    {
+        HistoryCaptureRecord(
+            captureID: captureID,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            sourceKind: .live,
+            completeness: .complete
         )
     }
 

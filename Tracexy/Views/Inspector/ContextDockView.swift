@@ -161,6 +161,16 @@ struct ContextDockView: View {
                             }
                         }
 
+                        if let evidence = selectedEvidence(for: session) {
+                            SessionEvidenceContextSummaryView(selection: evidence) {
+                                let workspace = coordinator.activeWorkspace
+                                workspace.inspectorTab = .evidence
+                                if workspace.inspectorLayout == .hidden {
+                                    coordinator.toggleInspectorBottom()
+                                }
+                            }
+                        }
+
                         // State B leads with how the action spent its time; state A
                         // has a single span, so its own layer's facts lead instead.
                         if let activity, activity.sessions.count > 1 {
@@ -260,6 +270,18 @@ struct ContextDockView: View {
                     detail: finding.subtitle,
                     color: finding.severity.tint
                 )
+                if !finding.citedFrames.isEmpty {
+                    ContextInspectorFullRow {
+                        Menu("Inspect Citation") {
+                            ForEach(Array(finding.citedFrames.enumerated()), id: \.offset) { _, provenance in
+                                Button("Frame \(provenance.ordinal.rawValue.formatted())") {
+                                    inspectCitation(provenance, for: session)
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
             }
         }
     }
@@ -568,6 +590,24 @@ struct ContextDockView: View {
         case .tls: "TLS handshake"
         case .tcp: "TCP connect"
         default: proto.label
+        }
+    }
+
+    private func selectedEvidence(for session: SessionSummary) -> SessionEvidenceSelection? {
+        guard let selection = coordinator.evidenceProjection.selection,
+              selection.sessionID == session.id else
+        {
+            return nil
+        }
+        return selection
+    }
+
+    private func inspectCitation(_ provenance: SessionFrameProvenance, for session: SessionSummary) {
+        coordinator.inspectCitedFrame(sessionID: session.id, provenance: provenance)
+        let workspace = coordinator.activeWorkspace
+        workspace.inspectorTab = .layers
+        if workspace.inspectorLayout == .hidden {
+            coordinator.toggleInspectorBottom()
         }
     }
 

@@ -66,6 +66,85 @@ extension MainContentCoordinator {
     /// One ordinal-ascending session page size; well within the store's bound.
     static let historySessionPageSize = 200
 
+    /// The most relevant recoverable History notice. Retention has precedence so
+    /// the Privacy pane and History surface can explain the action the user most
+    /// recently requested without overwriting unrelated read/write diagnostics.
+    var historyNotice: String? {
+        historyRetentionError ?? historyError
+    }
+
+    /// Dismiss the currently visible History notice wherever it is presented.
+    func dismissHistoryNotice() {
+        if historyRetentionError != nil {
+            historyRetentionError = nil
+        } else {
+            historyError = nil
+        }
+    }
+
+    // MARK: Synthetic demo preparation
+
+    /// Reset the explicitly injected in-memory demo store, then navigate to the
+    /// populated History surface. Production composition never enables this path.
+    /// The launch guard makes a SwiftUI task remount inert instead of replacing a
+    /// demo state the operator is actively testing.
+    func prepareHistoryDemo() async {
+        guard isHistoryDemoMode, !hasPreparedHistoryDemo else {
+            return
+        }
+        hasPreparedHistoryDemo = true
+        guard let store = sessionStore else {
+            historyError = "Synthetic History is unavailable because no isolated store was composed."
+            historyAvailability = .unavailable
+            return
+        }
+
+        do {
+            try await HistoryDemoFixture.reset(into: store, now: historyNow())
+            historyError = nil
+            historyRetentionError = nil
+            activeWorkspace.sidebarSelection = .history
+            refreshHistory()
+        } catch {
+            let message = "Couldn’t prepare synthetic History — \(Self.describe(error))"
+            historyError = message
+            historyAvailability = .failed(message)
+            activeWorkspace.sidebarSelection = .history
+        }
+    }
+
+    // MARK: Automatic retention policy
+
+    /// Adopt the persisted/user-selected policy and immediately evaluate it at a
+    /// documented lifecycle boundary. `.never` invalidates queued automatic work
+    /// but never attempts to undo a retention transaction that already began.
+    func configureHistoryAutoClear(_ selection: AutoClear) {
+        historyAutoClear = selection
+        historyRetentionError = nil
+        historyRetentionRequestID &+= 1
+        guard selection.retentionInterval != nil else {
+            return
+        }
+        scheduleAutomaticHistoryRetention(expectedRetentionRequestID: historyRetentionRequestID)
+    }
+
+    /// Map the UI preference to the store's settings-agnostic age policy. The
+    /// store deletes records strictly older than this cutoff, so a capture whose
+    /// end timestamp equals the cutoff remains retained.
+    static func historyRetentionPolicy(
+        autoClear: AutoClear,
+        now: Date
+    )
+        -> HistoryRetentionPolicy?
+    {
+        guard let interval = autoClear.retentionInterval else {
+            return nil
+        }
+        return HistoryRetentionPolicy(
+            oldestAllowedEndDate: now.timeIntervalSince1970 - interval
+        )
+    }
+
     // MARK: Lifetime tracking
 
     /// Mint one durable History identity for a confirmed live start. Any prior
@@ -196,24 +275,105 @@ extension MainContentCoordinator {
     /// read model; failure sets a distinct recoverable History error and never
     /// mutates sessions, capture state or ``captureError``, nor claims success.
     func scheduleHistoryWrite(store: SessionStore, input: HistoryRecordProjection.Input) {
-        let previous = historyWriteTask
-        historyWriteRequestID &+= 1
-        let requestID = historyWriteRequestID
-        historyWriteTask = Task.detached(priority: .utility) { [weak self] in
+        let previous = historyMutationTask
+        let retentionRequestID = historyRetentionRequestID
+        historyMutationRequestID &+= 1
+        let requestID = historyMutationRequestID
+        historyMutationTask = Task.detached(priority: .utility) { [weak self] in
             await previous?.value
             let output = HistoryRecordProjection.project(input)
             do {
                 try await store.replaceCapture(output.capture, sessions: output.sessions)
-                await self?.finishHistoryWrite(errorMessage: nil, requestID: requestID)
             } catch is CancellationError {
-                // A boundary superseded this write; leave read-model state intact.
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
+                return
             } catch {
-                await self?.finishHistoryWrite(
-                    errorMessage: "Couldn’t save this capture to History — \(Self.describe(error))",
-                    requestID: requestID
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    historyError: "Couldn’t save this capture to History — \(Self.describe(error))",
+                    refreshesHistory: true
+                )
+                return
+            }
+
+            // If Settings changed while the write was pending, that change has
+            // already enqueued its own pass behind this task. Skip the stale policy
+            // here so a longer interval or `.never` cannot be overruled.
+            guard let policy = await self?.automaticHistoryRetentionPolicy(
+                expectedRetentionRequestID: retentionRequestID
+            ) else {
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
+                return
+            }
+
+            do {
+                _ = try await store.applyRetention(policy)
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    clearsRetentionError: true,
+                    refreshesHistory: true
+                )
+            } catch is CancellationError {
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
+            } catch {
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    retentionError: Self.retentionFailureMessage(error),
+                    refreshesHistory: true
                 )
             }
         }
+    }
+
+    /// Enqueue one age-policy pass behind every already scheduled History
+    /// mutation. The request guard is checked only after the queue reaches this
+    /// operation, so a later Settings change can make stale queued work inert.
+    private func scheduleAutomaticHistoryRetention(expectedRetentionRequestID: Int) {
+        guard let store = sessionStore else {
+            return
+        }
+        let previous = historyMutationTask
+        historyMutationRequestID &+= 1
+        let requestID = historyMutationRequestID
+        historyMutationTask = Task.detached(priority: .utility) { [weak self] in
+            await previous?.value
+            guard let policy = await self?.automaticHistoryRetentionPolicy(
+                expectedRetentionRequestID: expectedRetentionRequestID
+            ) else {
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
+                return
+            }
+            do {
+                _ = try await store.applyRetention(policy)
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    clearsRetentionError: true,
+                    refreshesHistory: true
+                )
+            } catch is CancellationError {
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
+            } catch {
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    retentionError: Self.retentionFailureMessage(error),
+                    refreshesHistory: true
+                )
+            }
+        }
+    }
+
+    /// Resolve policy only when the queued request still represents the current
+    /// preference. The clock is read at execution time, not enqueue time, so a
+    /// long pending write cannot make the cutoff stale.
+    private func automaticHistoryRetentionPolicy(
+        expectedRetentionRequestID: Int
+    )
+        -> HistoryRetentionPolicy?
+    {
+        guard historyRetentionRequestID == expectedRetentionRequestID else {
+            return nil
+        }
+        return Self.historyRetentionPolicy(autoClear: historyAutoClear, now: historyNow())
     }
 
     // MARK: Read model
@@ -390,23 +550,24 @@ extension MainContentCoordinator {
         selectHistoryCapture(nil)
         historyRequestID &+= 1
         historySessionRequestID &+= 1
-        let requestID = historyRequestID
         historyAvailability = .loading
-        historyTask = Task { @MainActor [weak self] in
+        let previous = historyMutationTask
+        historyMutationRequestID &+= 1
+        let requestID = historyMutationRequestID
+        historyMutationTask = Task.detached(priority: .utility) { [weak self] in
+            await previous?.value
             do {
                 _ = try await store.applyRetention(HistoryRetentionPolicy(maxCaptureCount: 0))
-                guard let self, self.historyRequestID == requestID else {
-                    return
-                }
-                self.historyTask = nil
-                self.refreshHistory()
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
             } catch is CancellationError {
+                await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
             } catch {
-                guard let self, self.historyRequestID == requestID else {
-                    return
-                }
-                self.historyAvailability = .failed("Couldn’t clear History — \(Self.describe(error))")
-                self.historyTask = nil
+                await self?.finishHistoryMutation(
+                    requestID: requestID,
+                    historyError: "Couldn’t clear History — \(Self.describe(error))",
+                    refreshesHistory: false,
+                    failedAvailability: true
+                )
             }
         }
     }
@@ -417,7 +578,7 @@ extension MainContentCoordinator {
         // A terminal write may schedule a refresh, and a clear task schedules a
         // second refresh task when deletion commits. Re-read each handle until
         // the chain is actually idle rather than awaiting only the first snapshot.
-        while let task = historyWriteTask {
+        while let task = historyMutationTask {
             await task.value
         }
         while let task = historyTask {
@@ -430,17 +591,36 @@ extension MainContentCoordinator {
 
     // MARK: Private
 
-    private func finishHistoryWrite(errorMessage: String?, requestID: Int) {
-        if let errorMessage {
-            historyError = errorMessage
+    private func finishHistoryMutation(
+        requestID: Int,
+        historyError: String? = nil,
+        retentionError: String? = nil,
+        clearsRetentionError: Bool = false,
+        refreshesHistory: Bool,
+        failedAvailability: Bool = false
+    ) {
+        if let historyError {
+            self.historyError = historyError
         }
-        guard historyWriteRequestID == requestID else {
+        if let retentionError {
+            historyRetentionError = retentionError
+        } else if clearsRetentionError {
+            historyRetentionError = nil
+        }
+        guard historyMutationRequestID == requestID else {
             return
         }
-        historyWriteTask = nil
-        if errorMessage == nil {
+        historyMutationTask = nil
+        if failedAvailability {
+            historyAvailability = .failed(historyError ?? "Couldn’t update History.")
+        } else if refreshesHistory {
             refreshHistory()
         }
+    }
+
+    nonisolated private static func retentionFailureMessage(_ error: Error) -> String {
+        "Auto-clear couldn’t update local History — \(describe(error)). "
+            + "Your preference is still saved; cleanup will retry at the next History boundary."
     }
 
     nonisolated private static func describe(_ error: Error) -> String {

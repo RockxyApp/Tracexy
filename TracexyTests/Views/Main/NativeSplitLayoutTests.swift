@@ -178,6 +178,28 @@ struct NativeSplitLayoutTests {
     }
 
     @MainActor
+    @Test("Centered capture status leaves its single border to the native toolbar item")
+    func nativeCaptureStatusSurfaceOwnership() {
+        let controller = makeToolbarController()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+
+        #expect(toolbar.managedToolbar.centeredItemIdentifiers == [
+            NativeWorkspaceToolbar.captureStatusIdentifier,
+        ])
+
+        let statusItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.captureStatusIdentifier
+        })
+        #expect(statusItem?.view != nil)
+        #expect(statusItem?.isBordered == true)
+    }
+
+    @MainActor
     @Test("Trailing export menu stays visible beside the grouped capture and inspector actions")
     func nativeActionGroupStructure() {
         let controller = makeToolbarController()

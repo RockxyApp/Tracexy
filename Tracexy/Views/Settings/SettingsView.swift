@@ -7,8 +7,16 @@ import SwiftUI
 struct SettingsView: View {
     // MARK: Lifecycle
 
-    init(updater: AppUpdater) {
+    init(
+        updater: AppUpdater,
+        historyRetentionError: String? = nil,
+        isHistoryDemoMode: Bool = false,
+        onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
+    ) {
         self.updater = updater
+        self.historyRetentionError = historyRetentionError
+        self.isHistoryDemoMode = isHistoryDemoMode
+        self.onAutoClearChange = onAutoClearChange
     }
 
     // MARK: Internal
@@ -50,6 +58,9 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.selectedSettingsTab) private var selectedTab = SettingsTab.general.rawValue
 
     private let updater: AppUpdater
+    private let historyRetentionError: String?
+    private let isHistoryDemoMode: Bool
+    private let onAutoClearChange: (AutoClear) -> Void
     private let metrics = SettingsDisplayMetrics.standard
 
     private var selection: Binding<SettingsTab> {
@@ -64,7 +75,11 @@ struct SettingsView: View {
         case .general: GeneralSettingsView()
         case .capture: CaptureSettingsView()
         case .helper: HelperSettingsView()
-        case .privacy: PrivacySettingsView()
+        case .privacy: PrivacySettingsView(
+                historyRetentionError: historyRetentionError,
+                isHistoryDemoMode: isHistoryDemoMode,
+                onAutoClearChange: onAutoClearChange
+            )
         case .mcp: MCPSettingsView()
         case .updates: UpdatesSettingsView(updater: updater)
         }
