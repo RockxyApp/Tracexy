@@ -8,9 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Navigate retained connection and TLS evidence to the exact cited local frame.
+- Open the selected session in an auxiliary Inspector window that follows the workspace selection.
+
 ### Fixed
 
+- Enforce the selected automatic History retention at launch, after a capture is stored, and when the setting changes.
+- Remove duplicated workspace chrome and correct session-control and footer alignment.
+
 ### Changed
+
+- Refine session controls, status, and inspector layout for a clearer native Liquid Glass workspace.
 
 ## [0.5.0] - 2026-08-24
 
