@@ -157,11 +157,9 @@ struct InvestigationQueryActivationTests {
     }
 
     private func makeLoadedCoordinator(function: String = #function) async throws -> Environment {
-        let suiteName = "com.amunx.tracexy.query-tests.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
-        )
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("tracexy-query-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -176,7 +174,7 @@ struct InvestigationQueryActivationTests {
         try #require(!coordinator.sessions.isEmpty)
 
         return Environment(coordinator: coordinator) {
-            defaults.removePersistentDomain(forName: suiteName)
+            isolation.tearDown()
             try? FileManager.default.removeItem(at: directory)
         }
     }

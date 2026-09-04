@@ -31,10 +31,10 @@ enum NativeWorkspaceWindowChrome {
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .none
         window.autorecalculatesKeyViewLoop = true
-        // The capture-interface picker is the leading workspace context. Keep a
+        // The Project selector is the leading workspace context. Keep a
         // stable semantic window title for the Window menu and accessibility,
         // but never let SwiftUI promote a surface title or product tagline into
-        // the toolbar and push that picker away from its native position.
+        // the toolbar and push that selector away from its native position.
         window.title = TracexyIdentity.current.displayName
         window.titleVisibility = .hidden
 
@@ -89,11 +89,17 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     static let interfacePickerIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.interfacePicker"
     )
+    static let projectSelectorIdentifier = NSToolbarItem.Identifier(
+        "\(TracexyIdentity.current.logSubsystem).toolbar.projectSelector"
+    )
     static let captureStatusIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.captureStatus"
     )
     static let captureActionIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.captureAction"
+    )
+    static let captureSeparatorIdentifier = NSToolbarItem.Identifier(
+        "\(TracexyIdentity.current.logSubsystem).toolbar.captureSeparator"
     )
     static let sessionExportIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.sessionExport"
@@ -148,19 +154,21 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     )
         -> [NSToolbarItem.Identifier]
     {
-        // The bordered sidebar toggle sits behind a leading flexible space with the
-        // tracking separator immediately after it, so the interface picker returns
-        // to its native leading workspace slot. Capture status is centred; every
-        // capture/inspector commands trail in one coherent native group, with
-        // the native export menu immediately beside it.
+        // Project identity stands alone after the sidebar divider. Capture status
+        // is centred; source selection and Start/Stop form the trailing capture
+        // family. A native space separates capture from export/inspection.
         [
             .flexibleSpace,
             Self.sidebarToggleIdentifier,
             Self.sidebarTrackingSeparatorIdentifier,
-            Self.interfacePickerIdentifier,
+            Self.projectSelectorIdentifier,
             .flexibleSpace,
             Self.captureStatusIdentifier,
             .flexibleSpace,
+            Self.interfacePickerIdentifier,
+            Self.captureSeparatorIdentifier,
+            Self.captureActionIdentifier,
+            .space,
             Self.sessionExportIdentifier,
             Self.actionsIdentifier,
         ]
@@ -183,31 +191,46 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     {
         switch itemIdentifier {
         case Self.sidebarToggleIdentifier:
-            makeSidebarToggleItem()
+            return makeSidebarToggleItem()
         case Self.sidebarTrackingSeparatorIdentifier:
-            splitViewController.map {
+            return splitViewController.map {
                 NSTrackingSeparatorToolbarItem(
                     identifier: Self.sidebarTrackingSeparatorIdentifier,
                     splitView: $0.splitView,
                     dividerIndex: 0
                 )
             }
-        case Self.interfacePickerIdentifier:
-            hostingItem(
+        case Self.projectSelectorIdentifier:
+            let item = hostingItem(
                 identifier: itemIdentifier,
-                rootView: AnyView(CaptureInterfaceToolbarPicker(coordinator: coordinator))
+                rootView: AnyView(ProjectToolbarSelectorView(coordinator: coordinator))
             )
+            item.label = String(localized: "Project")
+            item.paletteLabel = item.label
+            item.visibilityPriority = .high
+            return item
+        case Self.interfacePickerIdentifier:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = String(localized: "Capture Interface")
+            item.paletteLabel = item.label
+            item.view = CaptureInterfaceToolbarHost(coordinator: coordinator)
+            item.visibilityPriority = .high
+            return item
+        case Self.captureActionIdentifier:
+            return makeCaptureItem()
+        case Self.captureSeparatorIdentifier:
+            return makeCaptureSeparatorItem()
         case Self.captureStatusIdentifier:
-            hostingItem(
+            return hostingItem(
                 identifier: itemIdentifier,
                 rootView: AnyView(CaptureStatusView(coordinator: coordinator))
             )
         case Self.sessionExportIdentifier:
-            makeSessionExportItem()
+            return makeSessionExportItem()
         case Self.actionsIdentifier:
-            makeActionGroup()
+            return makeActionGroup()
         default:
-            nil
+            return nil
         }
     }
 
@@ -238,8 +261,25 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
-    /// Capture stays independent from export/inspection, preserving a clear
-    /// primary Start/Stop action without adding divider chrome to its border.
+    /// A native, noninteractive hairline distinguishes source configuration from
+    /// the adjacent Start/Stop action without adding another control or label.
+    private func makeCaptureSeparatorItem() -> NSToolbarItem {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.setAccessibilityElement(false)
+        NSLayoutConstraint.activate([
+            separator.widthAnchor.constraint(equalToConstant: Theme.Metrics.toolbarSeparatorWidth),
+            separator.heightAnchor.constraint(equalToConstant: Theme.Metrics.toolbarSeparatorHeight),
+        ])
+        let item = NSToolbarItem(itemIdentifier: Self.captureSeparatorIdentifier)
+        item.view = separator
+        item.isBordered = false
+        item.visibilityPriority = .high
+        return item
+    }
+
+    /// Capture stays independent from export/inspection.
     private func makeCaptureItem() -> NSToolbarItem {
         let item = imageItem(
             identifier: Self.captureActionIdentifier,
@@ -253,6 +293,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             ? String(localized: "Stop capture")
             : String(localized: "Start capture")
         captureToggleItem = item
+        item.visibilityPriority = .high
         return item
     }
 
@@ -268,7 +309,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemSymbolName: "square.and.arrow.up",
             accessibilityDescription: label
         )
-        item.isBordered = false
+        item.isBordered = true
         item.showsIndicator = true
         item.menu = sessionExportMenu()
         item.isEnabled = coordinator.canExportSelectedSession
@@ -291,11 +332,10 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return menu
     }
 
-    /// Capture and the two inspector commands share one native Liquid Glass
-    /// family. Export remains the adjacent native menu toolbar item because
+    /// The two inspector commands share one native Liquid Glass family.
+    /// Export remains the adjacent native menu toolbar item because
     /// AppKit suppresses an `NSMenuToolbarItem` when nested inside a group.
     private func makeActionGroup() -> NSToolbarItemGroup {
-        let captureItem = makeCaptureItem()
         let bottomInspectorItem = imageItem(
             identifier: NSToolbarItem.Identifier(
                 "\(Self.actionsIdentifier.rawValue).bottomInspector"
@@ -317,10 +357,9 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         contextDockItem.toolTip = String(localized: "Show or hide the inspector (Details · AI Assistant).")
 
         let group = NSToolbarItemGroup(itemIdentifier: Self.actionsIdentifier)
-        group.label = String(localized: "Workspace Actions")
+        group.label = String(localized: "Inspectors")
         group.paletteLabel = group.label
         group.subitems = [
-            captureItem,
             bottomInspectorItem,
             contextDockItem,
         ]
@@ -418,72 +457,6 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         // requested state before collapse KVO fires, so that KVO callback correctly
         // coalesces the matching change instead of writing the binding a second time.
         splitViewController.onSidebarVisibilityChanged?(isPresented)
-    }
-}
-
-// MARK: - CaptureInterfaceToolbarPicker
-
-/// The capture-interface dropdown, grouped by family (Wi-Fi, Ethernet, Thunderbolt,
-/// …) with macOS's friendly names and a checkmark on the active one. Hosted in a
-/// native toolbar item so it lives in the title area beside the sidebar toggle.
-private struct CaptureInterfaceToolbarPicker: View {
-    // MARK: Internal
-
-    @Bindable var coordinator: MainContentCoordinator
-
-    var body: some View {
-        Menu {
-            Picker(
-                selection: Binding(
-                    get: { coordinator.captureInterface },
-                    set: { coordinator.captureInterface = $0 }
-                )
-            ) {
-                ForEach(interfaceGroups) { group in
-                    Section(group.category.title) {
-                        ForEach(group.interfaces) { iface in
-                            Text(iface.menuLabel).tag(iface.id)
-                        }
-                    }
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.inline)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: currentInterfaceSymbol)
-                Text(currentInterfaceLabel).lineLimit(1).truncationMode(.tail)
-            }
-            .frame(width: 188, alignment: .leading)
-        }
-        .menuStyle(.button)
-        .help("Capture interface")
-        .fixedSize()
-        .onAppear {
-            interfaceGroups = NetworkInterfaces.grouped()
-            // Make sure a real interface is selected by default.
-            if currentInterface == nil, let first = interfaceGroups.flatMap(\.interfaces).first {
-                coordinator.captureInterface = first.id
-            }
-        }
-    }
-
-    // MARK: Private
-
-    @State private var interfaceGroups: [InterfaceGroup] = []
-
-    private var currentInterface: NetworkInterface? {
-        interfaceGroups.flatMap(\.interfaces).first { $0.id == coordinator.captureInterface }
-    }
-
-    private var currentInterfaceSymbol: String {
-        currentInterface?.symbol ?? "network"
-    }
-
-    /// Friendly label for the toolbar button, e.g. "Wi-Fi (en0)".
-    private var currentInterfaceLabel: String {
-        currentInterface?.menuLabel ?? coordinator.captureInterface
     }
 }
 

@@ -58,6 +58,23 @@ extension MainContentCoordinator {
         }
     }
 
+    /// Project-boundary retirement. Retires only the *in-flight evaluation*: the
+    /// parked Project keeps its structured drafts, its accepted queries and their
+    /// results, because those are user state that belongs to it and are restored
+    /// verbatim when it comes back. Bumping each workspace's request ID retires any
+    /// evaluation still in flight, so a late result can never adopt into a workspace
+    /// under another Project's published snapshot.
+    func cancelInFlightInvestigationQueries() {
+        for task in investigationQueryTasks.values {
+            task.cancel()
+        }
+        investigationQueryTasks.removeAll()
+        for workspace in workspaces.workspaces {
+            workspace.investigationQueryRequestID &+= 1
+            workspace.isEvaluatingInvestigationQuery = false
+        }
+    }
+
     /// Reevaluate only accepted queries after the current capture publishes a new
     /// immutable snapshot. Existing matched IDs stay visible until the fresh guarded
     /// result arrives, avoiding a transient unfiltered flash on live updates.

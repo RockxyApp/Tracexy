@@ -22,58 +22,111 @@ final class MainContentCoordinator {
         policy: (any AppPolicy)? = nil,
         layoutPreferences: WorkspaceLayoutPreferences? = nil,
         sessionStore: SessionStore? = nil,
+        projectRepository: ProjectCatalogPersisting? = nil,
+        projectDataProvider: (any ProjectDataProviding)? = nil,
         isHistoryDemoMode: Bool = false,
         historyNow: @escaping @Sendable () -> Date = { Date() },
-        liveCaptureSpool: LiveCaptureSpool? = nil
+        liveCaptureSpool: LiveCaptureSpool? = nil,
+        settingsDefaults: UserDefaults? = nil
     ) {
-        self.sessionStore = sessionStore
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
-        self.liveCaptureSpool = liveCaptureSpool ?? LiveCaptureSpool(
-            directoryName: TracexyIdentity.current.appSupportDirectoryName
-        )
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
+        let provider = projectDataProvider ?? DefaultProjectDataProvider()
+        self.projectDataProvider = provider
+        injectedSessionStore = sessionStore
+        injectedLiveCaptureSpool = liveCaptureSpool
+        projectStore = ProjectStore(
+            maxProjects: resolvedPolicy.maxProjects,
+            maxWorkspacesPerProject: resolvedPolicy.maxWorkspaceTabs,
+            repository: projectRepository
+        )
         focusGate = FocusPolicyGate(
             maxFocusSets: resolvedPolicy.maxFocusSets,
             maxPinnedHosts: resolvedPolicy.maxPinnedHosts
         )
-        let preferences = layoutPreferences ?? WorkspaceLayoutPreferences()
-        self.layoutPreferences = preferences
-        workspaces = WorkspaceStore(
-            maxWorkspaces: resolvedPolicy.maxWorkspaceTabs,
-            layoutPreferences: preferences
+
+        // The pre-hydration runtime is deliberately *unbound*: it carries no
+        // Project identity, and capture intake is refused until
+        // `hydrateProjectsOnLaunch` binds it to the real active Project. That is
+        // what keeps a frame from ever being written for a provisional identity.
+        let bootDefaults = settingsDefaults ?? .standard
+        let bootPreferences = layoutPreferences ?? WorkspaceLayoutPreferences(defaults: bootDefaults)
+        let bootLocation = provider.location(
+            forProject: ProjectCatalog.retiredLegacyDataOwnerID,
+            isLegacyOwner: true
         )
+        let bootRuntime = ProjectRuntimeState(
+            projectID: nil,
+            location: bootLocation,
+            settingsDefaults: bootDefaults,
+            layoutPreferences: bootPreferences,
+            workspaces: WorkspaceStore(
+                maxWorkspaces: resolvedPolicy.maxWorkspaceTabs,
+                layoutPreferences: bootPreferences,
+                defaults: bootDefaults
+            ),
+            sessionStore: sessionStore,
+            liveCaptureSpool: liveCaptureSpool ?? provider.makeLiveCaptureSpool(at: bootLocation),
+            // Deliberately absent before hydration. Preparing or scanning a capture
+            // Library here would touch the pre-Projects folder before the legacy
+            // data owner is durably bound, which is exactly what must not happen.
+            capturesDirectory: nil,
+            captureInterface: Self.resolvedDefaultInterface(defaults: bootDefaults)
+        )
+        activeRuntime = bootRuntime
+        self.sessionStore = sessionStore
+        self.liveCaptureSpool = bootRuntime.liveCaptureSpool
+        self.layoutPreferences = bootPreferences
+        workspaces = bootRuntime.workspaces
+        activeProjectDefaults = bootDefaults
+        activeCapturesDirectory = bootRuntime.capturesDirectory
         // Boot empty: nothing is shown until a real capture streams real frames.
-        // Default to the *active* interface (up + has an IPv4), not the first
-        // non-loopback one — virtual interfaces (awdl0/anpi0/bridge0) carry no
-        // traffic, so capturing on them looks like "no data".
-        let interfaces = NetworkInterfaces.available()
-        let active = interfaces.first { !$0.isLoopback && $0.isUp && $0.ipv4 != nil }
-        let anyReal = interfaces.first { !$0.isLoopback }
-        // Honor the Capture → "Default interface" preference when it names a real,
-        // currently-available interface; otherwise fall back to the active one.
-        let preferred = UserDefaults.standard.string(forKey: SettingsKeys.defaultInterface)
-        if let preferred, !preferred.isEmpty, interfaces.contains(where: { $0.id == preferred }) {
-            captureInterface = preferred
-        } else {
-            captureInterface = active?.id ?? anyReal?.id ?? "en0"
-        }
+        captureInterface = bootRuntime.captureInterface
         localIPv4 = NetworkInterfaces.primaryIPv4()
-        pinnedHosts = Self.loadPinnedHosts()
         // History is unavailable until a store is injected; otherwise it begins idle
         // and loads lazily on the first refresh.
         historyAvailability = sessionStore == nil ? .unavailable : .idle
+        bootRuntime.loadPreferenceBackedState()
+        pinnedHosts = bootRuntime.pinnedHosts
+        focusSets = bootRuntime.focusSets
+        mutedHosts = bootRuntime.mutedHosts
+        mutedProtocols = bootRuntime.mutedProtocols
+        hiddenSourceApps = bootRuntime.hiddenSourceApps
+        hiddenSourceDomains = bootRuntime.hiddenSourceDomains
+        hiddenSourceIPs = bootRuntime.hiddenSourceIPs
         refreshSavedCaptures()
-        // Before any destructive/privileged helper op (force reset), stop active
-        // capture and invalidate polling so nothing keeps touching a helper that
-        // is about to be torn down.
+        // Before any destructive/privileged helper op (force reset), settle the
+        // active capture, retire what the destroyed connection still owes, and
+        // invalidate polling so nothing keeps touching a helper that is about to be
+        // torn down.
         helper.willBeginDestructiveReset = { [weak self] in
-            self?.stopCapture()
+            self?.prepareForDestructiveHelperReset()
         }
     }
 
     // MARK: Internal
+
+    /// One parked waiter on a specific owed drain operation.
+    struct FinalDrainWaiter {
+        let operationID: Int
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    /// One stop's owed final drain. It carries the identity every waiter and
+    /// completion is matched against, plus the exact capture epoch and owning
+    /// Project a recovery path needs — never re-derived from token arithmetic.
+    struct OwedFinalDrain {
+        let operationID: Int
+        /// The engine epoch whose accepted prefix this drain belongs to.
+        let captureToken: Int
+        /// The stopped generation this drain completes under, or `nil` while Stop
+        /// is still waiting behind an in-flight helper fetch.
+        var stoppedToken: Int?
+        /// The Project that owned the capture when the stop was issued.
+        let originProjectID: UUID?
+    }
 
     /// True when the app was launched in direct-capture dev mode — via the env
     /// var `TRACEXY_DIRECT_CAPTURE=1` or the launch argument `--direct-capture`
@@ -112,7 +165,95 @@ final class MainContentCoordinator {
     /// Capacity gate for focus sets and pinned hosts.
     let focusGate: FocusPolicyGate
 
-    let workspaces: WorkspaceStore
+    /// Composition seam for per-Project storage: History database, managed
+    /// capture folder, live spool, and preferences suite.
+    let projectDataProvider: any ProjectDataProviding
+
+    /// The active Project's workspace tabs. This is the *actual* store instance a
+    /// Project owns: parking a Project keeps its selection, drafts, query results
+    /// and layout alive rather than rehydrating them from portable configuration.
+    var workspaces: WorkspaceStore
+
+    /// The runtime bucket the coordinator's observable state currently mirrors.
+    var activeRuntime: ProjectRuntimeState
+
+    /// The active Project's preferences suite. Every settings resolver call in the
+    /// coordinator, readiness, saved loader, export, and History paths reads this
+    /// rather than the shared domain.
+    var activeProjectDefaults: UserDefaults
+
+    /// The active Project's managed capture Library folder, or `nil` when it could
+    /// not be prepared.
+    var activeCapturesDirectory: URL?
+
+    /// Local, configuration-only Project catalog. Projects own durable workspace
+    /// view intent; capture bytes, current sessions, and terminal History remain
+    /// app-wide and are never stored here.
+    let projectStore: ProjectStore
+
+    /// Project presentation and orchestration state. Stored on the app-level
+    /// coordinator so toolbar, commands, and sheets share one source of truth.
+    var projectNameEditorContext: ProjectNameEditorContext?
+    var projectDeletionRequest: ProjectDeletionRequest?
+    var isProjectManagerPresented = false
+    var isProjectRecoveryPresented = false
+    var lastProjectOperationError: ProjectMutationError?
+    var projectTransferErrorMessage: String?
+
+    /// Launch hydration and Observation-backed workspace autosave are coalesced
+    /// here rather than being owned by a view lifecycle.
+    var hasHydratedProjects = false
+    var isApplyingProjectSnapshot = false
+    var isObservingProjectWorkspaces = false
+    var projectHydrationTask: Task<Void, Never>?
+    var projectWorkspaceAutosaveTask: Task<Void, Never>?
+    /// The Project a queued autosave was scheduled for. A debounce that survives
+    /// into another Project is discarded rather than writing B's workspaces into A.
+    var projectWorkspaceAutosaveOwner: UUID?
+
+    /// The one Project lifecycle path's state. `pending` forbids capture start and
+    /// further transitions; `failed` keeps the outgoing Project active with a retry.
+    var projectTransitionStatus: ProjectTransitionStatus = .idle
+    /// A Project change waiting on the native Stop-and-Switch confirmation.
+    var pendingProjectSwitchConfirmation: ProjectSwitchConfirmationRequest?
+    var projectTransitionTask: Task<Bool, Never>?
+
+    /// The validated-but-unpublished catalog change the running transition holds.
+    /// It names the destination Project before that Project is durable, which is
+    /// how a caller learns the identity of a Project it just asked to create.
+    var preparedProjectTransition: PreparedProjectCatalogTransition?
+
+    /// One runtime bucket per Project, keyed by Project id and bounded by
+    /// ``ProjectStore/maxProjects``. Buckets are removed only when their Project is
+    /// deleted, so no Project's capture is ever silently evicted.
+    var projectRuntimes: [UUID: ProjectRuntimeState] = [:]
+
+    /// The transition to retry after a bounded stop/drain failure.
+    var retryableProjectTransition: ProjectSwitchConfirmationRequest.Kind?
+
+    /// True once the launch runtime has been bound to the hydrated active Project.
+    var hasBoundInitialRuntime = false
+
+    /// The in-flight managed "Save Capture" copy. A Project transition waits on it
+    /// before swapping the spool it reads from.
+    ///
+    /// It is also the Save half of the source-use gate (``isCaptureSourceHeld``):
+    /// it is non-nil from the moment a Save is accepted until the last save queued
+    /// behind it has finished, which is exactly the window in which the source that
+    /// save reads must not be reset, replaced or trashed.
+    var pendingCaptureIOTask: Task<Void, Never>?
+    @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
+    @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
+
+    /// Monotonic identity of the newest managed capture-I/O request. The handle
+    /// above is cleared only by the request that still owns it, so an older save
+    /// finishing late can never hide a newer one queued behind it.
+    var captureIORequestID = 0
+
+    /// Bounded wait for the helper's final drain during a Project change.
+    /// Exceeding it is reported as a retryable failure — it never means "assume it
+    /// drained". Injectable so tests exercise the timeout without a 15-second wait.
+    var projectTransitionDrainTimeout: Duration = .seconds(15)
 
     /// The most recent capacity limit the user ran into, in their words.
     /// Cleared when they acknowledge it or when the next successful action
@@ -248,11 +389,13 @@ final class MainContentCoordinator {
 
     // MARK: Terminal history persistence
 
-    /// The injected terminal-history store, or `nil` when no persistent database
-    /// is composed (all unit tests, and any production launch where the factory
+    /// The *active Project's* terminal-history store, or `nil` when no persistent
+    /// database is composed (unit tests, or a production launch where the factory
     /// could not open one). It is written to exactly once per terminated live or
     /// opened saved capture; it is never on the live 0.8-second publication path.
-    let sessionStore: SessionStore?
+    /// Each Project owns its own database file, so History reads, writes, Clear and
+    /// retention in one Project never touch another's.
+    var sessionStore: SessionStore?
 
     /// True only for the explicit synthetic History launch path. Production
     /// composition always leaves this false and never sees the demo fixture.
@@ -332,8 +475,9 @@ final class MainContentCoordinator {
 
     // MARK: Focus Sets
 
-    /// Saved named filter collections (sidebar Focus mode). Persisted as JSON.
-    private(set) var focusSets: [FocusSet] = MainContentCoordinator.loadFocusSets()
+    /// Saved named filter collections (sidebar Focus mode). Persisted as JSON in
+    /// the active Project's own preferences suite.
+    var focusSets: [FocusSet] = []
 
     /// The focus set currently open in the editor window (`nil` = window closed).
     var editingFocusSet: FocusSet?
@@ -341,18 +485,18 @@ final class MainContentCoordinator {
     // MARK: Noise Control
 
     /// Hosts muted from the session list (sidebar Focus → Noise Control).
-    private(set) var mutedHosts: Set<String> = MainContentCoordinator.loadMutedHosts()
+    var mutedHosts: Set<String> = []
     /// Protocols muted from the session list.
-    private(set) var mutedProtocols: Set<ProtocolKind> = MainContentCoordinator.loadMutedProtocols()
+    var mutedProtocols: Set<ProtocolKind> = []
 
     // MARK: Source visibility
 
     /// Source rows the user removed from the Browse sidebar. This is presentation
     /// state only: captured sessions and packet evidence remain untouched and can
     /// still be found from Sessions. Each category can restore its hidden rows.
-    var hiddenSourceApps = SourceVisibilityPreferences.loadApps()
-    var hiddenSourceDomains = SourceVisibilityPreferences.loadDomains()
-    var hiddenSourceIPs = SourceVisibilityPreferences.loadIPs()
+    var hiddenSourceApps: Set<String> = []
+    var hiddenSourceDomains: Set<String> = []
+    var hiddenSourceIPs: Set<String> = []
 
     /// Session rows removed from the current capture's presentation. This is
     /// deliberately capture-scoped and reversible: packet evidence and the
@@ -361,9 +505,11 @@ final class MainContentCoordinator {
     /// Overview rollup, Flow Map, Sources, finding, or related-session card.
     var removedSessionIDs: Set<UUID> = []
 
-    /// Complete local raw-frame retention for save/export. The in-memory frame
-    /// window remains bounded independently for responsive UI.
-    let liveCaptureSpool: LiveCaptureSpool
+    /// The *active Project's* complete local raw-frame retention for save/export.
+    /// Every Project keeps its own spool actor while parked, so starting, clearing
+    /// or resetting a capture in one Project can never destroy another's evidence.
+    /// The in-memory frame window remains bounded independently for responsive UI.
+    var liveCaptureSpool: LiveCaptureSpool
     /// Serializes engine access so batches fold in arrival order even though each
     /// call hops onto the engine actor, and so a boundary reset is ordered ahead
     /// of the ingests that follow it.
@@ -415,6 +561,34 @@ final class MainContentCoordinator {
     /// At most one off-main query evaluation per workspace. Superseding Apply/live
     /// refresh and capture boundaries cancel the prior task before issuing a new request.
     var investigationQueryTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Remembers the active Project's inspector-dock choice across launches.
+    var layoutPreferences: WorkspaceLayoutPreferences
+
+    /// The owed final drain and its parked waiters. Written only through
+    /// ``beginFinalCaptureDrain(stoppedToken:captureToken:)`` and the completion
+    /// paths beside it, so every owed drain carries an operation identity a
+    /// completion can be matched against.
+    var owedFinalDrain: OwedFinalDrain?
+    var finalDrainWaiters: [UUID: FinalDrainWaiter] = [:]
+    /// Monotonic identity of the drain the current stop owes. Every genuinely new
+    /// stop mints a new one.
+    var finalDrainOperationID = 0
+    var lastFinalDrainCompletion: (operationID: Int, drained: Bool)?
+
+    /// The store/spool a caller injected at composition. They belong to whichever
+    /// Project hydration binds first, and are never handed to a second Project.
+    let injectedSessionStore: SessionStore?
+    let injectedLiveCaptureSpool: LiveCaptureSpool?
+
+    /// True while the Project boundary is settling — a transition is running, or a
+    /// stopped capture still owes its exact final drain. New capture I/O, Library
+    /// mutations, exports and History mutations fail closed here rather than being
+    /// started against a spool, store or Library reference that is about to be
+    /// swapped or is not yet at its final boundary.
+    var isProjectBoundaryBusy: Bool {
+        projectTransitionStatus.isPending || isFinalDrainPending
+    }
 
     /// Cumulative frames evicted from the local in-memory inspection window. This
     /// is a UI memory bound, never kernel/interface loss; sessions and the complete
@@ -594,16 +768,27 @@ final class MainContentCoordinator {
     /// the freshly resolved next-start settings while stopped. The readiness
     /// popover uses this seam so changing Settings mid-capture never rewrites the
     /// truth about the active source.
+    ///
+    /// The retained running configuration is consulted *only* while starting or
+    /// capturing. While stopped there is no active source to describe, so this
+    /// resolves the active Project's own current defaults — otherwise a Project
+    /// left behind mid-capture would keep describing its source in a Project that
+    /// is merely idle.
     var readinessCaptureConfiguration: CaptureConfiguration {
-        activeCaptureConfiguration
-            ?? CaptureSettingsResolver.configuration(interface: captureInterface)
+        if isCapturing || isStarting, let activeCaptureConfiguration {
+            return activeCaptureConfiguration
+        }
+        return CaptureSettingsResolver.configuration(
+            interface: captureInterface,
+            defaults: activeProjectDefaults
+        )
     }
 
     var readinessRetentionCapacity: Int {
         if isCapturing || isStarting {
             return retainedFrames.capacity
         }
-        return CaptureSettingsResolver.retainCapacity()
+        return CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
     }
 
     // MARK: Aggregate rollups (status bar)
@@ -736,18 +921,6 @@ final class MainContentCoordinator {
         focusGate.canInsertFocusSet(into: focusSets)
     }
 
-    /// `~/Library/Application Support/<bundle id>/Captures`, created on demand.
-    static func capturesDirectory() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        let directory = base
-            .appendingPathComponent(TracexyIdentity.current.appBundleIdentifier, isDirectory: true)
-            .appendingPathComponent("Captures", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
-    }
-
     /// A host is a domain name (not a bare IPv4/IPv6 literal).
     static func isDomainName(_ host: String) -> Bool {
         if host.contains(":") {
@@ -758,6 +931,15 @@ final class MainContentCoordinator {
             return false // IPv4 literal
         }
         return host.contains(".") && host.contains { $0.isLetter }
+    }
+
+    /// The active Project's managed capture Library folder, created on demand.
+    ///
+    /// The legacy-owner Project keeps the pre-Projects
+    /// `Application Support/<namespace>/Captures`; every other Project is rooted
+    /// under `Projects/<uuid>/Captures`. Nothing is copied, moved, or deleted.
+    func capturesDirectory() -> URL? {
+        activeCapturesDirectory
     }
 
     func setSessionExporting(_ isExporting: Bool) {
@@ -818,88 +1000,6 @@ final class MainContentCoordinator {
         refreshSelectedSessionEvidenceProjection()
     }
 
-    // MARK: Search
-
-    /// ⌘F: bring the user to the session search box and put the cursor in it.
-    ///
-    /// Routes to the Sessions surface if they are elsewhere, reveals the filter
-    /// bar, and switches the search on — the three states the box needs to be
-    /// usable — then bumps a focus token the existing field observes. It does
-    /// *not* touch the query text or any active filter (host/process/IP drill-down,
-    /// category chips, advanced rules), so an in-progress investigation is
-    /// preserved; ⌘F only reveals and focuses the box that is already there.
-    func beginSessionSearch() {
-        let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.isFilterBarVisible = true
-        ws.isSearchEnabled = true
-        ws.searchFocusRequest = UUID()
-    }
-
-    // MARK: Sidebar selection
-
-    /// Selects a top-level sidebar item, clearing any host/process/IP drill-down.
-    func selectSidebarItem(_ item: SidebarItem) {
-        let ws = activeWorkspace
-        ws.sidebarSelection = item
-        ws.hostFilter = nil
-        ws.processFilter = nil
-        ws.ipFilter = nil
-    }
-
-    /// Drills into a single host/domain (from the sidebar "Domains"/"Pinned" groups).
-    func selectHost(_ host: String) {
-        let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.processFilter = nil
-        ws.ipFilter = nil
-        ws.hostFilter = host
-    }
-
-    /// Drills into a single process (from the sidebar "Apps" group).
-    func selectProcess(_ process: String) {
-        let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.hostFilter = nil
-        ws.ipFilter = nil
-        ws.processFilter = process
-    }
-
-    /// Drills into a single IP address (a sub-IP under a domain).
-    func selectIP(_ ip: String) {
-        let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.hostFilter = nil
-        ws.processFilter = nil
-        ws.ipFilter = ip
-    }
-
-    // MARK: Pinned hosts (Favorites)
-
-    func isHostPinned(_ host: String) -> Bool {
-        pinnedHosts.contains(host)
-    }
-
-    /// Pins or unpins a host and persists the new set immediately.
-    func togglePinHost(_ host: String) {
-        guard !host.isEmpty, host != "—" else {
-            return
-        }
-        if let index = pinnedHosts.firstIndex(of: host) {
-            pinnedHosts.remove(at: index)
-        } else {
-            do {
-                try focusGate.validatePinningHost(host, into: pinnedHosts)
-            } catch {
-                policyNotice = error.localizedDescription
-                return
-            }
-            pinnedHosts.append(host)
-        }
-        policyNotice = nil
-        UserDefaults.standard.set(pinnedHosts, forKey: Self.pinnedHostsKey)
-    }
-
     /// Bottom evidence inspector. Hiding it by hand also cancels the automatic
     /// reveal — a panel the user dismissed must not reappear on the next
     /// selection.
@@ -958,7 +1058,16 @@ final class MainContentCoordinator {
     }
 
     /// Clears all captured sessions (status-bar "Clear").
+    ///
+    /// Refused while the Project boundary is settling: this resets the engine and
+    /// the live spool, which would destroy the evidence a stopped capture is still
+    /// draining, or the outgoing Project's evidence mid-transition. It is refused
+    /// for the same reason while an accepted Save or an in-flight session export
+    /// still owns that source.
     func clearSessions() {
+        guard !isProjectBoundaryBusy, !isCaptureSourceHeld else {
+            return
+        }
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: true)
         // Supersede any in-flight engine work so a late snapshot can't repopulate
@@ -993,92 +1102,6 @@ final class MainContentCoordinator {
         }
     }
 
-    /// Inserts or updates a focus set (used by the editor sheet), then persists.
-    /// A save that would exceed the focus-set cap leaves the stored sets
-    /// untouched and reports why through ``policyNotice``.
-    func saveFocusSet(_ set: FocusSet) {
-        var normalizedSet = set
-        normalizedSet.rules = SessionFilterRule.normalized(
-            set.rules,
-            limit: policy.maxSessionFilterRules
-        )
-        do {
-            try focusGate.validateSavingFocusSet(normalizedSet, into: focusSets)
-        } catch {
-            policyNotice = error.localizedDescription
-            return
-        }
-        if let index = focusSets.firstIndex(where: { $0.id == normalizedSet.id }) {
-            focusSets[index] = normalizedSet
-        } else {
-            focusSets.append(normalizedSet)
-        }
-        policyNotice = nil
-        persistFocusSets()
-    }
-
-    /// Loads a focus set's rules into the active workspace's advanced filter.
-    func applyFocusSet(_ set: FocusSet) {
-        let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.hostFilter = nil
-        ws.processFilter = nil
-        ws.ipFilter = nil
-        // A saved set may hold more rows than this build allows (it was saved on
-        // a different build, or the cap changed). Clamp to capacity, and never
-        // leave the builder with zero rows.
-        ws.filterRules = SessionFilterRule.normalized(set.rules, limit: policy.maxSessionFilterRules)
-        ws.isFilterBarVisible = true
-        ws.isAdvancedFilterVisible = true
-    }
-
-    func deleteFocusSet(_ set: FocusSet) {
-        focusSets.removeAll { $0.id == set.id }
-        persistFocusSets()
-    }
-
-    /// A blank draft seeded from the active workspace's current active rules, so
-    /// "Add" captures whatever the user is already filtering by.
-    func draftFocusSet() -> FocusSet {
-        let active = activeWorkspace.activeFilterRules
-        return FocusSet(
-            name: "",
-            rules: active.isEmpty ? [SessionFilterRule()] : active
-        )
-    }
-
-    func isHostMuted(_ host: String) -> Bool {
-        mutedHosts.contains(host)
-    }
-
-    func isProtocolMuted(_ proto: ProtocolKind) -> Bool {
-        mutedProtocols.contains(proto)
-    }
-
-    func toggleMuteHost(_ host: String) {
-        if mutedHosts.contains(host) {
-            mutedHosts.remove(host)
-        } else {
-            mutedHosts.insert(host)
-        }
-        persistMutedNoise()
-    }
-
-    func toggleMuteProtocol(_ proto: ProtocolKind) {
-        if mutedProtocols.contains(proto) {
-            mutedProtocols.remove(proto)
-        } else {
-            mutedProtocols.insert(proto)
-        }
-        persistMutedNoise()
-    }
-
-    func clearNoiseControl() {
-        mutedHosts = []
-        mutedProtocols = []
-        persistMutedNoise()
-    }
-
     /// Toolbar Start/Stop. Starts a real libpcap capture (or surfaces why not).
     func toggleCapture() {
         if isCapturing {
@@ -1094,14 +1117,25 @@ final class MainContentCoordinator {
         guard !isStarting else {
             return
         }
+        // Fail closed while the Project boundary is unsettled: a frame must never
+        // be written for a provisional identity, and a capture must never begin
+        // inside a pending switch.
+        if let blocked = captureStartBlockedMessage {
+            captureError = blocked
+            return
+        }
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: true)
         // Read the current Capture-Settings preferences fresh at each start and map
         // them to a validated, bounded configuration (interface, snap length,
         // promiscuous mode, optional BPF). An invalid custom filter — or any
         // out-of-bounds value — surfaces here, before any capture backend is asked
-        // to start, rather than failing silently mid-capture.
-        let resolvedConfiguration = CaptureSettingsResolver.configuration(interface: captureInterface)
+        // to start, rather than failing silently mid-capture. Preferences come from
+        // the *active Project's* suite, never the shared domain.
+        let resolvedConfiguration = CaptureSettingsResolver.configuration(
+            interface: captureInterface,
+            defaults: activeProjectDefaults
+        )
         let configuration: CaptureConfiguration
         switch resolvedConfiguration.validated() {
         case let .success(valid):
@@ -1126,7 +1160,9 @@ final class MainContentCoordinator {
         // "Retain up to" preference, resetting it to a clean, zeroed window. This
         // bounds memory only — sessions accumulate independently (see
         // ``retainedFrameLimit``).
-        retainedFrames = RetainedFrameBuffer(capacity: CaptureSettingsResolver.retainCapacity())
+        retainedFrames = RetainedFrameBuffer(
+            capacity: CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
+        )
         removedSessionIDs.removeAll()
         sessions = []
         // Clear stale connection + analysis publication at the start boundary
@@ -1182,6 +1218,11 @@ final class MainContentCoordinator {
     }
 
     func stopCapture() {
+        // An idle Project may hold a parked snapshot from another engine epoch.
+        // Helper maintenance or a repeated Stop must not republish that engine.
+        guard isCapturing || isStarting else {
+            return
+        }
         pollTimer?.invalidate()
         pollTimer = nil
         // A fetch destructively drains the helper buffer. Let the one outstanding
@@ -1191,23 +1232,84 @@ final class MainContentCoordinator {
         if !Self.forceDirectCapture, helperFetchInFlight {
             helperStopRequested = true
             isStarting = false
+            // Stop is now owed a final drain even though `performStopCapture` has
+            // not run yet, so a Project transition must wait for it rather than
+            // seeing an idle pipeline and swapping the spool mid-stop. The stopped
+            // generation is not minted yet; `performStopCapture` resolves it onto
+            // this same owed drain, under the epoch recorded here.
+            beginFinalCaptureDrain(stoppedToken: nil, captureToken: startGeneration)
             return
         }
         performStopCapture()
     }
 
+    /// The app-side half of an explicit destructive helper reset (Settings → Helper
+    /// → Force Reset). It runs *before* the privileged removal, and the XPC
+    /// connection this capture depends on is destroyed immediately afterwards, so no
+    /// reply the running or stopping capture is still waiting for can ever arrive.
+    ///
+    /// Stopping is not enough on its own. ``stopCapture()`` returns at its idle
+    /// guard when a previous stop is already settling, and its in-flight-fetch
+    /// branch defers the stop to a reply this reset makes unreachable — either way
+    /// the owed final drain would stay owed forever, and with it Start, Clear,
+    /// opening a saved capture and every Project change would stay refused for the
+    /// rest of the app session.
+    ///
+    /// So the obsolete operation is terminated as **failed**, and the accepted
+    /// prefix that did fold is finalized under the exact capture epoch and stopped
+    /// generation the owed operation recorded — published as this capture's stopped
+    /// snapshot and written to History as `incomplete`. Nothing here claims the
+    /// missing tail arrived, discards the recoverable prefix or its spool bytes,
+    /// changes Projects, or touches the helper.
+    func prepareForDestructiveHelperReset() {
+        // Retire the in-flight work of the connection this reset destroys, so a late
+        // reply from it can never be folded into whatever comes next.
+        helperFetchGeneration &+= 1
+        helperFetchInFlight = false
+        helperStopRequested = false
+
+        let owed = owedFinalDrain
+        // Normal idle helper maintenance: nothing is running and nothing is owed, so
+        // this must not stop, republish or write anything.
+        guard isCapturing || isStarting || owed != nil else {
+            return
+        }
+        pollTimer?.invalidate()
+        pollTimer = nil
+        // A drain owed by a Project that is no longer active is retired by identity
+        // only: its prefix, spool and History belong to that Project, and finalizing
+        // it here would publish one Project's capture inside another.
+        if let owed, owed.originProjectID != activeRuntime.projectID {
+            abortOwedFinalCaptureDrain()
+            return
+        }
+
+        if let owed, let stoppedToken = owed.stoppedToken, !isCapturing, !isStarting {
+            // Retire the old reply and any queued publication synchronously, before
+            // awaiting the accepted prefix. Keep the same owed operation and exact
+            // engine epoch, but only recovery may complete its new publication token.
+            startGeneration &+= 1
+            let recoveryToken = startGeneration
+            owedFinalDrain?.stoppedToken = recoveryToken
+            rebaseFrozenHistoryLifetime(from: stoppedToken, to: recoveryToken)
+            publishStoppedSnapshotAfterCurrentIngest(
+                captureToken: owed.captureToken,
+                stoppedToken: recoveryToken,
+                finalDrainConfirmed: false
+            )
+        } else {
+            // A capture still running, or a stop parked behind an in-flight fetch
+            // that never minted its stopped generation: mint that boundary here
+            // instead of asking the helper for a reply it can no longer send.
+            performStopCapture(canAwaitHelperReply: false)
+        }
+        if !Self.forceDirectCapture {
+            captureError = "Capture stopped because the capture helper was reset. Only the packets Tracexy had "
+                + "already accepted are available — the last batch could not be confirmed."
+        }
+    }
+
     // MARK: Private
-
-    private static let pinnedHostsKey = TracexyIdentity.current.defaultsKey("pinnedHosts")
-
-    // MARK: Focus / Noise persistence
-
-    private static let focusSetsKey = TracexyIdentity.current.defaultsKey("focusSets")
-    private static let mutedHostsKey = TracexyIdentity.current.defaultsKey("noise.mutedHosts")
-    private static let mutedProtocolsKey = TracexyIdentity.current.defaultsKey("noise.mutedProtocols")
-
-    /// Remembers the user's inspector-dock choice across launches.
-    private let layoutPreferences: WorkspaceLayoutPreferences
 
     private let live = try? LiveCapture()
     /// Off-main incremental session engine: decodes and groups each captured frame
@@ -1231,28 +1333,6 @@ final class MainContentCoordinator {
     /// newer drain request replaces them.
     private var helperFetchGeneration = 0
 
-    private static func loadPinnedHosts() -> [String] {
-        UserDefaults.standard.stringArray(forKey: pinnedHostsKey) ?? []
-    }
-
-    private static func loadFocusSets() -> [FocusSet] {
-        guard let data = UserDefaults.standard.data(forKey: focusSetsKey),
-              let sets = try? JSONDecoder().decode([FocusSet].self, from: data) else
-        {
-            return []
-        }
-        return sets
-    }
-
-    private static func loadMutedHosts() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: mutedHostsKey) ?? [])
-    }
-
-    private static func loadMutedProtocols() -> Set<ProtocolKind> {
-        let raw = UserDefaults.standard.stringArray(forKey: mutedProtocolsKey) ?? []
-        return Set(raw.compactMap(ProtocolKind.init(rawValue:)))
-    }
-
     /// The IP portion of an "ip:port" endpoint (handles IPv6's inner colons).
     private static func ipPart(_ endpoint: String) -> String? {
         guard !endpoint.isEmpty, endpoint != "—" else {
@@ -1265,16 +1345,29 @@ final class MainContentCoordinator {
         return comps.dropLast().joined(separator: ":")
     }
 
-    private func performStopCapture() {
+    /// Settle the current capture at its exact stopped boundary.
+    ///
+    /// `canAwaitHelperReply` is `false` only on the explicit destructive-reset path,
+    /// where the helper connection is about to be destroyed: asking it for a final
+    /// batch there would park this capture on a reply that can never arrive. The
+    /// stop then finalizes locally, exactly as a helper that could not be reached
+    /// at all already does — reporting the accepted prefix as unconfirmed rather
+    /// than claiming the tail drained.
+    private func performStopCapture(canAwaitHelperReply: Bool = true) {
         helperStopRequested = false
         let captureToken = startGeneration
         // Invalidate any in-flight start attempt so its watchdog/reply is ignored.
         startGeneration &+= 1
         let stoppedToken = startGeneration
+        // From here until the final batch has folded and published, a Project
+        // transition must wait rather than swap the spool/store out from under it.
+        // A Stop parked behind an in-flight helper fetch already owes this drain;
+        // this resolves that same operation onto the generation it completes under.
+        beginFinalCaptureDrain(stoppedToken: stoppedToken, captureToken: captureToken)
         helperFetchGeneration &+= 1
         helperFetchInFlight = false
         var awaitsHelperStopReply = false
-        if !Self.forceDirectCapture, let proxy = try? helper.proxy() {
+        if canAwaitHelperReply, !Self.forceDirectCapture, let proxy = try? helper.proxy() {
             awaitsHelperStopReply = true
             proxy.stopCapture { [weak self] batch in
                 // The helper worker has now finished its read loop, sampled final
@@ -1296,7 +1389,12 @@ final class MainContentCoordinator {
                         let detail = "The capture helper returned \(rejectedFrameCount) frame(s) with invalid metadata."
                         self.helper.recordRuntimeConnectionFailure(detail)
                         self.captureError = detail
-                        self.queuePendingSavedCaptureOpenAfterCurrentIngest()
+                        self.cancelSavedCaptureOpen(clearPublishedEvidence: false)
+                        self.publishStoppedSnapshotAfterCurrentIngest(
+                            captureToken: captureToken,
+                            stoppedToken: stoppedToken,
+                            finalDrainConfirmed: false
+                        )
                         return
                     }
                     self.helperBufferDropCount = batch.bufferDroppedCount
@@ -1335,7 +1433,14 @@ final class MainContentCoordinator {
         isStarting = false
         captureStartedAt = nil
         if !awaitsHelperStopReply {
-            publishStoppedSnapshotAfterCurrentIngest(captureToken: captureToken, stoppedToken: stoppedToken)
+            if !Self.forceDirectCapture {
+                captureError = "The helper’s final capture batch could not be confirmed. Only the recoverable prefix is available."
+            }
+            publishStoppedSnapshotAfterCurrentIngest(
+                captureToken: captureToken,
+                stoppedToken: stoppedToken,
+                finalDrainConfirmed: Self.forceDirectCapture
+            )
         }
     }
 
@@ -1401,24 +1506,12 @@ final class MainContentCoordinator {
         }
         activityIndex = index
     }
-
-    private func persistFocusSets() {
-        guard let data = try? JSONEncoder().encode(focusSets) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: Self.focusSetsKey)
-    }
-
-    private func persistMutedNoise() {
-        UserDefaults.standard.set(Array(mutedHosts), forKey: Self.mutedHostsKey)
-        UserDefaults.standard.set(mutedProtocols.map(\.rawValue), forKey: Self.mutedProtocolsKey)
-    }
 }
 
 // MARK: - Live capture pipeline
 
-private extension MainContentCoordinator {
-    func startViaHelper(token: Int) {
+extension MainContentCoordinator {
+    private func startViaHelper(token: Int) {
         guard let configuration = activeCaptureConfiguration else {
             handleCaptureError("Capture configuration was unavailable.")
             return
@@ -1609,7 +1702,9 @@ private extension MainContentCoordinator {
         beginLiveHistoryLifetime(captureGeneration: startGeneration)
     }
 
-    private func ingest(_ frames: [CapturedFrame], linkType: UInt32) {
+    /// Shared receipt path for backend batches and deterministic synthetic lifecycle
+    /// tests. Callers establish the active capture generation before delivering frames.
+    func ingest(_ frames: [CapturedFrame], linkType: UInt32) {
         currentLinkType = linkType
         appendRetainedFrames(frames)
         pendingChartBytes += frames.reduce(0) { $0 + $1.originalLength }
@@ -1707,6 +1802,7 @@ private extension MainContentCoordinator {
             await self.sessionEngine.ingest(
                 frames, linkType: linkType, epoch: captureToken, locators: locators, loss: loss
             )
+            var publication: Task<Void, Never>?
             if self.startGeneration == stoppedToken,
                !self.isCapturing,
                let snapshot = await self.sessionEngine.investigationSnapshot(epoch: captureToken)
@@ -1715,13 +1811,23 @@ private extension MainContentCoordinator {
                 let completeness: HistoryCompleteness = self.currentCaptureLoss == .lossReported || spoolIncomplete
                     ? .incomplete
                     : .complete
-                self.publishLiveDetailed(
+                publication = self.publishLiveDetailed(
                     snapshot,
                     expectedGeneration: stoppedToken,
                     isCapturing: false,
                     terminalHistoryCompleteness: completeness
                 )
             }
+            // Publication hops one runloop turn. The drain is complete only once
+            // that exact last snapshot has actually been adopted and its terminal
+            // History write enqueued — not merely scheduled.
+            await publication?.value
+            guard self.startGeneration == stoppedToken else {
+                return
+            }
+            // The exact end of this capture's final fold and publication. A Project
+            // transition parked behind it resumes here — never on a timer.
+            self.completeFinalCaptureDrain(stoppedToken: stoppedToken)
             self.resumePendingSavedCaptureOpenAfterLiveDrain()
         }
     }
@@ -1732,26 +1838,45 @@ private extension MainContentCoordinator {
     /// so ordinary coalesced live publications intentionally fail their old-token
     /// guard; this final hop uses the old engine epoch for the snapshot and the
     /// new stopped token for publication, matching the helper final-drain path.
-    private func publishStoppedSnapshotAfterCurrentIngest(captureToken: Int, stoppedToken: Int) {
+    private func publishStoppedSnapshotAfterCurrentIngest(
+        captureToken: Int,
+        stoppedToken: Int,
+        finalDrainConfirmed: Bool
+    ) {
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
+            var publication: Task<Void, Never>?
             if self.startGeneration == stoppedToken,
                !self.isCapturing,
                let snapshot = await self.sessionEngine.investigationSnapshot(epoch: captureToken)
             {
                 let spoolIncomplete = await self.liveCaptureSpool.incompletenessReason() != nil
-                let completeness: HistoryCompleteness = self.currentCaptureLoss == .lossReported || spoolIncomplete
+                let completeness: HistoryCompleteness = !finalDrainConfirmed || self
+                    .currentCaptureLoss == .lossReported || spoolIncomplete
                     ? .incomplete
                     : .complete
-                self.publishLiveDetailed(
+                publication = self.publishLiveDetailed(
                     snapshot,
                     expectedGeneration: stoppedToken,
                     isCapturing: false,
                     terminalHistoryCompleteness: completeness
                 )
             }
-            self.resumePendingSavedCaptureOpenAfterLiveDrain()
+            // See `ingestFinalHelperBatch`: the signal must mean the publication
+            // and terminal History enqueue happened, not that they were scheduled.
+            await publication?.value
+            guard self.startGeneration == stoppedToken else {
+                return
+            }
+            // The exact end of this capture's final fold and publication. A Project
+            // transition parked behind it resumes here — never on a timer.
+            self.completeFinalCaptureDrain(stoppedToken: stoppedToken, succeeded: finalDrainConfirmed)
+            if finalDrainConfirmed {
+                self.resumePendingSavedCaptureOpenAfterLiveDrain()
+            } else {
+                self.cancelSavedCaptureOpen(clearPublishedEvidence: false)
+            }
         }
     }
 
@@ -1766,9 +1891,13 @@ private extension MainContentCoordinator {
     /// Clears the engine and adopts a new capture generation. Enqueued on the
     /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
     /// work carries the previous token and is dropped by the engine's epoch guard.
-    func resetSessionEngine(token: Int) {
+    private func resetSessionEngine(token: Int) {
         let engine = sessionEngine
         let spool = liveCaptureSpool
+        // The runtime this reset belongs to, captured before the first `await`. A
+        // queued reset can outlive a Project change, and its spool failure describes
+        // the Project that owns that spool — never the one now on screen.
+        let origin = activeRuntime
         let previous = ingestChain
         ingestChain = Task { @MainActor in
             await previous?.value
@@ -1776,7 +1905,14 @@ private extension MainContentCoordinator {
             do {
                 try await spool.reset(epoch: token)
             } catch {
-                self.captureError = "Capture spool unavailable — \(error.localizedDescription)"
+                let message = "Capture spool unavailable — \(error.localizedDescription)"
+                if self.activeRuntime !== origin {
+                    // Already parked: report it into its own Project's bucket so the
+                    // failure is still there when that Project comes back.
+                    origin.captureError = message
+                } else if self.startGeneration == token {
+                    self.captureError = message
+                }
             }
         }
     }
@@ -1792,6 +1928,11 @@ private extension MainContentCoordinator {
         // Retire this attempt so a late reply/watchdog can't flip state back.
         startGeneration &+= 1
         captureStartedAt = nil
+        // This capture is definitively over and no final batch is still owed, so a
+        // Project transition parked behind the drain may proceed. The failed
+        // attempt never reached a stopped-generation boundary, so the owed drain is
+        // aborted by identity rather than matched against a token it never minted.
+        abortOwedFinalCaptureDrain()
     }
 
     private func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
@@ -1800,74 +1941,5 @@ private extension MainContentCoordinator {
             totals[key(session), default: 0] += 1
         }
         return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
-    }
-}
-
-// MARK: - CaptureDisplayState
-
-/// Coarse capture state shown in the toolbar status capsule. Drives both the dot color and the trailing word.
-enum CaptureDisplayState {
-    case stopped
-    case starting
-    case capturing
-    case error
-
-    // MARK: Internal
-
-    var title: String {
-        switch self {
-        case .stopped: String(localized: "Stopped")
-        case .starting: String(localized: "Starting")
-        case .capturing: String(localized: "Capturing")
-        case .error: String(localized: "Error")
-        }
-    }
-}
-
-// MARK: - SavedCapture
-
-/// One saved `.pcap` or `.pcapng` file on disk, listed under the sidebar's "Saved Captures".
-struct SavedCapture: Identifiable, Hashable, Sendable {
-    let url: URL
-    let name: String
-    let date: Date
-    let byteCount: Int
-
-    var id: URL {
-        url
-    }
-}
-
-// MARK: - DomainGroup
-
-/// A domain and the set of server IPs it resolved to, for the sidebar tree.
-struct DomainGroup: Identifiable {
-    let domain: String
-    let ips: [String]
-    let count: Int
-
-    var id: String {
-        domain
-    }
-}
-
-// MARK: - ThroughputSample
-
-/// One point on the real-time throughput chart (bytes/sec over an interval).
-struct ThroughputSample: Identifiable {
-    let id = UUID()
-    let bytesPerSecond: Double
-}
-
-// MARK: - AppGroup
-
-/// An app and the set of hosts/IPs it contacted, for the expandable sidebar tree.
-struct AppGroup: Identifiable {
-    let app: String
-    let hosts: [String]
-    let count: Int
-
-    var id: String {
-        app
     }
 }

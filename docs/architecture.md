@@ -35,6 +35,32 @@ evidence and an explicit confidence tier (weak / strong / causal).
 saved focus sets) are resolved once from an `AppPolicy` at the composition root and injected downward,
 keeping the limits in one place rather than scattered as constants.
 
+**Projects** are the isolation boundary above all of it. One coordinator serves every Project and holds
+one `ProjectRuntimeState` bucket per Project, bounded by `AppPolicy.maxProjects`. A parked Project keeps
+its *actual* `WorkspaceStore`, `SessionStore`, `LiveCaptureSpool` actor, capture Library folder and
+`UserDefaults` suite — nothing is evicted and nothing is rebuilt from portable configuration, so
+switching back restores its retained investigation; derived queries/evidence are refreshed and raw
+Follow Stream is requested on demand. `ProjectDataProviding` resolves those per-Project
+locations; `ProjectCatalog.legacyDataOwnerProjectID` names the one Project that owns the pre-Projects
+History database and Captures folder, assigned once and never reassigned.
+
+There is a single capture engine and helper backend, so a Project change that involves a running
+capture is a lifecycle transition, not a swap: stop → helper's final drain → final fold → terminal
+History write → *then* the store/spool/preferences references move. Switch, create, import,
+delete-active and recovery all run that one path. Generation and request tokens are globally monotonic
+and are never restored to an older counter; a restored Project's stopped-spool readiness marker is
+rebased onto a fresh token while the spool's own opaque evidence locators are left untouched.
+
+Final-drain waiters are tied to one owed operation, not elapsed time. An explicit destructive helper
+reset finalizes that operation's accepted prefix as incomplete under its recorded engine epoch. A
+fresh publication token retires old replies while preserving the frozen History identity and
+timestamps. The outgoing Project remains active until a later explicit retry succeeds.
+
+Accepted saves and session exports hold their source against Clear, Start, saved-file adoption,
+import replacement and trash. A Project transition drains queued saves and rejects active exports,
+including revalidation after a delayed Stop-and-Switch confirmation. Restoring a runtime restarts
+interrupted initial History reads, but preserves loaded pages/cursors and does not trigger retention.
+
 ## Repository map
 
 ```text

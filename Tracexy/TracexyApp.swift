@@ -23,6 +23,7 @@ struct TracexyApp: App {
                     AppThemeApplier.apply(AppAppearance(rawValue: newValue) ?? .system)
                 }
                 .task {
+                    appDelegate.coordinator = coordinator
                     updater.startIfConfigured()
                 }
         }
@@ -31,6 +32,7 @@ struct TracexyApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             TracexySettingsCommands()
+            TracexyProjectCommands(coordinator: coordinator)
 
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
@@ -74,8 +76,12 @@ struct TracexyApp: App {
 
         // Focus / Noise managers open as real Mac windows (not sheets), sharing the
         // one app-level coordinator so edits flow straight back to the main window.
+        // The auxiliary editors are remounted on the Project identity, so a draft
+        // left open across a Project change cannot be saved into the new Project.
         Window("Edit Focus Set", id: Self.focusSetEditorWindowID) {
             FocusSetEditorWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
                 .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 600, height: 420)
@@ -84,6 +90,8 @@ struct TracexyApp: App {
 
         Window("Noise Control", id: Self.noiseControlWindowID) {
             NoiseControlWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
                 .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 460, height: 560)
@@ -98,11 +106,21 @@ struct TracexyApp: App {
         Window("Settings", id: "settings") {
             SettingsView(
                 updater: updater,
+                applicationDefaults: Self.applicationDefaults,
+                activeProjectName: coordinator.projectStore.activeProject.name,
+                isProjectReady: coordinator.hasHydratedProjects,
                 historyRetentionError: coordinator.historyRetentionError,
                 isHistoryDemoMode: coordinator.isHistoryDemoMode,
                 onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }
             )
-            .defaultAppStorage(Self.settingsDefaults)
+            // Capture, Privacy and default-view preferences belong to the active
+            // Project's own suite. Remounting on the Project identity is what stops
+            // an editor left open across a switch from applying one Project's draft
+            // to another; the panes that must stay app-wide (appearance, updater,
+            // helper, selected tab) name `.standard` explicitly.
+            .defaultAppStorage(coordinator.activeProjectDefaults)
+            .id(coordinator.projectStore.activeProjectID)
+            .disabled(coordinator.projectTransitionStatus.isPending)
             .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 900, height: 640)
@@ -120,9 +138,17 @@ struct TracexyApp: App {
         ? HistoryDemoLaunchMode.freshSettingsDefaults()
         : nil
 
-    private static var settingsDefaults: UserDefaults {
-        historyDemoDefaults ?? .standard
+    private static var applicationDefaults: UserDefaults {
+        guard isHistoryDemoMode else {
+            return .standard
+        }
+        guard let historyDemoDefaults else {
+            preconditionFailure("Synthetic History requires an isolated settings store.")
+        }
+        return historyDemoDefaults
     }
+
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// The single shared coordinator, owned by the app so every scene (main
     /// window + editor/manager windows) reads and mutates the same state.
@@ -135,7 +161,10 @@ struct TracexyApp: App {
 
     /// The user's General → Appearance preference, applied app-wide. `nil` follows
     /// the system.
-    @AppStorage(SettingsKeys.appearance) private var appearance = AppAppearance.system.rawValue
+    /// Appearance is an application preference, so it names the shared domain
+    /// explicitly and is unaffected by the per-Project settings suites.
+    @AppStorage(SettingsKeys.appearance, store: TracexyApp.applicationDefaults)
+    private var appearance = AppAppearance.system.rawValue
 
     private var colorScheme: ColorScheme? {
         AppAppearance(rawValue: appearance)?.colorScheme
@@ -144,36 +173,109 @@ struct TracexyApp: App {
     /// Resolve the terminal-history store for production. A directory/open/migration
     /// failure is isolated here: the app and capture engine start regardless, and
     /// History simply reports itself unavailable.
+    /// Resolve per-Project storage for production. History, the managed capture
+    /// Library and the preferences suite are now resolved *per Project* by the
+    /// provider at hydration, so a directory/open/migration failure stays isolated
+    /// to the Project it belongs to: the app and capture engine start regardless,
+    /// and that Project's History simply reports itself unavailable.
     private static func composeCoordinator() -> MainContentCoordinator {
         if isHistoryDemoMode {
-            guard historyDemoDefaults != nil else {
-                let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
-                coordinator.historyError = "Synthetic History couldn’t start because its isolated settings store is unavailable."
-                return coordinator
-            }
+            let demoDefaults = applicationDefaults
+            let demoRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Tracexy-HistoryDemo-\(UUID().uuidString)", isDirectory: true)
+            let provider = DefaultProjectDataProvider(
+                applicationSupportRoot: demoRoot.appendingPathComponent("Support", isDirectory: true),
+                cacheRoot: demoRoot.appendingPathComponent("Cache", isDirectory: true),
+                settingsSuitePrefix: "\(HistoryDemoLaunchMode.settingsSuiteName()).project",
+                legacySettingsSource: nil
+            )
             do {
+                // The demo never shares the production defaults domain, and its
+                // Project suites are namespaced under the demo suite as well.
                 return try MainContentCoordinator(
                     policy: AppPolicyProvider.current,
                     sessionStore: SessionStore(),
-                    isHistoryDemoMode: true
+                    projectDataProvider: provider,
+                    isHistoryDemoMode: true,
+                    settingsDefaults: demoDefaults
                 )
             } catch {
-                let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+                let coordinator = MainContentCoordinator(
+                    policy: AppPolicyProvider.current,
+                    projectDataProvider: provider,
+                    isHistoryDemoMode: true,
+                    settingsDefaults: demoDefaults
+                )
                 coordinator.historyError = "Synthetic History couldn’t start — \(error.localizedDescription)"
                 return coordinator
             }
         }
 
-        switch HistoryStoreFactory.production() {
-        case let .ready(store):
-            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current, sessionStore: store)
-            coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
-            return coordinator
-        case let .unavailable(reason):
-            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
-            coordinator.historyError = reason
-            coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
-            return coordinator
+        return MainContentCoordinator(
+            policy: AppPolicyProvider.current,
+            projectRepository: JSONProjectCatalogRepository(
+                directoryURL: TracexyIdentity.current.appSupportPath("Projects", fileManager: .default)
+            ),
+            projectDataProvider: DefaultProjectDataProvider()
+        )
+    }
+}
+
+// MARK: - TracexyProjectCommands
+
+private struct TracexyProjectCommands: Commands {
+    let coordinator: MainContentCoordinator
+
+    var body: some Commands {
+        CommandMenu("Project") {
+            Button("New Project…") {
+                coordinator.presentNewProjectEditor()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(!coordinator.projectStore.canCreateProject)
+
+            Button("Rename Project…") {
+                coordinator.presentRenameProjectEditor(id: coordinator.projectStore.activeProjectID)
+            }
+            .disabled(!coordinator.projectStore.isMutable)
+
+            Button("Manage Projects…") {
+                coordinator.isProjectManagerPresented = true
+            }
+
+            Divider()
+
+            Button("Export Project Configuration…") {
+                coordinator.exportProjectConfiguration(coordinator.projectStore.activeProject)
+            }
+            .disabled(!coordinator.projectStore.isMutable)
+
+            Button("Import Project Configuration…") {
+                coordinator.importProjectConfiguration()
+            }
+            .disabled(!coordinator.projectStore.canCreateProject)
+
+            Divider()
+
+            ForEach(coordinator.projectStore.projects) { project in
+                Button {
+                    coordinator.switchToProject(id: project.id)
+                } label: {
+                    if project.id == coordinator.projectStore.activeProjectID {
+                        Label(project.name, systemImage: "checkmark")
+                    } else {
+                        Text(project.name)
+                    }
+                }
+                .disabled(!coordinator.projectStore.isMutable)
+            }
+
+            if case .failed = coordinator.projectStore.loadState {
+                Divider()
+                Button("Repair Projects…") {
+                    coordinator.isProjectRecoveryPresented = true
+                }
+            }
         }
     }
 }
@@ -190,6 +292,8 @@ private struct SessionInspectorWindowScene: Scene {
     var body: some Scene {
         let base = Window("Session Inspector", id: TracexyApp.sessionInspectorWindowID) {
             InspectorView(coordinator: coordinator, allowsDetaching: false)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(coordinator.projectTransitionStatus.isPending)
                 .frame(minWidth: 640, minHeight: 400)
                 .preferredColorScheme(colorScheme)
         }

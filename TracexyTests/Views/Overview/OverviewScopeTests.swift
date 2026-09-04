@@ -211,11 +211,9 @@ struct OverviewScopeTests {
     /// Writes the sample frames to a real `.pcap` and opens it through
     /// `openSavedCapture`, the same path the sidebar uses.
     private func makeLoadedCoordinator(function: String = #function) async throws -> Environment {
-        let suiteName = "com.amunx.tracexy.tests.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
-        )
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
 
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("tracexy-tests-\(UUID().uuidString)", isDirectory: true)
@@ -231,7 +229,7 @@ struct OverviewScopeTests {
         try #require(!coordinator.sessions.isEmpty, "opening the sample capture must produce sessions")
 
         return Environment(coordinator: coordinator) {
-            defaults.removePersistentDomain(forName: suiteName)
+            isolation.tearDown()
             try? FileManager.default.removeItem(at: directory)
         }
     }

@@ -187,6 +187,20 @@ extension MainContentCoordinator {
         frozenHistoryLifetime = nil
     }
 
+    /// Recovery retires an unconfirmed stop's callbacks without creating a second
+    /// capture or changing its frozen timestamps. Only its publication token moves.
+    func rebaseFrozenHistoryLifetime(from stoppedToken: Int, to recoveryToken: Int) {
+        guard let frozen = frozenHistoryLifetime, frozen.stoppedGeneration == stoppedToken else {
+            return
+        }
+        frozenHistoryLifetime = FrozenHistoryLifetime(
+            captureID: frozen.captureID,
+            startedAt: frozen.startedAt,
+            endedAt: frozen.endedAt,
+            stoppedGeneration: recoveryToken
+        )
+    }
+
     // MARK: Terminal write hooks
 
     /// Persist the terminated live capture exactly once, consuming the frozen
@@ -212,7 +226,8 @@ extension MainContentCoordinator {
             sourceKind: .live,
             completeness: completeness,
             sessions: sessions,
-            maskIPAddresses: PrivacySettingsResolver.exportPolicy().maskIPAddresses
+            maskIPAddresses: PrivacySettingsResolver
+                .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
         )
         scheduleHistoryWrite(store: store, input: input)
     }
@@ -242,7 +257,8 @@ extension MainContentCoordinator {
             sourceKind: .saved,
             completeness: completeness,
             sessions: result.sessions,
-            maskIPAddresses: PrivacySettingsResolver.exportPolicy().maskIPAddresses
+            maskIPAddresses: PrivacySettingsResolver
+                .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
         )
         scheduleHistoryWrite(store: store, input: input)
     }
@@ -418,8 +434,15 @@ extension MainContentCoordinator {
                 guard let self, self.historyRequestID == requestID else {
                     return
                 }
-                self.historyAvailability = .failed("Couldn’t load History — \(Self.describe(error))")
+                let message = "Couldn’t load History — \(Self.describe(error))"
+                self.historyAvailability = .failed(message)
                 self.historyTask = nil
+                // A restored initial session read may be waiting for this refresh
+                // to re-select its capture. Failure must settle that orphaned slot
+                // too, without interrupting an independently running session read.
+                if self.historySessionsAvailability == .loading, self.historySessionTask == nil {
+                    self.historySessionsAvailability = .failed(message)
+                }
             }
         }
     }
@@ -427,6 +450,43 @@ extension MainContentCoordinator {
     /// Retry after a failure — identical to a refresh.
     func retryHistory() {
         refreshHistory()
+    }
+
+    /// Restart the first-page History reads a Project change interrupted.
+    ///
+    /// ``invalidateOutgoingProjectWork()`` cancels this Project's in-flight reads,
+    /// so its bucket parks `.loading` with no reader behind it. Nothing on the
+    /// History surface would ever start one again: its `task` reads only from
+    /// `.idle`, and it auto-selects a capture only when *nothing* is selected — so
+    /// a restored Project would sit on a spinner until the user pressed Refresh.
+    /// Demoting the parked state to `.idle` is not enough either, because a capture
+    /// list that had already loaded keeps its restored selection and would leave
+    /// that selection's interrupted session page unread.
+    ///
+    /// Only interrupted *first* pages are restarted. `loadMore` appends behind
+    /// `.loaded`, so an interrupted page append is never restarted and no
+    /// already-loaded page or cursor is discarded. Reads run against the restored
+    /// Project's own store, and no retention or write is performed here: a Project
+    /// change is not a History mutation boundary.
+    func resumeInterruptedHistoryReads() {
+        guard sessionStore != nil else {
+            // No store to read from: say so instead of leaving either surface on a
+            // spinner that nothing will ever resolve.
+            if historyAvailability == .loading {
+                historyAvailability = .unavailable
+            }
+            if historySessionsAvailability == .loading {
+                historySessionsAvailability = .unavailable
+            }
+            return
+        }
+        if historyAvailability == .loading {
+            // A successful refresh re-selects the preserved capture, which restarts
+            // that capture's session page too — so this covers both interruptions.
+            refreshHistory()
+        } else if historySessionsAvailability == .loading, let captureID = selectedHistoryCaptureID {
+            selectHistoryCapture(captureID)
+        }
     }
 
     /// Append the next newest-first page when one exists and no read is in flight.
@@ -542,7 +602,10 @@ extension MainContentCoordinator {
     /// touches the current capture's sessions or capture state, and it never
     /// activates Auto Clear.
     func clearAllHistory() {
-        guard let store = sessionStore else {
+        // A clear started while the Project boundary is settling would run against
+        // a store that is about to be swapped, or race the terminal write a
+        // stopping capture still owes.
+        guard let store = sessionStore, !isProjectBoundaryBusy else {
             return
         }
         historyTask?.cancel()

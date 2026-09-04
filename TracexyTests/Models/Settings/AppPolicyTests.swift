@@ -7,6 +7,7 @@ import Testing
 /// A policy built per-test, so a test states its own limits instead of
 /// inheriting whatever the shipping baseline happens to be today.
 private struct TestPolicy: AppPolicy {
+    var maxProjects = 3
     var maxWorkspaceTabs = 8
     var maxFocusSets = 5
     var maxPinnedHosts = 5
@@ -17,6 +18,11 @@ private struct TestPolicy: AppPolicy {
 
 @Suite("App policy defaults")
 struct AppPolicyDefaultsTests {
+    @Test("The shipping baseline caps local projects at three")
+    func defaultProjectCap() {
+        #expect(DefaultAppPolicy().maxProjects == 3)
+    }
+
     @Test("The shipping baseline caps advanced filter rules at 12")
     func defaultSessionFilterRuleCap() {
         #expect(DefaultAppPolicy().maxSessionFilterRules == 12)
@@ -122,32 +128,30 @@ struct WorkspaceStorePolicyTests {
 struct CoordinatorPolicyTests {
     @Test("The injected policy decides the tab cap and the focus gate's limits")
     func injectedPolicyIsPlumbedThrough() {
-        let policy = TestPolicy(maxWorkspaceTabs: 2, maxFocusSets: 1, maxPinnedHosts: 4)
+        let policy = TestPolicy(maxProjects: 2, maxWorkspaceTabs: 2, maxFocusSets: 1, maxPinnedHosts: 4)
         let coordinator = MainContentCoordinator(policy: policy)
+        #expect(coordinator.projectStore.maxProjects == 2)
         #expect(coordinator.workspaces.maxWorkspaces == 2)
         #expect(coordinator.focusGate.maxFocusSets == 1)
         #expect(coordinator.focusGate.maxPinnedHosts == 4)
     }
 
     @Test("Saving past the focus-set cap changes nothing and says why")
-    func refusedSaveIsExplained() {
-        // Focus sets persist to the app's shared defaults, so the cap is set
-        // relative to whatever is already stored and the additions are undone
-        // afterwards. Otherwise running the suite would leave sets behind.
-        let coordinator = MainContentCoordinator(policy: TestPolicy())
-        let stored = coordinator.focusSets.count
-        let capped = MainContentCoordinator(policy: TestPolicy(maxFocusSets: stored + 1))
+    func refusedSaveIsExplained() async {
+        let environment = ProjectIsolationEnvironment(name: "focus-cap")
+        defer { environment.tearDown() }
+        let capped = environment.makeCoordinator(policy: TestPolicy(maxFocusSets: 1))
+        await capped.hydrateProjectsOnLaunch()
 
         let accepted = FocusSet(name: "accepted", rules: [])
         let refused = FocusSet(name: "refused", rules: [])
-        defer { capped.deleteFocusSet(accepted) }
 
         capped.saveFocusSet(accepted)
-        #expect(capped.focusSets.count == stored + 1)
+        #expect(capped.focusSets.count == 1)
         #expect(capped.policyNotice == nil)
 
         capped.saveFocusSet(refused)
-        #expect(capped.focusSets.count == stored + 1)
+        #expect(capped.focusSets.count == 1)
         #expect(!capped.focusSets.contains { $0.id == refused.id })
         #expect(capped.policyNotice != nil)
         #expect(!capped.canAddFocusSet)

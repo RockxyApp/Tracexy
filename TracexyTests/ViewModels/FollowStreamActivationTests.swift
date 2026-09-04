@@ -9,7 +9,7 @@ struct FollowStreamActivationTests {
 
     @Test("Saved capture follows the selected TCP tuple from its identity-checked source")
     func savedCaptureActivation() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try writeCapture(named: "saved-follow", frames: frames, in: environment.directory)
@@ -38,7 +38,7 @@ struct FollowStreamActivationTests {
 
     @Test("Stopped live capture copies a finalized spool before following")
     func stoppedLiveActivation() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -81,7 +81,7 @@ struct FollowStreamActivationTests {
 
     @Test("Active capture rejects Follow Stream without scanning the growing spool")
     func activeCaptureIsUnavailable() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -104,7 +104,7 @@ struct FollowStreamActivationTests {
 
     @Test("Selection change retires previously loaded raw stream bytes")
     func selectionChangeClearsResult() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -137,18 +137,14 @@ struct FollowStreamActivationTests {
         let teardown: () -> Void
     }
 
-    private func makeEnvironment(function: String = #function) throws -> Environment {
-        let suiteName = "com.amunx.tracexy.follow-stream.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("tracexy-follow-stream-\(UUID().uuidString)", isDirectory: true)
+    private func makeEnvironment(function: String = #function) async throws -> Environment {
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let directory = isolation.root.appendingPathComponent("Fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
-        )
         return Environment(coordinator: coordinator, directory: directory) {
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: directory)
+            isolation.tearDown()
         }
     }
 

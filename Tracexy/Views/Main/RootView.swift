@@ -24,27 +24,37 @@ struct RootView: View {
     @Bindable var coordinator: MainContentCoordinator
 
     var body: some View {
-        NativeWorkspaceSplitView(
-            isSidebarPresented: $isSidebarPresented,
-            isInspectorPresented: contextDockVisibility,
-            autosaveName: Self.workspaceSplitAutosaveName,
-            sidebarMinimumWidth: Theme.Metrics.sidebarMinWidth,
-            sidebarIdealWidth: Theme.Metrics.sidebarIdealWidth,
-            sidebarMaximumWidth: Theme.Metrics.sidebarMaxWidth,
-            workspaceMinimumWidth: Theme.Metrics.sessionTableMinWidth,
-            inspectorMinimumWidth: Theme.Metrics.contextDockMinWidth,
-            inspectorIdealWidth: Theme.Metrics.contextDockIdealWidth,
-            inspectorMaximumWidth: Theme.Metrics.contextDockMaxWidth,
-            toolbarConfiguration: NativeWorkspaceToolbarConfiguration(coordinator: coordinator)
-        ) {
-            SidebarView(coordinator: coordinator)
-        } workspace: {
-            MainDetailView(
-                coordinator: coordinator,
-                bottomInspectorAutosaveName: Self.bottomInspectorSplitAutosaveName
-            )
-        } inspector: {
-            ContextDockView(coordinator: coordinator)
+        let activeProjectID = coordinator.projectStore.activeProjectID
+        return ZStack {
+            NativeWorkspaceSplitView(
+                isSidebarPresented: sidebarVisibility,
+                isInspectorPresented: contextDockVisibility,
+                autosaveName: Self.workspaceSplitAutosaveName(projectID: activeProjectID),
+                sidebarMinimumWidth: Theme.Metrics.sidebarMinWidth,
+                sidebarIdealWidth: Theme.Metrics.sidebarIdealWidth,
+                sidebarMaximumWidth: Theme.Metrics.sidebarMaxWidth,
+                workspaceMinimumWidth: Theme.Metrics.sessionTableMinWidth,
+                inspectorMinimumWidth: Theme.Metrics.contextDockMinWidth,
+                inspectorIdealWidth: Theme.Metrics.contextDockIdealWidth,
+                inspectorMaximumWidth: Theme.Metrics.contextDockMaxWidth,
+                toolbarConfiguration: NativeWorkspaceToolbarConfiguration(coordinator: coordinator)
+            ) {
+                SidebarView(coordinator: coordinator)
+            } workspace: {
+                MainDetailView(
+                    coordinator: coordinator,
+                    bottomInspectorAutosaveName: Self.bottomInspectorSplitAutosaveName(
+                        projectID: activeProjectID
+                    )
+                )
+                .id(activeProjectID)
+            } inspector: {
+                ContextDockView(coordinator: coordinator)
+            }
+            // Native split autosave names are applied only during construction.
+            // Rebuild the split, not this RootView's launch task, for a new Project.
+            .id(activeProjectID)
+            .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
         }
         .ignoresSafeArea(.container, edges: .top)
         .onChange(of: coordinator.workspaces.activeWorkspaceID) {
@@ -57,6 +67,49 @@ struct RootView: View {
         .task { await launchSetup() }
         .sheet(isPresented: $showHelperInstall) {
             HelperInstallPromptView(coordinator: coordinator)
+        }
+        .sheet(item: Binding(
+            get: {
+                coordinator.isProjectManagerPresented ? nil : coordinator.projectNameEditorContext
+            },
+            set: { coordinator.projectNameEditorContext = $0 }
+        )) { context in
+            ProjectNameEditorSheet(context: context, coordinator: coordinator)
+        }
+        .sheet(isPresented: $coordinator.isProjectManagerPresented) {
+            ProjectManagerSheet(coordinator: coordinator)
+        }
+        .sheet(isPresented: $coordinator.isProjectRecoveryPresented) {
+            ProjectRecoverySheet(coordinator: coordinator)
+        }
+        // Changing Projects while a capture runs is an explicit, reversible choice.
+        // Cancel leaves the outgoing Project untouched; Stop and Switch waits for
+        // the helper's final drain, fold and History write before anything moves.
+        .modifier(ProjectTransitionPresentation(
+            coordinator: coordinator,
+            isActive: !coordinator.isProjectManagerPresented && coordinator.projectNameEditorContext == nil
+        ))
+        .alert(
+            "Project Operation Failed",
+            isPresented: Binding(
+                get: {
+                    coordinator.lastProjectOperationError != nil
+                        || coordinator.projectTransferErrorMessage != nil
+                },
+                set: {
+                    if !$0 {
+                        coordinator.lastProjectOperationError = nil
+                        coordinator.projectTransferErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                coordinator.lastProjectOperationError = nil
+                coordinator.projectTransferErrorMessage = nil
+            }
+        } message: {
+            Text(coordinator.projectOperationErrorMessage ?? "The Project operation could not be completed.")
         }
         // A capacity limit is worth one sentence and a dismiss, not a banner
         // that lingers over the traffic the user came here to read.
@@ -77,27 +130,52 @@ struct RootView: View {
         }
     }
 
+    /// Divider positions are part of a Project's layout, so each Project gets its
+    /// own autosave namespace. The native split behavior itself is unchanged.
+    static func workspaceSplitAutosaveName(projectID: UUID) -> String {
+        "\(workspaceSplitAutosaveName).\(projectID.uuidString)"
+    }
+
+    static func bottomInspectorSplitAutosaveName(projectID: UUID) -> String {
+        "\(bottomInspectorSplitAutosaveName).\(projectID.uuidString)"
+    }
+
     // MARK: Private
 
     @State private var showHelperInstall = false
-    /// Sidebar presentation is view-local: the source list is chrome, not workspace
-    /// state, so it is not persisted with the capture/filter/selection model. The
-    /// native toolbar toggle and `View ▸ Show Sidebar` both drive the split, which
-    /// resynchronizes this value through the collapse KVO.
-    @State private var isSidebarPresented = true
+    @State private var sidebarVisibilityByProject: [UUID: Bool] = [:]
+
+    private var sidebarVisibility: Binding<Bool> {
+        let projectID = coordinator.projectStore.activeProjectID
+        let defaults = coordinator.activeProjectDefaults
+        let key = TracexyIdentity.current.defaultsKey("project.sidebarPresented")
+        return Binding(
+            get: { sidebarVisibilityByProject[projectID] ?? defaults.object(forKey: key) as? Bool ?? true },
+            set: { value in
+                guard coordinator.projectStore.activeProjectID == projectID else {
+                    return
+                }
+                sidebarVisibilityByProject[projectID] = value
+                defaults.set(value, forKey: key)
+            }
+        )
+    }
 
     /// Bridges the native inspector split's presentation to workspace state. Routing the
     /// setter through `toggleContextDock()` keeps the existing persistence and animation
     /// semantics, and the equality guard means a native collapse publishes back exactly once.
     private var contextDockVisibility: Binding<Bool> {
-        Binding(
+        let projectID = coordinator.projectStore.activeProjectID
+        return Binding(
             get: {
                 coordinator.activeWorkspace.sidebarSelection == .history
                     ? false
                     : coordinator.isContextDockVisible
             },
             set: { newValue in
-                guard coordinator.activeWorkspace.sidebarSelection != .history else {
+                guard coordinator.projectStore.activeProjectID == projectID,
+                      coordinator.activeWorkspace.sidebarSelection != .history else
+                {
                     return
                 }
                 if coordinator.isContextDockVisible != newValue {
@@ -112,14 +190,21 @@ struct RootView: View {
     /// setting is the single source of truth for auto-start in both development
     /// and normal launches.
     private func launchSetup() async {
+        await coordinator.hydrateProjectsOnLaunch()
+
         if coordinator.isHistoryDemoMode {
             await coordinator.prepareHistoryDemo()
             return
         }
 
-        let shouldAutoStart = UserDefaults.standard.bool(
+        // Auto-start is a *launch* preference, resolved once against the Project
+        // that was active at launch. Changing Projects later never starts a
+        // capture on its own: capture always begins with a deliberate Start.
+        let shouldAutoStart = coordinator.activeProjectDefaults.bool(
             forKey: SettingsKeys.autoStartCapture
         )
+        let launchProjectID = coordinator.projectStore.activeProjectID
+        let launchGeneration = coordinator.startGeneration
         if MainContentCoordinator.forceDirectCapture {
             if shouldAutoStart {
                 coordinator.startCapture()
@@ -127,6 +212,14 @@ struct RootView: View {
             return
         }
         await coordinator.helper.checkStatus()
+        // A delayed helper reply must never apply the launch Project's consent
+        // to a destination selected while the reply was in flight.
+        guard coordinator.projectStore.activeProjectID == launchProjectID,
+              coordinator.startGeneration == launchGeneration,
+              !coordinator.projectTransitionStatus.isPending else
+        {
+            return
+        }
         if coordinator.helper.status == .notInstalled {
             showHelperInstall = true
         } else if shouldAutoStart {

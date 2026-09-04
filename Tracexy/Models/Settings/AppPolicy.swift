@@ -13,6 +13,8 @@ import Foundation
 ///
 /// The shipping baseline is ``DefaultAppPolicy``.
 protocol AppPolicy: Sendable {
+    /// Maximum local Projects, including the default Project.
+    var maxProjects: Int { get }
     /// Maximum user-created workspace tabs, including the first one.
     var maxWorkspaceTabs: Int { get }
     /// Maximum saved focus sets in the sidebar's focus library.
@@ -24,6 +26,10 @@ protocol AppPolicy: Sendable {
 }
 
 extension AppPolicy {
+    var maxProjects: Int {
+        3
+    }
+
     var maxWorkspaceTabs: Int {
         8
     }
@@ -47,6 +53,7 @@ extension AppPolicy {
 /// rather than inherited from the protocol extension so this file reads as the
 /// single answer to "what are the limits?".
 struct DefaultAppPolicy: AppPolicy {
+    let maxProjects = 3
     let maxWorkspaceTabs = 8
     let maxFocusSets = 5
     let maxPinnedHosts = 5
