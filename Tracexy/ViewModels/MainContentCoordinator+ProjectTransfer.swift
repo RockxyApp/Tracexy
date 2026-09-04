@@ -68,17 +68,10 @@ extension MainContentCoordinator {
             guard confirmProjectImport(importedConfiguration, fileName: url.lastPathComponent) else {
                 return false
             }
-            guard flushProjectWorkspaceSnapshot() else {
-                return false
-            }
-            let importedProject = try projectStore.importProject(importedConfiguration)
-            activateCurrentProjectWorkspaces()
-            lastProjectOperationError = nil
-            projectTransferErrorMessage = nil
-            return importedProject.id == projectStore.activeProjectID
-        } catch let error as ProjectMutationError {
-            lastProjectOperationError = error
-            return false
+            // Import lands on the same Project lifecycle path as switch, create and
+            // delete-active, so an in-flight capture is stopped and fully drained
+            // before the imported Project becomes active.
+            return beginProjectTransition(.importProject(importedConfiguration))
         } catch {
             projectTransferErrorMessage = projectTransferFailureMessage(for: error)
             return false

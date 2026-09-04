@@ -9,7 +9,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("Open publishes only one final bounded result and lazy-loads selected evidence")
     func finalOnlyOpenAndLazyEvidence() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let frames = SampleCapture.frames(now: Date())
         let capture = try writeCapture(named: "bounded", frames: frames, in: environment.directory)
@@ -41,7 +41,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A malformed newer open preserves the previously published capture")
     func malformedOpenPreservesPublishedState() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let valid = try writeCapture(
             named: "valid",
@@ -65,7 +65,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A newer open retires every result and progress callback from the older request")
     func newerOpenWins() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let first = try writeCapture(
             named: "first",
@@ -86,7 +86,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("Clear retires a pending saved open without publishing partial state")
     func clearRetiresPendingOpen() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let capture = try writeCapture(
             named: "cancelled",
@@ -107,7 +107,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A multi-gigabyte sparse open cancels without publishing or traversing the sparse tail")
     func sparseOpenCancelsIncrementally() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let firstFrame = try #require(SampleCapture.frames(now: Date()).first)
         let base = try writeCapture(named: "sparse", frames: [firstFrame], in: environment.directory)
@@ -137,7 +137,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A truncated tail publishes prior sessions with an explicit warning")
     func truncatedTailIsExplicit() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let frames = SampleCapture.frames(now: Date())
         let capture = try writeCapture(named: "truncated", frames: frames, in: environment.directory)
@@ -165,7 +165,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("Opening a saved capture adopts the loader's connection snapshot")
     func openAdoptsConnectionSnapshot() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try writeCapture(named: "connections", frames: frames, in: environment.directory)
@@ -195,7 +195,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("Clear removes both the sessions and the connection snapshot")
     func clearRemovesSessionsAndConnections() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try writeCapture(named: "clearable", frames: frames, in: environment.directory)
@@ -215,7 +215,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A malformed newer open preserves the previously published session/connection pair")
     func malformedOpenPreservesConnectionPair() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let valid = try writeCapture(
             named: "valid-connections",
@@ -247,7 +247,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A live investigation publication adopts the exact pair only for the current generation and state")
     func liveInvestigationPublicationHonorsGenerationAndState() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
 
@@ -303,7 +303,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("Opening a saved capture adopts a non-vacuous datagram analysis and clear resets it")
     func openAdoptsNonVacuousDatagramAnalysisAndClearResetsIt() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         // A capture whose IPv4 UDP-DNS response has the TC bit set, so the datagram
         // analysis is a non-vacuous single note rather than empty.
@@ -327,7 +327,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A malformed newer open preserves a non-vacuous datagram analysis")
     func malformedOpenPreservesNonVacuousDatagramAnalysis() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let valid = try writeCapture(
             named: "valid-datagram",
@@ -351,7 +351,7 @@ struct SavedCaptureOpeningTests {
 
     @Test("A live datagram publication adopts the exact non-vacuous value only for the current generation/state")
     func liveDatagramPublicationHonorsGenerationAndState() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
 
@@ -448,18 +448,14 @@ struct SavedCaptureOpeningTests {
         }
     }
 
-    private func makeEnvironment(function: String = #function) throws -> Environment {
-        let suiteName = "com.amunx.tracexy.saved-open.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("tracexy-saved-open-\(UUID().uuidString)", isDirectory: true)
+    private func makeEnvironment(function: String = #function) async throws -> Environment {
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let directory = isolation.root.appendingPathComponent("Fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
-        )
         return Environment(coordinator: coordinator, directory: directory) {
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: directory)
+            isolation.tearDown()
         }
     }
 

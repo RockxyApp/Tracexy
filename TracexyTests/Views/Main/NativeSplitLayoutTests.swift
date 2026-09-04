@@ -139,6 +139,21 @@ struct NativeSplitLayoutTests {
         #expect(workspace != bottom)
     }
 
+    @MainActor
+    @Test("Each Project owns separate root and evidence divider positions")
+    func projectAutosaveNamesAreDistinct() {
+        let first = UUID()
+        let second = UUID()
+        let names = [
+            RootView.workspaceSplitAutosaveName(projectID: first),
+            RootView.workspaceSplitAutosaveName(projectID: second),
+            RootView.bottomInspectorSplitAutosaveName(projectID: first),
+            RootView.bottomInspectorSplitAutosaveName(projectID: second),
+        ]
+        #expect(Set(names).count == 4)
+        #expect(names[0] == RootView.workspaceSplitAutosaveName(projectID: first))
+    }
+
     // MARK: Native window toolbar chrome
 
     @MainActor
@@ -204,7 +219,9 @@ struct NativeSplitLayoutTests {
         let statusIndex = identifiers.firstIndex(of: NativeWorkspaceToolbar.captureStatusIdentifier)
         #expect(projectSelectorIndex.map { identifiers[$0 + 1] } == .flexibleSpace)
         #expect(interfacePickerIndex == statusIndex.map { $0 + 2 })
-        #expect(captureIndex == interfacePickerIndex.map { $0 + 1 })
+        #expect(interfacePickerIndex.map { identifiers[$0 + 1] }
+            == NativeWorkspaceToolbar.captureSeparatorIdentifier)
+        #expect(captureIndex == interfacePickerIndex.map { $0 + 2 })
         #expect(captureIndex.map { identifiers[$0 + 1] } == .space)
 
         let selectorItem = toolbar.managedToolbar.items.first(where: {
@@ -278,13 +295,81 @@ struct NativeSplitLayoutTests {
             $0.itemIdentifier == NativeWorkspaceToolbar.sessionExportIdentifier
         }) as? NSMenuToolbarItem
         #expect(exportItem != nil)
-        #expect(exportItem?.isBordered == false)
+        #expect(exportItem?.isBordered == true)
         #expect(exportItem?.showsIndicator == true)
         #expect(exportItem?.menu.items.map(\.title) == [
             "Export Session",
             "Export as pcap",
             "Export as pcapng",
         ])
+    }
+
+    @MainActor
+    @Test("Capture separator is a noninteractive native hairline")
+    func nativeCaptureSeparator() throws {
+        let controller = makeToolbarController()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+        let item = try #require(toolbar.managedToolbar.items.first {
+            $0.itemIdentifier == NativeWorkspaceToolbar.captureSeparatorIdentifier
+        })
+        let separator = try #require(item.view as? NSBox)
+        #expect(separator.boxType == .separator)
+        #expect(!separator.isAccessibilityElement())
+        #expect(!separator.acceptsFirstResponder)
+        #expect(!item.isBordered)
+        #expect(item.action == nil)
+        // NSBox includes native padding in fittingSize; pin the requested
+        // hairline constraint and its vertical orientation, not that padding.
+        #expect(separator.constraints.contains {
+            $0.isActive && $0.firstAttribute == .width
+                && $0.constant == Theme.Metrics.toolbarSeparatorWidth
+        })
+        #expect(separator.fittingSize.width < separator.fittingSize.height)
+        #expect(separator.fittingSize.height == Theme.Metrics.toolbarSeparatorHeight)
+    }
+
+    @MainActor
+    @Test("Export retains its native border across selection and busy states")
+    func nativeExportAvailability() async throws {
+        let controller = makeToolbarController()
+        let coordinator = MainContentCoordinator()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: coordinator)
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+        let item = try #require(toolbar.managedToolbar.items.first {
+            $0.itemIdentifier == NativeWorkspaceToolbar.sessionExportIdentifier
+        } as? NSMenuToolbarItem)
+        toolbar.startObservingState()
+        #expect(!item.isEnabled)
+        #expect(item.isBordered)
+
+        let frames = ReplayCorpus.tcpConnectionCapturedFrames()
+        coordinator.retainedFrames.append(contentsOf: frames)
+        coordinator.sessions = SessionBuilder.build(from: frames, linkType: LinkType.ethernet)
+        try coordinator.select(#require(coordinator.sessions.first))
+        await Task.yield()
+        #expect(item.isEnabled)
+        #expect(item.isBordered)
+
+        coordinator.setSessionExporting(true)
+        await Task.yield()
+        #expect(!item.isEnabled)
+        #expect(item.isBordered)
+        coordinator.setSessionExporting(false)
+        await Task.yield()
+        #expect(item.isEnabled)
+        coordinator.workspaces.activeWorkspace.selectedSessionID = nil
+        await Task.yield()
+        #expect(!item.isEnabled)
+        #expect(item.isBordered)
     }
 
     @MainActor

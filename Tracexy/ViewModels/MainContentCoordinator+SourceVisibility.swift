@@ -80,41 +80,45 @@ extension MainContentCoordinator {
         SourceVisibilityPreferences.persist(
             apps: hiddenSourceApps,
             domains: hiddenSourceDomains,
-            ips: hiddenSourceIPs
+            ips: hiddenSourceIPs,
+            defaults: activeProjectDefaults
         )
     }
 }
 
 // MARK: - SourceVisibilityPreferences
 
+/// Hidden-source presentation state. `defaults` is always the *active Project's*
+/// suite, so hiding a row in one Project never removes it from another.
 enum SourceVisibilityPreferences {
     // MARK: Internal
 
-    static func loadApps() -> Set<String> {
-        load(key: appsKey)
+    static func loadApps(defaults: UserDefaults) -> Set<String> {
+        load(key: ProjectScopedSettingsKeys.hiddenSourceApps, defaults: defaults)
     }
 
-    static func loadDomains() -> Set<String> {
-        load(key: domainsKey)
+    static func loadDomains(defaults: UserDefaults) -> Set<String> {
+        load(key: ProjectScopedSettingsKeys.hiddenSourceDomains, defaults: defaults)
     }
 
-    static func loadIPs() -> Set<String> {
-        load(key: ipsKey)
+    static func loadIPs(defaults: UserDefaults) -> Set<String> {
+        load(key: ProjectScopedSettingsKeys.hiddenSourceIPs, defaults: defaults)
     }
 
-    static func persist(apps: Set<String>, domains: Set<String>, ips: Set<String>) {
-        UserDefaults.standard.set(apps.sorted(), forKey: appsKey)
-        UserDefaults.standard.set(domains.sorted(), forKey: domainsKey)
-        UserDefaults.standard.set(ips.sorted(), forKey: ipsKey)
+    static func persist(
+        apps: Set<String>,
+        domains: Set<String>,
+        ips: Set<String>,
+        defaults: UserDefaults
+    ) {
+        defaults.set(apps.sorted(), forKey: ProjectScopedSettingsKeys.hiddenSourceApps)
+        defaults.set(domains.sorted(), forKey: ProjectScopedSettingsKeys.hiddenSourceDomains)
+        defaults.set(ips.sorted(), forKey: ProjectScopedSettingsKeys.hiddenSourceIPs)
     }
 
     // MARK: Private
 
-    private static let appsKey = TracexyIdentity.current.defaultsKey("sources.hiddenApps")
-    private static let domainsKey = TracexyIdentity.current.defaultsKey("sources.hiddenDomains")
-    private static let ipsKey = TracexyIdentity.current.defaultsKey("sources.hiddenIPs")
-
-    private static func load(key: String) -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    private static func load(key: String, defaults: UserDefaults) -> Set<String> {
+        Set(defaults.stringArray(forKey: key) ?? [])
     }
 }

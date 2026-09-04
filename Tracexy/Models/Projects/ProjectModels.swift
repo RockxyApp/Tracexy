@@ -224,22 +224,36 @@ nonisolated struct ProjectCatalog: Codable, Hashable, Sendable {
         schemaVersion: Int = ProjectCatalog.currentSchemaVersion,
         revision: UInt64 = 0,
         projects: [Project],
-        activeProjectID: UUID
+        activeProjectID: UUID,
+        legacyDataOwnerProjectID: UUID? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.revision = revision
         self.projects = projects
         self.activeProjectID = activeProjectID
+        self.legacyDataOwnerProjectID = legacyDataOwnerProjectID
     }
 
     // MARK: Internal
 
     static let currentSchemaVersion = 1
 
+    /// Marks the pre-Projects History/Captures data as deliberately unowned.
+    ///
+    /// Catalog recovery uses it instead of handing existing data to a freshly
+    /// minted Project: the files stay on disk untouched, and no new Project can
+    /// silently inherit another user's capture history.
+    static let retiredLegacyDataOwnerID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
     var schemaVersion: Int
     var revision: UInt64
     var projects: [Project]
     var activeProjectID: UUID
+
+    /// The single Project that owns the pre-Projects `History/` database and
+    /// `Captures/` folder. Absent in a v1 catalog written before Project
+    /// isolation; assigned exactly once on first load and never reassigned.
+    var legacyDataOwnerProjectID: UUID?
 
     static func defaultCatalog(now: Date = Date()) -> ProjectCatalog {
         let workspace = ProjectWorkspaceSnapshot(title: "Live", isClosable: false)

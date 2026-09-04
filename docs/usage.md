@@ -9,7 +9,9 @@ Choose the capture interface from the toolbar menu beside **Start/Stop**, on the
 The compact label shows the interface's friendly name (for example, **Wi-Fi**); the menu,
 tooltip, and accessibility value retain its BSD identifier (for example, **Wi-Fi (en0)**).
 At narrow window widths the same menu becomes icon-only. Project selection remains separate
-on the left; a native gap separates capture controls from Export and the inspectors.
+on the left. A vertical divider distinguishes interface selection from Start/Stop; a native gap
+separates capture controls from Export and the inspectors. Export retains its button background
+when disabled and becomes available when a session with retained capture frames is selected.
 
 Live capture reads from a network interface through the signed privileged helper. By default, it
 begins when you press **Start**. If you explicitly enable **Settings → Capture → Auto-start capture
@@ -66,15 +68,63 @@ results, and selected-evidence reads.
 
 ## Projects
 
-Projects keep investigation workspaces organized without moving or rewriting capture data. Use the
-Project selector in the main toolbar, immediately beside the sidebar controls, or the **Project** menu
-to switch, create, rename, and manage Projects. Each Project remembers its workspace names, filters,
-grouping, navigation, and inspector layout. Switching Projects restores that view configuration.
+A Project is a complete, isolated investigation. Use the Project selector in the main toolbar,
+immediately beside the sidebar controls, or the **Project** menu to switch, create, rename, and manage
+Projects.
+
+Each Project owns, separately from every other Project:
+
+- its captured sessions, investigation snapshot, findings, evidence, retained frames, capture
+  statistics, errors, warnings, and throughput chart;
+- its workspace tabs — names, filters, grouping, navigation, inspector layout, selected session, and
+  structured query drafts and results;
+- its saved-capture Library folder and its local History database, including History selection,
+  paging, Clear, and retention;
+- its capture settings (interface, filter mode and BPF, snap length, promiscuous mode, retention
+  size, auto-start), its privacy settings (payload redaction, credential stripping, IP masking,
+  History Auto-clear), and its pins, Focus Sets, muted noise, hidden sources, and default view.
+
+Appearance, byte units, quit confirmation, workspace restoration, the selected Settings tab, the
+"Local only" posture, analytics, updates, and the privileged helper stay application-wide. The
+Settings window shows the Project name beside the panes it edits, and it reopens against the new
+Project when you switch, so an editor left open cannot apply one Project's draft to another.
+
+Switching Projects preserves the investigation within an app session. Going A → B → A restores A's
+sessions, snapshot, findings, evidence, retained frames, selected session, query drafts and results,
+saved source references, capture statistics and chart, removed-session state, and History selection
+exactly as they were. Starting, clearing, filtering, or changing settings in B never affects A.
+In-flight derived work is cancelled at the boundary; evidence projections and accepted queries are
+rebuilt from the restored snapshot. Interrupted initial History reads restart in the restored
+Project; already-loaded pages and their paging position are preserved. An on-demand Follow Stream
+request can be run again.
+
+If a capture is running when you change Projects, Tracexy asks first. **Cancel** leaves the running
+capture and its Project completely untouched. **Stop and Switch** stops the capture and waits for the
+helper's final packets, the final session fold, and the terminal History entry *before* the Project
+changes. If the helper does not confirm that final drain, Tracexy stays where it is, says so, and
+offers a retry — a timeout never counts as a confirmed drain. Capture cannot be started while a
+Project change or a final drain is in progress, and auto-start applies only at launch, never on a
+switch. If you explicitly reset the helper while its final reply is unavailable, Tracexy preserves
+the accepted packet prefix, marks its terminal History entry **incomplete**, and stays in the
+outgoing Project. Retry the Project change after recovery has settled; the missing tail is not
+reported as recovered.
+
+An accepted **Save Capture** or session export holds its capture source until it finishes or fails.
+During that time Start, Clear, opening another capture, import replacement, and Library trash are
+refused so they cannot change the bytes being saved or exported. Stop remains available. Project
+changes wait for accepted saves; finish or cancel an export before changing Projects.
+Import and Trash explain when the capture source is busy rather than reporting a filesystem
+permission problem. Save/export failures remain visible even if you stopped the capture while
+the operation was running. If a resumed History read fails, it offers retry instead of leaving
+the selected-session pane loading indefinitely.
+The destination is prepared and the catalog saved before activation. A failed save keeps the old
+Project and investigation active. Deleting an inactive Project does not stop the active capture.
 
 **Project → Manage Projects…** opens the same management sheet used by the toolbar control. Its sidebar
 lists local Projects and their workspace counts; the detail area can open, rename, import, export, or
-delete the selected Project. Deleting a Project removes only its saved workspace configuration. It does
-not delete the current capture, saved `.pcap`/`.pcapng` files, or History.
+delete the selected Project. Deleting a Project removes it from the catalog and releases it from the
+app, discarding its unsaved in-memory sessions and evidence. Its saved captures and local History are
+**not** deleted — they remain on disk — but they are no longer reachable from Tracexy.
 
 **Export Project Configuration…** writes a configuration-only `.tracexyproject` file. It can include
 user-authored filter text, so review it before sharing, but it never includes packets, payloads, capture
@@ -82,8 +132,21 @@ paths, session selection, findings, or History. Import always creates a new loca
 identities and never replaces an existing Project. Project files and the local catalog are size-bounded
 and validated before adoption.
 
-Capture, decoded sessions, saved captures, and History currently remain app-wide. Changing the active
-Project therefore does not stop a live capture, change evidence ownership, or hide terminal History.
+### What survives quitting
+
+Durable configuration, per-Project History, and managed saved captures survive relaunch. **Sessions
+held only in memory do not**: Tracexy does not checkpoint an unsaved live capture, so a Project's
+current sessions and retained frames exist for the life of the app session only. Use **Save Capture**
+before quitting if you need them later.
+
+Data written before Project isolation existed — the original History database and Captures folder —
+is attached to exactly one Project the first time the catalog is loaded, and that ownership is
+recorded and never reassigned. Nothing is copied, moved, or deleted. If the catalog has to be
+repaired, that data stays on disk and is deliberately left unattached rather than handed to a newly
+created Project.
+Catalog reload is a startup-recovery action. If an investigation is already open, save unsaved captures
+and relaunch before reloading. Explicit catalog reset warns about discarding in-memory investigations;
+it prepares the replacement before changing the catalog, and preserves saved files and History on disk.
 
 ## Local History
 

@@ -137,24 +137,21 @@ struct CoordinatorPolicyTests {
     }
 
     @Test("Saving past the focus-set cap changes nothing and says why")
-    func refusedSaveIsExplained() {
-        // Focus sets persist to the app's shared defaults, so the cap is set
-        // relative to whatever is already stored and the additions are undone
-        // afterwards. Otherwise running the suite would leave sets behind.
-        let coordinator = MainContentCoordinator(policy: TestPolicy())
-        let stored = coordinator.focusSets.count
-        let capped = MainContentCoordinator(policy: TestPolicy(maxFocusSets: stored + 1))
+    func refusedSaveIsExplained() async {
+        let environment = ProjectIsolationEnvironment(name: "focus-cap")
+        defer { environment.tearDown() }
+        let capped = environment.makeCoordinator(policy: TestPolicy(maxFocusSets: 1))
+        await capped.hydrateProjectsOnLaunch()
 
         let accepted = FocusSet(name: "accepted", rules: [])
         let refused = FocusSet(name: "refused", rules: [])
-        defer { capped.deleteFocusSet(accepted) }
 
         capped.saveFocusSet(accepted)
-        #expect(capped.focusSets.count == stored + 1)
+        #expect(capped.focusSets.count == 1)
         #expect(capped.policyNotice == nil)
 
         capped.saveFocusSet(refused)
-        #expect(capped.focusSets.count == stored + 1)
+        #expect(capped.focusSets.count == 1)
         #expect(!capped.focusSets.contains { $0.id == refused.id })
         #expect(capped.policyNotice != nil)
         #expect(!capped.canAddFocusSet)

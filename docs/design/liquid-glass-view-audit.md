@@ -2,7 +2,7 @@
 
 Audited 2026-08-24 against the production `Tracexy/Views` tree and every app scene in `TracexyApp.swift`. This inventory is exhaustive for current source. It distinguishes functional chrome from data content so “more glass” never becomes glass behind packet text, tables or evidence.
 
-Toolbar entries reconciled 2026-09-04: Project context and capture-source controls now have separate native toolbar ownership and responsive interface labeling.
+Toolbar entries reconciled 2026-09-04: Project context and capture-source controls now have separate native toolbar ownership and responsive interface labeling. A noninteractive native vertical separator distinguishes the source menu from Start/Stop; Export retains its native bordered surface even when disabled.
 
 ## Window and split hierarchy
 

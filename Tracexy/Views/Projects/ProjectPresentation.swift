@@ -94,7 +94,10 @@ struct ProjectToolbarSelectorView: View {
     }
 
     private var projectStatusSymbol: String {
-        switch coordinator.projectStore.loadState {
+        if coordinator.projectTransitionStatus.isPending {
+            return "hourglass"
+        }
+        return switch coordinator.projectStore.loadState {
         case .failed: "folder.badge.questionmark"
         case .loading: "folder"
         case .idle,
@@ -137,7 +140,7 @@ struct ProjectNameEditorSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.title)
                         .font(Theme.Typography.surfaceTitle)
-                    Text("Projects keep workspace filters and layout together.")
+                    Text("A Project keeps its own sessions, Library, History, and settings.")
                         .font(Theme.Typography.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -217,7 +220,12 @@ struct ProjectNameEditorSheet: View {
             return
         }
         let succeeded: Bool = switch context.mode {
+        // A pending transition means the request was accepted and is waiting for a
+        // running capture to stop and drain, so the sheet closes rather than
+        // reporting a failure that did not happen.
         case .create: coordinator.createProject(named: normalizedName) != nil
+            || coordinator.projectTransitionStatus.isPending
+            || coordinator.pendingProjectSwitchConfirmation != nil
         case let .rename(id): coordinator.renameProject(id: id, to: normalizedName)
         }
         guard succeeded else {
@@ -271,13 +279,18 @@ struct ProjectManagerSheet: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text(
-                "This removes the Project and its saved workspace configuration. "
-                    + "Current capture data, saved captures, and History are not deleted."
+                "This removes the Project, its workspace configuration, and any unsaved in-memory sessions and evidence. "
+                    + "Its saved captures and local History stay on disk and are not deleted, "
+                    + "but they will no longer be reachable from Tracexy."
             )
         }
         .sheet(item: $coordinator.projectNameEditorContext) { context in
             ProjectNameEditorSheet(context: context, coordinator: coordinator)
         }
+        .modifier(ProjectTransitionPresentation(
+            coordinator: coordinator,
+            isActive: coordinator.projectNameEditorContext == nil
+        ))
         .onChange(of: coordinator.projectStore.activeProjectID) { _, activeProjectID in
             selection = activeProjectID
         }
@@ -314,7 +327,7 @@ struct ProjectManagerSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Projects")
                     .font(Theme.Typography.surfaceTitle)
-                Text("Organize durable workspace views for different investigations.")
+                Text("Keep separate investigations isolated: sessions, Library, History, and settings.")
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -444,7 +457,7 @@ struct ProjectManagerSheet: View {
 
                 Divider()
                 Label(
-                    "Projects save workspace names, filters, grouping, and layout. Capture data and History remain app-wide.",
+                    "Each Project keeps its own sessions, saved-capture Library, local History, and capture/privacy settings. Exported Project files carry configuration only.",
                     systemImage: "info.circle"
                 )
                 .font(Theme.Typography.caption)
@@ -565,7 +578,8 @@ struct ProjectRecoverySheet: View {
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
                 Text(
                     "Tracexy will not overwrite an unreadable catalog. Retry after fixing the file, "
-                        + "or reset Projects to a new default catalog. Capture and History are unaffected."
+                        + "or reset Projects to a new default catalog. Saved capture files and History remain on disk; "
+                        + "resetting discards unsaved in-memory sessions and workspace state."
                 )
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -605,8 +619,9 @@ struct ProjectRecoverySheet: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This replaces Project names and saved workspace configuration. "
-                    + "Current capture data, saved captures, and History are not deleted."
+                "This discards unsaved in-memory sessions and evidence, and replaces Project names and workspace configuration with a new default "
+                    + "Project. Saved captures and History stay on disk and are never handed to the "
+                    + "new Project, so no investigation inherits another's data."
             )
         }
     }

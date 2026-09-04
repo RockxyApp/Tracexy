@@ -44,6 +44,33 @@ enum SettingsKeys {
     }
 }
 
+// MARK: - ProjectScopedSettingsKeys
+
+/// Preference keys that are *not* surfaced in the Settings window but are still
+/// owned independently by each Project (pins, Focus Sets, muted noise, hidden
+/// sources, remembered panel layout). Centralized here so the per-Project suite
+/// seeding and the readers below can never drift apart.
+enum ProjectScopedSettingsKeys {
+    // MARK: Internal
+
+    static let pinnedHosts = key("pinnedHosts")
+    static let focusSets = key("focusSets")
+    static let mutedHosts = key("noise.mutedHosts")
+    static let mutedProtocols = key("noise.mutedProtocols")
+    static let hiddenSourceApps = key("sources.hiddenApps")
+    static let hiddenSourceDomains = key("sources.hiddenDomains")
+    static let hiddenSourceIPs = key("sources.hiddenIPs")
+    static let inspectorLayout = key("workspace.inspectorLayout")
+    static let contextDockVisible = key("workspace.contextDockVisible")
+    static let allowsAutomaticInspectorReveal = key("workspace.allowsAutomaticInspectorReveal")
+
+    // MARK: Private
+
+    private static func key(_ suffix: String) -> String {
+        TracexyIdentity.current.defaultsKey(suffix)
+    }
+}
+
 // MARK: - SettingsTab
 
 enum SettingsTab: String, CaseIterable, Identifiable, Hashable {

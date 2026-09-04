@@ -340,7 +340,7 @@ struct HistoryIntegrationTests {
 
     @Test("Opening a saved capture persists exactly one saved, complete capture")
     func savedTerminalMapping() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "saved", frames: frames, in: environment.directory)
@@ -358,7 +358,7 @@ struct HistoryIntegrationTests {
 
     @Test("Reopening the same file is a distinct History event")
     func reopenIsDistinctEvent() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "reopen", frames: frames, in: environment.directory)
@@ -378,7 +378,7 @@ struct HistoryIntegrationTests {
 
     @Test("A truncated tail maps to incomplete completeness")
     func savedTruncatedCompleteness() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "truncated", frames: frames, in: environment.directory)
@@ -399,7 +399,7 @@ struct HistoryIntegrationTests {
 
     @Test("An empty saved capture uses the finite deterministic fallback instant")
     func emptySavedFallback() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let capture = try Self.writeCapture(named: "empty", frames: [], in: environment.directory)
 
@@ -618,20 +618,15 @@ struct HistoryIntegrationTests {
         await coordinator.waitForHistory()
     }
 
-    private static func makeSavedEnvironment(function: String = #function) throws -> SavedEnvironment {
-        let suiteName = "com.amunx.tracexy.history.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("tracexy-history-\(UUID().uuidString)", isDirectory: true)
+    private static func makeSavedEnvironment(function: String = #function) async throws -> SavedEnvironment {
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let store = try #require(coordinator.sessionStore)
+        let directory = isolation.root.appendingPathComponent("Fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = try SessionStore()
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults),
-            sessionStore: store
-        )
         return SavedEnvironment(coordinator: coordinator, store: store, directory: directory) {
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: directory)
+            isolation.tearDown()
         }
     }
 

@@ -118,6 +118,8 @@ enum Theme {
         /// at narrow desktop widths. The menu and full accessible label stay intact.
         static let toolbarCompactWindowWidth: CGFloat = 1_180
         static let toolbarInterfaceLabelMaximumWidth: CGFloat = 140
+        static let toolbarSeparatorWidth: CGFloat = 1
+        static let toolbarSeparatorHeight: CGFloat = 18
         /// The label frame inside a small native glass button. Native button
         /// insets expand this to a comfortable pointer target; keeping the inner
         /// square at the approved 27pt rhythm prevents toolbar glyphs from looking

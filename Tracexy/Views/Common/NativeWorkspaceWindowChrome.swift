@@ -98,6 +98,9 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     static let captureActionIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.captureAction"
     )
+    static let captureSeparatorIdentifier = NSToolbarItem.Identifier(
+        "\(TracexyIdentity.current.logSubsystem).toolbar.captureSeparator"
+    )
     static let sessionExportIdentifier = NSToolbarItem.Identifier(
         "\(TracexyIdentity.current.logSubsystem).toolbar.sessionExport"
     )
@@ -163,6 +166,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             Self.captureStatusIdentifier,
             .flexibleSpace,
             Self.interfacePickerIdentifier,
+            Self.captureSeparatorIdentifier,
             Self.captureActionIdentifier,
             .space,
             Self.sessionExportIdentifier,
@@ -214,6 +218,8 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             return item
         case Self.captureActionIdentifier:
             return makeCaptureItem()
+        case Self.captureSeparatorIdentifier:
+            return makeCaptureSeparatorItem()
         case Self.captureStatusIdentifier:
             return hostingItem(
                 identifier: itemIdentifier,
@@ -255,8 +261,25 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
-    /// Capture stays independent from export/inspection, preserving a clear
-    /// primary Start/Stop action without adding divider chrome to its border.
+    /// A native, noninteractive hairline distinguishes source configuration from
+    /// the adjacent Start/Stop action without adding another control or label.
+    private func makeCaptureSeparatorItem() -> NSToolbarItem {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.setAccessibilityElement(false)
+        NSLayoutConstraint.activate([
+            separator.widthAnchor.constraint(equalToConstant: Theme.Metrics.toolbarSeparatorWidth),
+            separator.heightAnchor.constraint(equalToConstant: Theme.Metrics.toolbarSeparatorHeight),
+        ])
+        let item = NSToolbarItem(itemIdentifier: Self.captureSeparatorIdentifier)
+        item.view = separator
+        item.isBordered = false
+        item.visibilityPriority = .high
+        return item
+    }
+
+    /// Capture stays independent from export/inspection.
     private func makeCaptureItem() -> NSToolbarItem {
         let item = imageItem(
             identifier: Self.captureActionIdentifier,
@@ -286,7 +309,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemSymbolName: "square.and.arrow.up",
             accessibilityDescription: label
         )
-        item.isBordered = false
+        item.isBordered = true
         item.showsIndicator = true
         item.menu = sessionExportMenu()
         item.isEnabled = coordinator.canExportSelectedSession

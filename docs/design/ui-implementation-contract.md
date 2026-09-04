@@ -10,6 +10,7 @@ This contract describes the current native macOS presentation boundary. Product 
 - Seat functional top and bottom chrome with `safeAreaBar`; allow scrollable content to continue underneath it and choose one deliberate scroll-edge style per pane. Do not add another rounded glass background merely because content sits in a safe-area bar.
 - Keep the main window title semantic but hidden. Surface titles and the product tagline must never enter the toolbar or displace the leading Project selector. Keep capture status centered, the capture-interface picker beside Start/Stop on the trailing side, and a native gap before Export and inspector controls.
 - Preserve semantic SF Symbols, system type styles and system colors across Light, Dark and accessibility appearances.
+- Separate capture-source configuration from Start/Stop with a noninteractive native vertical separator. Export keeps its native bordered menu surface in both enabled and disabled states; do not replace it with a floating borderless glyph or add a custom glass background.
 
 ## Liquid Glass policy
 

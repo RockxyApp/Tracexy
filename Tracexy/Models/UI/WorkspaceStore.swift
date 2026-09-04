@@ -8,12 +8,18 @@ final class WorkspaceStore {
     /// `maxWorkspaces` arrives as a plain number: the store enforces a cap, it
     /// does not decide one. The composition root resolves it from the app
     /// policy and hands the value in.
-    init(maxWorkspaces: Int, layoutPreferences: WorkspaceLayoutPreferences? = nil) {
+    /// `defaults` is the active Project's preferences suite, so "Default view" is
+    /// resolved per Project rather than app-wide.
+    init(
+        maxWorkspaces: Int,
+        layoutPreferences: WorkspaceLayoutPreferences? = nil,
+        defaults: UserDefaults = .standard
+    ) {
         self.maxWorkspaces = maxWorkspaces
-        let preferences = layoutPreferences ?? WorkspaceLayoutPreferences()
+        let preferences = layoutPreferences ?? WorkspaceLayoutPreferences(defaults: defaults)
         self.layoutPreferences = preferences
         // Honor the General → "Default view" preference for the first workspace.
-        let stored = UserDefaults.standard.string(forKey: SettingsKeys.defaultView)
+        let stored = defaults.string(forKey: SettingsKeys.defaultView)
         let landing = stored.flatMap(DefaultView.init(rawValue:))?.sidebarItem ?? .sessions
         // Both panels start closed, whatever the remembered preference is.
         //

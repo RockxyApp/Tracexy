@@ -8,14 +8,22 @@ extension MainContentCoordinator {
     /// intentionally separate from frame matching, which happens only after the
     /// user activates an export command.
     var canExportSelectedSession: Bool {
-        selectedSession != nil && canSaveCapture && !isExportingSession
+        selectedSession != nil && canExport()
     }
 
     /// Cheap presentation gate for row menus. Packet matching is deliberately
     /// deferred until activation because reading and decoding the complete capture belongs
     /// off the main actor.
     func canExport(_: SessionSummary) -> Bool {
-        canSaveCapture && !isExportingSession
+        canExport()
+    }
+
+    /// An export reads the complete capture from the active Project's spool. While
+    /// the Project boundary is settling that spool has not reached its exact final
+    /// boundary, or is about to be replaced, so export is refused rather than
+    /// serving a partial or another Project's capture.
+    func canExport() -> Bool {
+        canSaveCapture && !isExportingSession && !isProjectBoundaryBusy
     }
 
     func exportSelectedSession(as format: SessionExportFormat) {
@@ -29,24 +37,37 @@ extension MainContentCoordinator {
     /// toolbar menu and row context menu route here, so scope, serialization,
     /// filename, errors, and privacy behavior cannot drift apart.
     func exportSession(_ session: SessionSummary, as format: SessionExportFormat) {
-        guard !isExportingSession else {
+        guard !isExportingSession, !isProjectBoundaryBusy else {
             return
         }
-        let configuredPrivacy = PrivacySettingsResolver.exportPolicy()
+        let configuredPrivacy = PrivacySettingsResolver.exportPolicy(defaults: activeProjectDefaults)
+        // The raw-capture acknowledgement below is modal, so it spins the run loop:
+        // Start, Clear and Open can all be activated while it is up. The export owns
+        // its capture source from *here*, before the first reentrant presentation,
+        // rather than from the moment the user confirms.
+        setSessionExporting(true)
         guard let exportPrivacy = confirmedPrivacyPolicy(
             for: format,
             configuredPrivacy: configuredPrivacy
         ) else {
+            setSessionExporting(false)
             return
         }
-        setSessionExporting(true)
+        // The source identity this export was started against, captured before any
+        // asynchronous work so a late result can never describe another Project's
+        // or another capture generation's source.
+        let originProjectID = activeRuntime.projectID
+        let originGeneration = startGeneration
 
-        Task { [weak self] in
-            defer { self?.setSessionExporting(false) }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            defer { self.setSessionExporting(false) }
+            var failure: String?
+            var warning: String?
+            var didWrite = false
             do {
-                guard let self else {
-                    return
-                }
                 let capture = try await self.completeCaptureForExport()
                 let artifact = try await Task.detached(priority: .userInitiated) {
                     let sessionFrames = SessionExporter.frames(
@@ -80,15 +101,21 @@ extension MainContentCoordinator {
                 try await Task.detached(priority: .userInitiated) {
                     try artifact.data.write(to: url, options: .atomic)
                 }.value
-                if let warning = capture.incompletenessReason {
-                    self.captureError = "Exported the recoverable session prefix. Later frames are missing because "
-                        + "the local spool failed — \(warning)"
-                } else {
-                    self.captureError = nil
-                }
+                didWrite = true
+                warning = capture.incompletenessReason
             } catch {
-                self?.captureError = "Couldn’t export session: \(error.localizedDescription)"
+                failure = "Couldn’t export session: \(error.localizedDescription)"
             }
+            self.reportCaptureIOOutcome(
+                failure: failure,
+                warning: warning.map {
+                    "Exported the recoverable session prefix. Later frames are missing because "
+                        + "the local spool failed — \($0)"
+                },
+                didWrite: didWrite,
+                originProjectID: originProjectID,
+                originGeneration: originGeneration
+            )
         }
     }
 
