@@ -85,6 +85,36 @@ final class WorkspaceStore {
         }
     }
 
+    /// Captures only the bounded, durable view intent owned by the active
+    /// Project. Session selection, Investigation results, and capture evidence
+    /// deliberately remain outside the Project catalog.
+    func captureProjectWorkspaces() -> [ProjectWorkspaceSnapshot] {
+        workspaces.map(ProjectWorkspaceSnapshot.init(capturing:))
+    }
+
+    /// Replaces the live workspace set from a validated Project snapshot. This
+    /// changes presentation only: the coordinator's capture/session/History
+    /// state is app-wide and is never swapped or cleared by Project navigation.
+    func applyProjectWorkspaces(
+        _ snapshots: [ProjectWorkspaceSnapshot],
+        activeWorkspaceID desiredActiveWorkspaceID: UUID,
+        maxFilterRules: Int
+    ) {
+        let hydrated = snapshots.map {
+            $0.hydrateWorkspaceState(
+                maxFilterRules: maxFilterRules,
+                allowsAutomaticInspectorReveal: layoutPreferences.allowsAutomaticInspectorReveal
+            )
+        }
+        guard !hydrated.isEmpty else {
+            return
+        }
+        workspaces = hydrated
+        activeWorkspaceID = hydrated.contains { $0.id == desiredActiveWorkspaceID }
+            ? desiredActiveWorkspaceID
+            : hydrated[0].id
+    }
+
     // MARK: Private
 
     /// Seeds new workspaces from the remembered inspector-dock choice.

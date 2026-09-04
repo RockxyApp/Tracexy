@@ -8,7 +8,7 @@ This contract describes the current native macOS presentation boundary. Product 
 - Keep navigation in `List(.sidebar)` and session data in the existing native `Table` path. Do not replace selection, resizing, focus, menus or keyboard behavior with painted lookalikes.
 - Keep the right Details inspector and bottom evidence inspector as independently resizable native split regions.
 - Seat functional top and bottom chrome with `safeAreaBar`; allow scrollable content to continue underneath it and choose one deliberate scroll-edge style per pane. Do not add another rounded glass background merely because content sits in a safe-area bar.
-- Keep the main window title semantic but hidden. Surface titles and the product tagline must never enter the toolbar or displace the leading capture-interface picker.
+- Keep the main window title semantic but hidden. Surface titles and the product tagline must never enter the toolbar or displace the leading Project selector. Keep capture status centered, the capture-interface picker beside Start/Stop on the trailing side, and a native gap before Export and inspector controls.
 - Preserve semantic SF Symbols, system type styles and system colors across Light, Dark and accessibility appearances.
 
 ## Liquid Glass policy

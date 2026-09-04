@@ -22,6 +22,7 @@ final class MainContentCoordinator {
         policy: (any AppPolicy)? = nil,
         layoutPreferences: WorkspaceLayoutPreferences? = nil,
         sessionStore: SessionStore? = nil,
+        projectRepository: ProjectCatalogPersisting? = nil,
         isHistoryDemoMode: Bool = false,
         historyNow: @escaping @Sendable () -> Date = { Date() },
         liveCaptureSpool: LiveCaptureSpool? = nil
@@ -34,6 +35,11 @@ final class MainContentCoordinator {
         )
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
+        projectStore = ProjectStore(
+            maxProjects: resolvedPolicy.maxProjects,
+            maxWorkspacesPerProject: resolvedPolicy.maxWorkspaceTabs,
+            repository: projectRepository
+        )
         focusGate = FocusPolicyGate(
             maxFocusSets: resolvedPolicy.maxFocusSets,
             maxPinnedHosts: resolvedPolicy.maxPinnedHosts
@@ -113,6 +119,28 @@ final class MainContentCoordinator {
     let focusGate: FocusPolicyGate
 
     let workspaces: WorkspaceStore
+
+    /// Local, configuration-only Project catalog. Projects own durable workspace
+    /// view intent; capture bytes, current sessions, and terminal History remain
+    /// app-wide and are never stored here.
+    let projectStore: ProjectStore
+
+    /// Project presentation and orchestration state. Stored on the app-level
+    /// coordinator so toolbar, commands, and sheets share one source of truth.
+    var projectNameEditorContext: ProjectNameEditorContext?
+    var projectDeletionRequest: ProjectDeletionRequest?
+    var isProjectManagerPresented = false
+    var isProjectRecoveryPresented = false
+    var lastProjectOperationError: ProjectMutationError?
+    var projectTransferErrorMessage: String?
+
+    /// Launch hydration and Observation-backed workspace autosave are coalesced
+    /// here rather than being owned by a view lifecycle.
+    var hasHydratedProjects = false
+    var isApplyingProjectSnapshot = false
+    var isObservingProjectWorkspaces = false
+    var projectHydrationTask: Task<Void, Never>?
+    var projectWorkspaceAutosaveTask: Task<Void, Never>?
 
     /// The most recent capacity limit the user ran into, in their words.
     /// Cleared when they acknowledge it or when the next successful action
@@ -1800,74 +1828,5 @@ private extension MainContentCoordinator {
             totals[key(session), default: 0] += 1
         }
         return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
-    }
-}
-
-// MARK: - CaptureDisplayState
-
-/// Coarse capture state shown in the toolbar status capsule. Drives both the dot color and the trailing word.
-enum CaptureDisplayState {
-    case stopped
-    case starting
-    case capturing
-    case error
-
-    // MARK: Internal
-
-    var title: String {
-        switch self {
-        case .stopped: String(localized: "Stopped")
-        case .starting: String(localized: "Starting")
-        case .capturing: String(localized: "Capturing")
-        case .error: String(localized: "Error")
-        }
-    }
-}
-
-// MARK: - SavedCapture
-
-/// One saved `.pcap` or `.pcapng` file on disk, listed under the sidebar's "Saved Captures".
-struct SavedCapture: Identifiable, Hashable, Sendable {
-    let url: URL
-    let name: String
-    let date: Date
-    let byteCount: Int
-
-    var id: URL {
-        url
-    }
-}
-
-// MARK: - DomainGroup
-
-/// A domain and the set of server IPs it resolved to, for the sidebar tree.
-struct DomainGroup: Identifiable {
-    let domain: String
-    let ips: [String]
-    let count: Int
-
-    var id: String {
-        domain
-    }
-}
-
-// MARK: - ThroughputSample
-
-/// One point on the real-time throughput chart (bytes/sec over an interval).
-struct ThroughputSample: Identifiable {
-    let id = UUID()
-    let bytesPerSecond: Double
-}
-
-// MARK: - AppGroup
-
-/// An app and the set of hosts/IPs it contacted, for the expandable sidebar tree.
-struct AppGroup: Identifiable {
-    let app: String
-    let hosts: [String]
-    let count: Int
-
-    var id: String {
-        app
     }
 }

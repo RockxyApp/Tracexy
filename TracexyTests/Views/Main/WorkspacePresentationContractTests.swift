@@ -208,7 +208,7 @@ struct WorkspacePresentationContractTests {
         #expect(!settings.contains("TabView(selection:"))
     }
 
-    @Test("Main toolbar keeps workspace titles out and the capture picker in its native slot")
+    @Test("Main toolbar separates Project context from capture controls")
     func mainToolbarOwnsWorkspaceContext() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
         let chrome = try readProjectFile("Tracexy/Views/Common/NativeWorkspaceWindowChrome.swift")
@@ -217,7 +217,12 @@ struct WorkspacePresentationContractTests {
         #expect(!root.contains(".navigationSubtitle("))
         #expect(chrome.contains("window.title = TracexyIdentity.current.displayName"))
         #expect(chrome.contains("window.titleVisibility = .hidden"))
-        #expect(chrome.contains("Self.sidebarTrackingSeparatorIdentifier,\n            Self.interfacePickerIdentifier"))
+        #expect(chrome.contains(
+            "Self.sidebarTrackingSeparatorIdentifier,\n            Self.projectSelectorIdentifier,\n            .flexibleSpace"
+        ))
+        #expect(chrome.contains(
+            "Self.interfacePickerIdentifier,\n            Self.captureActionIdentifier,\n            .space"
+        ))
     }
 
     @Test("Capture status uses the native toolbar as its only visible surface")

@@ -114,6 +114,10 @@ enum Theme {
         /// Center toolbar status + software-update badge: one 32pt native control
         /// with a 24pt continuous capsule inset.
         static let toolbarControlHeight: CGFloat = 32
+        /// Keep capture-source text away from Project identity and centered status
+        /// at narrow desktop widths. The menu and full accessible label stay intact.
+        static let toolbarCompactWindowWidth: CGFloat = 1_180
+        static let toolbarInterfaceLabelMaximumWidth: CGFloat = 140
         /// The label frame inside a small native glass button. Native button
         /// insets expand this to a comfortable pointer target; keeping the inner
         /// square at the approved 27pt rhythm prevents toolbar glyphs from looking

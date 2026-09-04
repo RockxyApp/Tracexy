@@ -23,6 +23,7 @@ struct TracexyApp: App {
                     AppThemeApplier.apply(AppAppearance(rawValue: newValue) ?? .system)
                 }
                 .task {
+                    appDelegate.coordinator = coordinator
                     updater.startIfConfigured()
                 }
         }
@@ -31,6 +32,7 @@ struct TracexyApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             TracexySettingsCommands()
+            TracexyProjectCommands(coordinator: coordinator)
 
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
@@ -124,6 +126,8 @@ struct TracexyApp: App {
         historyDemoDefaults ?? .standard
     }
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     /// The single shared coordinator, owned by the app so every scene (main
     /// window + editor/manager windows) reads and mutates the same state.
     ///
@@ -164,16 +168,86 @@ struct TracexyApp: App {
             }
         }
 
+        let projectRepository = JSONProjectCatalogRepository(
+            directoryURL: TracexyIdentity.current.appSupportPath("Projects", fileManager: .default)
+        )
+
         switch HistoryStoreFactory.production() {
         case let .ready(store):
-            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current, sessionStore: store)
+            let coordinator = MainContentCoordinator(
+                policy: AppPolicyProvider.current,
+                sessionStore: store,
+                projectRepository: projectRepository
+            )
             coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
             return coordinator
         case let .unavailable(reason):
-            let coordinator = MainContentCoordinator(policy: AppPolicyProvider.current)
+            let coordinator = MainContentCoordinator(
+                policy: AppPolicyProvider.current,
+                projectRepository: projectRepository
+            )
             coordinator.historyError = reason
             coordinator.configureHistoryAutoClear(HistoryRetentionSettingsResolver.autoClear())
             return coordinator
+        }
+    }
+}
+
+// MARK: - TracexyProjectCommands
+
+private struct TracexyProjectCommands: Commands {
+    let coordinator: MainContentCoordinator
+
+    var body: some Commands {
+        CommandMenu("Project") {
+            Button("New Project…") {
+                coordinator.presentNewProjectEditor()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(!coordinator.projectStore.canCreateProject)
+
+            Button("Rename Project…") {
+                coordinator.presentRenameProjectEditor(id: coordinator.projectStore.activeProjectID)
+            }
+            .disabled(!coordinator.projectStore.isMutable)
+
+            Button("Manage Projects…") {
+                coordinator.isProjectManagerPresented = true
+            }
+
+            Divider()
+
+            Button("Export Project Configuration…") {
+                coordinator.exportProjectConfiguration(coordinator.projectStore.activeProject)
+            }
+            .disabled(!coordinator.projectStore.isMutable)
+
+            Button("Import Project Configuration…") {
+                coordinator.importProjectConfiguration()
+            }
+            .disabled(!coordinator.projectStore.canCreateProject)
+
+            Divider()
+
+            ForEach(coordinator.projectStore.projects) { project in
+                Button {
+                    coordinator.switchToProject(id: project.id)
+                } label: {
+                    if project.id == coordinator.projectStore.activeProjectID {
+                        Label(project.name, systemImage: "checkmark")
+                    } else {
+                        Text(project.name)
+                    }
+                }
+                .disabled(!coordinator.projectStore.isMutable)
+            }
+
+            if case .failed = coordinator.projectStore.loadState {
+                Divider()
+                Button("Repair Projects…") {
+                    coordinator.isProjectRecoveryPresented = true
+                }
+            }
         }
     }
 }

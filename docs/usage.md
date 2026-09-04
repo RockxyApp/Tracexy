@@ -5,6 +5,12 @@ hex are demoted to an inspector tab, one click away when the bytes are the answe
 
 ## Live capture
 
+Choose the capture interface from the toolbar menu beside **Start/Stop**, on the right.
+The compact label shows the interface's friendly name (for example, **Wi-Fi**); the menu,
+tooltip, and accessibility value retain its BSD identifier (for example, **Wi-Fi (en0)**).
+At narrow window widths the same menu becomes icon-only. Project selection remains separate
+on the left; a native gap separates capture controls from Export and the inspectors.
+
 Live capture reads from a network interface through the signed privileged helper. By default, it
 begins when you press **Start**. If you explicitly enable **Settings → Capture → Auto-start capture
 on launch**, Tracexy starts capture after launch setup completes. Starting a capture clears the
@@ -57,6 +63,27 @@ Only the recent raw-frame inspection window stays in memory. Session summaries c
 file, and the Inspector reopens exactly one representative frame by validated file offset when a saved
 session is selected. Opening another file, clearing, or starting live capture retires stale progress,
 results, and selected-evidence reads.
+
+## Projects
+
+Projects keep investigation workspaces organized without moving or rewriting capture data. Use the
+Project selector in the main toolbar, immediately beside the sidebar controls, or the **Project** menu
+to switch, create, rename, and manage Projects. Each Project remembers its workspace names, filters,
+grouping, navigation, and inspector layout. Switching Projects restores that view configuration.
+
+**Project → Manage Projects…** opens the same management sheet used by the toolbar control. Its sidebar
+lists local Projects and their workspace counts; the detail area can open, rename, import, export, or
+delete the selected Project. Deleting a Project removes only its saved workspace configuration. It does
+not delete the current capture, saved `.pcap`/`.pcapng` files, or History.
+
+**Export Project Configuration…** writes a configuration-only `.tracexyproject` file. It can include
+user-authored filter text, so review it before sharing, but it never includes packets, payloads, capture
+paths, session selection, findings, or History. Import always creates a new local Project with fresh
+identities and never replaces an existing Project. Project files and the local catalog are size-bounded
+and validated before adoption.
+
+Capture, decoded sessions, saved captures, and History currently remain app-wide. Changing the active
+Project therefore does not stop a live capture, change evidence ownership, or hide terminal History.
 
 ## Local History
 

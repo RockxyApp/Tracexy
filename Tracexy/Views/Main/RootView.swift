@@ -58,6 +58,42 @@ struct RootView: View {
         .sheet(isPresented: $showHelperInstall) {
             HelperInstallPromptView(coordinator: coordinator)
         }
+        .sheet(item: Binding(
+            get: {
+                coordinator.isProjectManagerPresented ? nil : coordinator.projectNameEditorContext
+            },
+            set: { coordinator.projectNameEditorContext = $0 }
+        )) { context in
+            ProjectNameEditorSheet(context: context, coordinator: coordinator)
+        }
+        .sheet(isPresented: $coordinator.isProjectManagerPresented) {
+            ProjectManagerSheet(coordinator: coordinator)
+        }
+        .sheet(isPresented: $coordinator.isProjectRecoveryPresented) {
+            ProjectRecoverySheet(coordinator: coordinator)
+        }
+        .alert(
+            "Project Operation Failed",
+            isPresented: Binding(
+                get: {
+                    coordinator.lastProjectOperationError != nil
+                        || coordinator.projectTransferErrorMessage != nil
+                },
+                set: {
+                    if !$0 {
+                        coordinator.lastProjectOperationError = nil
+                        coordinator.projectTransferErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                coordinator.lastProjectOperationError = nil
+                coordinator.projectTransferErrorMessage = nil
+            }
+        } message: {
+            Text(coordinator.projectOperationErrorMessage ?? "The Project operation could not be completed.")
+        }
         // A capacity limit is worth one sentence and a dismiss, not a banner
         // that lingers over the traffic the user came here to read.
         .alert(
@@ -112,6 +148,8 @@ struct RootView: View {
     /// setting is the single source of truth for auto-start in both development
     /// and normal launches.
     private func launchSetup() async {
+        await coordinator.hydrateProjectsOnLaunch()
+
         if coordinator.isHistoryDemoMode {
             await coordinator.prepareHistoryDemo()
             return

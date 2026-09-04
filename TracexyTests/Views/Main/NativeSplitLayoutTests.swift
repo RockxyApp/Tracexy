@@ -178,6 +178,55 @@ struct NativeSplitLayoutTests {
     }
 
     @MainActor
+    @Test("Project stands alone after the sidebar; capture source stays beside Start/Stop")
+    func nativeProjectSelectorPlacement() {
+        let controller = makeToolbarController()
+        let toolbar = NativeWorkspaceToolbar(
+            splitViewController: controller,
+            configuration: NativeWorkspaceToolbarConfiguration(coordinator: MainContentCoordinator())
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.toolbar = toolbar.managedToolbar
+
+        let identifiers = toolbar.managedToolbar.items.map(\.itemIdentifier)
+        let trackingSeparatorIndex = identifiers.firstIndex(
+            of: NativeWorkspaceToolbar.sidebarTrackingSeparatorIdentifier
+        )
+        let projectSelectorIndex = identifiers.firstIndex(
+            of: NativeWorkspaceToolbar.projectSelectorIdentifier
+        )
+        let interfacePickerIndex = identifiers.firstIndex(
+            of: NativeWorkspaceToolbar.interfacePickerIdentifier
+        )
+
+        #expect(projectSelectorIndex == trackingSeparatorIndex.map { $0 + 1 })
+        let captureIndex = identifiers.firstIndex(of: NativeWorkspaceToolbar.captureActionIdentifier)
+        let statusIndex = identifiers.firstIndex(of: NativeWorkspaceToolbar.captureStatusIdentifier)
+        #expect(projectSelectorIndex.map { identifiers[$0 + 1] } == .flexibleSpace)
+        #expect(interfacePickerIndex == statusIndex.map { $0 + 2 })
+        #expect(captureIndex == interfacePickerIndex.map { $0 + 1 })
+        #expect(captureIndex.map { identifiers[$0 + 1] } == .space)
+
+        let selectorItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.projectSelectorIdentifier
+        })
+        #expect(selectorItem?.view != nil)
+        #expect(selectorItem?.visibilityPriority == .high)
+    }
+
+    @MainActor
+    @Test("Project selector width stays bounded for short and long names")
+    func projectSelectorWidthIsBounded() {
+        let shortWidth = ProjectToolbarSelectorMetrics.preferredWidth(for: "A")
+        let longWidth = ProjectToolbarSelectorMetrics.preferredWidth(
+            for: String(repeating: "Very Long Project Name ", count: 20)
+        )
+
+        #expect(shortWidth == ProjectToolbarSelectorMetrics.minimumWidth)
+        #expect(longWidth == ProjectToolbarSelectorMetrics.maximumWidth)
+    }
+
+    @MainActor
     @Test("Centered capture status leaves its single border to the native toolbar item")
     func nativeCaptureStatusSurfaceOwnership() {
         let controller = makeToolbarController()
@@ -200,7 +249,7 @@ struct NativeSplitLayoutTests {
     }
 
     @MainActor
-    @Test("Trailing export menu stays visible beside the grouped capture and inspector actions")
+    @Test("Export and inspectors stay separate from the source and capture action")
     func nativeActionGroupStructure() {
         let controller = makeToolbarController()
         let toolbar = NativeWorkspaceToolbar(
@@ -219,8 +268,11 @@ struct NativeSplitLayoutTests {
 
         let group = actionsItem as? NSToolbarItemGroup
         #expect(group != nil)
-        #expect(group?.subitems.count == 3)
-        #expect(group?.subitems.map(\.label) == ["Start", "Bottom Inspector", "Inspector"])
+        #expect(group?.subitems.count == 2)
+        #expect(group?.subitems.map(\.label) == ["Bottom Inspector", "Inspector"])
+        #expect(toolbar.managedToolbar.items.contains {
+            $0.itemIdentifier == NativeWorkspaceToolbar.captureActionIdentifier
+        })
 
         let exportItem = toolbar.managedToolbar.items.first(where: {
             $0.itemIdentifier == NativeWorkspaceToolbar.sessionExportIdentifier
@@ -247,13 +299,9 @@ struct NativeSplitLayoutTests {
         let window = NSWindow(contentViewController: controller)
         window.toolbar = toolbar.managedToolbar
 
-        guard let group = toolbar.managedToolbar.items.first(where: {
-            $0.itemIdentifier == NativeWorkspaceToolbar.actionsIdentifier
-        }) as? NSToolbarItemGroup,
-            let captureItem = group.subitems.first(where: {
-                $0.itemIdentifier == NativeWorkspaceToolbar.captureActionIdentifier
-            }) else
-        {
+        guard let captureItem = toolbar.managedToolbar.items.first(where: {
+            $0.itemIdentifier == NativeWorkspaceToolbar.captureActionIdentifier
+        }) else {
             Issue.record("Capture toolbar item was not installed")
             return
         }

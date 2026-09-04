@@ -7,6 +7,7 @@ import Testing
 /// A policy built per-test, so a test states its own limits instead of
 /// inheriting whatever the shipping baseline happens to be today.
 private struct TestPolicy: AppPolicy {
+    var maxProjects = 3
     var maxWorkspaceTabs = 8
     var maxFocusSets = 5
     var maxPinnedHosts = 5
@@ -17,6 +18,11 @@ private struct TestPolicy: AppPolicy {
 
 @Suite("App policy defaults")
 struct AppPolicyDefaultsTests {
+    @Test("The shipping baseline caps local projects at three")
+    func defaultProjectCap() {
+        #expect(DefaultAppPolicy().maxProjects == 3)
+    }
+
     @Test("The shipping baseline caps advanced filter rules at 12")
     func defaultSessionFilterRuleCap() {
         #expect(DefaultAppPolicy().maxSessionFilterRules == 12)
@@ -122,8 +128,9 @@ struct WorkspaceStorePolicyTests {
 struct CoordinatorPolicyTests {
     @Test("The injected policy decides the tab cap and the focus gate's limits")
     func injectedPolicyIsPlumbedThrough() {
-        let policy = TestPolicy(maxWorkspaceTabs: 2, maxFocusSets: 1, maxPinnedHosts: 4)
+        let policy = TestPolicy(maxProjects: 2, maxWorkspaceTabs: 2, maxFocusSets: 1, maxPinnedHosts: 4)
         let coordinator = MainContentCoordinator(policy: policy)
+        #expect(coordinator.projectStore.maxProjects == 2)
         #expect(coordinator.workspaces.maxWorkspaces == 2)
         #expect(coordinator.focusGate.maxFocusSets == 1)
         #expect(coordinator.focusGate.maxPinnedHosts == 4)
