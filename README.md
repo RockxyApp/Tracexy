@@ -32,21 +32,19 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.6.0** — 2026-09-02
+**v0.7.0** — 2026-09-08
 
 ### Added
 
-- Navigate retained connection and TLS evidence to the exact cited local frame.
-- Open the selected session in an auxiliary Inspector window that follows the workspace selection.
-
-### Fixed
-
-- Enforce the selected automatic History retention at launch, after a capture is stored, and when the setting changes.
-- Remove duplicated workspace chrome and correct session-control and footer alignment.
+- Organize investigations into isolated Projects, each with its own workspaces, saved captures, History, and capture and privacy settings.
+- Import PCAP and PCAPNG captures into a chosen Project, including gzip-compressed files, TCP Viewer session archives, and Linux cooked captures.
+- Query whole sessions with bounded Session Expressions, return from host, client, IP, or Findings drill-downs with filters intact, and import named BPF capture filters.
+- Export and import configuration-only `.tracexyproject` files without packets, payloads, capture paths, findings, or History.
 
 ### Changed
 
-- Refine session controls, status, and inspector layout for a clearer native Liquid Glass workspace.
+- Keep Project transitions safe by waiting for accepted capture and save work, preserving the current investigation when a transition cannot complete.
+- Reorganize the native toolbar so Project selection, capture source, and Start/Stop controls remain distinct and easier to follow.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
