@@ -47,7 +47,10 @@ extension MainContentCoordinator {
             return
         }
         hiddenSourceIPs.insert(ip)
-        if activeWorkspace.ipFilter == ip || activeWorkspace.hostFilter == ip {
+        let destination = activeWorkspace.aggregateDestinationFilter.flatMap(IPAddressValue.init(parsing:))
+        let hiddenAddress = IPAddressValue(parsing: ip)
+        let hidesDestinationScope = destination != nil && destination == hiddenAddress
+        if activeWorkspace.ipFilter == ip || activeWorkspace.hostFilter == ip || hidesDestinationScope {
             selectSidebarItem(.sessions)
         }
         persistHiddenSources()

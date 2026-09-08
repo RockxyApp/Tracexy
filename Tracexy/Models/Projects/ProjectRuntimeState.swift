@@ -87,6 +87,9 @@ final class ProjectRuntimeState {
     var isViewingSavedCapture = false
     var activeSavedCapture: SavedCapture?
     var savedCaptureActivity: CaptureActivity?
+    /// The parked saved-capture metadata inventory, so a restored Project shows the
+    /// same link-type/untimed/undecodable coverage it had when it was parked.
+    var savedCaptureMetadata: CaptureMetadataSummary?
     var savedCaptureWarning: String?
     var savedCaptureEvidence: [UUID: CaptureEvidenceReference] = [:]
     var savedCaptureEvidenceURL: URL?

@@ -32,18 +32,25 @@ nonisolated struct SavedCaptureOpenRequest: Sendable {
     let capture: SavedCapture
 }
 
-// MARK: - SavedCaptureProgressRelay
+// MARK: - CoordinatorProgressRelay
 
 /// A latest-value relay with at most one MainActor delivery task queued. A fast
-/// stream can emit progress for millions of tiny records without accumulating one
-/// UI task per callback; intermediate values collapse while the terminal remains
-/// monotonic and authoritative.
-nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
+/// stream can emit progress for millions of tiny records — or a copy for every
+/// chunk of a large file — without accumulating one UI task per callback;
+/// intermediate values collapse while the terminal remains monotonic and
+/// authoritative. `deliver` names which request state the value belongs to, so
+/// the saved-open and import pipelines share one bound without sharing state.
+nonisolated final class CoordinatorProgressRelay: @unchecked Sendable {
     // MARK: Lifecycle
 
-    init(coordinator: MainContentCoordinator, requestID: Int) {
+    init(
+        coordinator: MainContentCoordinator,
+        requestID: Int,
+        deliver: @escaping @Sendable @MainActor (MainContentCoordinator, PcapStreamProgress, Int) -> Void
+    ) {
         self.coordinator = coordinator
         self.requestID = requestID
+        self.deliver = deliver
     }
 
     // MARK: Internal
@@ -64,6 +71,7 @@ nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
 
     private weak var coordinator: MainContentCoordinator?
     private let requestID: Int
+    private let deliver: @Sendable @MainActor (MainContentCoordinator, PcapStreamProgress, Int) -> Void
     private let lock = NSLock()
     private var latest: PcapStreamProgress?
     private var deliveryScheduled = false
@@ -81,8 +89,8 @@ nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
         latest = nil
         lock.unlock()
 
-        if let progress {
-            coordinator?.publishSavedCaptureProgress(progress, requestID: requestID)
+        if let progress, let coordinator {
+            deliver(coordinator, progress, requestID)
         }
 
         lock.lock()
@@ -148,37 +156,6 @@ extension MainContentCoordinator {
         }
     }
 
-    /// Imports an external `.pcap` file into the captures folder and opens it.
-    ///
-    /// Lossless and idempotent: a source that is already the managed file is
-    /// refreshed and reopened in place, and a name collision with a different
-    /// external file replaces the old copy only after the new one is fully
-    /// staged, so a failed import never destroys existing capture data.
-    func importCapture(from source: URL) {
-        // A name collision replaces an existing Library file, which may be exactly
-        // the file an accepted Save or an in-flight export is reading.
-        if let held = captureSourceHoldMessage {
-            captureError = held
-            return
-        }
-        guard hasHydratedProjects, !isProjectBoundaryBusy,
-              let directory = capturesDirectory() else
-        {
-            return
-        }
-        let destination: URL
-        do {
-            destination = try CaptureImporter.importCapture(from: source, intoDirectory: directory)
-        } catch {
-            captureError = "Couldn’t import “\(source.lastPathComponent)”: \(error.localizedDescription)"
-            return
-        }
-        refreshSavedCaptures()
-        if let imported = savedCaptures.first(where: { $0.url == destination }) {
-            openSavedCapture(imported)
-        }
-    }
-
     /// Rescans the *active Project's* captures folder and rebuilds
     /// `savedCaptures`, newest first. Each Project has its own Library folder, so
     /// saving or trashing a capture in one never changes another's list.
@@ -193,7 +170,7 @@ extension MainContentCoordinator {
             return
         }
         savedCaptures = urls
-            .filter { ["pcap", "pcapng"].contains($0.pathExtension.lowercased()) }
+            .filter { CaptureImporter.libraryPathExtensions.contains($0.pathExtension.lowercased()) }
             .map { url in
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 return SavedCapture(
@@ -356,7 +333,12 @@ extension MainContentCoordinator {
         let retainedCapacity = CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
         let originProjectID = activeRuntime.projectID
         let operation = savedCaptureLoadOperation
-        let progressRelay = SavedCaptureProgressRelay(coordinator: self, requestID: request.id)
+        let progressRelay = CoordinatorProgressRelay(
+            coordinator: self,
+            requestID: request.id
+        ) { coordinator, progress, id in
+            coordinator.publishSavedCaptureProgress(progress, requestID: id)
+        }
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let result = try await operation.run(request.capture.url, retainedCapacity) { progress in
@@ -381,7 +363,7 @@ extension MainContentCoordinator {
         savedCaptureOpenTask = task
     }
 
-    fileprivate func publishSavedCaptureProgress(_ progress: PcapStreamProgress, requestID: Int) {
+    private func publishSavedCaptureProgress(_ progress: PcapStreamProgress, requestID: Int) {
         guard requestID == savedCaptureOpenRequestID, isOpeningSavedCapture else {
             return
         }
@@ -458,6 +440,7 @@ extension MainContentCoordinator {
         isViewingSavedCapture = true
         activeSavedCapture = request.capture
         savedCaptureActivity = result.activity
+        savedCaptureMetadata = result.metadata
         savedCaptureEvidence = result.evidence
         savedCaptureEvidenceURL = request.capture.url
         stoppedCaptureReadyGeneration = nil

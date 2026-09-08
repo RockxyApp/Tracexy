@@ -52,6 +52,12 @@ nonisolated enum CitedFrameState: Equatable, Sendable {
 /// The one explicitly cited frame plus its request/task guard.
 struct CitedFramePipeline {
     var state: CitedFrameState = .idle
+    /// The inspector facet the *first* citation of this run interrupted, so an
+    /// explicit Clear Citation can put the user back where they were. Repeated
+    /// citations keep the original facet; an ordinary cancel, a selection change
+    /// or a source boundary discards it. It is a facet identity and nothing else
+    /// — no provenance, bytes or source token is remembered here.
+    var returnInspectorTab: InspectorTab?
     /// Monotonic request id; a superseded/cleared read cannot publish.
     var requestID = 0
     var task: Task<Void, Never>?
@@ -113,6 +119,9 @@ extension MainContentCoordinator {
     /// live/stopped-live sources each resolve exactly one frame; neither copies nor
     /// scans its source, and no fallback frame is ever read.
     func inspectCitedFrame(sessionID: UUID, provenance: SessionFrameProvenance) {
+        // A second citation is still the same visit to Layers, so it keeps the
+        // facet the first one interrupted rather than recording Layers itself.
+        let originTab = citedFrame.returnInspectorTab
         cancelCitedFrame()
         citedFrame.requestID &+= 1
         let requestID = citedFrame.requestID
@@ -121,6 +130,11 @@ extension MainContentCoordinator {
         guard activeWorkspace.selectedSessionID == sessionID else {
             return
         }
+        // An accepted citation is what moves the inspector to Layers, and it
+        // happens here so no caller can change the facet without recording where
+        // the user came from.
+        citedFrame.returnInspectorTab = originTab ?? activeWorkspace.inspectorTab
+        activeWorkspace.inspectorTab = .layers
         // Nil locator: explicit unavailable, no read, no fallback offset.
         guard let locator = provenance.locator else {
             citedFrame.state = .unavailable
@@ -145,11 +159,30 @@ extension MainContentCoordinator {
 
     /// Cancel and clear only the cited-frame slot (a selection change or explicit
     /// clear). The projection is left to its own refresh path.
+    ///
+    /// This is the *ordinary* cancel: it discards the remembered facet and leaves
+    /// the inspector where it is. A user who navigated away has already chosen
+    /// where they are, and moving them again would be the app arguing with them.
     func cancelCitedFrame() {
         citedFrame.task?.cancel()
         citedFrame.task = nil
         citedFrame.requestID &+= 1
         citedFrame.state = .idle
+        citedFrame.returnInspectorTab = nil
+    }
+
+    /// The explicit Clear Citation route: retire the cited frame *and* return the
+    /// inspector to the facet the first citation interrupted.
+    ///
+    /// Only this deliberate action returns. It restores a facet and nothing else:
+    /// no selection, scope, filter or evidence is touched.
+    func clearCitedFrameAndReturn() {
+        let returnTab = citedFrame.returnInspectorTab
+        cancelCitedFrame()
+        guard let returnTab else {
+            return
+        }
+        activeWorkspace.inspectorTab = returnTab
     }
 
     /// Retire both evidence-navigation pipelines at a capture/source/clear boundary so

@@ -375,14 +375,60 @@ struct InvestigationQueryTests {
 
     // MARK: Coverage
 
-    @Test("Coverage is present only when a finding predicate appears")
+    @Test("Coverage is present only when a finding or capture-time predicate appears")
     func coveragePresence() throws {
         let snap = snapshot(sessions: [tcpSession(for: tcpTuple)])
-        // No finding predicate -> no coverage.
+        // No finding or date predicate -> no coverage.
         #expect(try run(.leaf(.statusEquals(.ok)), over: snap).coverage == nil)
         // A finding predicate -> coverage present.
         #expect(try run(.leaf(.findingKind(.reset)), over: snap).coverage != nil)
         #expect(try run(.leaf(.hasEvidence(.anyFinding)), over: snap).coverage != nil)
+        // A date predicate reads capture time, which has its own coverage story.
+        let now = Date(timeIntervalSince1970: 1_000)
+        #expect(try run(.leaf(.startDateInRange(lower: now, upper: now)), over: snap).coverage != nil)
+    }
+
+    @Test("A date predicate is indeterminate for a session with no capture time, even under negation")
+    func unknownStartTimeIsIndeterminate() throws {
+        let untimed = session(startTime: nil)
+        let lo = Date(timeIntervalSince1970: 0)
+        let hi = Date(timeIntervalSince1970: 10_000)
+        let range = InvestigationQuery.leaf(.startDateInRange(lower: lo, upper: hi))
+
+        let snap = snapshot(sessions: [untimed])
+        let direct = try run(range, over: snap)
+        #expect(direct.matched.isEmpty)
+        #expect(direct.indeterminate == [untimed.id])
+
+        // Negation propagates indeterminate rather than turning absence into a match.
+        let negated = try run(.not(range), over: snap)
+        #expect(negated.matched.isEmpty)
+        #expect(negated.indeterminate == [untimed.id])
+
+        // The caveat is disclosed as a typed coverage reason, not silently dropped.
+        let coverage = try #require(direct.coverage)
+        #expect(coverage.reasons == [.unknownSessionStartTime])
+        #expect(!coverage.isCleanBoundedLocalContext)
+    }
+
+    @Test("Finding-only queries do not acquire an unrelated timing caveat")
+    func findingCoverageIgnoresUnreferencedTime() throws {
+        let result = try run(.leaf(.hasEvidence(.anyFinding)), over: snapshot(sessions: [session(startTime: nil)]))
+        #expect(result.coverage?.reasons.contains(.unknownSessionStartTime) == false)
+    }
+
+    @Test("A known-time session still decides a date predicate normally")
+    func knownStartTimeStaysDecidable() throws {
+        let timed = session(startTime: Date(timeIntervalSince1970: 1_000))
+        let snap = snapshot(sessions: [timed])
+        let inside = InvestigationQuery.leaf(.startDateInRange(
+            lower: Date(timeIntervalSince1970: 900), upper: Date(timeIntervalSince1970: 1_100)
+        ))
+        let result = try run(inside, over: snap)
+        #expect(result.matched.map(\.id) == [timed.id])
+        #expect(result.indeterminate.isEmpty)
+        let coverage = try #require(result.coverage)
+        #expect(coverage.reasons.isEmpty)
     }
 
     @Test("A clean, bounded-local context reports no coverage reasons")
@@ -621,7 +667,7 @@ struct InvestigationQueryTests {
         destination: IPEndpoint? = nil,
         protocolStack: [ProtocolKind] = [.tcp],
         status: SessionStatus = .ok,
-        startTime: Date = Date(timeIntervalSince1970: 1_000),
+        startTime: Date? = Date(timeIntervalSince1970: 1_000),
         latency: Double? = nil,
         bytesUp: Int = 0,
         bytesDown: Int = 0,

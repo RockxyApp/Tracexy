@@ -9,12 +9,19 @@ below reflects what the decoder actually produces today.
 | Protocol | Support |
 |---|---|
 | Ethernet II | Source/destination MAC, EtherType, dispatch to IPv4 / IPv6 / ARP |
+| Linux cooked SLL / SLL2 | Fixed header fields and exact byte ranges; bounded sender-address prefix; SLL2 capture-machine interface index; IPv4 / IPv6 / ARP handoff for supported payloads |
 | Loopback / null (BSD) | 4-byte address-family header → IPv4 or IPv6 |
 | Tunnel / raw IP (utun, VPN) | Auto-detects bare IPv4/IPv6 or a 4-byte address-family prefix |
 | ARP | Operation (request/reply), sender/target MAC and IPv4; surfaced as a session |
 | IPv4 | Version, header length, total length, TTL, protocol, addresses, **and option TLVs** |
 | IPv6 | Version, traffic class, flow label, next header, hop limit, addresses, **and the extension-header chain** (Hop-by-Hop, Routing, Fragment, AH, Destination Options, Mobility) |
 | ICMP / ICMPv6 | Type + code with named types (echo, unreachable, neighbor/router discovery); surfaced as a session |
+
+Linux cooked captures use link types 113 and 276. Unsupported payloads retain their complete
+cooked header facts without inventing a session. Frame Relay, radiotap and Netlink payloads
+are not decoded through the IP handoff. Interface indexes belong to the machine that recorded
+the file, and are not mapped to interfaces on this Mac. Bare raw-IP link type 101 dispatches
+by the actual IPv4 or IPv6 version.
 
 ## Transport layer (L4)
 
@@ -43,7 +50,9 @@ field-by-field parse.
 - **No decryption** of TLS or QUIC. Tracexy reads only what is on the wire in the clear.
 - **No general TCP connection/reassembly engine.** Session accumulation keeps only a bounded 16 KiB
   prefix per direction until it can classify the first TLS record, HTTP header, or DNS-over-TCP
-  message, then releases the bytes. It does not reconstruct long-lived streams or application bodies.
+  message, then releases the bytes. This automatic path does not reconstruct long-lived streams
+  or application bodies. A separate, explicit **Follow Stream** action reads a stable saved or
+  fully stopped capture on demand, with bounded output and visible coverage limits.
 - **No deep HTTP/2** parsing, **no HTTP/3**, and **no WebSocket** decode. (`http2` and `websocket`
   exist as protocol labels for grouping, but the decoder never produces them from bytes.)
 

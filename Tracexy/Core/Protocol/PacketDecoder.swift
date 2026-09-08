@@ -1,23 +1,23 @@
 import Foundation
 
-// MARK: - LinkType
-
-nonisolated enum LinkType {
-    static let ethernet: UInt32 = 1
-    static let null: UInt32 = 0
-    static let raw: UInt32 = 101
-}
-
 // MARK: - PacketDecoder
 
 nonisolated enum PacketDecoder {
     // MARK: Internal
 
+    /// The network protocols a link-layer framing decoder may hand a payload to.
+    /// Framing never reaches transport or application parsing itself: it names one
+    /// of these and the existing network decoders do the rest.
+    enum NetworkPayload: Sendable {
+        case ipv4
+        case ipv6
+        case arp
+    }
+
     struct ReassembledTCPApplication: Sendable {
         let appProtocol: ProtocolKind
         let layers: [DecodedLayer]
-        let sni: String?
-        let dnsQuery: String?
+        let sni: String?, dnsQuery: String?
         let dnsAnswers: [String]
         let dnsAnswersOmittedCount: Int
         let dnsFacts: DNSMessageFacts?
@@ -29,20 +29,21 @@ nonisolated enum PacketDecoder {
         let isComplete: Bool
     }
 
-    static func decode(_ frame: PacketBuffer, linkType: UInt32, timestamp: Date, originalLength: Int) -> DecodedPacket {
+    /// Decode one frame. `timestamp` is the source's capture time, or `nil` when the
+    /// source carried none; decoding never invents one.
+    static func decode(
+        _ frame: PacketBuffer,
+        linkType: UInt32,
+        timestamp: Date?,
+        originalLength: Int
+    )
+        -> DecodedPacket
+    {
         var packet = DecodedPacket(timestamp: timestamp, originalLength: originalLength)
-        do {
-            switch linkType {
-            case LinkType.ethernet: try ethernet(frame, into: &packet)
-            case LinkType.raw: try ipv4(frame, into: &packet)
-            case LinkType.null: try loopback(frame, into: &packet)
-            // VPN/tunnel (utun) and other point-to-point links report assorted
-            // DLTs — auto-detect raw IP vs a 4-byte address-family header.
-            default: try tunnel(frame, into: &packet)
-            }
-        } catch {
-            // Partial decode is fine — keep whatever layers we parsed.
-        }
+        // A partial decode is fine — `try?` keeps whatever layers were parsed,
+        // exactly as the previous surrounding do/catch did. The per-DLT framing
+        // lives in `PacketDecoder+LinkLayer`.
+        try? linkLayer(frame, linkType: linkType, into: &packet)
         return packet
     }
 
@@ -55,7 +56,10 @@ nonisolated enum PacketDecoder {
     )
         -> ReassembledTCPApplication?
     {
-        var packet = DecodedPacket(timestamp: .distantPast, originalLength: bytes.count)
+        // A reassembled prefix spans several frames, so it has no single capture
+        // instant of its own; the recovered metadata is applied to a real frame's
+        // packet upstream, which keeps that frame's own (possibly absent) time.
+        var packet = DecodedPacket(timestamp: nil, originalLength: bytes.count)
         let context = ApplicationMatchContext(
             payload: PacketBuffer(bytes), sourcePort: sourcePort, destinationPort: destinationPort
         )
@@ -78,6 +82,48 @@ nonisolated enum PacketDecoder {
         )
     }
 
+    /// The single typed handoff from link-layer framing to the existing, unchanged
+    /// network decoders. Keeping it narrow means new link-layer breadth cannot grow
+    /// a second copy of the transport/application chain, and a framing decoder can
+    /// only name a protocol — never reach past one.
+    static func network(
+        _ payload: NetworkPayload, _ buf: PacketBuffer, into packet: inout DecodedPacket
+    )
+        throws
+    {
+        switch payload {
+        case .ipv4: try ipv4(buf, into: &packet)
+        case .ipv6: try ipv6(buf, into: &packet)
+        case .arp: try arp(buf, into: &packet)
+        }
+    }
+
+    // MARK: Byte-range helpers
+
+    /// A field whose value lives at `offset` (relative to `buf`) for `size` bytes.
+    /// `buf.start` is the layer's absolute offset within the frame, so the range
+    /// is absolute into the frame's `rawBytes` — exactly what the hex pane needs.
+    /// Shared with the link-layer framing decoders in `PacketDecoder+LinkLayer`.
+    static func ranged(
+        _ name: String, _ value: String,
+        in buf: PacketBuffer, at offset: Int, _ size: Int
+    )
+        -> DecodedField
+    {
+        DecodedField(name: name, value: value, byteRange: (buf.start + offset) ..< (buf.start + offset + size))
+    }
+
+    /// The absolute span of a whole layer (`length` bytes from `buf`'s start),
+    /// clamped to the captured bytes.
+    static func span(_ buf: PacketBuffer, _ length: Int) -> Range<Int> {
+        let clamped = max(0, min(length, buf.length))
+        return buf.start ..< (buf.start + clamped)
+    }
+
+    static func mac(_ buf: PacketBuffer, _ offset: Int) throws -> String {
+        try (0 ..< 6).map { try String(format: "%02x", buf.u8(offset + $0)) }.joined(separator: ":")
+    }
+
     // MARK: Private
 
     /// IPv6 extension-header protocol numbers (RFC 8200 order).
@@ -97,44 +143,7 @@ nonisolated enum PacketDecoder {
     /// no shift is ever computed for it.
     private static let tcpMaxWindowScale: UInt8 = 14
 
-    /// Decodes a tunnel/raw frame whose link-layer header is unknown: a bare IP
-    /// packet, or one prefixed with a 4-byte BSD address family (NULL/LOOP).
-    private static func tunnel(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        if let first = try? buf.u8(0) {
-            switch first >> 4 {
-            case 4: try ipv4(buf, into: &packet)
-                return
-            case 6: try ipv6(buf, into: &packet)
-                return
-            default: break
-            }
-        }
-        try loopback(buf, into: &packet) // 4-byte address-family prefix
-    }
-
-    // MARK: Link layer
-
-    private static func ethernet(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        let dst = try mac(buf, 0)
-        let src = try mac(buf, 6)
-        let etherType = try buf.u16(12)
-        packet.layers.append(DecodedLayer(
-            proto: .ethernet, title: "Ethernet II", summary: "\(src) → \(dst)",
-            fields: [
-                ranged("Destination", dst, in: buf, at: 0, 6),
-                ranged("Source", src, in: buf, at: 6, 6),
-                ranged("Type", etherTypeName(etherType), in: buf, at: 12, 2)
-            ],
-            byteRange: span(buf, 14)
-        ))
-        let payload = try buf.subset(from: 14)
-        switch etherType {
-        case 0x0800: try ipv4(payload, into: &packet)
-        case 0x86DD: try ipv6(payload, into: &packet)
-        case 0x0806: try arp(payload, into: &packet)
-        default: break
-        }
-    }
+    // MARK: Network layer
 
     /// Address Resolution Protocol. Forms a session keyed on the protocol
     /// (IPv4) sender/target addresses (port 0) so it surfaces in the list.
@@ -166,19 +175,6 @@ nonisolated enum PacketDecoder {
             byteRange: span(buf, 28)
         ))
     }
-
-    private static func loopback(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        // BSD loopback: 4-byte address family header.
-        let family = try buf.u32le(0)
-        let payload = try buf.subset(from: 4)
-        if family == 2 {
-            try ipv4(payload, into: &packet)
-        } else {
-            try ipv6(payload, into: &packet)
-        }
-    }
-
-    // MARK: Network layer
 
     private static func ipv4(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
         let versionIHL = try buf.u8(0)
@@ -1172,35 +1168,10 @@ nonisolated enum PacketDecoder {
         return true
     }
 
-    // MARK: Byte-range helpers
-
-    /// A field whose value lives at `offset` (relative to `buf`) for `size` bytes.
-    /// `buf.start` is the layer's absolute offset within the frame, so the range
-    /// is absolute into the frame's `rawBytes` — exactly what the hex pane needs.
-    private static func ranged(
-        _ name: String, _ value: String,
-        in buf: PacketBuffer, at offset: Int, _ size: Int
-    )
-        -> DecodedField
-    {
-        DecodedField(name: name, value: value, byteRange: (buf.start + offset) ..< (buf.start + offset + size))
-    }
-
-    /// The absolute span of a whole layer (`length` bytes from `buf`'s start),
-    /// clamped to the captured bytes.
-    private static func span(_ buf: PacketBuffer, _ length: Int) -> Range<Int> {
-        let clamped = max(0, min(length, buf.length))
-        return buf.start ..< (buf.start + clamped)
-    }
-
     // MARK: Field formatting
 
     private static func asciiString(_ bytes: [UInt8]) -> String {
         String(bytes: bytes, encoding: .utf8) ?? ""
-    }
-
-    private static func mac(_ buf: PacketBuffer, _ offset: Int) throws -> String {
-        try (0 ..< 6).map { try String(format: "%02x", buf.u8(offset + $0)) }.joined(separator: ":")
     }
 
     /// Lower-case contiguous hex (e.g. a STUN transaction ID), no separators.
@@ -1243,15 +1214,6 @@ nonisolated enum PacketDecoder {
             offset += 1 + Int(len)
         }
         return (labels.joined(separator: "."), next < 0 ? offset : next)
-    }
-
-    private static func etherTypeName(_ type: UInt16) -> String {
-        switch type {
-        case 0x0800: "IPv4 (0x0800)"
-        case 0x86DD: "IPv6 (0x86DD)"
-        case 0x0806: "ARP (0x0806)"
-        default: String(format: "0x%04x", type)
-        }
     }
 
     private static func ipProtoName(_ proto: UInt8) -> String {

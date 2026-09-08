@@ -320,12 +320,16 @@ struct MainDetailView: View {
             SessionCenterView(
                 coordinator: coordinator,
                 commandDescriptors: sessionCommandDescriptors(workspace),
-                onCommandAction: { performSessionCommand($0, workspace) }
+                // Resolve at action time: launch hydration can replace the provisional
+                // WorkspaceState while this view subtree is still alive.
+                onCommandAction: { performSessionCommand($0, coordinator.activeWorkspace) }
             )
             .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
                 InvestigationQueryEditorView(
                     coordinator: coordinator,
-                    workspace: workspace
+                    // The popover closure outlives the body pass that created it.
+                    // Bind its editor to the currently owned workspace instance.
+                    workspace: coordinator.activeWorkspace
                 )
             }
         } inspector: {

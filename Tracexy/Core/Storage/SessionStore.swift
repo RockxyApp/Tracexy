@@ -5,7 +5,8 @@ import SQLite3
 
 /// A pure, actor-isolated SQLite substrate for terminal capture history. It owns
 /// exactly one connection, enables and verifies foreign keys (and, for a writable
-/// file, WAL) before migrating schema v1 in one immediate transaction, and exposes
+/// file, WAL) before installing or upgrading to schema v2 in one immediate
+/// transaction (v1 databases are migrated in place, never reset), and exposes
 /// only atomic whole-capture replacement, bounded keyset reads and whole-group
 /// retention. It never reads settings, touches `@MainActor`, converts a
 /// `SessionSummary`/`Finding`, retains raw bytes, or schedules anything — it is a
@@ -156,8 +157,16 @@ extension SessionStore {
 // MARK: - SessionStore migration
 
 private extension SessionStore {
-    /// The exact schema v1 DDL. Installed atomically; `user_version` is bumped in
-    /// the same transaction.
+    /// The current schema version this build owns.
+    static let currentSchemaVersion: Int64 = 2
+
+    /// The exact schema v2 DDL for a fresh database. Installed atomically;
+    /// `user_version` is bumped in the same transaction.
+    ///
+    /// Two things differ from v1: `captures.time_basis` records whether a capture's
+    /// lifetime is its own or the app's open event, and `sessions.start_time` /
+    /// `sessions.duration` are nullable so an unknown session span is stored as SQL
+    /// `NULL` rather than a numeric sentinel.
     static let schemaSQL = """
     CREATE TABLE captures (
         id TEXT PRIMARY KEY,
@@ -165,14 +174,15 @@ private extension SessionStore {
         ended_at REAL NOT NULL,
         source_kind INTEGER NOT NULL,
         completeness INTEGER NOT NULL,
-        session_count INTEGER NOT NULL
+        session_count INTEGER NOT NULL,
+        time_basis INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE sessions (
         capture_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         ordinal INTEGER NOT NULL,
-        start_time REAL NOT NULL,
-        duration REAL NOT NULL,
+        start_time REAL NULL,
+        duration REAL NULL,
         process_name TEXT NULL,
         host TEXT NOT NULL,
         source_endpoint TEXT NOT NULL,
@@ -194,17 +204,58 @@ private extension SessionStore {
         FOREIGN KEY(capture_id, session_id) REFERENCES sessions(capture_id, session_id) ON DELETE CASCADE
     );
     CREATE INDEX idx_captures_ended ON captures(ended_at, id);
-    PRAGMA user_version = 1;
+    PRAGMA user_version = 2;
     """
 
-    /// Configure the connection and migrate to schema v1.
+    /// The v1 → v2 upgrade body, run inside one immediate transaction with foreign
+    /// keys temporarily off (SQLite's documented table-rebuild procedure).
+    ///
+    /// `sessions` is rebuilt rather than altered because SQLite cannot relax a
+    /// `NOT NULL` in place. Every existing row is copied first, and `session_protocols`
+    /// is deliberately left untouched: its rows key on `(capture_id, session_id)`,
+    /// which the rebuild preserves exactly, so no protocol row is deleted or
+    /// re-inserted. Dropping the old table with foreign keys off is what prevents the
+    /// implicit `DELETE FROM` from cascading those protocol rows away.
+    static let migrateV1ToV2SQL = """
+    CREATE TABLE sessions_v2 (
+        capture_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        start_time REAL NULL,
+        duration REAL NULL,
+        process_name TEXT NULL,
+        host TEXT NOT NULL,
+        source_endpoint TEXT NOT NULL,
+        destination_endpoint TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        latency_ms REAL NULL,
+        bytes_up INTEGER NOT NULL,
+        bytes_down INTEGER NOT NULL,
+        PRIMARY KEY(capture_id, session_id),
+        UNIQUE(capture_id, ordinal),
+        FOREIGN KEY(capture_id) REFERENCES captures(id) ON DELETE CASCADE
+    );
+    INSERT INTO sessions_v2 (
+        capture_id, session_id, ordinal, start_time, duration, process_name, host,
+        source_endpoint, destination_endpoint, status, latency_ms, bytes_up, bytes_down
+    )
+    SELECT capture_id, session_id, ordinal, start_time, duration, process_name, host,
+           source_endpoint, destination_endpoint, status, latency_ms, bytes_up, bytes_down
+    FROM sessions;
+    DROP TABLE sessions;
+    ALTER TABLE sessions_v2 RENAME TO sessions;
+    ALTER TABLE captures ADD COLUMN time_basis INTEGER NOT NULL DEFAULT 0;
+    UPDATE captures SET time_basis = 2 WHERE source_kind = 1;
+    """
+
+    /// Configure the connection and bring it to schema v2.
     ///
     /// Every handle sets and verifies `foreign_keys = ON` before any transaction —
     /// setting it inside a transaction is silently ignored, so it must precede one.
     /// A writable file additionally sets and verifies WAL; a read-only or in-memory
-    /// database preserves its journal mode. Version 0 migrates to 1; a future
-    /// version is a typed unsupported-schema error; a read-only version-0 database
-    /// cannot migrate and fails typed.
+    /// database preserves its journal mode. Version 0 installs v2 and version 1 is
+    /// upgraded in place; a future version is a typed unsupported-schema error; a
+    /// read-only database that still needs either step cannot migrate and fails typed.
     static func migrate(_ database: SQLiteDatabase, configuration: Configuration) throws {
         database.setBusyTimeout(configuration.busyTimeoutMilliseconds)
 
@@ -222,19 +273,26 @@ private extension SessionStore {
 
         let version = try database.readIntegerPragma("user_version")
         switch version {
-        case 1:
+        case currentSchemaVersion:
             return
         case 0:
             guard !configuration.readOnly else {
                 throw HistoryStoreError.cannotMigrateReadOnly
             }
             try installSchema(database, faultHook: configuration.faultInjection)
+        case 1:
+            // A populated v1 database is upgraded in place; it is never reset,
+            // recreated, or opened at the older shape.
+            guard !configuration.readOnly else {
+                throw HistoryStoreError.cannotMigrateReadOnly
+            }
+            try upgradeV1ToV2(database, configuration: configuration)
         default:
             throw HistoryStoreError.unsupportedSchema(version: Int(clamping: version))
         }
     }
 
-    /// Install schema v1 in one immediate transaction, verifying integrity, and
+    /// Install schema v2 in one immediate transaction, verifying integrity, and
     /// roll back on any error so a failed migration leaves version 0 intact.
     static func installSchema(_ database: SQLiteDatabase, faultHook: FaultHook?) throws {
         try checkFault(faultHook, .migrationBegin)
@@ -250,6 +308,48 @@ private extension SessionStore {
         } catch {
             try? database.execute("ROLLBACK;")
             throw error
+        }
+    }
+
+    /// Upgrade a populated v1 database to v2 in one immediate transaction.
+    ///
+    /// Foreign keys are disabled for the duration because SQLite's `DROP TABLE`
+    /// performs an implicit `DELETE FROM` while they are on, which would cascade the
+    /// `session_protocols` rows away. The pragma is toggled *outside* the
+    /// transaction (inside one it is a silent no-op), the rebuild runs inside it,
+    /// `foreign_key_check` must come back clean before the commit, and foreign keys
+    /// are re-enabled and re-verified afterwards. Any failure rolls the whole
+    /// upgrade back with `user_version` still at 1 and every capture, session and
+    /// protocol row untouched.
+    static func upgradeV1ToV2(_ database: SQLiteDatabase, configuration: Configuration) throws {
+        let faultHook = configuration.faultInjection
+        try database.execute("PRAGMA foreign_keys = OFF;")
+        defer {
+            try? database.execute("PRAGMA foreign_keys = ON;")
+        }
+        guard try database.readIntegerPragma("foreign_keys") == 0 else {
+            throw HistoryStoreError.configurationFailed("foreign_keys could not be suspended for migration")
+        }
+
+        try checkFault(faultHook, .migrationBegin)
+        try database.execute("BEGIN IMMEDIATE;")
+        do {
+            try checkFault(faultHook, .migrationCreateSchema)
+            try database.execute(migrateV1ToV2SQL)
+            guard try !database.hasForeignKeyViolations() else {
+                throw HistoryStoreError.corruption("v1 to v2 migration failed foreign_key_check")
+            }
+            try checkFault(faultHook, .migrationCommit)
+            try database.execute("PRAGMA user_version = \(currentSchemaVersion);")
+            try database.execute("COMMIT;")
+        } catch {
+            try? database.execute("ROLLBACK;")
+            throw error
+        }
+
+        try database.execute("PRAGMA foreign_keys = ON;")
+        guard try database.readIntegerPragma("foreign_keys") == 1 else {
+            throw HistoryStoreError.configurationFailed("foreign_keys could not be re-enabled after migration")
         }
     }
 }
@@ -309,8 +409,8 @@ extension SessionStore {
         try Self.checkFault(faultHook, .replaceAfterDelete)
 
         let insertCapture = try database.prepare("""
-        INSERT INTO captures (id, started_at, ended_at, source_kind, completeness, session_count)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO captures (id, started_at, ended_at, source_kind, completeness, session_count, time_basis)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
         """)
         defer { insertCapture.finalizeStatement() }
         try insertCapture.bindText(1, captureID)
@@ -319,6 +419,7 @@ extension SessionStore {
         try insertCapture.bindInt(4, Int64(capture.sourceKind.rawValue))
         try insertCapture.bindInt(5, Int64(capture.completeness.rawValue))
         try insertCapture.bindInt(6, Int64(sessions.count))
+        try insertCapture.bindInt(7, Int64(capture.timeBasis.rawValue))
         _ = try insertCapture.step()
         try Self.checkFault(faultHook, .replaceCaptureInsert)
 
@@ -373,8 +474,17 @@ extension SessionStore {
         try statement.bindText(1, captureID)
         try statement.bindText(2, session.sessionID.uuidString)
         try statement.bindInt(3, Int64(ordinal))
-        try statement.bindDouble(4, session.startTime)
-        try statement.bindDouble(5, session.duration)
+        // Unknown timing binds SQL NULL: no epoch, no zero, no sentinel.
+        if let startTime = session.startTime {
+            try statement.bindDouble(4, startTime)
+        } else {
+            try statement.bindNull(4)
+        }
+        if let duration = session.duration {
+            try statement.bindDouble(5, duration)
+        } else {
+            try statement.bindNull(5)
+        }
         if let processName = session.processName {
             try statement.bindText(6, boundedText(processName, field: "processName"))
         } else {
@@ -400,7 +510,7 @@ extension SessionStore {
     /// Fetch one capture by ID, with its database-derived session count, or `nil`.
     func capture(id: UUID) throws -> HistoryStoredCapture? {
         let statement = try database.prepare("""
-        SELECT started_at, ended_at, source_kind, completeness, session_count
+        SELECT started_at, ended_at, source_kind, completeness, session_count, time_basis
         FROM captures WHERE id = ?;
         """)
         defer { statement.finalizeStatement() }
@@ -413,7 +523,8 @@ extension SessionStore {
             startedAt: statement.columnDouble(0),
             endedAt: statement.columnDouble(1),
             rawSourceKind: statement.columnInt64(2),
-            rawCompleteness: statement.columnInt64(3)
+            rawCompleteness: statement.columnInt64(3),
+            rawTimeBasis: statement.columnInt64(5)
         )
         let count = try Self.decodeCount(statement.columnInt64(4), field: "session_count")
         return HistoryStoredCapture(record: record, sessionCount: count)
@@ -436,7 +547,8 @@ extension SessionStore {
                 startedAt: statement.columnDouble(1),
                 endedAt: statement.columnDouble(2),
                 rawSourceKind: statement.columnInt64(3),
-                rawCompleteness: statement.columnInt64(4)
+                rawCompleteness: statement.columnInt64(4),
+                rawTimeBasis: statement.columnInt64(6)
             )
             let count = try Self.decodeCount(statement.columnInt64(5), field: "session_count")
             rows.append(HistoryStoredCapture(record: record, sessionCount: count))
@@ -489,14 +601,14 @@ extension SessionStore {
     private func capturePageStatement(after cursor: HistoryCaptureCursor?, limit: Int) throws -> SQLiteStatement {
         guard let cursor else {
             let statement = try database.prepare("""
-            SELECT id, started_at, ended_at, source_kind, completeness, session_count
+            SELECT id, started_at, ended_at, source_kind, completeness, session_count, time_basis
             FROM captures ORDER BY ended_at DESC, id DESC LIMIT ?;
             """)
             try statement.bindInt(1, Int64(limit))
             return statement
         }
         let statement = try database.prepare("""
-        SELECT id, started_at, ended_at, source_kind, completeness, session_count
+        SELECT id, started_at, ended_at, source_kind, completeness, session_count, time_basis
         FROM captures WHERE ended_at < ? OR (ended_at = ? AND id < ?)
         ORDER BY ended_at DESC, id DESC LIMIT ?;
         """)
@@ -523,8 +635,8 @@ extension SessionStore {
         let protocols = try loadProtocols(captureID: captureID, sessionID: sessionID)
         let record = HistorySessionRecord(
             sessionID: sessionID,
-            startTime: statement.columnDouble(2),
-            duration: statement.columnDouble(3),
+            startTime: statement.columnIsNull(2) ? nil : statement.columnDouble(2),
+            duration: statement.columnIsNull(3) ? nil : statement.columnDouble(3),
             processName: statement.columnIsNull(4) ? nil : statement.columnText(4),
             host: statement.columnText(5) ?? "",
             sourceEndpoint: statement.columnText(6) ?? "",
@@ -716,7 +828,8 @@ private extension SessionStore {
         startedAt: Double,
         endedAt: Double,
         rawSourceKind: Int64,
-        rawCompleteness: Int64
+        rawCompleteness: Int64,
+        rawTimeBasis: Int64
     )
         throws -> HistoryCaptureRecord
     {
@@ -726,12 +839,16 @@ private extension SessionStore {
         guard let completeness = HistoryCompleteness(rawValue: Int(clamping: rawCompleteness)) else {
             throw HistoryStoreError.corruption("captures.completeness was not a known value")
         }
+        guard let timeBasis = HistoryCaptureTimeBasis(rawValue: Int(clamping: rawTimeBasis)) else {
+            throw HistoryStoreError.corruption("captures.time_basis was not a known value")
+        }
         return HistoryCaptureRecord(
             captureID: captureID,
             startedAt: startedAt,
             endedAt: endedAt,
             sourceKind: sourceKind,
-            completeness: completeness
+            completeness: completeness,
+            timeBasis: timeBasis
         )
     }
 

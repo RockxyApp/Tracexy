@@ -44,22 +44,21 @@ extension MainContentCoordinator {
         return captureSourceHoldMessage
     }
 
-    /// True while an accepted Save or an in-flight session export still owns the
-    /// current capture source.
-    ///
-    /// This is the explicit source-use gate: while it is set, every *destructive*
-    /// source mutation — Clear, Start, adopting another saved capture, an import
-    /// that replaces a Library file, and trashing one — is refused, because each
-    /// resets or removes exactly the bytes the accepted operation is copying.
-    /// Deliberately not gated: Stop (settling a live capture is how an owed source
-    /// reaches its final boundary) and a Project change (which waits for the queued
-    /// save instead of racing it).
+    /// Holds the current source while Save, import or session export owns it.
+    /// Clear, Start, saved-capture adoption, another import and Trash are refused
+    /// until the operation finishes. Imports preserve existing Library files;
+    /// their hold also prevents a late result from replacing a newer source.
+    /// Stop may still settle live capture. A Project change drains origin-owned
+    /// copy/save work before activating the destination.
     var isCaptureSourceHeld: Bool {
-        pendingCaptureIOTask != nil || isExportingSession
+        pendingCaptureIOTask != nil || isImportingCapture || isExportingSession
     }
 
     /// The refusal above in the user's words, or `nil` when nothing owns the source.
     var captureSourceHoldMessage: String? {
+        if isImportingCapture {
+            return "Finish or cancel the capture import before changing the capture source."
+        }
         if isExportingSession {
             return "Finish or cancel the session export before changing the capture source."
         }
@@ -182,6 +181,7 @@ extension MainContentCoordinator {
         runtime.isViewingSavedCapture = isViewingSavedCapture
         runtime.activeSavedCapture = activeSavedCapture
         runtime.savedCaptureActivity = savedCaptureActivity
+        runtime.savedCaptureMetadata = savedCaptureMetadata
         runtime.savedCaptureWarning = savedCaptureWarning
         runtime.savedCaptureEvidence = savedCaptureEvidence
         runtime.savedCaptureEvidenceURL = savedCaptureEvidenceURL
@@ -246,6 +246,7 @@ extension MainContentCoordinator {
         isViewingSavedCapture = runtime.isViewingSavedCapture
         activeSavedCapture = runtime.activeSavedCapture
         savedCaptureActivity = runtime.savedCaptureActivity
+        savedCaptureMetadata = runtime.savedCaptureMetadata
         savedCaptureWarning = runtime.savedCaptureWarning
         savedCaptureEvidence = runtime.savedCaptureEvidence
         savedCaptureEvidenceURL = runtime.savedCaptureEvidenceURL
@@ -638,6 +639,7 @@ extension MainContentCoordinator {
     /// History mutations are refused while the transition is pending, so this
     /// terminates.
     private func drainOutgoingProjectIO() async {
+        await pendingCaptureImportTask?.value
         var awaitedSave = -1
         while let save = pendingCaptureIOTask, captureIORequestID != awaitedSave {
             awaitedSave = captureIORequestID

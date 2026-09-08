@@ -60,7 +60,7 @@ struct WorkspacePresentationContractTests {
         let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
 
         #expect(source.contains("findingSummaryBar"))
-        #expect(source.contains("Review \\(all.count.formatted()) in Sessions"))
+        #expect(source.contains("coordinator.showAggregateFindingSessions()"))
         #expect(!source.contains("findingPreviewLimit"))
         #expect(!source.contains("findingRow("))
         #expect(!source.contains("Open evidence"))
@@ -93,7 +93,7 @@ struct WorkspacePresentationContractTests {
 
         #expect(inspector.contains("case .evidence: sessionEvidence(session)"))
         #expect(inspector.contains("Cited frame"))
-        #expect(inspector.contains("coordinator.cancelCitedFrame()"))
+        #expect(inspector.contains("coordinator.clearCitedFrameAndReturn()"))
         #expect(timeline.contains("Capture-level:"))
         #expect(timeline.contains("No replacement frame was loaded"))
         #expect(details.contains("SessionEvidenceContextSummaryView"))
@@ -139,7 +139,9 @@ struct WorkspacePresentationContractTests {
         let footer = try readProjectFile("Tracexy/Views/Common/WorkspaceFooterBar.swift")
 
         #expect(root.contains("commandDescriptors: sessionCommandDescriptors(workspace)"))
-        #expect(root.contains("onCommandAction: { performSessionCommand($0, workspace) }"))
+        #expect(root.contains(
+            "onCommandAction: { performSessionCommand($0, coordinator.activeWorkspace) }"
+        ))
         #expect(!commandBar.contains("TracexyGlassEffectGroup"))
         #expect(!commandBar.contains(".tracexyGlassEffect"))
         #expect(commandBar.contains(".tracexyGlassButtonStyle()"))
@@ -357,7 +359,7 @@ struct WorkspacePresentationContractTests {
         #expect(query.contains("Picker(\"Field\""))
         #expect(query.contains(".accessibilityLabel(\"Investigation field\")"))
         #expect(query.contains("DatePicker(\"From\""))
-        #expect(query.contains("A missing retained finding is never treated as proof"))
+        #expect(query.contains("Unavailable evidence stays unknown, including under negation."))
         #expect(query.contains(".accessibilityLabel(\"Investigation query editor\")"))
         #expect(!footer.contains("Investigate"))
         #expect(!footer.contains("Investigation"))

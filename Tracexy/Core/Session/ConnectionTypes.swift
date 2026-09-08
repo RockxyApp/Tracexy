@@ -59,7 +59,7 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
 
     init(
         ordinal: FrameOrdinal,
-        timestamp: Date,
+        timestamp: Date?,
         capturedLength: Int,
         originalLength: Int,
         linkType: UInt32,
@@ -77,11 +77,28 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
     // MARK: Internal
 
     let ordinal: FrameOrdinal
-    let timestamp: Date
+    /// When the frame was captured, or `nil` when the source carried no capture
+    /// time. `ordinal` — not this value — remains the sequencing key, so an untimed
+    /// frame folds in exactly the same order it arrived.
+    let timestamp: Date?
     let capturedLength: Int
     let originalLength: Int
     let linkType: UInt32
     let locator: SessionEvidenceLocator?
+
+    /// A documented total order over optional capture times, used **only** as a
+    /// deterministic tie-break in orderings that already agree on ordinal-level
+    /// facts. A known time precedes an unknown one and two known times compare
+    /// chronologically; an unknown time never participates in elapsed-time
+    /// arithmetic and never stands in for an instant.
+    static func timeOrderedBefore(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        switch (lhs, rhs) {
+        case let (left?, right?): left < right
+        case (.some, .none): true
+        case (.none, .some),
+             (.none, .none): false
+        }
+    }
 }
 
 // MARK: - ConnectionDirection
@@ -324,7 +341,7 @@ nonisolated struct ConnectionEvent: Hashable, Sendable {
     init(
         connectionID: ConnectionID,
         kind: ConnectionEventKind,
-        timestamp: Date,
+        timestamp: Date?,
         provenance: SessionFrameProvenance,
         relatedProvenance: [SessionFrameProvenance] = [],
         direction: ConnectionDirection? = nil,
@@ -348,7 +365,9 @@ nonisolated struct ConnectionEvent: Hashable, Sendable {
 
     let connectionID: ConnectionID
     let kind: ConnectionEventKind
-    let timestamp: Date
+    /// The capture time of the frame that completed this observation, or `nil` when
+    /// that frame carried none. Never substituted with an epoch or a wall clock.
+    let timestamp: Date?
     /// One to three frames of evidence, never more.
     let provenance: [SessionFrameProvenance]
     /// Canonical direction of the triggering segment. `nil` only for a synthetic

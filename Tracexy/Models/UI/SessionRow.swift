@@ -32,7 +32,8 @@ enum SessionRow: Identifiable, Hashable {
         }
     }
 
-    var startTime: Date {
+    /// The row's earliest known start, or `nil` when nothing under it carries one.
+    var startTime: Date? {
         switch self {
         case let .action(activity): activity.startTime
         case let .group(group): group.startTime
@@ -116,6 +117,40 @@ enum SessionRow: Identifiable, Hashable {
         case let .action(activity): activity.sessions.map(SessionRow.session)
         case let .group(group): group.sessions.map(SessionRow.session)
         case .session: []
+        }
+    }
+
+    /// Oldest first, with rows whose start time is unknown trailing every known-time
+    /// row and ordering by first source ordinal then id among themselves. This mirrors
+    /// ``SessionChronology`` for the mixed row type; no sentinel date is used.
+    static func orderedBefore(_ lhs: SessionRow, _ rhs: SessionRow) -> Bool {
+        switch (lhs.startTime, rhs.startTime) {
+        case let (left?, right?):
+            if left != right {
+                return left < right
+            }
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            switch (lhs.firstSourceOrdinal, rhs.firstSourceOrdinal) {
+            case let (left?, right?) where left != right: return left < right
+            case (.some, .none): return true
+            case (.none, .some): return false
+            default: break
+            }
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    // MARK: Private
+
+    private var firstSourceOrdinal: UInt64? {
+        switch self {
+        case let .session(session): session.firstCaptureOrdinal
+        case let .action(activity): activity.sessions.compactMap(\.firstCaptureOrdinal).min()
+        case let .group(group): group.sessions.compactMap(\.firstCaptureOrdinal).min()
         }
     }
 }

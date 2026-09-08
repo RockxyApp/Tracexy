@@ -182,7 +182,8 @@ struct SavedCaptureStreamLoaderTests {
             #expect(result.activity.buckets.count <= 8)
             #expect(result.activity.totalFrames == 40)
             #expect(result.activity.totalBytes == expectedBytes)
-            #expect(abs(result.activity.duration - 39) < 1e-6)
+            let duration = try #require(result.activity.duration)
+            #expect(abs(duration - 39) < 1e-6)
             // Per-bucket totals conserve the exact frame/byte totals.
             #expect(result.activity.buckets.reduce(0) { $0 + $1.frameCount } == 40)
             #expect(result.activity.buckets.reduce(0) { $0 + $1.byteCount } == expectedBytes)

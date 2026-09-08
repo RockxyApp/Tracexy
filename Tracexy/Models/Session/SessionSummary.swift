@@ -34,8 +34,14 @@ nonisolated enum SessionStatus: String, CaseIterable, Hashable {
 /// One network conversation as shown in the timeline / session list.
 nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     let id: UUID
-    var startTime: Date
-    var duration: TimeInterval
+    /// When the session's earliest contributing frame was captured, or `nil` when
+    /// at least one contributing frame carried no capture time at all. Unknown is
+    /// never spelled as an epoch, the file's open instant, or the current clock.
+    var startTime: Date?
+    /// Wall-clock span from the earliest to the latest contributing frame, or `nil`
+    /// on the same condition as ``startTime``: a span measured over only the timed
+    /// subset would silently claim the whole session.
+    var duration: TimeInterval?
 
     /// Originating process, when known (pktap enrichment). Display only.
     var processName: String?
@@ -75,6 +81,21 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// not presented as exact unique cardinality after the retained list fills.
     var dnsAnswersOmittedCount: Int = 0
 
+    /// Capture ordinal of the first frame folded into this session, when the fold
+    /// supplied one. It is a **source-order fallback for ordering only** — never an
+    /// instant, and never an input to an elapsed-time calculation.
+    var firstCaptureOrdinal: UInt64?
+    /// Contributing frames whose source carried no capture time. Non-zero is exactly
+    /// the condition that makes ``startTime``/``duration``/``latencyMilliseconds``
+    /// unknown, while every byte total and decoded fact is still retained.
+    var untimedFrameCount: Int = 0
+
+    /// Whether this session's own timing could not be established because at least
+    /// one contributing frame carried no capture time.
+    nonisolated var hasUnknownTiming: Bool {
+        untimedFrameCount > 0 || startTime == nil
+    }
+
     /// Whether any DNS answers were omitted from ``dnsAnswers`` due to a cap.
     nonisolated var dnsAnswersTruncated: Bool {
         dnsAnswersOmittedCount > 0
@@ -113,5 +134,75 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     nonisolated var hasApplicationExchange: Bool {
         let applicationProtocols: Set<ProtocolKind> = [.http, .http2, .dns, .websocket, .stun]
         return protocolStack.contains(where: applicationProtocols.contains)
+    }
+}
+
+// MARK: - SessionChronology
+
+/// The single documented ordering used wherever sessions are listed in time order.
+///
+/// Sessions with a known start time keep their existing chronology exactly. Sessions
+/// whose start time is unknown are ordered **after** every known-time session — an
+/// unknown instant is not an early one — and among themselves by their capture
+/// ordinal, then by id. The ordinal is a source-order fallback for ordering only; no
+/// sentinel date is ever substituted, and nothing here measures elapsed time.
+nonisolated enum SessionChronology {
+    // MARK: Internal
+
+    /// Oldest first.
+    static func ascending(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
+        switch (lhs.startTime, rhs.startTime) {
+        case let (left?, right?):
+            if left != right {
+                return left < right
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            break
+        }
+        return fallback(lhs, rhs)
+    }
+
+    /// Newest first — the exact reverse of ``ascending(_:_:)`` on known times, with
+    /// unknown-time sessions still trailing rather than leading.
+    static func descending(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
+        switch (lhs.startTime, rhs.startTime) {
+        case let (left?, right?):
+            if left != right {
+                return left > right
+            }
+            return lhs.id.uuidString > rhs.id.uuidString
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            break
+        }
+        return fallback(lhs, rhs)
+    }
+
+    // MARK: Private
+
+    /// Deterministic fallback for absent start times: capture ordinal
+    /// first (sessions that carry one precede those that do not), then id.
+    private static func fallback(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
+        switch (lhs.firstCaptureOrdinal, rhs.firstCaptureOrdinal) {
+        case let (left?, right?):
+            if left != right {
+                return left < right
+            }
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            break
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 }

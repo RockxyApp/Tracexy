@@ -37,6 +37,10 @@ extension MainContentCoordinator {
     /// toolbar menu and row context menu route here, so scope, serialization,
     /// filename, errors, and privacy behavior cannot drift apart.
     func exportSession(_ session: SessionSummary, as format: SessionExportFormat) {
+        guard !isImportingCapture else {
+            captureError = captureSourceHoldMessage
+            return
+        }
         guard !isExportingSession, !isProjectBoundaryBusy else {
             return
         }

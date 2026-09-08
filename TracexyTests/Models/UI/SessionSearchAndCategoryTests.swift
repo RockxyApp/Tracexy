@@ -179,11 +179,12 @@ struct SessionCategoryFilterTests {
         workspace.hostFilter = "api.example.com"
         workspace.isFilterBarVisible = false
 
-        coordinator.showFindingSessions()
+        coordinator.showAggregateFindingSessions()
 
         #expect(workspace.sidebarSelection == .sessions)
-        #expect(workspace.categoryFilters == [.tcp, .security])
-        #expect(workspace.hostFilter == nil)
-        #expect(workspace.isFilterBarVisible)
+        #expect(workspace.categoryFilters == [.tcp])
+        #expect(workspace.aggregateRequiresFindings)
+        #expect(workspace.hostFilter == "api.example.com")
+        #expect(!workspace.isFilterBarVisible)
     }
 }

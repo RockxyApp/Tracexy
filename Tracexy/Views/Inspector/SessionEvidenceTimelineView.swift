@@ -212,7 +212,9 @@ struct SessionEvidenceTimelineView: View {
                 HStack(spacing: Theme.Metrics.spacingS) {
                     Text("Frame \(item.ordinal.rawValue.formatted())")
                     Text("·")
-                    Text(item.timestamp.formatted(date: .omitted, time: .standard))
+                    // The frame ordinal is always exact; its capture instant is
+                    // only shown when the file actually recorded one.
+                    Text(item.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "no capture time")
                 }
                 .font(Theme.Typography.monoSmall)
                 .foregroundStyle(.secondary)

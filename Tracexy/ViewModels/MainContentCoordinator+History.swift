@@ -225,6 +225,9 @@ extension MainContentCoordinator {
             endedAt: frozen.endedAt.timeIntervalSince1970,
             sourceKind: .live,
             completeness: completeness,
+            // A live capture's lifetime is the capture's own confirmed start/stop,
+            // not an open event.
+            timeBasis: .captured,
             sessions: sessions,
             maskIPAddresses: PrivacySettingsResolver
                 .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
@@ -232,30 +235,41 @@ extension MainContentCoordinator {
         scheduleHistoryWrite(store: store, input: input)
     }
 
-    /// Persist an opened saved capture exactly once, after atomic adoption. Start
-    /// and end derive from the accepted session min/max, with one finite
-    /// deterministic fallback for an empty capture; completeness maps directly from
-    /// the loader result. No path or file identity is persisted.
+    /// Persist an opened saved capture exactly once, after atomic adoption.
+    ///
+    /// A capture lifetime is only derived from the capture when *every* accepted
+    /// frame carried known timing; otherwise the record stores the real instant
+    /// the file was opened here and labels it ``HistoryCaptureTimeBasis/opened``, so
+    /// History never presents an open event as when the traffic happened.
+    /// Completeness maps directly from the loader result. No path or file identity
+    /// is persisted.
     func persistTerminalSavedHistory(result: SavedCaptureLoadResult, request: SavedCaptureOpenRequest) {
         guard let store = sessionStore,
               scheduledHistoryTerminals.insert(.saved(requestID: request.id)).inserted else
         {
             return
         }
-        let instants = Self.historyInstants(
-            for: result.sessions,
-            fallback: request.historyOpenedAt.timeIntervalSince1970
-        )
+        let lifetime: (startedAt: Double, endedAt: Double, timeBasis: HistoryCaptureTimeBasis)
+        do {
+            lifetime = try Self.historyLifetime(
+                for: result.metadata,
+                openedAt: request.historyOpenedAt.timeIntervalSince1970
+            )
+        } catch {
+            historyError = "Couldn’t save this capture to History — \(Self.describe(error))"
+            return
+        }
         let completeness: HistoryCompleteness = switch result.completeness {
         case .complete: .complete
         case .incompleteTruncatedTail: .incomplete
         }
         let input = HistoryRecordProjection.Input(
             captureID: request.historyCaptureID,
-            startedAt: instants.startedAt,
-            endedAt: instants.endedAt,
+            startedAt: lifetime.startedAt,
+            endedAt: lifetime.endedAt,
             sourceKind: .saved,
             completeness: completeness,
+            timeBasis: lifetime.timeBasis,
             sessions: result.sessions,
             maskIPAddresses: PrivacySettingsResolver
                 .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
@@ -263,28 +277,28 @@ extension MainContentCoordinator {
         scheduleHistoryWrite(store: store, input: input)
     }
 
-    /// Derive `(startedAt, endedAt)` from the accepted sessions' min start and max
-    /// end. An empty capture uses a single finite deterministic fallback instant so
-    /// the persisted ordering invariant still holds.
-    static func historyInstants(
-        for sessions: [SessionSummary],
-        fallback: Double
+    /// A captured lifetime requires known time on every accepted frame, including
+    /// frames that yielded no session. Otherwise retain the actual open event.
+    static func historyLifetime(
+        for metadata: CaptureMetadataSummary,
+        openedAt: Double
     )
-        -> (startedAt: Double, endedAt: Double)
+        throws -> (startedAt: Double, endedAt: Double, timeBasis: HistoryCaptureTimeBasis)
     {
-        guard !sessions.isEmpty else {
-            let instant = fallback.isFinite ? fallback : 0
-            return (instant, instant)
+        guard openedAt.isFinite else {
+            throw HistoryStoreError.nonFiniteValue(field: "openedAt")
         }
-        var minStart = Double.greatestFiniteMagnitude
-        var maxEnd = -Double.greatestFiniteMagnitude
-        for session in sessions {
-            let start = session.startTime.timeIntervalSince1970
-            let end = start + max(0, session.duration)
-            minStart = min(minStart, start)
-            maxEnd = max(maxEnd, end)
+        guard metadata.totalFrames > 0, metadata.untimedFrameCount == 0,
+              let first = metadata.firstTimedAt, let last = metadata.lastTimedAt else
+        {
+            return (openedAt, openedAt, .opened)
         }
-        return (minStart, maxEnd)
+        let start = first.timeIntervalSince1970
+        let end = last.timeIntervalSince1970
+        guard start.isFinite, end.isFinite, end >= start else {
+            return (openedAt, openedAt, .opened)
+        }
+        return (start, end, .captured)
     }
 
     /// Project (off `@MainActor`) and write asynchronously. Success refreshes the

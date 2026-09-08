@@ -56,17 +56,4 @@ extension MainContentCoordinator {
         }
         return true
     }
-
-    /// Findings is a session quick filter, not a separate destination. Reuse the
-    /// full table/search/group/inspector workflow and retain any complementary
-    /// protocol, text, or advanced filters the user already applied.
-    func showFindingSessions() {
-        let workspace = activeWorkspace
-        workspace.sidebarSelection = .sessions
-        workspace.hostFilter = nil
-        workspace.processFilter = nil
-        workspace.ipFilter = nil
-        workspace.categoryFilters.insert(.security)
-        workspace.isFilterBarVisible = true
-    }
 }

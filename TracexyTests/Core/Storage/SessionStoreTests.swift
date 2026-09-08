@@ -35,7 +35,7 @@ struct SessionStoreTests {
         withExtendedLifetime(store) {}
     }
 
-    @Test("Schema v1 capture values are non-null")
+    @Test("Schema v2 capture values are non-null")
     func captureSchemaRequiresValues() throws {
         let url = Self.temporaryURL()
         defer { Self.removeDatabaseFiles(url) }
@@ -53,9 +53,46 @@ struct SessionStoreTests {
             }
         }
         #expect(requiredColumns == [
-            "started_at", "ended_at", "source_kind", "completeness", "session_count",
+            "started_at", "ended_at", "source_kind", "completeness", "session_count", "time_basis",
         ])
         withExtendedLifetime(store) {}
+    }
+
+    @Test("Schema v2 session timing columns are nullable so unknown timing needs no sentinel")
+    func sessionSchemaAllowsNullTiming() throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let store = try SessionStore(configuration: .init(location: .file(url)))
+
+        let probe = try SQLiteDatabase(path: url.path, readOnly: true)
+        defer { probe.close() }
+        let statement = try probe.prepare("PRAGMA table_info(sessions);")
+        defer { statement.finalizeStatement() }
+
+        var nullableColumns: Set<String> = []
+        while try statement.step() {
+            if statement.columnInt64(3) == 0, let name = statement.columnText(1) {
+                nullableColumns.insert(name)
+            }
+        }
+        #expect(nullableColumns.contains("start_time"))
+        #expect(nullableColumns.contains("duration"))
+        withExtendedLifetime(store) {}
+    }
+
+    @Test("A session with unknown timing round-trips as SQL NULL, not a zero instant")
+    func nullTimingRoundTrips() async throws {
+        let store = try SessionStore()
+        let capture = Self.capture(timeBasis: .opened)
+        let untimed = Self.session(startTime: nil, duration: nil)
+        try await store.replaceCapture(capture, sessions: [untimed])
+
+        let stored = try #require(try await store.capture(id: capture.captureID))
+        #expect(stored.record.timeBasis == .opened)
+        let page = try await store.sessions(captureID: capture.captureID, after: nil, limit: 10)
+        #expect(page.sessions == [untimed])
+        #expect(page.sessions.first?.startTime == nil)
+        #expect(page.sessions.first?.duration == nil)
     }
 
     @Test("A failed migration rolls back and leaves version 0 for a clean retry")
@@ -83,10 +120,10 @@ struct SessionStoreTests {
         let url = Self.temporaryURL()
         defer { Self.removeDatabaseFiles(url) }
         let raw = try SQLiteDatabase(path: url.path, readOnly: false)
-        try raw.execute("PRAGMA user_version = 2;")
+        try raw.execute("PRAGMA user_version = 3;")
         raw.close()
 
-        #expect(throws: HistoryStoreError.unsupportedSchema(version: 2)) {
+        #expect(throws: HistoryStoreError.unsupportedSchema(version: 3)) {
             _ = try SessionStore(configuration: .init(location: .file(url)))
         }
     }
@@ -100,6 +137,95 @@ struct SessionStoreTests {
         #expect(throws: HistoryStoreError.cannotMigrateReadOnly) {
             _ = try SessionStore(configuration: .init(location: .file(url), readOnly: true))
         }
+    }
+
+    // MARK: Internal — v1 to v2 migration
+
+    @Test("Migrated saved records retain values without claiming verified capture-time provenance")
+    func migratedSavedTimeIsLegacy() async throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let captureID = UUID()
+        let sessionID = UUID()
+        try Self.installLegacyV1Database(at: url, captureID: captureID, sessionID: sessionID, sourceKind: .saved)
+        let store = try SessionStore(configuration: .init(location: .file(url)))
+        let capture = try #require(try await store.capture(id: captureID))
+        #expect(capture.record.timeBasis == .legacy)
+        #expect(capture.record.startedAt == 1_000)
+        let page = try await store.sessions(captureID: captureID, after: nil, limit: 10)
+        let session = try #require(page.sessions.first)
+        #expect(session.startTime == 1_000)
+        #expect(session.protocols == ["tcp", "tls"])
+    }
+
+    @Test("A populated v1 database upgrades in place, keeping every capture, session and protocol row")
+    func v1MigrationRetainsPopulatedRows() async throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let captureID = UUID()
+        let sessionID = UUID()
+        try Self.installLegacyV1Database(at: url, captureID: captureID, sessionID: sessionID)
+
+        let store = try SessionStore(configuration: .init(location: .file(url)))
+        let stored = try #require(try await store.capture(id: captureID))
+        #expect(stored.sessionCount == 1)
+        // A pre-existing capture was recorded from its own frames, so the default
+        // basis is `captured` — never retroactively relabelled as an open event.
+        #expect(stored.record.timeBasis == .captured)
+
+        let page = try await store.sessions(captureID: captureID, after: nil, limit: 10)
+        let session = try #require(page.sessions.first)
+        #expect(session.sessionID == sessionID)
+        #expect(session.startTime == 1_000)
+        #expect(session.duration == 5)
+        // The protocol rows survive: dropping the old table with foreign keys on
+        // would have cascaded them away.
+        #expect(session.protocols == ["tcp", "tls"])
+
+        // Foreign keys are back on after the rebuild, so deleting the capture still
+        // cascades its sessions and protocol rows away.
+        _ = try await store.applyRetention(HistoryRetentionPolicy(maxCaptureCount: 0))
+        #expect(try await store.capture(id: captureID) == nil)
+        let empty = try await store.sessions(captureID: captureID, after: nil, limit: 10)
+        #expect(empty.sessions.isEmpty)
+    }
+
+    @Test("A read-only v1 database is a typed failure rather than a silent downgrade")
+    func readOnlyV1CannotMigrate() throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        try Self.installLegacyV1Database(at: url, captureID: UUID(), sessionID: UUID())
+
+        #expect(throws: HistoryStoreError.cannotMigrateReadOnly) {
+            _ = try SessionStore(configuration: .init(location: .file(url), readOnly: true))
+        }
+    }
+
+    @Test("A failed v1 upgrade rolls back with version 1 and every row intact")
+    func v1MigrationRollsBackOnFault() throws {
+        let url = Self.temporaryURL()
+        defer { Self.removeDatabaseFiles(url) }
+        let captureID = UUID()
+        try Self.installLegacyV1Database(at: url, captureID: captureID, sessionID: UUID())
+
+        #expect(throws: HistoryStoreError.diskFull) {
+            _ = try SessionStore(configuration: .init(
+                location: .file(url),
+                faultInjection: Self.fault(at: .migrationCommit, code: 13)
+            ))
+        }
+
+        let probe = try SQLiteDatabase(path: url.path, readOnly: true)
+        defer { probe.close() }
+        #expect(try probe.readIntegerPragma("user_version") == 1)
+        let counts = try probe.prepare("SELECT COUNT(*) FROM sessions;")
+        defer { counts.finalizeStatement() }
+        #expect(try counts.step())
+        #expect(counts.columnInt64(0) == 1)
+        let protocols = try probe.prepare("SELECT COUNT(*) FROM session_protocols;")
+        defer { protocols.finalizeStatement() }
+        #expect(try protocols.step())
+        #expect(protocols.columnInt64(0) == 2)
     }
 
     @Test("A non-database file maps to typed corruption")
@@ -570,7 +696,8 @@ struct SessionStoreTests {
         startedAt: Double = 1_000,
         endedAt: Double = 2_000,
         sourceKind: HistorySourceKind = .live,
-        completeness: HistoryCompleteness = .complete
+        completeness: HistoryCompleteness = .complete,
+        timeBasis: HistoryCaptureTimeBasis = .captured
     )
         -> HistoryCaptureRecord
     {
@@ -579,14 +706,86 @@ struct SessionStoreTests {
             startedAt: startedAt,
             endedAt: endedAt,
             sourceKind: sourceKind,
-            completeness: completeness
+            completeness: completeness,
+            timeBasis: timeBasis
         )
+    }
+
+    /// Write a populated database at the exact previous schema (v1): non-null
+    /// session timing, no `time_basis` column, and one capture / session / two
+    /// protocol rows to prove the upgrade preserves them.
+    private static func installLegacyV1Database(
+        at url: URL,
+        captureID: UUID,
+        sessionID: UUID,
+        sourceKind: HistorySourceKind = .live
+    )
+        throws
+    {
+        let database = try SQLiteDatabase(path: url.path, readOnly: false)
+        defer { database.close() }
+        try database.execute("PRAGMA foreign_keys = ON;")
+        try database.execute("""
+        CREATE TABLE captures (
+            id TEXT PRIMARY KEY,
+            started_at REAL NOT NULL,
+            ended_at REAL NOT NULL,
+            source_kind INTEGER NOT NULL,
+            completeness INTEGER NOT NULL,
+            session_count INTEGER NOT NULL
+        );
+        CREATE TABLE sessions (
+            capture_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            start_time REAL NOT NULL,
+            duration REAL NOT NULL,
+            process_name TEXT NULL,
+            host TEXT NOT NULL,
+            source_endpoint TEXT NOT NULL,
+            destination_endpoint TEXT NOT NULL,
+            status INTEGER NOT NULL,
+            latency_ms REAL NULL,
+            bytes_up INTEGER NOT NULL,
+            bytes_down INTEGER NOT NULL,
+            PRIMARY KEY(capture_id, session_id),
+            UNIQUE(capture_id, ordinal),
+            FOREIGN KEY(capture_id) REFERENCES captures(id) ON DELETE CASCADE
+        );
+        CREATE TABLE session_protocols (
+            capture_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            protocol_ordinal INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY(capture_id, session_id, protocol_ordinal),
+            FOREIGN KEY(capture_id, session_id) REFERENCES sessions(capture_id, session_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_captures_ended ON captures(ended_at, id);
+        PRAGMA user_version = 1;
+        """)
+        let capture = captureID.uuidString
+        let session = sessionID.uuidString
+        try database.execute("""
+        INSERT INTO captures (id, started_at, ended_at, source_kind, completeness, session_count)
+        VALUES ('\(capture)', 1000.0, 2000.0, \(sourceKind.rawValue), 0, 1);
+        INSERT INTO sessions (
+            capture_id, session_id, ordinal, start_time, duration, process_name, host,
+            source_endpoint, destination_endpoint, status, latency_ms, bytes_up, bytes_down
+        ) VALUES (
+            '\(capture)', '\(session)', 0, 1000.0, 5.0, 'curl', 'example.com',
+            '10.0.0.1:5000', '93.184.216.34:443', 0, 12.5, 100, 200
+        );
+        INSERT INTO session_protocols (capture_id, session_id, protocol_ordinal, value)
+        VALUES ('\(capture)', '\(session)', 0, 'tcp');
+        INSERT INTO session_protocols (capture_id, session_id, protocol_ordinal, value)
+        VALUES ('\(capture)', '\(session)', 1, 'tls');
+        """)
     }
 
     private static func session(
         sessionID: UUID = UUID(),
-        startTime: Double = 1_000,
-        duration: Double = 5,
+        startTime: Double? = 1_000,
+        duration: Double? = 5,
         processName: String? = "curl",
         host: String = "example.com",
         sourceEndpoint: String = "10.0.0.1:5000",

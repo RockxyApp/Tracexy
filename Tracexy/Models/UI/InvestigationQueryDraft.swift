@@ -5,6 +5,10 @@ import Foundation
 /// Capture-local structured input for the Investigation editor. This is deliberately
 /// separate from persisted `SessionFilterRule`/`FocusSet` values: it compiles native
 /// controls to the typed Core query and has no Codable or persistence surface.
+///
+/// The draft carries *both* editable representations at once. Switching mode never
+/// discards the other one, and only the active `mode` is compiled, so a user can move
+/// between the row builder and the session-expression text without losing work.
 nonisolated struct InvestigationQueryDraft: Hashable, Sendable {
     enum Combination: String, CaseIterable, Identifiable, Hashable, Sendable {
         case all
@@ -24,8 +28,32 @@ nonisolated struct InvestigationQueryDraft: Hashable, Sendable {
         }
     }
 
+    /// Which editable representation Apply compiles. `rows` stays the default so an
+    /// untouched draft behaves exactly as before.
+    enum Mode: String, CaseIterable, Identifiable, Hashable, Sendable {
+        case rows
+        case expression
+
+        // MARK: Internal
+
+        var id: String {
+            rawValue
+        }
+
+        var label: String {
+            switch self {
+            case .rows: "Rows"
+            case .expression: "Expression"
+            }
+        }
+    }
+
     var combination: Combination = .all
     var rows: [InvestigationQueryDraftRow] = [InvestigationQueryDraftRow()]
+    /// Declared after `rows` so the existing memberwise initializations keep working.
+    var mode: Mode = .rows
+    /// The retained session-expression text, kept verbatim across mode switches.
+    var expression: String = ""
 }
 
 // MARK: - InvestigationQueryDraftRow
@@ -152,6 +180,9 @@ nonisolated struct InvestigationQueryDraftError: Error, Hashable, Sendable {
         case invalidCIDR
         case invalidPort
         case invalidByteCount
+        /// The session-expression text could not be parsed. Always draft-level: the
+        /// typed position inside the error locates the offending characters.
+        case expression(SessionQueryParseError)
         case core(QueryValidationError)
     }
 
@@ -173,17 +204,57 @@ nonisolated struct CompiledInvestigationQueryDraft: Hashable, Sendable {
 nonisolated struct InvestigationQueryDraftCompiler: Hashable, Sendable {
     // MARK: Lifecycle
 
-    init(engine: InvestigationQueryEngine = InvestigationQueryEngine()) {
+    init(
+        engine: InvestigationQueryEngine = InvestigationQueryEngine(),
+        parser: SessionQueryParser = SessionQueryParser()
+    ) {
         self.engine = engine
+        self.parser = parser
     }
 
     // MARK: Internal
 
     static let maximumRows = InvestigationQueryEngine.Configuration.productionMaxChildrenPerGroup
+    static let maximumExpressionUTF8Bytes = SessionQueryParser.Configuration.productionMaxUTF8Bytes
 
     let engine: InvestigationQueryEngine
+    let parser: SessionQueryParser
 
+    /// Compile whichever representation the draft's `mode` selects. Both paths end in
+    /// the same ``InvestigationQueryEngine/compile(_:)`` validation, so bounds and
+    /// three-valued semantics are identical however the query was written.
     func compile(_ draft: InvestigationQueryDraft) throws -> CompiledInvestigationQueryDraft {
+        switch draft.mode {
+        case .rows: try compileRows(draft)
+        case .expression: try compileExpression(draft)
+        }
+    }
+
+    // MARK: Private
+
+    private func compileExpression(
+        _ draft: InvestigationQueryDraft
+    )
+        throws -> CompiledInvestigationQueryDraft
+    {
+        let query: InvestigationQuery
+        do {
+            query = try parser.parse(draft.expression)
+        } catch let error as SessionQueryParseError {
+            throw InvestigationQueryDraftError(rowID: nil, reason: .expression(error))
+        }
+        do {
+            return try CompiledInvestigationQueryDraft(query: query, compiled: engine.compile(query))
+        } catch let error as QueryValidationError {
+            throw InvestigationQueryDraftError(rowID: nil, reason: .core(error))
+        }
+    }
+
+    private func compileRows(
+        _ draft: InvestigationQueryDraft
+    )
+        throws -> CompiledInvestigationQueryDraft
+    {
         guard !draft.rows.isEmpty else {
             throw InvestigationQueryDraftError(rowID: nil, reason: .emptyDraft)
         }
@@ -214,8 +285,6 @@ nonisolated struct InvestigationQueryDraftCompiler: Hashable, Sendable {
             throw InvestigationQueryDraftError(rowID: nil, reason: .core(error))
         }
     }
-
-    // MARK: Private
 
     private func predicate(for row: InvestigationQueryDraftRow) throws -> QueryPredicate {
         switch row.predicate {
