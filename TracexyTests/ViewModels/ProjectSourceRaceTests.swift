@@ -39,6 +39,103 @@ private actor SourceRaceGate {
 struct ProjectSourceRaceTests {
     // MARK: Internal
 
+    @Test("Cancelling an import keeps its hold until cleanup and preserves the open capture")
+    func importCancellationPreservesEvidence() async throws {
+        let environment = ProjectIsolationEnvironment(name: "import-cancel")
+        defer { environment.tearDown() }
+        let coordinator = environment.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let directory = try #require(coordinator.capturesDirectory())
+        let original = try fixture("original", frames: SampleCapture.frames(now: Date()), directory: directory)
+        coordinator.openSavedCapture(original)
+        await coordinator.waitForSavedCaptureOpen()
+        let oldIDs = coordinator.sessions.map(\.id)
+        let gate = SourceRaceGate()
+        coordinator.captureImportOperation = CaptureImportOperation { _, _, progress in
+            progress(PcapStreamProgress(bytesConsumed: 1, totalBytes: 10))
+            await gate.pause()
+            try Task.checkCancellation()
+            throw CocoaError(.fileReadUnknown)
+        }
+        coordinator.importCapture(from: original.url)
+        await gate.waitForEntry()
+        #expect(coordinator.isImportingCapture)
+        #expect(coordinator.isCaptureSourceHeld)
+        #expect(!coordinator.canSaveCapture)
+        #expect(!coordinator.canExport())
+        coordinator.beginSessionSearch()
+        #expect(coordinator.activeWorkspace.searchFocusRequest != nil)
+        coordinator.clearSessions()
+        #expect(coordinator.sessions.map(\.id) == oldIDs)
+        coordinator.cancelCaptureImport()
+        #expect(coordinator.isCaptureSourceHeld)
+        await gate.release()
+        await coordinator.waitForCaptureImport()
+        #expect(!coordinator.isCaptureSourceHeld)
+        #expect(coordinator.captureError == nil)
+        #expect(coordinator.activeSavedCapture?.url == original.url)
+        #expect(coordinator.sessions.map(\.id) == oldIDs)
+        #expect(coordinator.savedCaptures.count == 1)
+        await coordinator.waitForHistory()
+    }
+
+    @Test("Project transition waits for import but never opens its result in the incoming Project")
+    func projectSwitchWaitsForImport() async throws {
+        let environment = ProjectIsolationEnvironment(name: "import-project-drain")
+        defer { environment.tearDown() }
+        let coordinator = environment.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let originalProject = try #require(coordinator.activeRuntime.projectID)
+        let library = try #require(coordinator.capturesDirectory())
+        let external = try fixture(
+            "incoming",
+            frames: SampleCapture.frames(now: Date()),
+            directory: environment.root.appendingPathComponent("Input")
+        )
+        let gate = SourceRaceGate()
+        coordinator.captureImportOperation = CaptureImportOperation { source, directory, progress in
+            await gate.pause()
+            return try await CaptureImportOperation.copy.run(source, directory, progress)
+        }
+        coordinator.importCapture(from: external.url)
+        await gate.waitForEntry()
+        _ = try #require(coordinator.createProject(named: "Incoming Project"))
+        #expect(coordinator.projectTransitionStatus.isPending)
+        #expect(coordinator.activeRuntime.projectID == originalProject)
+        await gate.release()
+        #expect(await coordinator.waitForProjectTransition())
+        #expect(coordinator.activeRuntime.projectID != originalProject)
+        #expect(coordinator.savedCaptures.isEmpty)
+        #expect(!coordinator.isViewingSavedCapture)
+        #expect(try Data(contentsOf: library.appendingPathComponent("incoming.pcap")) == Data(contentsOf: external.url))
+        await coordinator.waitForHistory()
+    }
+
+    @Test("Import failure preserves current evidence and releases the source hold")
+    func failedImportPreservesEvidence() async throws {
+        let environment = ProjectIsolationEnvironment(name: "import-error")
+        defer { environment.tearDown() }
+        let coordinator = environment.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let original = try fixture(
+            "original",
+            frames: SampleCapture.frames(now: Date()),
+            directory: #require(coordinator.capturesDirectory())
+        )
+        coordinator.openSavedCapture(original)
+        await coordinator.waitForSavedCaptureOpen()
+        let oldIDs = coordinator.sessions.map(\.id)
+        coordinator
+            .captureImportOperation = CaptureImportOperation { _, _, _ in throw CocoaError(.fileWriteOutOfSpace) }
+        coordinator.importCapture(from: original.url)
+        await coordinator.waitForCaptureImport()
+        #expect(coordinator.captureError?.contains("Couldn’t import") == true)
+        #expect(coordinator.sessions.map(\.id) == oldIDs)
+        #expect(coordinator.activeSavedCapture?.url == original.url)
+        #expect(!coordinator.isImportingCapture)
+        await coordinator.waitForHistory()
+    }
+
     @Test("Save/export outcomes preserve Stop diagnostics and reject foreign Project errors")
     func captureIOOutcomesRespectSourceOwnership() async {
         let environment = ProjectIsolationEnvironment(name: "capture-io-outcomes")
@@ -161,6 +258,7 @@ struct ProjectSourceRaceTests {
             directory: directory
         )
         coordinator.openSavedCapture(original)
+        await coordinator.waitForCaptureImport()
         await coordinator.waitForSavedCaptureOpen()
         await coordinator.waitForHistory()
         let ids = coordinator.sessions.map(\.id)
@@ -211,6 +309,7 @@ struct ProjectSourceRaceTests {
         )
         let bytes = try Data(contentsOf: original.url)
         coordinator.openSavedCapture(original)
+        await coordinator.waitForCaptureImport()
         await coordinator.waitForSavedCaptureOpen()
         await coordinator.waitForHistory()
         let gate = SourceRaceGate()
@@ -231,6 +330,41 @@ struct ProjectSourceRaceTests {
         #expect(try Data(contentsOf: saved.url) == bytes)
     }
 
+    @Test("An import panel opened in one Project never files its capture into another")
+    func importRefusesAfterTheOriginProjectChanged() async throws {
+        let environment = ProjectIsolationEnvironment(name: "import-panel-origin")
+        defer { environment.tearDown() }
+        let coordinator = environment.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let origin = try #require(coordinator.activeRuntime.projectID)
+        let external = try fixture(
+            "panel-origin",
+            frames: SampleCapture.frames(now: Date()),
+            directory: environment.root.appendingPathComponent("Import")
+        )
+
+        // The panel is modal: the user opened it in the first Project and switched
+        // Projects before choosing a file.
+        _ = try #require(coordinator.createProject(named: "Second"))
+        #expect(await coordinator.waitForProjectTransition())
+        #expect(coordinator.activeRuntime.projectID != origin)
+
+        coordinator.importCapture(from: external.url, originProjectID: origin)
+
+        // Refused with a reason, and nothing landed in the Project now on screen.
+        #expect(coordinator.captureError?.contains("switched Projects") == true)
+        coordinator.refreshSavedCaptures()
+        #expect(coordinator.savedCaptures.isEmpty)
+        #expect(!coordinator.isViewingSavedCapture)
+
+        // A fresh import started in this Project still works normally.
+        coordinator.importCapture(from: external.url, originProjectID: coordinator.activeRuntime.projectID)
+        await coordinator.waitForCaptureImport()
+        await coordinator.waitForSavedCaptureOpen()
+        await coordinator.waitForHistory()
+        #expect(coordinator.savedCaptures.map(\.name) == ["panel-origin"])
+    }
+
     @Test("A failed Save releases its source hold and permits an explicit retry")
     func failedSaveReleasesHold() async throws {
         let environment = ProjectIsolationEnvironment(name: "failed-save-unlock")
@@ -243,6 +377,7 @@ struct ProjectSourceRaceTests {
             directory: #require(coordinator.capturesDirectory())
         )
         coordinator.openSavedCapture(original)
+        await coordinator.waitForCaptureImport()
         await coordinator.waitForSavedCaptureOpen()
         await coordinator.waitForHistory()
         coordinator.captureSaveOperation = CaptureSaveOperation { _, _, _ in throw CocoaError(.fileWriteUnknown) }

@@ -10,7 +10,7 @@ nonisolated struct CapturedFrame: Sendable {
 
     init(
         bytes: [UInt8],
-        timestamp: Date,
+        timestamp: Date?,
         originalLength: Int,
         capturedLength: Int? = nil,
         linkType: UInt32? = nil,
@@ -86,7 +86,10 @@ nonisolated struct CapturedFrame: Sendable {
     static let maxReasonableLength = 1_000_000
 
     let bytes: [UInt8]
-    let timestamp: Date
+    /// When the frame was captured, or `nil` when the source carried no capture
+    /// time (a pcapng Simple Packet Block). A `nil` here is never replaced by the
+    /// Unix epoch, the file's open instant, or the current clock.
+    let timestamp: Date?
     let originalLength: Int
     /// Bytes actually captured for this frame (`pcap_pkthdr.caplen` for a live
     /// helper frame; the bytes present for a file frame). Kept distinct from

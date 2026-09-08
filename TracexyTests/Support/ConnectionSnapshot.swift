@@ -15,7 +15,10 @@ struct ProvenanceSnapshot: Codable, Equatable {
 
     init(_ provenance: SessionFrameProvenance) {
         ordinal = provenance.ordinal.rawValue
-        timestampMicros = Int64((provenance.timestamp.timeIntervalSince1970 * 1_000_000).rounded())
+        // Absent capture time stays absent in the snapshot, so a known-time corpus
+        // pins exactly the values it always did while an untimed frame cannot be
+        // mistaken for one stamped at the epoch.
+        timestampMicros = provenance.timestamp.map { Int64(($0.timeIntervalSince1970 * 1_000_000).rounded()) }
         capturedLength = provenance.capturedLength
         originalLength = provenance.originalLength
         linkType = provenance.linkType
@@ -24,7 +27,7 @@ struct ProvenanceSnapshot: Codable, Equatable {
     // MARK: Internal
 
     let ordinal: UInt64
-    let timestampMicros: Int64
+    let timestampMicros: Int64?
     let capturedLength: Int
     let originalLength: Int
     let linkType: UInt32
@@ -40,7 +43,7 @@ struct ConnectionEventSnapshot: Codable, Equatable {
 
     init(_ event: ConnectionEvent) {
         kind = String(describing: event.kind)
-        timestampMicros = Int64((event.timestamp.timeIntervalSince1970 * 1_000_000).rounded())
+        timestampMicros = event.timestamp.map { Int64(($0.timeIntervalSince1970 * 1_000_000).rounded()) }
         provenance = event.provenance.map(ProvenanceSnapshot.init)
         direction = event.direction.map { String(describing: $0) }
         sequenceNumber = event.sequenceNumber
@@ -53,7 +56,7 @@ struct ConnectionEventSnapshot: Codable, Equatable {
     // MARK: Internal
 
     let kind: String
-    let timestampMicros: Int64
+    let timestampMicros: Int64?
     let provenance: [ProvenanceSnapshot]
     let direction: String?
     let sequenceNumber: UInt32?

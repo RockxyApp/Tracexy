@@ -47,6 +47,18 @@ struct OverviewView: View {
         }
     }
 
+    /// Explains, without guessing, that the plotted range covers only the frames the
+    /// capture file gave a time — or that none of them had one.
+    nonisolated static func untimedCoverageLabel(_ activity: CaptureActivity) -> String {
+        let untimed = activity.untimedFrameCount.formatted()
+        guard activity.timedFrameCount > 0 else {
+            return "This capture file records no time for any of its \(untimed) frames, "
+                + "so there is no capture timeline to show."
+        }
+        return "Timed frames only — \(untimed) of \(activity.totalFrames.formatted()) frames "
+            + "have no capture time, so this range isn’t the whole capture."
+    }
+
     // MARK: Private
 
     private static let percent: NumberFormatter = {
@@ -108,8 +120,13 @@ struct OverviewView: View {
     }
 
     private var linkTypeName: String {
-        switch coordinator.currentLinkType {
+        if let metadata = coordinator.savedCaptureMetadata, metadata.hasMixedLinkTypes {
+            return "Mixed link types"
+        }
+        return switch coordinator.currentLinkType {
         case LinkType.ethernet: "Ethernet"
+        case LinkType.linuxSLL: "Linux cooked SLL"
+        case LinkType.linuxSLL2: "Linux cooked SLL2"
         case LinkType.raw: "Raw IP"
         case LinkType.null: "Loopback"
         default: "Link type \(coordinator.currentLinkType)"
@@ -132,11 +149,24 @@ struct OverviewView: View {
     /// The span of the currently accumulated live sessions, for a stopped capture.
     private var sessionsSpanLabel: String {
         let sessions = coordinator.presentedSessions
-        guard let earliest = sessions.map(\.startTime).min() else {
+        guard !sessions.isEmpty else {
             return "—"
         }
+        // A span across sessions whose own timing is unknown would silently be the
+        // timed subset's span presented as the whole.
+        guard !sessions.contains(where: \.hasUnknownTiming) else {
+            return "Unknown"
+        }
+        guard let earliest = sessions.compactMap(\.startTime).min() else {
+            return "Unknown"
+        }
         let latest = sessions
-            .map { $0.startTime.addingTimeInterval($0.duration) }
+            .compactMap { session -> Date? in
+                guard let start = session.startTime, let duration = session.duration else {
+                    return nil
+                }
+                return start.addingTimeInterval(duration)
+            }
             .max() ?? earliest
         return secondsLabel(max(0, latest.timeIntervalSince(earliest)))
     }
@@ -227,18 +257,18 @@ struct OverviewView: View {
         }
     }
 
-    /// Says out loud when the numbers below describe a filtered subset. Without
-    /// this the surface and the session list can disagree with no visible reason.
-    @ViewBuilder private var scopeNotice: some View {
-        if coordinator.activeWorkspace.hasActiveFilters {
-            Label(
-                "Showing \(coordinator.visibleSessions.count.formatted()) of "
-                    + "\(coordinator.presentedSessions.count.formatted()) sessions — a filter is active.",
-                systemImage: "line.3.horizontal.decrease.circle"
-            )
-            .font(Theme.Typography.caption)
-            .foregroundStyle(.secondary)
-        }
+    /// Says out loud when the numbers below describe a filtered subset, naming
+    /// every layer doing the narrowing. Without this the surface and the session
+    /// list can disagree with no visible reason.
+    ///
+    /// Overview has no filter shelf of its own, so it carries the shared reset —
+    /// the same route the shelf and the empty state use.
+    private var scopeNotice: some View {
+        SessionScopeNotice(
+            coordinator: coordinator,
+            shownCount: coordinator.visibleSessions.count,
+            showsResetAction: true
+        )
     }
 
     // MARK: Summary strip (identity + KPIs + fidelity)
@@ -308,15 +338,13 @@ struct OverviewView: View {
                 sectionLabel("Capture Activity", systemImage: "waveform.path.ecg")
                 Spacer()
                 Button(
-                    isSaved
-                        ? "Open all \(coordinator.presentedSessions.count.formatted()) sessions"
-                        : "Open live sessions"
+                    isSaved ? "Open Sessions" : "Open live sessions"
                 ) {
-                    coordinator.selectSidebarItem(.sessions)
+                    coordinator.openSessionsPreservingScope()
                 }
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
-                .help("Open the session list")
+                .help("Open these sessions in the full table, keeping the current scope")
             }
             Text(activitySubtitle)
                 .font(Theme.Typography.caption)
@@ -338,7 +366,7 @@ struct OverviewView: View {
     }
 
     @ViewBuilder private var savedActivityChart: some View {
-        if let activity = coordinator.savedCaptureActivity, !activity.isEmpty {
+        if let activity = coordinator.savedCaptureActivity, !activity.buckets.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
                 Chart(activity.buckets) { bucket in
                     BarMark(
@@ -363,10 +391,25 @@ struct OverviewView: View {
                 HStack {
                     Text("0 s").font(Theme.Typography.micro).foregroundStyle(.tertiary)
                     Spacer()
-                    Text(secondsLabel(activity.duration))
+                    Text(secondsLabel(activity.timedSpan))
                         .font(Theme.Typography.micro).foregroundStyle(.tertiary)
                 }
+                if activity.untimedFrameCount > 0 {
+                    Text(Self.untimedCoverageLabel(activity))
+                        .font(Theme.Typography.micro)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("saved-activity-untimed-notice")
+                }
             }
+        } else if let activity = coordinator.savedCaptureActivity, !activity.isEmpty {
+            // Frames exist, but the file recorded no time for any of them, so there
+            // is no time axis to plot. That is a different statement from "empty".
+            Text(Self.untimedCoverageLabel(activity))
+                .font(Theme.Typography.body)
+                .foregroundStyle(.secondary)
+                .frame(height: 168, alignment: .center)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("saved-activity-untimed-notice")
         } else {
             Text("No frames in this capture")
                 .font(Theme.Typography.body)
@@ -473,13 +516,15 @@ struct OverviewView: View {
                 sectionLabel("Top Talkers", systemImage: "chart.bar.xaxis")
                 Spacer()
                 if !talkers.isEmpty {
-                    Button("Open Sessions") { coordinator.selectSidebarItem(.sessions) }
+                    Button("Open Sessions") { coordinator.openSessionsPreservingScope() }
                         .buttonStyle(.link)
                         .font(Theme.Typography.captionMedium)
+                        .help("Open these sessions in the full table, keeping the current scope")
                 }
             }
             if talkers.isEmpty {
-                Text("No traffic yet").font(Theme.Typography.body).foregroundStyle(.secondary)
+                Text(coordinator.sessions.isEmpty ? "No sessions in this capture" : "No hosts match the current scope")
+                    .font(Theme.Typography.body).foregroundStyle(.secondary)
             } else {
                 ForEach(talkers, id: \.host) { entry in
                     talkerRow(host: entry.host, bytes: entry.bytes, maxBytes: maxBytes)
@@ -498,8 +543,19 @@ struct OverviewView: View {
         let maxHits = entries.map(\.hits).max() ?? 0
         return card {
             sectionLabel("Protocol Mix", systemImage: "chart.bar")
+            // These are session counts over a layered stack, so one session is
+            // counted in several rows and the rows do not sum to the capture.
+            // Saying so is the difference between an honest rollup and a chart
+            // that reads as a share of traffic it never measured.
+            Text("Sessions containing each layer — one session carries several, so these overlap.")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if entries.isEmpty {
-                Text("No protocols decoded yet").font(Theme.Typography.body).foregroundStyle(.secondary)
+                Text(coordinator.sessions
+                    .isEmpty ? "No protocols decoded yet" : "No listed protocols match the current scope")
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(.secondary)
             } else {
                 ForEach(entries, id: \.kind) { entry in
                     protocolRow(kind: entry.kind, hits: entry.hits, maxHits: maxHits)
@@ -513,7 +569,8 @@ struct OverviewView: View {
     /// Who is involved, from the same observed data the sidebar's Sources groups
     /// build on — no fabricated apps, domains, or IPs.
     private var sourceSummaryCard: some View {
-        let attributedApps = coordinator.appGroups.filter { $0.app != "—" }.count
+        let sources = coordinator.visibleSourceSummary
+        let attributedApps = sources.apps
         return card {
             sectionLabel("Source Summary", systemImage: "person.2")
             sourceRow(
@@ -521,10 +578,10 @@ struct OverviewView: View {
                 attributedApps > 0 ? "\(attributedApps.formatted()) observed" : "No attribution",
                 tint: attributedApps > 0 ? .primary : .orange
             )
-            sourceRow("Domains", "\(coordinator.domainGroups.count.formatted()) observed")
-            sourceRow("IP Addresses", "\(coordinator.ipHosts.count.formatted()) observed")
+            sourceRow("Domains", "\(sources.domains.formatted()) observed")
+            sourceRow("IP Addresses", "\(sources.addresses.formatted()) observed")
             Divider()
-            Button("Open Flow Map") { coordinator.selectSidebarItem(.flow) }
+            Button("Open Flow Map") { coordinator.openFlowPreservingScope() }
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
                 .help("See where this traffic is going")
@@ -537,6 +594,7 @@ struct OverviewView: View {
     /// Individual sessions belong in the scalable Sessions/Findings workflow.
     private var findingSummaryBar: some View {
         let all = scopedFindings
+        let sessionCount = Set(all.map(\.sessionID)).count
         return HStack(spacing: Theme.Metrics.spacingM) {
             sectionLabel("Findings", systemImage: "sparkle.magnifyingglass")
             if all.isEmpty {
@@ -544,8 +602,8 @@ struct OverviewView: View {
             } else {
                 findingSeveritySummary(all)
                 Spacer(minLength: Theme.Metrics.spacingM)
-                Button("Review \(all.count.formatted()) in Sessions") {
-                    coordinator.showFindingSessions()
+                Button(sessionCount == 1 ? "Review 1 Session" : "Review \(sessionCount.formatted()) Sessions") {
+                    coordinator.showAggregateFindingSessions()
                 }
                 .buttonStyle(.link)
                 .font(Theme.Typography.captionMedium)
@@ -596,7 +654,11 @@ struct OverviewView: View {
 
     private func talkerRow(host: String, bytes: Int, maxBytes: Int) -> some View {
         Button {
-            coordinator.selectHost(host)
+            // Narrows to this host inside the scope the row was computed over —
+            // not the sidebar's global "everything for this host", which would
+            // drop the complementary client/IP/aggregate scope and could show
+            // more sessions than this row counted.
+            coordinator.showSessionsForAggregateHost(host)
         } label: {
             HStack(spacing: Theme.Metrics.spacingM) {
                 Text(host)
@@ -612,16 +674,15 @@ struct OverviewView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show sessions for \(host)")
+        .help(talkerHelp(host: host, bytes: bytes))
     }
 
-    @ViewBuilder
     private func protocolRow(kind: ProtocolKind, hits: Int, maxHits: Int) -> some View {
-        let destination = protocolDestination(kind)
         Button {
-            if let destination {
-                coordinator.selectSidebarItem(destination)
-            }
+            // Adds a conjunctive protocol to the current scope. Every listed
+            // kind drills in, including the ones with no sidebar lens of their
+            // own (UDP, HTTP/2), which previously left a dead row.
+            coordinator.showSessionsForAggregateProtocol(kind)
         } label: {
             HStack(spacing: Theme.Metrics.spacingM) {
                 Text(kind.label)
@@ -637,10 +698,8 @@ struct OverviewView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(destination == nil)
-        .help(destination == nil
-            ? "\(kind.label): \(hits.formatted()) sessions"
-            : "Filter the session list to \(kind.label)")
+        .help("\(kind.label): \(hits.formatted()) session\(hits == 1 ? "" : "s") in this scope. "
+            + "Narrow the current scope to sessions that also carry \(kind.label).")
     }
 
     private func sourceRow(_ label: String, _ value: String, tint: Color = .primary) -> some View {
@@ -704,9 +763,29 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// A stale row — the workspace is already scoped to a different host — cannot
+    /// narrow anything, so the help says that instead of promising a filter the
+    /// click will not apply.
+    private func talkerHelp(host: String, bytes: Int) -> String {
+        let current = coordinator.activeWorkspace.hostFilter
+        if let current, current != host {
+            return "\(host): \(byteString(bytes)). The list is already scoped to \(current)."
+        }
+        return "Narrow the current scope to \(host)"
+    }
+
     private func durationValue(at now: Date) -> String {
         if isSaved {
-            return secondsLabel(coordinator.savedCaptureActivity?.duration ?? 0)
+            guard let activity = coordinator.savedCaptureActivity else {
+                return "—"
+            }
+            // A capture containing frames the file recorded without a time has no
+            // whole-capture duration to state. Say so instead of showing the timed
+            // subset's span as if it covered everything.
+            guard let duration = activity.duration else {
+                return "Unknown"
+            }
+            return secondsLabel(duration)
         }
         if coordinator.captureDisplayState == .capturing,
            let startedAt = coordinator.captureStartedAt
@@ -719,18 +798,6 @@ struct OverviewView: View {
     private func dropCountersText(_ stats: CaptureStatistics?, helperDrops: UInt64) -> String {
         let kernel = stats.map { $0.totalDropped.formatted() } ?? "—"
         return "Kernel \(kernel) · helper \(helperDrops.formatted())"
-    }
-
-    private func protocolDestination(_ kind: ProtocolKind) -> SidebarItem? {
-        switch kind {
-        case .dns: .dns
-        case .tcp: .tcp
-        case .tls: .tls
-        case .http: .http
-        case .quic: .quic
-        case .stun: .stun
-        default: nil
-        }
     }
 
     private func byteString(_ bytes: Int) -> String {

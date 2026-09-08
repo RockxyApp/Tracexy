@@ -8,6 +8,16 @@ nonisolated struct InvestigationQueryExecution: Sendable {
     let result: InvestigationQueryResult
 }
 
+// MARK: - InvestigationQueryTask
+
+/// A handle plus a process-local identity. Workspace UUIDs and request counters can
+/// be recreated by Project hydration, so neither alone proves that a completion still
+/// owns the dictionary slot it is about to remove.
+struct InvestigationQueryTask {
+    let token: UUID
+    let task: Task<Void, Never>
+}
+
 // MARK: - Capture-local Investigation query
 
 @MainActor
@@ -28,7 +38,7 @@ extension MainContentCoordinator {
     func clearInvestigationQuery(in workspace: WorkspaceState? = nil) {
         let workspace = workspace ?? activeWorkspace
         workspace.investigationQueryRequestID &+= 1
-        investigationQueryTasks.removeValue(forKey: workspace.id)?.cancel()
+        investigationQueryTasks.removeValue(forKey: workspace.id)?.task.cancel()
         workspace.acceptedInvestigationDraft = nil
         workspace.investigationMatchedSessionIDs.removeAll()
         workspace.investigationIndeterminateSessionIDs.removeAll()
@@ -43,7 +53,7 @@ extension MainContentCoordinator {
     /// deliberately not touched.
     func clearAllInvestigationQueries() {
         for task in investigationQueryTasks.values {
-            task.cancel()
+            task.task.cancel()
         }
         investigationQueryTasks.removeAll()
         for workspace in workspaces.workspaces {
@@ -66,7 +76,7 @@ extension MainContentCoordinator {
     /// under another Project's published snapshot.
     func cancelInFlightInvestigationQueries() {
         for task in investigationQueryTasks.values {
-            task.cancel()
+            task.task.cancel()
         }
         investigationQueryTasks.removeAll()
         for workspace in workspaces.workspaces {
@@ -90,7 +100,7 @@ extension MainContentCoordinator {
     /// Test/runtime synchronization seam; awaiting it never performs evaluation on the
     /// MainActor because the stored task delegates the bounded work to a detached task.
     func waitForInvestigationQuery(in workspace: WorkspaceState) async {
-        await investigationQueryTasks[workspace.id]?.value
+        await investigationQueryTasks[workspace.id]?.task.value
     }
 
     private func scheduleInvestigationQuery(
@@ -101,15 +111,20 @@ extension MainContentCoordinator {
         workspace.investigationQueryRequestID &+= 1
         let requestID = workspace.investigationQueryRequestID
         let workspaceID = workspace.id
+        let taskToken = UUID()
         let expectedGeneration = startGeneration
         let snapshot = investigationSnapshot
-        investigationQueryTasks.removeValue(forKey: workspaceID)?.cancel()
+        investigationQueryTasks.removeValue(forKey: workspaceID)?.task.cancel()
         workspace.isEvaluatingInvestigationQuery = true
         if clearsError {
             workspace.investigationQueryError = nil
         }
 
-        let task = Task { @MainActor [weak self] in
+        // Keep the exact initiating workspace long enough to retire its progress state,
+        // even if Project hydration replaces the live WorkspaceStore while evaluation
+        // is suspended. Adoption additionally requires object identity in the current
+        // store; request, task and generation identities protect later work.
+        let task = Task { @MainActor [weak self, workspace] in
             do {
                 let execution = try await Self.executeInvestigationQuery(
                     draft,
@@ -118,71 +133,100 @@ extension MainContentCoordinator {
                 guard let self else {
                     return
                 }
-                guard let current = self.workspaces.workspaces.first(where: { $0.id == workspaceID }),
-                      current.investigationQueryRequestID == requestID else
-                {
+                guard workspace.investigationQueryRequestID == requestID else {
+                    return
+                }
+                guard self.workspaces.workspaces.contains(where: { $0 === workspace }) else {
+                    self.finishCancelledInvestigationQuery(
+                        workspace,
+                        requestID: requestID,
+                        taskToken: taskToken
+                    )
                     return
                 }
                 guard self.startGeneration == expectedGeneration else {
-                    self.investigationQueryTasks.removeValue(forKey: workspaceID)
-                    current.isEvaluatingInvestigationQuery = false
+                    self.removeInvestigationQueryTask(workspaceID: workspaceID, taskToken: taskToken)
+                    workspace.isEvaluatingInvestigationQuery = false
                     return
                 }
-                self.investigationQueryTasks.removeValue(forKey: workspaceID)
-                current.acceptedInvestigationDraft = draft
-                current.investigationMatchedSessionIDs = Set(execution.result.matched.map(\.id))
-                current.investigationIndeterminateSessionIDs = Set(execution.result.indeterminate)
-                current.investigationCoverageReasons = execution.result.coverage?.reasons ?? []
-                current.investigationQueryError = nil
-                current.isEvaluatingInvestigationQuery = false
-                self.reconcileLiveFollowing(in: current)
+                self.removeInvestigationQueryTask(workspaceID: workspaceID, taskToken: taskToken)
+                workspace.acceptedInvestigationDraft = draft
+                workspace.investigationMatchedSessionIDs = Set(execution.result.matched.map(\.id))
+                workspace.investigationIndeterminateSessionIDs = Set(execution.result.indeterminate)
+                workspace.investigationCoverageReasons = execution.result.coverage?.reasons ?? []
+                workspace.investigationQueryError = nil
+                workspace.isEvaluatingInvestigationQuery = false
+                self.reconcileLiveFollowing(in: workspace)
             } catch is CancellationError {
                 self?.finishCancelledInvestigationQuery(
-                    workspaceID: workspaceID,
-                    requestID: requestID
+                    workspace,
+                    requestID: requestID,
+                    taskToken: taskToken
                 )
             } catch let error as InvestigationQueryDraftError {
                 self?.finishInvalidInvestigationQuery(
                     error,
-                    workspaceID: workspaceID,
+                    in: workspace,
                     requestID: requestID,
-                    expectedGeneration: expectedGeneration
+                    expectedGeneration: expectedGeneration,
+                    taskToken: taskToken
                 )
             } catch {
                 self?.finishCancelledInvestigationQuery(
-                    workspaceID: workspaceID,
-                    requestID: requestID
+                    workspace,
+                    requestID: requestID,
+                    taskToken: taskToken
                 )
             }
         }
-        investigationQueryTasks[workspaceID] = task
+        investigationQueryTasks[workspaceID] = InvestigationQueryTask(token: taskToken, task: task)
     }
 
-    private func finishCancelledInvestigationQuery(workspaceID: UUID, requestID: Int) {
-        guard let workspace = workspaces.workspaces.first(where: { $0.id == workspaceID }),
-              workspace.investigationQueryRequestID == requestID else
-        {
+    private func finishCancelledInvestigationQuery(
+        _ workspace: WorkspaceState,
+        requestID: Int,
+        taskToken: UUID
+    ) {
+        guard workspace.investigationQueryRequestID == requestID else {
             return
         }
-        investigationQueryTasks.removeValue(forKey: workspaceID)
+        removeInvestigationQueryTask(workspaceID: workspace.id, taskToken: taskToken)
         workspace.isEvaluatingInvestigationQuery = false
     }
 
     private func finishInvalidInvestigationQuery(
         _ error: InvestigationQueryDraftError,
-        workspaceID: UUID,
+        in workspace: WorkspaceState,
         requestID: Int,
-        expectedGeneration: Int
+        expectedGeneration: Int,
+        taskToken: UUID
     ) {
-        guard startGeneration == expectedGeneration,
-              let workspace = workspaces.workspaces.first(where: { $0.id == workspaceID }),
-              workspace.investigationQueryRequestID == requestID else
-        {
+        guard workspace.investigationQueryRequestID == requestID else {
+            return
+        }
+        guard startGeneration == expectedGeneration else {
+            removeInvestigationQueryTask(workspaceID: workspace.id, taskToken: taskToken)
+            workspace.isEvaluatingInvestigationQuery = false
+            return
+        }
+        guard workspaces.workspaces.contains(where: { $0 === workspace }) else {
+            finishCancelledInvestigationQuery(
+                workspace,
+                requestID: requestID,
+                taskToken: taskToken
+            )
+            return
+        }
+        removeInvestigationQueryTask(workspaceID: workspace.id, taskToken: taskToken)
+        workspace.investigationQueryError = error
+        workspace.isEvaluatingInvestigationQuery = false
+    }
+
+    private func removeInvestigationQueryTask(workspaceID: UUID, taskToken: UUID) {
+        guard investigationQueryTasks[workspaceID]?.token == taskToken else {
             return
         }
         investigationQueryTasks.removeValue(forKey: workspaceID)
-        workspace.investigationQueryError = error
-        workspace.isEvaluatingInvestigationQuery = false
     }
 
     nonisolated private static func executeInvestigationQuery(

@@ -68,6 +68,10 @@ extension MainContentCoordinator {
     /// so ``isCaptureSourceHeld`` freezes destructive source mutations for exactly
     /// as long as this save, and any save queued behind it, still needs its source.
     func saveCurrentCapture() {
+        guard !isImportingCapture else {
+            captureError = captureSourceHoldMessage
+            return
+        }
         // A save started while the Project boundary is settling would read a spool
         // that has not reached its exact final boundary, or one that is about to be
         // swapped for another Project's.

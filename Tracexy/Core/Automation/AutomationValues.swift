@@ -58,6 +58,28 @@ nonisolated enum AutomationSessionStatus: String, Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - AutomationCaptureTimeBasis
+
+/// Transport-neutral spelling of what a capture's exported lifetime describes.
+/// Independent of the persisted ``HistoryCaptureTimeBasis`` integer enum, and
+/// always disclosed: a consumer must be able to tell "when this traffic happened"
+/// from "when this file was opened here".
+nonisolated enum AutomationCaptureTimeBasis: String, Codable, Sendable, Equatable {
+    case captured
+    case opened
+    case legacy
+
+    // MARK: Lifecycle
+
+    init(_ storage: HistoryCaptureTimeBasis) {
+        switch storage {
+        case .captured: self = .captured
+        case .opened: self = .opened
+        case .legacy: self = .legacy
+        }
+    }
+}
+
 // MARK: - AutomationFilterField
 
 /// Which filter field a validation error refers to. Kept small and stable so a
@@ -188,6 +210,7 @@ nonisolated struct AutomationCaptureValue: Codable, Sendable, Equatable {
         endedAt = stored.record.endedAt
         sourceKind = AutomationSourceKind(stored.record.sourceKind)
         completeness = AutomationCompleteness(stored.record.completeness)
+        timeBasis = AutomationCaptureTimeBasis(stored.record.timeBasis)
         sessionCount = stored.sessionCount
     }
 
@@ -198,6 +221,9 @@ nonisolated struct AutomationCaptureValue: Codable, Sendable, Equatable {
     let endedAt: Double
     let sourceKind: AutomationSourceKind
     let completeness: AutomationCompleteness
+    /// Whether `startedAt`/`endedAt` are the capture's own instants or the instant
+    /// the file was opened here. Always present — timing is disclosed, not gated.
+    let timeBasis: AutomationCaptureTimeBasis
     let sessionCount: Int
 }
 
@@ -229,8 +255,12 @@ nonisolated struct AutomationSessionValue: Codable, Sendable, Equatable {
     // MARK: Internal
 
     let sessionID: UUID
-    let startTime: Double
-    let duration: Double
+    /// The session's start, or `null` when its own timing is unknown. Timing is
+    /// always disclosed, so this key is always present and an unknown value is an
+    /// explicit `null` rather than an omitted key or a numeric stand-in.
+    let startTime: Double?
+    /// The session's duration, on the same explicit-`null` terms as ``startTime``.
+    let duration: Double?
     /// Ordered, storage-bounded protocol raw values (for example `["tcp", "tls"]`).
     let protocols: [String]
     let status: AutomationSessionStatus
@@ -250,6 +280,30 @@ nonisolated struct AutomationSessionValue: Codable, Sendable, Equatable {
     /// Rendered destination endpoint — present only when the endpoint family is
     /// opted in.
     let destinationEndpoint: String?
+
+    /// Explicit encoding, because two families of optionals mean different things
+    /// here and must not share one rule.
+    ///
+    /// Timing is *disclosed*, unlike names and endpoints: `startTime`/`duration`
+    /// are always emitted, and an unknown value is an explicit `null`, so a consumer
+    /// can distinguish "this session's span is unknown" from "this field was not
+    /// projected". Every privacy-gated key keeps its established omit-when-absent
+    /// behaviour, so a minimum projection's key set is unchanged.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionID, forKey: .sessionID)
+        try container.encode(startTime, forKey: .startTime)
+        try container.encode(duration, forKey: .duration)
+        try container.encode(protocols, forKey: .protocols)
+        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(latencyMilliseconds, forKey: .latencyMilliseconds)
+        try container.encode(bytesUp, forKey: .bytesUp)
+        try container.encode(bytesDown, forKey: .bytesDown)
+        try container.encodeIfPresent(processName, forKey: .processName)
+        try container.encodeIfPresent(host, forKey: .host)
+        try container.encodeIfPresent(sourceEndpoint, forKey: .sourceEndpoint)
+        try container.encodeIfPresent(destinationEndpoint, forKey: .destinationEndpoint)
+    }
 }
 
 // MARK: - AutomationCaptureCursor
@@ -477,11 +531,21 @@ nonisolated struct NormalizedSessionFilter: Sendable, Equatable {
         return AutomationSessionStatus(record.status) == status
     }
 
+    /// A start-time bound can only be decided for a session whose start is known.
+    /// A session with unknown timing does not match a supplied bound — the same
+    /// fail-closed rule the process predicate already uses for an absent name — and
+    /// is unaffected when no start bound is active at all.
     private func matchesStartTime(_ record: HistorySessionRecord) -> Bool {
-        if let startAtLeast, record.startTime < startAtLeast {
+        guard startAtLeast != nil || startAtMost != nil else {
+            return true
+        }
+        guard let startTime = record.startTime else {
             return false
         }
-        if let startAtMost, record.startTime > startAtMost {
+        if let startAtLeast, startTime < startAtLeast {
+            return false
+        }
+        if let startAtMost, startTime > startAtMost {
             return false
         }
         return true

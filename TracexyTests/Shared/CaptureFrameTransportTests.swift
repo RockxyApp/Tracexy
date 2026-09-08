@@ -27,8 +27,12 @@ struct CaptureFrameTransportTests {
         // The legacy surface assigned one wall-clock `Date` to the whole batch;
         // now each frame carries its own precise libpcap instant.
         #expect(frames[0].timestamp != frames[1].timestamp)
-        #expect(abs(frames[0].timestamp.timeIntervalSince1970 - 1_000.0005) < 1e-6)
-        #expect(abs(frames[1].timestamp.timeIntervalSince1970 - 2_000.25) < 1e-6)
+        // A live helper frame always carries a real instant — never the unknown
+        // capture time a pcapng Simple Packet Block can produce.
+        let firstInstant = try #require(frames[0].timestamp)
+        let secondInstant = try #require(frames[1].timestamp)
+        #expect(abs(firstInstant.timeIntervalSince1970 - 1_000.0005) < 1e-6)
+        #expect(abs(secondInstant.timeIntervalSince1970 - 2_000.25) < 1e-6)
     }
 
     @Test("Captured and original lengths survive secure coding → CapturedFrame")

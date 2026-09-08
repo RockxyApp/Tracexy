@@ -332,6 +332,39 @@ struct ConnectionTableTests {
         #expect(!survivor.isTerminal)
     }
 
+    @Test("Eviction ranks untimed connections after timed ones, ordering them by capture ordinal")
+    func lruEvictionWithUnknownCaptureTime() throws {
+        let config = ConnectionTable.Configuration(maxActiveConnections: 1)
+
+        // A timed connection and an untimed one: an unknown last-capture time is not
+        // a small time, so the timed connection is the least-recently-used victim.
+        var mixed = ConnectionTable(configuration: config)
+        ingest(&mixed, from: clientA, to: serverA, flags: [.syn], seq: 1_000, ordinal: 1, at: 5)
+        ingestUntimed(&mixed, from: clientB, to: serverB, flags: [.syn], seq: 2_000, ordinal: 2)
+        let mixedSnapshot = mixed.snapshot()
+        assertWithinBounds(mixedSnapshot, config)
+        let mixedEvicted = try #require(mixedSnapshot.summaries.first { $0.tuple.a == clientA })
+        let mixedSurvivor = try #require(mixedSnapshot.summaries.first { $0.tuple.a == clientB })
+        #expect(mixedEvicted.closeReason == .stateEviction)
+        #expect(!mixedSurvivor.isTerminal)
+
+        // Two untimed connections compare by their last frame's capture ordinal —
+        // the named source-order fallback, never an invented instant.
+        var untimedOnly = ConnectionTable(configuration: config)
+        ingestUntimed(&untimedOnly, from: clientA, to: serverA, flags: [.syn], seq: 1_000, ordinal: 1)
+        ingestUntimed(&untimedOnly, from: clientB, to: serverB, flags: [.syn], seq: 2_000, ordinal: 2)
+        let untimedSnapshot = untimedOnly.snapshot()
+        assertWithinBounds(untimedSnapshot, config)
+        let evicted = try #require(untimedSnapshot.summaries.first { $0.tuple.a == clientA })
+        let survivor = try #require(untimedSnapshot.summaries.first { $0.tuple.a == clientB })
+        #expect(evicted.closeReason == .stateEviction)
+        #expect(!survivor.isTerminal)
+        // The eviction observation cites the frame it happened on, and honestly
+        // reports that frame's unknown capture time.
+        let event = try #require(evicted.events.first { $0.kind == .stateEvicted })
+        #expect(event.timestamp == nil)
+    }
+
     @Test("A frame after eviction opens a new id flagged priorStateEvicted")
     func postEvictionContinuation() throws {
         let config = ConnectionTable.Configuration(maxActiveConnections: 1)
@@ -980,6 +1013,35 @@ struct ConnectionTableTests {
         table.ingest(
             packet(from: source, to: destination, flags: flags, seq: seq, ack: ack, payload: payload, at: timestamp),
             provenance: provenance(ordinal: ordinal, at: timestamp)
+        )
+    }
+
+    /// Fold one frame whose source recorded no capture time, keeping its ordinal —
+    /// the sequencing key — exactly as an ordinary frame would.
+    private func ingestUntimed(
+        _ table: inout ConnectionTable,
+        from source: IPEndpoint,
+        to destination: IPEndpoint,
+        flags: TCPFlags,
+        seq: UInt32 = 0,
+        ack: UInt32 = 0,
+        payload: Int = 0,
+        ordinal: UInt64
+    ) {
+        var untimedPacket = packet(
+            from: source, to: destination, flags: flags, seq: seq, ack: ack, payload: payload, at: 0
+        )
+        untimedPacket.timestamp = nil
+        table.ingest(
+            untimedPacket,
+            provenance: SessionFrameProvenance(
+                ordinal: FrameOrdinal(ordinal),
+                timestamp: nil,
+                capturedLength: 120,
+                originalLength: 120,
+                linkType: 1,
+                locator: SessionEvidenceLocator(sourceToken: token, offset: ordinal)
+            )
         )
     }
 

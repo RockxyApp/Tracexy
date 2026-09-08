@@ -135,8 +135,9 @@ struct CaptureActivityTests {
         #expect(activity.buckets.count <= 8)
         #expect(activity.totalFrames == 500)
         #expect(activity.totalBytes == expectedBytes)
-        // 499 steps of 0.1 s.
-        #expect(abs(activity.duration - 49.9) < 1e-6)
+        // 499 steps of 0.1 s. Every frame was timed, so the capture has a duration.
+        #expect(abs(activity.timedSpan - 49.9) < 1e-6)
+        #expect(activity.duration != nil)
         // Every frame and byte is conserved across the merges.
         #expect(activity.buckets.reduce(0) { $0 + $1.frameCount } == 500)
         #expect(activity.buckets.reduce(0) { $0 + $1.byteCount } == expectedBytes)
@@ -167,8 +168,72 @@ struct CaptureActivityTests {
         let incremental = accumulator.activity()
         #expect(incremental.totalFrames == batch.totalFrames)
         #expect(incremental.totalBytes == batch.totalBytes)
-        #expect(abs(incremental.duration - batch.duration) < 1e-6)
+        #expect(abs(incremental.timedSpan - batch.timedSpan) < 1e-6)
+        #expect(incremental.untimedFrameCount == batch.untimedFrameCount)
         #expect(incremental.buckets.count <= 10)
+    }
+
+    // MARK: - Missing capture time
+
+    @Test("Untimed frames keep every byte and frame while leaving them out of the buckets")
+    func untimedFramesCountedButNotBucketed() {
+        let frames = [
+            frame(atOffset: 0, bytes: 100),
+            untimedFrame(bytes: 250),
+            frame(atOffset: 4, bytes: 100),
+        ]
+        let activity = CaptureActivityBuilder.build(frames: frames, maxBuckets: 4)
+
+        // Totals include the untimed frame; buckets do not.
+        #expect(activity.totalFrames == 3)
+        #expect(activity.totalBytes == 450)
+        #expect(activity.untimedFrameCount == 1)
+        #expect(activity.timedFrameCount == 2)
+        #expect(activity.buckets.reduce(0) { $0 + $1.frameCount } == 2)
+        #expect(activity.buckets.reduce(0) { $0 + $1.byteCount } == 200)
+        // The span covers the timed subset, and the capture duration is unknown.
+        #expect(activity.timedSpan == 4)
+        #expect(activity.duration == nil)
+        #expect(activity.coversTimedSubsetOnly)
+        #expect(!activity.isEmpty)
+    }
+
+    @Test("A capture with no timed frame has frames but no timeline")
+    func allFramesUntimed() {
+        let frames = [untimedFrame(bytes: 60), untimedFrame(bytes: 40)]
+        let activity = CaptureActivityBuilder.build(frames: frames)
+
+        #expect(activity.buckets.isEmpty)
+        #expect(!activity.isEmpty)
+        #expect(activity.totalFrames == 2)
+        #expect(activity.totalBytes == 100)
+        #expect(activity.untimedFrameCount == 2)
+        #expect(activity.timedFrameCount == 0)
+        #expect(activity.duration == nil)
+        // Not a "timed subset" — there is no timed subset at all.
+        #expect(!activity.coversTimedSubsetOnly)
+    }
+
+    @Test("Incremental and batch aggregation agree on mixed timed and untimed frames")
+    func mixedTimingBatchEquivalence() {
+        let frames = (0 ..< 40).map { index -> CapturedFrame in
+            index % 3 == 0
+                ? untimedFrame(bytes: index + 1)
+                : frame(atOffset: Double(index) * 0.25, bytes: index + 1)
+        }
+        let batch = CaptureActivityBuilder.build(frames: frames, maxBuckets: 6)
+        var accumulator = CaptureActivityAccumulator(maxBuckets: 6)
+        for frame in frames {
+            accumulator.add(timestamp: frame.timestamp, originalLength: frame.originalLength)
+        }
+        let incremental = accumulator.activity()
+
+        #expect(incremental.totalFrames == batch.totalFrames)
+        #expect(incremental.totalBytes == batch.totalBytes)
+        #expect(incremental.untimedFrameCount == batch.untimedFrameCount)
+        #expect(abs(incremental.timedSpan - batch.timedSpan) < 1e-6)
+        #expect(incremental.duration == nil)
+        #expect(batch.duration == nil)
     }
 
     // MARK: Private
@@ -179,6 +244,16 @@ struct CaptureActivityTests {
         CapturedFrame(
             bytes: [UInt8](repeating: 0, count: max(0, bytes)),
             timestamp: Self.base.addingTimeInterval(offset),
+            originalLength: bytes
+        )
+    }
+
+    /// A frame whose source recorded no capture time — what a pcapng Simple Packet
+    /// Block yields.
+    private func untimedFrame(bytes: Int) -> CapturedFrame {
+        CapturedFrame(
+            bytes: [UInt8](repeating: 0, count: max(0, bytes)),
+            timestamp: nil,
             originalLength: bytes
         )
     }

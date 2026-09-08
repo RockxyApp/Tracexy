@@ -140,6 +140,15 @@ nonisolated enum CompiledPredicate: Hashable, Sendable {
         default: false
         }
     }
+
+    /// Whether this predicate reads a session's capture time, so an evaluation must
+    /// disclose unknown-timing coverage. Only the start-date range does.
+    var readsCaptureTime: Bool {
+        switch self {
+        case .startDateInRange: true
+        default: false
+        }
+    }
 }
 
 // MARK: - CompiledQueryNode
@@ -162,6 +171,14 @@ nonisolated struct CompiledInvestigationQuery: Hashable, Sendable {
     /// `true` iff at least one leaf reads the finding index (see
     /// ``CompiledPredicate/readsFindings``).
     let referencesFindings: Bool
+    /// `true` iff at least one leaf reads a session's capture time, so unknown
+    /// timing must be disclosed as typed coverage rather than silently excluded.
+    let referencesCaptureTime: Bool
+
+    /// Whether an evaluation of this query must produce a coverage summary.
+    var requiresCoverage: Bool {
+        referencesFindings || referencesCaptureTime
+    }
 }
 
 // MARK: - QueryValidationError
@@ -229,12 +246,15 @@ nonisolated enum QueryCoverageReason: Hashable, Sendable, CaseIterable {
     case captureLossUnknown
     /// A source-table or analysis saturating counter reached its maximum.
     case counterOverflow
+    /// At least one session in the snapshot has no known start time, so a date
+    /// predicate could not be decided for it in either direction.
+    case unknownSessionStartTime
 }
 
 // MARK: - QueryCoverageSummary
 
 /// The bounded set of coverage reasons that apply to one evaluation. Returned only
-/// when the query references a finding predicate. An empty set is the clean
+/// when the query references a finding or capture-time predicate. An empty set is the clean
 /// bounded-local context: nothing was dropped *for this snapshot within its bounds* —
 /// never a claim the whole capture or network was seen completely.
 nonisolated struct QueryCoverageSummary: Hashable, Sendable {
@@ -251,13 +271,13 @@ nonisolated struct QueryCoverageSummary: Hashable, Sendable {
 
 /// The immutable result of one evaluation: matched sessions and indeterminate session
 /// ids, both in snapshot input order without duplication, plus the optional coverage
-/// summary (present iff the query references a finding predicate).
+/// summary (present iff the query references findings or capture time).
 nonisolated struct InvestigationQueryResult: Hashable, Sendable {
     /// Sessions whose top-level truth was `match`, in snapshot order.
     let matched: [SessionSummary]
     /// Ids of sessions whose top-level truth was `indeterminate`, in snapshot order.
     let indeterminate: [UUID]
-    /// The coverage caveat for a finding-referencing query, else `nil`.
+    /// The coverage caveat for a finding/time-referencing query, else `nil`.
     let coverage: QueryCoverageSummary?
 }
 
@@ -330,12 +350,13 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
     /// ``QueryValidationError`` encountered; on success the query is guaranteed to fit
     /// every bound and to carry only normalized, non-empty, control-free text.
     func compile(_ query: InvestigationQuery) throws -> CompiledInvestigationQuery {
-        var nodeCount = 0
-        var referencesFindings = false
-        let root = try compileNode(
-            query, depth: 1, nodeCount: &nodeCount, referencesFindings: &referencesFindings
+        var context = CompileContext()
+        let root = try compileNode(query, depth: 1, context: &context)
+        return CompiledInvestigationQuery(
+            root: root,
+            referencesFindings: context.referencesFindings,
+            referencesCaptureTime: context.referencesCaptureTime
         )
-        return CompiledInvestigationQuery(root: root, referencesFindings: referencesFindings)
     }
 
     /// Evaluate a compiled query over one immutable snapshot. Synchronous and pure.
@@ -360,6 +381,8 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         // no permanent/duplicate finding index is created. Scalar-only queries do not
         // pay this allocation cost at all.
         let membership = query.referencesFindings ? Self.buildFindingMembership(snapshot) : [:]
+        // A date predicate has its own coverage story (unknown capture time), so the
+        // summary is produced for finding *and* time predicates alike.
 
         var matched: [SessionSummary] = []
         var indeterminate: [UUID] = []
@@ -374,11 +397,30 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             }
         }
 
-        let coverage = query.referencesFindings ? Self.coverage(for: snapshot) : nil
+        let coverage: QueryCoverageSummary?
+        if query.requiresCoverage {
+            var reasons = query.referencesFindings ? Self.coverage(for: snapshot).reasons : []
+            if query.referencesCaptureTime, snapshot.sessions.contains(where: { $0.startTime == nil }) {
+                reasons.insert(.unknownSessionStartTime)
+            }
+            coverage = QueryCoverageSummary(reasons: reasons)
+        } else {
+            coverage = nil
+        }
         return InvestigationQueryResult(matched: matched, indeterminate: indeterminate, coverage: coverage)
     }
 
     // MARK: Private
+
+    // MARK: Compilation
+
+    /// The mutable bookkeeping threaded through one compilation: the running node
+    /// budget plus which coverage-relevant inputs the query reads.
+    private struct CompileContext {
+        var nodeCount = 0
+        var referencesFindings = false
+        var referencesCaptureTime = false
+    }
 
     // MARK: Evaluation — Kleene combinators
 
@@ -457,7 +499,10 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         case let .findingKind(kind):
             evaluateFindingKind(kind, session: session, membership: membership)
         case let .startDateInRange(range):
-            boolean(range.contains(session.startTime))
+            // A session with no known start time is genuinely undecidable against a
+            // date range — including under negation, which propagates
+            // `indeterminate` rather than turning absence into a match.
+            evaluateStartDate(range, session: session)
         case let .totalBytesInRange(range):
             evaluateTotalBytes(range, session: session)
         case let .hasEvidence(field):
@@ -517,6 +562,20 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             // indeterminate because coverage may be incomplete.
             (membership[session.id]?.isEmpty == false) ? .match : .indeterminate
         }
+    }
+
+    /// Three-valued start-date test: a known start compares against the closed range;
+    /// an unknown start is indeterminate, never a silent no-match.
+    private static func evaluateStartDate(
+        _ range: ClosedRange<Date>,
+        session: SessionSummary
+    )
+        -> QueryTruth
+    {
+        guard let startTime = session.startTime else {
+            return .indeterminate
+        }
+        return boolean(range.contains(startTime))
     }
 
     /// Total-byte range test with fail-closed overflow handling. A hand-built summary
@@ -683,18 +742,15 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             || datagramEvidence.summaries.contains { $0.lossKnowledge == knowledge }
     }
 
-    // MARK: Compilation
-
     private func compileNode(
         _ node: InvestigationQuery,
         depth: Int,
-        nodeCount: inout Int,
-        referencesFindings: inout Bool
+        context: inout CompileContext
     )
         throws -> CompiledQueryNode
     {
-        nodeCount += 1
-        guard nodeCount <= configuration.maxNodes else {
+        context.nodeCount += 1
+        guard context.nodeCount <= configuration.maxNodes else {
             throw QueryValidationError.nodeCountExceeded(limit: configuration.maxNodes)
         }
         guard depth <= configuration.maxDepth else {
@@ -702,20 +758,15 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         }
         switch node {
         case let .all(children):
-            return try .all(compileGroup(
-                children, depth: depth, nodeCount: &nodeCount, referencesFindings: &referencesFindings
-            ))
+            return try .all(compileGroup(children, depth: depth, context: &context))
         case let .any(children):
-            return try .any(compileGroup(
-                children, depth: depth, nodeCount: &nodeCount, referencesFindings: &referencesFindings
-            ))
+            return try .any(compileGroup(children, depth: depth, context: &context))
         case let .not(child):
-            return try .not(compileNode(
-                child, depth: depth + 1, nodeCount: &nodeCount, referencesFindings: &referencesFindings
-            ))
+            return try .not(compileNode(child, depth: depth + 1, context: &context))
         case let .leaf(predicate):
             let compiled = try compilePredicate(predicate)
-            referencesFindings = referencesFindings || compiled.readsFindings
+            context.referencesFindings = context.referencesFindings || compiled.readsFindings
+            context.referencesCaptureTime = context.referencesCaptureTime || compiled.readsCaptureTime
             return .leaf(compiled)
         }
     }
@@ -723,8 +774,7 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
     private func compileGroup(
         _ children: [InvestigationQuery],
         depth: Int,
-        nodeCount: inout Int,
-        referencesFindings: inout Bool
+        context: inout CompileContext
     )
         throws -> [CompiledQueryNode]
     {
@@ -735,9 +785,7 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             throw QueryValidationError.childCountExceeded(limit: configuration.maxChildrenPerGroup)
         }
         return try children.map {
-            try compileNode(
-                $0, depth: depth + 1, nodeCount: &nodeCount, referencesFindings: &referencesFindings
-            )
+            try compileNode($0, depth: depth + 1, context: &context)
         }
     }
 

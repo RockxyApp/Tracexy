@@ -332,6 +332,9 @@ struct ProjectAdversarialFlowTests {
             #expect(Set(coordinator.sessions.map(\.host)) == hostsA)
             #expect(coordinator.isViewingSavedCapture)
             #expect(coordinator.activeSavedCapture == captureA)
+            // The metadata inventory travels with its Project, so a restored
+            // Project describes its own file rather than the other one's.
+            #expect(coordinator.savedCaptureMetadata?.totalFrames == framesA.count)
             #expect(coordinator.activeWorkspace.selectedSessionID == selectedA.id)
             #expect(coordinator.readinessCaptureConfiguration.bpf == "tcp port 443")
             #expect(coordinator.readinessRetentionCapacity == CaptureSettingsResolver.defaultRetainPackets)
@@ -351,6 +354,7 @@ struct ProjectAdversarialFlowTests {
             #expect(await Self.switched(coordinator, to: projectB.id))
             #expect(Set(coordinator.sessions.map(\.host)) == hostsB)
             #expect(coordinator.activeSavedCapture == captureB)
+            #expect(coordinator.savedCaptureMetadata?.totalFrames == framesB.count)
             #expect(coordinator.savedCaptures.map(\.name) == ["bravo"])
             #expect(coordinator.readinessCaptureConfiguration.bpf == nil)
             #expect(coordinator.readinessRetentionCapacity == 20_000)

@@ -29,8 +29,10 @@ nonisolated struct PcapngFrameReference: Sendable, Equatable {
     let capturedLength: Int
     /// The frame's original on-wire length (>= `capturedLength`).
     let originalLength: Int
-    /// Decoded capture timestamp (Unix epoch for a Simple Packet Block).
-    let timestamp: Date
+    /// Decoded capture timestamp, or `nil` for a Simple Packet Block — which
+    /// carries no timestamp field, so its capture instant is genuinely unknown
+    /// rather than the Unix epoch.
+    let timestamp: Date?
     /// Zero-based index of the section this frame was found in.
     let sectionIndex: Int
     /// Declaration-order interface id within the current section.
@@ -699,8 +701,8 @@ nonisolated final class PcapngStreamReader {
             throw PacketError.malformed("pcapng: simple packet without interface 0")
         }
         // A Simple Packet Block carries no captured length or timestamp: the
-        // captured length is derived from the interface snap length, and the frame
-        // is honestly stamped at the Unix epoch.
+        // captured length is derived from the interface snap length, and the
+        // capture instant is reported as unknown rather than invented.
         let capturedLength = interface.snapLength == 0
             ? originalLength
             : min(originalLength, Int(interface.snapLength))
@@ -727,7 +729,7 @@ nonisolated final class PcapngStreamReader {
             payloadOffset: payloadOffset,
             capturedLength: capturedLength,
             originalLength: originalLength,
-            timestamp: Date(timeIntervalSince1970: 0),
+            timestamp: nil,
             sectionIndex: sectionIndex,
             interfaceID: 0,
             linkType: interface.linkType

@@ -149,6 +149,69 @@ struct InvestigationQueryActivationTests {
         #expect(coordinator.visibleSessions(in: second).allSatisfy { $0.protocolStack.contains(.udp) })
     }
 
+    @Test("A replaced workspace cannot adopt or remove its replacement's query task")
+    func replacedWorkspaceCannotAdoptOrRemoveReplacementTask() async throws {
+        let environment = try await makeLoadedCoordinator()
+        defer { environment.teardown() }
+        let coordinator = environment.coordinator
+        let initiatingWorkspace = coordinator.activeWorkspace
+        let snapshots = coordinator.workspaces.captureProjectWorkspaces()
+        let initiatingDraft = InvestigationQueryDraft(rows: [
+            InvestigationQueryDraftRow(predicate: .protocolStackContains(.http)),
+        ])
+
+        coordinator.applyInvestigationQuery(initiatingDraft, in: initiatingWorkspace)
+        coordinator.workspaces.applyProjectWorkspaces(
+            snapshots,
+            activeWorkspaceID: initiatingWorkspace.id,
+            maxFilterRules: coordinator.policy.maxSessionFilterRules
+        )
+        let replacement = coordinator.activeWorkspace
+        #expect(replacement !== initiatingWorkspace)
+
+        let replacementDraft = InvestigationQueryDraft(rows: [
+            InvestigationQueryDraftRow(predicate: .protocolStackContains(.tcp)),
+        ])
+        coordinator.applyInvestigationQuery(replacementDraft, in: replacement)
+        await coordinator.waitForInvestigationQuery(in: replacement)
+        await Task.yield()
+
+        #expect(!initiatingWorkspace.isEvaluatingInvestigationQuery)
+        #expect(initiatingWorkspace.acceptedInvestigationDraft == nil)
+        #expect(replacement.acceptedInvestigationDraft == replacementDraft)
+        #expect(!replacement.isEvaluatingInvestigationQuery)
+        #expect(coordinator.investigationQueryTasks[replacement.id] == nil)
+    }
+
+    @Test("A query completion retires cleanly when its workspace instance was replaced")
+    func replacedWorkspaceCompletionIsRetired() async throws {
+        let environment = try await makeLoadedCoordinator()
+        defer { environment.teardown() }
+        let coordinator = environment.coordinator
+        let initiatingWorkspace = coordinator.activeWorkspace
+        let snapshots = coordinator.workspaces.captureProjectWorkspaces()
+        let draft = InvestigationQueryDraft(rows: [
+            InvestigationQueryDraftRow(predicate: .protocolStackContains(.http)),
+        ])
+
+        coordinator.applyInvestigationQuery(draft, in: initiatingWorkspace)
+        coordinator.workspaces.applyProjectWorkspaces(
+            snapshots,
+            activeWorkspaceID: initiatingWorkspace.id,
+            maxFilterRules: coordinator.policy.maxSessionFilterRules
+        )
+        let replacement = coordinator.activeWorkspace
+        #expect(replacement !== initiatingWorkspace)
+
+        await coordinator.waitForInvestigationQuery(in: replacement)
+
+        #expect(!initiatingWorkspace.isEvaluatingInvestigationQuery)
+        #expect(initiatingWorkspace.acceptedInvestigationDraft == nil)
+        #expect(replacement.acceptedInvestigationDraft == nil)
+        #expect(!replacement.isEvaluatingInvestigationQuery)
+        #expect(coordinator.investigationQueryTasks[replacement.id] == nil)
+    }
+
     // MARK: Private
 
     private struct Environment {

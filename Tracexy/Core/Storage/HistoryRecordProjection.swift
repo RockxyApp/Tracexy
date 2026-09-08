@@ -34,6 +34,7 @@ nonisolated enum HistoryRecordProjection {
             endedAt: Double,
             sourceKind: HistorySourceKind,
             completeness: HistoryCompleteness,
+            timeBasis: HistoryCaptureTimeBasis = .captured,
             sessions: [SessionSummary],
             maskIPAddresses: Bool
         ) {
@@ -42,6 +43,7 @@ nonisolated enum HistoryRecordProjection {
             self.endedAt = endedAt
             self.sourceKind = sourceKind
             self.completeness = completeness
+            self.timeBasis = timeBasis
             self.sessions = sessions
             self.maskIPAddresses = maskIPAddresses
         }
@@ -53,6 +55,9 @@ nonisolated enum HistoryRecordProjection {
         let endedAt: Double
         let sourceKind: HistorySourceKind
         let completeness: HistoryCompleteness
+        /// Whether the supplied lifetime is the capture's own or the app's open
+        /// event. Resolved by the caller, which alone knows which it had.
+        let timeBasis: HistoryCaptureTimeBasis
         let sessions: [SessionSummary]
         let maskIPAddresses: Bool
     }
@@ -78,7 +83,8 @@ nonisolated enum HistoryRecordProjection {
             // the store's ordering invariant.
             endedAt: max(sanitizedInstant(input.startedAt), sanitizedInstant(input.endedAt)),
             sourceKind: input.sourceKind,
-            completeness: input.completeness
+            completeness: input.completeness,
+            timeBasis: input.timeBasis
         )
         let sessions = input.sessions.map { session in
             projectSession(session, maskIPAddresses: input.maskIPAddresses)
@@ -96,8 +102,11 @@ nonisolated enum HistoryRecordProjection {
     {
         HistorySessionRecord(
             sessionID: session.id,
-            startTime: sanitizedInstant(session.startTime.timeIntervalSince1970),
-            duration: sanitizedNonNegative(session.duration),
+            // An unknown session span is persisted as unknown. It is never clamped
+            // to zero or to the epoch, which would be indistinguishable from a real
+            // 1970 capture with no elapsed time.
+            startTime: session.startTime.flatMap { finiteInstant($0.timeIntervalSince1970) },
+            duration: session.duration.flatMap { finiteNonNegative($0) },
             processName: session.processName.map { bounded($0) },
             host: bounded(masked(session.host, mask: mask)),
             sourceEndpoint: bounded(maskedEndpoint(session.sourceEndpoint, mask: mask)),
@@ -150,9 +159,16 @@ nonisolated enum HistoryRecordProjection {
         value.isFinite ? value : 0
     }
 
-    private static func sanitizedNonNegative(_ value: Double) -> Double {
+    /// A finite instant, or `nil` when the value could not be represented. Used only
+    /// for the nullable session columns, where "not representable" and "unknown"
+    /// are the same stored answer rather than a fabricated `0`.
+    private static func finiteInstant(_ value: Double) -> Double? {
+        value.isFinite ? value : nil
+    }
+
+    private static func finiteNonNegative(_ value: Double) -> Double? {
         guard value.isFinite, value >= 0 else {
-            return 0
+            return nil
         }
         return value
     }

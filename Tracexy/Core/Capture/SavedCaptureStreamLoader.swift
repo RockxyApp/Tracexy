@@ -20,8 +20,8 @@ nonisolated struct CaptureEvidenceReference: Sendable, Equatable {
     let capturedLength: Int
     /// The frame's original on-wire length (>= `capturedLength`).
     let originalLength: Int
-    /// Decoded capture timestamp.
-    let timestamp: Date
+    /// Decoded capture timestamp, or `nil` when the source block carried none.
+    let timestamp: Date?
     /// Link type of the frame's interface, for decoding the reloaded bytes.
     let linkType: UInt32
 }
@@ -192,6 +192,9 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     let retainedTail: RetainedFrameBuffer
     /// Bounded activity aggregation over the whole file.
     let activity: CaptureActivity
+    /// Bounded neutral metadata inventory (encountered link types, untimed frames,
+    /// frames with no decodable link layer) folded from the same accepted frames.
+    let metadata: CaptureMetadataSummary
     let completeness: CaptureLoadCompleteness
     /// Total frames accepted (independent of the retained-tail window size).
     let totalFrames: Int
@@ -298,6 +301,7 @@ nonisolated final class SavedCaptureStreamLoader {
         var evidence: [UUID: CaptureEvidenceReference] = [:]
         var tail = RetainedFrameBuffer(capacity: configuration.retainedCapacity)
         var activity = CaptureActivityAccumulator(maxBuckets: configuration.activityBucketCap)
+        var metadata = CaptureMetadataAccumulator()
         var totalFrames = 0
         // A deterministic, opaque per-file token for evidence locators, derived
         // only from the opened file's identity — computed once, never per frame.
@@ -310,6 +314,7 @@ nonisolated final class SavedCaptureStreamLoader {
             evidence: &evidence,
             tail: &tail,
             activity: &activity,
+            metadata: &metadata,
             totalFrames: &totalFrames
         )
         guard let defaultLinkType = reader.defaultLinkType else {
@@ -351,6 +356,7 @@ nonisolated final class SavedCaptureStreamLoader {
             evidence: evidence,
             retainedTail: tail,
             activity: activity.activity(),
+            metadata: metadata.summary(),
             completeness: completeness,
             totalFrames: totalFrames,
             finalProgress: completion.progress
@@ -371,6 +377,7 @@ nonisolated final class SavedCaptureStreamLoader {
         evidence: inout [UUID: CaptureEvidenceReference],
         tail: inout RetainedFrameBuffer,
         activity: inout CaptureActivityAccumulator,
+        metadata: inout CaptureMetadataAccumulator,
         totalFrames: inout Int
     )
         throws -> CaptureStreamCompletion
@@ -384,7 +391,8 @@ nonisolated final class SavedCaptureStreamLoader {
                     accumulator: &accumulator,
                     evidence: &evidence,
                     tail: &tail,
-                    activity: &activity
+                    activity: &activity,
+                    metadata: &metadata
                 )
                 totalFrames += 1
                 if totalFrames % configuration.progressStride == 0 {
@@ -405,7 +413,8 @@ nonisolated final class SavedCaptureStreamLoader {
         accumulator: inout SessionAccumulator,
         evidence: inout [UUID: CaptureEvidenceReference],
         tail: inout RetainedFrameBuffer,
-        activity: inout CaptureActivityAccumulator
+        activity: inout CaptureActivityAccumulator,
+        metadata: inout CaptureMetadataAccumulator
     ) {
         let frame = CapturedFrame(
             bytes: event.bytes,
@@ -449,5 +458,13 @@ nonisolated final class SavedCaptureStreamLoader {
 
         tail.append(contentsOf: [frame])
         activity.add(timestamp: event.reference.timestamp, originalLength: event.reference.originalLength)
+        // The inventory reads only what this frame already proved: its own declared
+        // link type, whether the source carried a capture time, and whether this
+        // build's decoders produced any link-layer layer for it.
+        metadata.add(
+            linkType: event.reference.linkType,
+            timestamp: event.reference.timestamp,
+            hasDecodedLinkLayer: !packet.layers.isEmpty
+        )
     }
 }

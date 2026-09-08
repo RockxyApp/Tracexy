@@ -28,6 +28,17 @@ struct SavedCaptureOpeningTests {
         #expect(coordinator.savedCaptureEvidence.count == coordinator.sessions.count)
         #expect(coordinator.retainedFrameCount <= coordinator.retainedFrameCapacity)
         #expect(coordinator.savedCaptureActivity?.totalFrames == frames.count)
+        // The bounded metadata inventory is published beside the activity: one
+        // Ethernet link type, every frame timed, every frame decodable.
+        let metadata = try #require(coordinator.savedCaptureMetadata)
+        #expect(metadata.totalFrames == frames.count)
+        #expect(metadata.untimedFrameCount == 0)
+        #expect(metadata.undecodableLinkLayerFrameCount == 0)
+        #expect(metadata.linkTypeOverflowFrameCount == 0)
+        #expect(metadata.linkTypeCounts.map(\.linkType) == [LinkType.ethernet])
+        #expect(metadata.linkTypeCounts.first?.frameCount == frames.count)
+        #expect(!metadata.hasMixedLinkTypes)
+        #expect(!metadata.hasCoverageCaveat)
 
         let selected = try #require(coordinator.sessions.first)
         let reference = try #require(coordinator.savedCaptureEvidence[selected.id])

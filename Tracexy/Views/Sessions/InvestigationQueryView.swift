@@ -12,8 +12,11 @@ struct InvestigationQueryEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            rows
-            if let error = workspace.investigationQueryError, error.rowID == nil {
+            editableContent
+            if workspace.investigationDraft.mode == .rows,
+               let error = workspace.investigationQueryError,
+               error.rowID == nil
+            {
                 errorText(error.message)
             }
         }
@@ -22,7 +25,10 @@ struct InvestigationQueryEditorView: View {
         .tracexySafeAreaBar(edge: .top) {
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
                 header
-                combinationPicker
+                modePicker
+                if workspace.investigationDraft.mode == .rows {
+                    combinationPicker
+                }
             }
             .padding(Theme.Metrics.spacingL)
         }
@@ -37,6 +43,19 @@ struct InvestigationQueryEditorView: View {
 
     // MARK: Private
 
+    private static let expressionExample =
+        "tcp and destination.port == 443 and not host contains \"example\""
+
+    /// The complete accepted vocabulary, stated once so an unsupported spelling is a
+    /// visible omission rather than a guess. Deliberately not a display-filter dialect.
+    private static let expressionReference = """
+    Protocols: ipv4, ipv6, arp, icmp, icmpv6, tcp, udp, dns, tls, http, http2, quic, websocket, stun.
+    Comparisons: ip / source.ip / destination.ip == address, ip in cidr, \
+    port / source.port / destination.port == number, host contains "text", process contains "text", \
+    bytes == / >= / <= number, finding == reset | retransmission | overlap | outOfOrder | dnsTruncation.
+    Operators: not or !, and or &&, or or ||, and parentheses.
+    """
+
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             Label("Investigate Sessions", systemImage: "scope")
@@ -44,6 +63,72 @@ struct InvestigationQueryEditorView: View {
             Text("Build a typed query for this capture. Existing search, filters, and Focus Sets stay unchanged.")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The two editable representations. Switching never discards the other draft;
+    /// only the selected one is compiled by Apply.
+    @ViewBuilder private var editableContent: some View {
+        switch workspace.investigationDraft.mode {
+        case .rows: rows
+        case .expression: expressionEditor
+        }
+    }
+
+    private var modePicker: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Text("Editor")
+                .font(Theme.Typography.bodyEmphasis)
+            Picker("Editor mode", selection: $workspace.investigationDraft.mode) {
+                ForEach(InvestigationQueryDraft.Mode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 200)
+            .accessibilityLabel("Investigation editor mode")
+            Spacer()
+        }
+    }
+
+    private var expressionEditor: some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            TextEditor(text: $workspace.investigationDraft.expression)
+                .font(Theme.Typography.mono)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 96, maxHeight: 160)
+                .padding(Theme.Metrics.spacingS)
+                .tracexyContentSurface(
+                    in: RoundedRectangle(
+                        cornerRadius: Theme.Metrics.pillCornerRadius,
+                        style: .continuous
+                    )
+                )
+                .accessibilityLabel("Session expression")
+
+            if let error = workspace.investigationQueryError, error.rowID == nil {
+                errorText(error.message)
+            }
+
+            Text(Self.expressionExample)
+                .font(Theme.Typography.monoSmall)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .accessibilityLabel("Example session expression: \(Self.expressionExample)")
+
+            Text(
+                "Session expressions match whole sessions, not individual packets. "
+                    + "“source” and “destination” are this session’s endpoints."
+            )
+            .font(Theme.Typography.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Text(Self.expressionReference)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -84,13 +169,15 @@ struct InvestigationQueryEditorView: View {
 
     private var actions: some View {
         HStack {
-            Button {
-                workspace.investigationDraft.rows.append(InvestigationQueryDraftRow())
-            } label: {
-                Label("Add Row", systemImage: "plus")
+            if workspace.investigationDraft.mode == .rows {
+                Button {
+                    workspace.investigationDraft.rows.append(InvestigationQueryDraftRow())
+                } label: {
+                    Label("Add Row", systemImage: "plus")
+                }
+                .tracexyGlassButtonStyle()
+                .disabled(workspace.investigationDraft.rows.count >= InvestigationQueryDraftCompiler.maximumRows)
             }
-            .tracexyGlassButtonStyle()
-            .disabled(workspace.investigationDraft.rows.count >= InvestigationQueryDraftCompiler.maximumRows)
 
             if workspace.hasActiveInvestigationQuery {
                 Button("Clear Query") {
@@ -190,7 +277,7 @@ struct InvestigationQueryEditorView: View {
             }
         case .protocolStackContains:
             Picker("Protocol", selection: protocolBinding(row)) {
-                ForEach(ProtocolKind.allCases) { value in
+                ForEach(ProtocolKind.allCases.filter { $0 != .ethernet && $0 != .linuxCooked }) { value in
                     Text(value.label).tag(value)
                 }
             }
@@ -257,6 +344,7 @@ struct InvestigationQueryEditorView: View {
             .font(Theme.Typography.caption)
             .foregroundStyle(.orange)
             .accessibilityLabel("Query error: \(message)")
+            .accessibilityIdentifier("investigation-query-error")
     }
 
     private func fieldBinding(_ row: Binding<InvestigationQueryDraftRow>)
@@ -522,7 +610,7 @@ struct InvestigationQueryChip: View {
                 "\(workspace.investigationIndeterminateSessionIDs.count) session(s) could not be decided and are not included in matches."
             )
             .font(Theme.Typography.body)
-            Text("A missing retained finding is never treated as proof that no finding exists.")
+            Text("Unavailable evidence stays unknown, including under negation.")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             ForEach(workspace.investigationCoverageReasons.sorted(by: { $0.label < $1.label }), id: \.self) { reason in
@@ -614,6 +702,7 @@ private extension QueryCoverageReason {
         case .captureLossReported: "Capture loss was reported"
         case .captureLossUnknown: "Capture loss is unknown"
         case .counterOverflow: "An evidence counter overflowed"
+        case .unknownSessionStartTime: "Some sessions have no capture time, so date rows can’t decide them"
         }
     }
 }
@@ -627,7 +716,43 @@ private extension InvestigationQueryDraftError {
         case .invalidCIDR: "Enter a valid IPv4 or IPv6 CIDR block."
         case .invalidPort: "Ports must be whole numbers from 0 through 65535, in ascending order."
         case .invalidByteCount: "Byte bounds must be non-negative whole numbers in ascending order."
+        case let .expression(error): error.message
         case let .core(error): error.message
+        }
+    }
+}
+
+// MARK: - SessionQueryParseError + message
+
+private extension SessionQueryParseError {
+    /// A concise diagnostic that names the position and the offending token only. The
+    /// expression itself is never echoed back.
+    var message: String {
+        "\(explanation) (character \(position))"
+    }
+
+    private var explanation: String {
+        switch reason {
+        case .emptyExpression: "Enter a session expression."
+        case let .inputTooLong(limit): "Keep the expression within \(limit) UTF-8 bytes."
+        case let .tokenLimitExceeded(limit): "Use at most \(limit) terms and operators."
+        case let .depthLimitExceeded(limit): "Nesting exceeds the depth limit of \(limit)."
+        case .unexpectedCharacter: "This character can’t start a term."
+        case .unterminatedString: "This quoted value has no closing quote."
+        case .unsupportedEscape: "Only \\\" and \\\\ are supported inside quotes."
+        case .controlCharacterInText: "Remove the control character from this quoted value."
+        case let .unknownName(name): "“\(name)” isn’t a supported session name."
+        case let .unsupportedOperator(text): "“\(text)” isn’t a supported operator."
+        case let .operatorNotSupportedForField(field, operatorText):
+            "“\(field)” doesn’t support “\(operatorText)”."
+        case .expectedValue: "A value is expected here."
+        case .expectedExpression: "A term or parenthesized group is expected here."
+        case .unbalancedParenthesis: "A closing parenthesis is expected here."
+        case .unexpectedTrailingInput: "Extra input follows the expression."
+        case .invalidIPAddress: "Enter a standalone IPv4 or IPv6 address."
+        case .invalidCIDR: "Enter a valid IPv4 or IPv6 CIDR block."
+        case .invalidPort: "Ports must be whole numbers from 0 through 65535."
+        case .invalidByteCount: "Byte counts must be non-negative whole numbers."
         }
     }
 }

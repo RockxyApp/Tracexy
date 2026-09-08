@@ -17,12 +17,32 @@ struct SessionCenterView: View {
         sessionContent(sessions: sessions, workspace: workspace)
             .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .top) {
-                sessionControlShelf(workspace)
+                sessionControlShelf(workspace, shownCount: sessions.count)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: visibilityFingerprint(workspace)) { _, _ in
                 coordinator.reconcileLiveFollowing(in: workspace)
             }
+    }
+
+    /// A compact, counted inventory of what the file actually contained: how many
+    /// link types its frames declared, and the two coverage caveats. Nothing here
+    /// interprets a link type, a comment or an option — these are counts only.
+    nonisolated static func metadataSummary(_ metadata: CaptureMetadataSummary) -> String {
+        var parts: [String] = []
+        let linkTypes = metadata.linkTypeCounts.count
+        if metadata.linkTypeOverflowFrameCount > 0 {
+            parts.append("More than \(linkTypes.formatted()) link types")
+        } else if linkTypes > 0 {
+            parts.append(linkTypes == 1 ? "1 link type" : "\(linkTypes.formatted()) link types")
+        }
+        if metadata.untimedFrameCount > 0 {
+            parts.append("\(metadata.untimedFrameCount.formatted()) untimed")
+        }
+        if metadata.undecodableLinkLayerFrameCount > 0 {
+            parts.append("\(metadata.undecodableLinkLayerFrameCount.formatted()) undecoded link layer")
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Private
@@ -36,7 +56,63 @@ struct SessionCenterView: View {
         let hostFilter: String?
         let processFilter: String?
         let ipFilter: String?
+        let aggregateProtocolFilters: Set<ProtocolKind>
+        let aggregateDestinationFilter: String?
+        let aggregateRequiresFindings: Bool
         let filterRules: [SessionFilterRule]
+    }
+
+    private var captureImportNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "tray.and.arrow.down")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(coordinator.isCancellingCaptureImport ? "Cancelling import…" : "Importing capture…")
+                    .font(Theme.Typography.bodyEmphasis)
+                if let name = coordinator.captureImportName {
+                    Text(name).font(Theme.Typography.caption).lineLimit(1).truncationMode(.middle)
+                }
+                if let fraction = coordinator.captureImportFraction {
+                    ProgressView(value: fraction)
+                        .accessibilityValue(Text(fraction, format: .percent))
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+            Button("Cancel Import") { coordinator.cancelCaptureImport() }
+                .disabled(coordinator.isCancellingCaptureImport)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .background(Color.accentColor.opacity(0.06))
+        .accessibilityIdentifier("capture-import-progress")
+    }
+
+    private var savedCaptureSourceNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            Image(systemName: "doc")
+            Text(coordinator.activeSavedCapture?.url.lastPathComponent ?? "Saved capture")
+                .lineLimit(1).truncationMode(.middle)
+                .help(coordinator.activeSavedCapture?.url.lastPathComponent ?? "Saved capture")
+            Spacer(minLength: 0)
+            Text("Saved capture")
+            if let activity = coordinator.savedCaptureActivity {
+                Text("\(activity.totalFrames.formatted()) frames")
+                    .monospacedDigit()
+            }
+            if let metadata = coordinator.savedCaptureMetadata {
+                Text(Self.metadataSummary(metadata))
+                    .monospacedDigit()
+                    .accessibilityIdentifier("saved-capture-metadata")
+            }
+        }
+        .font(Theme.Typography.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("saved-capture-source")
     }
 
     private var savedCaptureOpeningNotice: some View {
@@ -62,21 +138,28 @@ struct SessionCenterView: View {
     }
 
     @ViewBuilder private var emptyState: some View {
+        let scope = coordinator.sessionScope(shownCount: 0)
         if let error = coordinator.captureError {
             ContentUnavailableView {
                 Label("Capture Error", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(error)
             }
-        } else if coordinator.presentedSessions.isEmpty, coordinator.removedSessionCount > 0 {
+        } else if scope.emptyClassification == .allSessionsRemoved {
             ContentUnavailableView {
                 Label("All Sessions Removed from View", systemImage: "eye.slash")
             } description: {
                 Text("The capture evidence is still intact and can be restored.")
             } actions: {
-                Button("Restore Removed Sessions") {
-                    coordinator.restoreRemovedSessions()
-                }
+                scopeRecovery(scope)
+            }
+        } else if scope.emptyClassification == .hiddenByScope {
+            ContentUnavailableView {
+                Label("No Matching Sessions", systemImage: "line.3.horizontal.decrease.circle")
+            } description: {
+                Text("Sessions exist in this capture, but none match the current scope.")
+            } actions: {
+                scopeRecovery(scope)
             }
         } else if coordinator.isCapturing {
             ContentUnavailableView {
@@ -84,24 +167,14 @@ struct SessionCenterView: View {
             } description: {
                 Text("Waiting for packets…")
             }
-        } else if coordinator.sessions.isEmpty {
-            if coordinator.isViewingSavedCapture {
-                ContentUnavailableView {
-                    Label("No Sessions", systemImage: "rectangle.stack")
-                } description: {
-                    Text("This capture contains no sessions.")
-                }
-            } else {
-                firstRunEmptyState
-            }
-        } else if coordinator.activeWorkspace.categoryFilters.contains(.security) {
+        } else if coordinator.isViewingSavedCapture {
             ContentUnavailableView {
-                Label("No Findings", systemImage: "checkmark.seal")
+                Label("No Sessions", systemImage: "rectangle.stack")
             } description: {
-                Text("No sessions match the active Findings filter and the other filters above.")
+                Text("This capture contains no sessions.")
             }
         } else {
-            ContentUnavailableView.search
+            firstRunEmptyState
         }
     }
 
@@ -116,7 +189,22 @@ struct SessionCenterView: View {
         }
     }
 
-    private func sessionControlShelf(_ workspace: WorkspaceState) -> some View {
+    @ViewBuilder
+    private func scopeRecovery(_ scope: SessionScopeSummary) -> some View {
+        if scope.hasClearableFilters {
+            Button(SessionScopeAction.resetTitle) { coordinator.resetSessionFilters() }
+                .help(SessionScopeAction.resetHelp)
+        }
+        if coordinator.isNoiseControlActive {
+            Button("Reset Noise Control for Project") { coordinator.clearNoiseControl() }
+                .help("Removes this Project’s muted host and protocol rules across its workspaces.")
+        }
+        if scope.removedCount > 0 {
+            Button("Restore Removed Sessions") { coordinator.restoreRemovedSessions() }
+        }
+    }
+
+    private func sessionControlShelf(_ workspace: WorkspaceState, shownCount: Int) -> some View {
         VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
             if workspace.isFilterBarVisible {
                 SessionFilterBar(
@@ -125,14 +213,31 @@ struct SessionCenterView: View {
                     onCommandAction: onCommandAction
                 )
             }
-            LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
+            if coordinator.sessionScope(shownCount: shownCount).isConstrained || coordinator
+                .canReturnToPreviousSessionScope
+            {
+                SessionScopeNotice(
+                    coordinator: coordinator,
+                    shownCount: shownCount,
+                    showsResetAction: !workspace.isFilterBarVisible && shownCount > 0
+                )
+                .padding(.horizontal, Theme.Metrics.spacingL)
+            }
+            if coordinator.isViewingSavedCapture {
+                savedCaptureSourceNotice
+            } else {
+                LiveTrafficStrip(coordinator: coordinator, isExpanded: liveChartBinding(workspace))
+            }
         }
         .padding(.bottom, Theme.Glass.functionalBarVerticalInset)
     }
 
     private func sessionContent(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
         VStack(spacing: 0) {
-            if coordinator.isOpeningSavedCapture {
+            if coordinator.isImportingCapture {
+                captureImportNotice
+                Divider()
+            } else if coordinator.isOpeningSavedCapture {
                 savedCaptureOpeningNotice
                 Divider()
             } else if let warning = coordinator.savedCaptureWarning {
@@ -183,6 +288,23 @@ struct SessionCenterView: View {
         .background(Color.yellow.opacity(0.06))
     }
 
+    /// The Time cell for a row. A capture file that recorded no time for a frame
+    /// leaves the session's start unknown; the cell says so with the standard em
+    /// dash rather than showing a substituted instant.
+    @ViewBuilder
+    private func timeCell(_ startTime: Date?) -> some View {
+        if let startTime {
+            Text(startTime, format: .dateTime.hour().minute().second())
+                .font(Theme.Typography.monoSmall)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("—")
+                .font(Theme.Typography.monoSmall)
+                .foregroundStyle(.tertiary)
+                .help("This capture file records no time for these frames.")
+        }
+    }
+
     private func sessionTable(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
         Table(sessions, selection: Binding(
             get: { workspace.selectedSessionID },
@@ -200,9 +322,7 @@ struct SessionCenterView: View {
             }
         )) {
             TableColumn("Time") { session in
-                Text(session.startTime, format: .dateTime.hour().minute().second())
-                    .font(Theme.Typography.monoSmall)
-                    .foregroundStyle(.secondary)
+                timeCell(session.startTime)
             }
             .width(72)
             TableColumn("Source") { session in
@@ -286,9 +406,7 @@ struct SessionCenterView: View {
             }
         )) {
             TableColumn("Time") { (row: SessionRow) in
-                Text(row.startTime, format: .dateTime.hour().minute().second())
-                    .font(Theme.Typography.monoSmall)
-                    .foregroundStyle(.secondary)
+                timeCell(row.startTime)
             }
             .width(72)
             TableColumn("Source") { (row: SessionRow) in
@@ -620,6 +738,9 @@ struct SessionCenterView: View {
             hostFilter: workspace.hostFilter,
             processFilter: workspace.processFilter,
             ipFilter: workspace.ipFilter,
+            aggregateProtocolFilters: workspace.aggregateProtocolFilters,
+            aggregateDestinationFilter: workspace.aggregateDestinationFilter,
+            aggregateRequiresFindings: workspace.aggregateRequiresFindings,
             filterRules: workspace.filterRules
         )
     }

@@ -412,7 +412,33 @@ struct HistoryIntegrationTests {
         #expect(record.sourceKind == .saved)
         #expect(record.startedAt > 0)
         #expect(record.endedAt == record.startedAt)
+        // An empty capture has no capture lifetime of its own, so the stored
+        // instants are the real saved-open event and are labelled as such.
+        #expect(record.timeBasis == .opened)
         #expect(page.captures.first?.sessionCount == 0)
+    }
+
+    @Test("Saved History timing accounts for every accepted frame")
+    func savedHistoryLifetimeUsesFrameCoverage() throws {
+        let openedAt = 9_000.0
+        var metadata = CaptureMetadataAccumulator()
+        metadata.add(linkType: 1, timestamp: Date(timeIntervalSince1970: 1_000), hasDecodedLinkLayer: true)
+        metadata.add(linkType: 999, timestamp: Date(timeIntervalSince1970: 1_050), hasDecodedLinkLayer: false)
+        let captured = try MainContentCoordinator.historyLifetime(for: metadata.summary(), openedAt: openedAt)
+        #expect(captured.timeBasis == .captured)
+        #expect(captured.startedAt == 1_000)
+        #expect(captured.endedAt == 1_050)
+        metadata.add(linkType: 999, timestamp: nil, hasDecodedLinkLayer: false)
+        let opened = try MainContentCoordinator.historyLifetime(for: metadata.summary(), openedAt: openedAt)
+        #expect(opened.timeBasis == .opened)
+        #expect(opened.startedAt == openedAt)
+        #expect(opened.endedAt == openedAt)
+        let empty = try MainContentCoordinator.historyLifetime(for: .empty, openedAt: openedAt)
+        #expect(empty.timeBasis == .opened)
+        #expect(empty.startedAt == openedAt)
+        #expect(throws: HistoryStoreError.self) {
+            try MainContentCoordinator.historyLifetime(for: .empty, openedAt: .nan)
+        }
     }
 
     // MARK: Privacy masking end-to-end

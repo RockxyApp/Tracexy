@@ -68,7 +68,7 @@ nonisolated struct SessionAccumulator {
     ///   it are unchanged.
     @discardableResult
     mutating func add(_ packet: DecodedPacket) -> UUID? {
-        foldSession(packet, hasReassembledApplication: false)
+        foldSession(packet, hasReassembledApplication: false, ordinal: nil)
     }
 
     /// The common production fold shared by batch, live and saved paths. Assigns
@@ -122,7 +122,9 @@ nonisolated struct SessionAccumulator {
         // excludes-counts any multi-frame recovered records the handoff carries; the
         // recovered facts are never propagated onto `enriched`/the representative.
         tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
-        return foldSession(enriched, hasReassembledApplication: hasReassembledApplication)
+        return foldSession(
+            enriched, hasReassembledApplication: hasReassembledApplication, ordinal: provenance.ordinal
+        )
     }
 
     /// Emit summaries in first-seen five-tuple order. Pure; decodes nothing and
@@ -218,7 +220,13 @@ nonisolated struct SessionAccumulator {
     /// enriched by the connection table's first-record probe, so a reassembly-driven
     /// application handoff can displace a representative even without a strictly
     /// larger layer count.
-    private mutating func foldSession(_ packet: DecodedPacket, hasReassembledApplication: Bool) -> UUID? {
+    private mutating func foldSession(
+        _ packet: DecodedPacket,
+        hasReassembledApplication: Bool,
+        ordinal: FrameOrdinal?
+    )
+        -> UUID?
+    {
         SessionBuilder.learnResolved(from: packet, into: &resolved)
         guard let key = packet.fiveTuple else {
             return nil
@@ -229,7 +237,7 @@ nonisolated struct SessionAccumulator {
             states[key] = state
         } else {
             order.append(key)
-            states[key] = State(first: packet)
+            states[key] = State(first: packet, ordinal: ordinal)
             becameRepresentative = true
         }
         return becameRepresentative ? SessionBuilder.sessionID(for: key) : nil
@@ -247,10 +255,13 @@ private extension SessionAccumulator {
         /// The packet is already enriched (or not) before it reaches session state:
         /// the connection table's first-record probe applies any reassembled
         /// application metadata upstream, so this fold never reassembles.
-        init(first packet: DecodedPacket) {
+        init(first packet: DecodedPacket, ordinal: FrameOrdinal?) {
             earliest = packet
+            firstSource = packet.sourceEndpoint
+            firstDestination = packet.destinationEndpoint
             latestTime = packet.timestamp
             rich = packet
+            firstOrdinal = ordinal
             fold(packet)
         }
 
@@ -271,13 +282,16 @@ private extension SessionAccumulator {
         mutating func merge(_ packet: DecodedPacket, hasReassembledApplication: Bool) -> Bool {
             // Earliest packet: a strictly-smaller timestamp wins, so equal
             // timestamps keep the first-seen packet — matching `sorted.first`.
-            if packet.timestamp < earliest.timestamp {
+            // Untimed packets never participate in this comparison. A mixed
+            // session uses the separately retained first endpoint pair below.
+            if let candidate = packet.timestamp, let current = earliest.timestamp, candidate < current {
                 earliest = packet
             }
             // Latest instant: `>=` lets an equal timestamp advance to the
-            // last-seen packet — matching `sorted.last`.
-            if packet.timestamp >= latestTime {
-                latestTime = packet.timestamp
+            // last-seen packet — matching `sorted.last`. An untimed packet cannot
+            // advance an instant it does not have.
+            if let candidate = packet.timestamp, candidate >= (latestTime ?? candidate) {
+                latestTime = candidate
             }
             // Richest representative: only a strictly-greater layer count wins, so
             // ties keep the first-seen packet — matching `packets.max(by:)`.
@@ -293,8 +307,8 @@ private extension SessionAccumulator {
         }
 
         func summary(key: FiveTuple, resolved: [String: String]) -> SessionSummary {
-            let client = earliest.sourceEndpoint
-            let server = earliest.destinationEndpoint
+            let client = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
+            let server = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
 
             let httpHost = rich.layers.first { $0.proto == .http }?
                 .fields.first { $0.name == "Host" }?.value
@@ -313,11 +327,21 @@ private extension SessionAccumulator {
             let stack = rich.protocolStack.filter { $0 != .ipv4 && $0 != .ipv6 }
             let protocolStack: [ProtocolKind] = stack.isEmpty ? [rich.transport ?? .other] : stack
             let id = SessionBuilder.sessionID(for: key)
-            let duration = max(0, latestTime.timeIntervalSince(earliest.timestamp))
+            // One untimed contributing frame makes the session's own span unknown:
+            // a start/duration derived from the timed subset would silently claim
+            // the whole session. Bytes, direction and every other fact are retained.
+            let start: Date? = untimedFrameCount > 0 ? nil : earliest.timestamp
+            let duration: TimeInterval? = if untimedFrameCount > 0 {
+                nil
+            } else if let latestTime, let first = earliest.timestamp {
+                max(0, latestTime.timeIntervalSince(first))
+            } else {
+                nil
+            }
 
             return SessionSummary(
                 id: id,
-                startTime: earliest.timestamp,
+                startTime: start,
                 duration: duration,
                 processName: processName,
                 host: host,
@@ -335,7 +359,9 @@ private extension SessionAccumulator {
                 sni: sni,
                 dnsQuery: dnsQuery,
                 dnsAnswers: dnsAnswers,
-                dnsAnswersOmittedCount: dnsAnswersOmittedCount
+                dnsAnswersOmittedCount: dnsAnswersOmittedCount,
+                firstCaptureOrdinal: firstOrdinal?.rawValue,
+                untimedFrameCount: untimedFrameCount
             )
         }
 
@@ -345,14 +371,24 @@ private extension SessionAccumulator {
         /// order. Beyond this, further unique answers are counted, not stored.
         private static let dnsAnswerPublicationCap = 64
 
-        /// Earliest packet by timestamp (first-seen tie-break) — drives direction
-        /// (client/server) and the session start.
+        /// Earliest packet by timestamp (first-seen tie-break), used for fully
+        /// timed session direction/start. Mixed sessions use the first endpoint
+        /// pair and expose unknown timing instead.
         private var earliest: DecodedPacket
-        /// Latest instant by timestamp (last-seen tie-break) — drives duration.
-        private var latestTime: Date
+        private let firstSource: IPEndpoint?
+        private let firstDestination: IPEndpoint?
+        /// Latest known instant (last-seen tie-break) — drives duration. `nil` while
+        /// no contributing packet has carried a capture time.
+        private var latestTime: Date?
         /// Richest packet by layer count (first-seen tie-break) — drives the
         /// decoded layers, protocol stack, and host resolution inputs.
         private var rich: DecodedPacket
+        /// Capture ordinal of the first frame folded into this session. Used only as
+        /// a deterministic source-order fallback for ordering; never elapsed time.
+        private let firstOrdinal: FrameOrdinal?
+        /// Contributing frames that carried no capture time. One is enough to make
+        /// the session's start, duration and latency unknown.
+        private var untimedFrameCount = 0
 
         /// Cumulative `originalLength` per source endpoint. Within a canonical
         /// five-tuple this holds at most the two directions; "up" vs "down" is
@@ -388,8 +424,15 @@ private extension SessionAccumulator {
             anyTCPRST ? .error : .ok
         }
 
+        /// The DNS handshake latency, and only when every contributing frame was
+        /// timed: an interval measured across a session with a missing instant
+        /// would be an inference from an input we do not have.
         private var latency: Double? {
-            guard let query = dnsQueryTime, let response = dnsResponseTime, response > query else {
+            guard untimedFrameCount == 0,
+                  let query = dnsQueryTime,
+                  let response = dnsResponseTime,
+                  response > query else
+            {
                 return nil
             }
             return response.timeIntervalSince(query) * 1_000
@@ -416,6 +459,9 @@ private extension SessionAccumulator {
         private mutating func fold(_ packet: DecodedPacket) {
             bytesBySource[packet.sourceEndpoint, default: 0] += packet.originalLength
             totalBytes += packet.originalLength
+            if packet.timestamp == nil {
+                untimedFrameCount += 1
+            }
 
             if sni == nil, let value = packet.sni {
                 sni = value
@@ -443,11 +489,12 @@ private extension SessionAccumulator {
             }
             dnsAnswersOmittedCount += packet.dnsAnswersOmittedCount
 
-            if packet.appProtocol == .dns {
+            // Only a timed DNS frame can contribute a handshake instant.
+            if packet.appProtocol == .dns, let instant = packet.timestamp {
                 if packet.dnsAnswers.isEmpty {
-                    dnsQueryTime = earlier(dnsQueryTime, packet.timestamp)
+                    dnsQueryTime = earlier(dnsQueryTime, instant)
                 } else {
-                    dnsResponseTime = earlier(dnsResponseTime, packet.timestamp)
+                    dnsResponseTime = earlier(dnsResponseTime, instant)
                 }
             }
 

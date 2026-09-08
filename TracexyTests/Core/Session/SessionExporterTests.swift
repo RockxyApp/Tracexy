@@ -53,7 +53,10 @@ struct SessionExporterTests {
         #expect(parsed.frames.count == fixture.frames.count)
         #expect(parsed.frames.allSatisfy { $0.linkType == LinkType.ethernet })
         #expect(zip(parsed.frames, fixture.frames).allSatisfy { lhs, rhs in
-            abs(lhs.timestamp.timeIntervalSince(rhs.timestamp)) < 0.00001
+            guard let left = lhs.timestamp, let right = rhs.timestamp else {
+                return lhs.timestamp == nil && rhs.timestamp == nil
+            }
+            return abs(left.timeIntervalSince(right)) < 0.00001
         })
         #expect(artifact.suggestedFileName.hasSuffix(".pcapng"))
     }
@@ -362,6 +365,151 @@ struct SessionExporterTests {
         #expect(alreadyUnprotected?.hasProtections == false)
     }
 
+    // MARK: - Missing capture time
+
+    @Test("Classic pcap export refuses untimed frames and names pcapng as the alternative")
+    func classicExportRejectsUntimedFrames() throws {
+        let fixture = try makeFixture()
+        let frames = framesWithLastUntimed(fixture.frames)
+
+        do {
+            _ = try SessionExporter.artifact(
+                for: fixture.session,
+                frames: frames,
+                defaultLinkType: LinkType.ethernet,
+                format: .pcap
+            )
+            Issue.record("Expected classic pcap to refuse an untimed frame")
+        } catch let error as SessionExportError {
+            #expect(error == .untimedFramesRequirePcapng)
+            let message = try #require(error.errorDescription)
+            #expect(message.contains("pcapng"))
+        }
+    }
+
+    @Test("Pcapng exports an untimed frame as an SPB preserving its DLT and both lengths")
+    func pcapngPreservesUntimedFrameExactly() throws {
+        let fixture = try makeFixture()
+        let frames = framesWithLastUntimed(fixture.frames)
+        let artifact = try SessionExporter.artifact(
+            for: fixture.session,
+            frames: frames,
+            defaultLinkType: LinkType.ethernet,
+            format: .pcapng
+        )
+
+        let parsed = try PcapngReader.read([UInt8](artifact.data))
+        #expect(parsed.frames.count == frames.count)
+        for (written, original) in zip(parsed.frames, frames) {
+            #expect(written.bytes == original.bytes)
+            #expect(written.originalLength == original.originalLength)
+            #expect(written.capturedLength == original.capturedLength)
+            #expect(written.linkType == LinkType.ethernet)
+            // Timing survives as it was: known stays known, unknown stays unknown.
+            #expect((written.timestamp == nil) == (original.timestamp == nil))
+        }
+    }
+
+    @Test("A truncated untimed frame keeps its exact captured and original lengths through pcapng")
+    func pcapngPreservesTruncatedUntimedFrame() throws {
+        let fixture = try makeFixture()
+        // 20 captured bytes of a 1500-byte wire frame, with no capture time.
+        let truncated = CapturedFrame(
+            bytes: [UInt8](repeating: 0x5A, count: 20),
+            timestamp: nil,
+            originalLength: 1_500,
+            capturedLength: 20,
+            linkType: LinkType.raw
+        )
+        let artifact = try SessionExporter.artifact(
+            for: fixture.session,
+            frames: [fixture.frames[0], truncated],
+            defaultLinkType: LinkType.ethernet,
+            format: .pcapng
+        )
+
+        let parsed = try PcapngReader.read([UInt8](artifact.data))
+        let written = try #require(parsed.frames.last)
+        #expect(written.bytes == truncated.bytes)
+        #expect(written.capturedLength == 20)
+        #expect(written.originalLength == 1_500)
+        #expect(written.linkType == LinkType.raw)
+        #expect(written.timestamp == nil)
+    }
+
+    @Test("An untimed frame that captured nothing of a longer wire frame is refused, not rewritten")
+    func pcapngRejectsUnrepresentableUntimedFrame() throws {
+        let fixture = try makeFixture()
+        let impossible = CapturedFrame(
+            bytes: [],
+            timestamp: nil,
+            originalLength: 64,
+            capturedLength: 0,
+            linkType: LinkType.ethernet
+        )
+        do {
+            _ = try SessionExporter.artifact(
+                for: fixture.session,
+                frames: [impossible],
+                defaultLinkType: LinkType.ethernet,
+                format: .pcapng
+            )
+            Issue.record("Expected pcapng to refuse an unrepresentable untimed frame")
+        } catch let error as SessionExportError {
+            #expect(error == .untimedFrameNotRepresentable)
+        }
+    }
+
+    @Test("Known-only pcapng output is unchanged by the untimed-frame support")
+    func pcapngKnownOnlyOutputIsStable() throws {
+        let fixture = try makeFixture()
+        let mixedFrames = framesWithMixedLinkTypes(fixture.frames)
+        let direct = try PcapngWriter.data(defaultLinkType: LinkType.ethernet, frames: mixedFrames)
+        // One section, one IDB per distinct link type, then the packet blocks —
+        // exactly the historical shape, with no Simple Packet Block anywhere.
+        #expect(!direct.isEmpty)
+        let parsed = try PcapngReader.read([UInt8](direct))
+        #expect(parsed.frames.map(\.linkType) == [LinkType.ethernet, LinkType.raw])
+        #expect(parsed.frames.allSatisfy { $0.timestamp != nil })
+    }
+
+    @Test("A session document only announces the nullable-timing versions when timing is absent")
+    func sessionDocumentVersionsTrackNullableTiming() throws {
+        let fixture = try makeFixture()
+        var untimedSession = fixture.session
+        untimedSession.startTime = nil
+        untimedSession.duration = nil
+        untimedSession.untimedFrameCount = 1
+        let frames = framesWithLastUntimed(fixture.frames)
+
+        let raw = try SessionExporter.artifact(
+            for: untimedSession,
+            frames: frames,
+            defaultLinkType: LinkType.ethernet,
+            format: .session
+        )
+        let rawObject = try #require(JSONSerialization.jsonObject(with: raw.data) as? [String: Any])
+        #expect(rawObject["formatVersion"] as? Int == 3)
+        let rawSummary = try #require(rawObject["session"] as? [String: Any])
+        // The keys are present and explicitly null — absent would be ambiguous.
+        #expect(rawSummary["startTime"] is NSNull)
+        #expect(rawSummary["duration"] is NSNull)
+        let rawFrames = try #require(rawObject["frames"] as? [[String: Any]])
+        #expect(rawFrames.contains { $0["timestamp"] is NSNull })
+        #expect(rawFrames.allSatisfy { $0["timestamp"] != nil })
+
+        let protected = try SessionExporter.artifact(
+            for: untimedSession,
+            frames: frames,
+            defaultLinkType: LinkType.ethernet,
+            format: .session,
+            privacy: SessionExportPrivacyPolicy(redactPayloadBodies: true)
+        )
+        let protectedObject = try #require(JSONSerialization.jsonObject(with: protected.data) as? [String: Any])
+        #expect(protectedObject["formatVersion"] as? Int == 4)
+        #expect((protectedObject["frames"] as? [[String: Any]])?.allSatisfy { $0["bytes"] == nil } == true)
+    }
+
     // MARK: Private
 
     private func makeRichSession(
@@ -404,6 +552,21 @@ struct SessionExporterTests {
             defaultLinkType: LinkType.ethernet
         )
         return (session, frames)
+    }
+
+    /// The same frames with the final one's capture time removed — what a pcapng
+    /// Simple Packet Block contributes to an otherwise timed session.
+    private func framesWithLastUntimed(_ frames: [CapturedFrame]) -> [CapturedFrame] {
+        frames.enumerated().map { index, frame in
+            CapturedFrame(
+                bytes: frame.bytes,
+                timestamp: index == frames.count - 1 ? nil : frame.timestamp,
+                originalLength: frame.originalLength,
+                capturedLength: frame.capturedLength,
+                linkType: frame.linkType ?? LinkType.ethernet,
+                processName: frame.processName
+            )
+        }
     }
 
     private func framesWithMixedLinkTypes(_ frames: [CapturedFrame]) -> [CapturedFrame] {

@@ -242,6 +242,12 @@ final class MainContentCoordinator {
     /// behind it has finished, which is exactly the window in which the source that
     /// save reads must not be reset, replaced or trashed.
     var pendingCaptureIOTask: Task<Void, Never>?
+    var pendingCaptureImportTask: Task<Void, Never>?
+    @ObservationIgnored var captureImportOperation: CaptureImportOperation = .copy
+    var captureImportRequestID = 0
+    var captureImportProgress: PcapStreamProgress?
+    var captureImportName: String?
+    var isCancellingCaptureImport = false
     @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
     @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
 
@@ -329,6 +335,14 @@ final class MainContentCoordinator {
     /// so the Overview chart draws from per-bucket totals and never re-scans frames
     /// or receives packet bytes.
     var savedCaptureActivity: CaptureActivity?
+
+    /// Bounded, neutral metadata inventory for the open saved capture: the link
+    /// types its frames declared, how many frames the file recorded without a time,
+    /// and how many this build could not decode a link layer for. Folded once at
+    /// open behind the same seam as ``savedCaptureActivity``; `nil` for live and
+    /// idle captures. It is a coverage statement, never an interpretation of file
+    /// comments, options or annotations.
+    var savedCaptureMetadata: CaptureMetadataSummary?
 
     /// Saved-file opening is an off-main, final-only transaction. The previous
     /// workspace remains intact while this is true; only monotonic byte progress
@@ -560,7 +574,7 @@ final class MainContentCoordinator {
 
     /// At most one off-main query evaluation per workspace. Superseding Apply/live
     /// refresh and capture boundaries cancel the prior task before issuing a new request.
-    var investigationQueryTasks: [UUID: Task<Void, Never>] = [:]
+    var investigationQueryTasks: [UUID: InvestigationQueryTask] = [:]
 
     /// Remembers the active Project's inspector-dock choice across launches.
     var layoutPreferences: WorkspaceLayoutPreferences
@@ -809,7 +823,7 @@ final class MainContentCoordinator {
 
     /// Whether there is anything to save (frames retained from a live or open capture).
     var canSaveCapture: Bool {
-        !retainedFrames.isEmpty
+        !retainedFrames.isEmpty && !isImportingCapture
     }
 
     var isNoiseControlActive: Bool {
@@ -900,14 +914,13 @@ final class MainContentCoordinator {
     /// map draws the heaviest routes last and they land on top.
     var regionTraffic: [(region: EndpointRegion, bytes: Int, sessions: Int)] {
         var totals: [EndpointRegion: (bytes: Int, sessions: Int)] = [:]
-        for session in visibleSessions {
-            let region = EndpointRegionResolver.region(forEndpoint: session.destinationEndpoint)
-            let current = totals[region] ?? (0, 0)
-            totals[region] = (current.bytes + session.totalBytes, current.sessions + 1)
+        for endpoint in flowEndpoints {
+            let current = totals[endpoint.region] ?? (0, 0)
+            totals[endpoint.region] = (current.bytes + endpoint.bytes, current.sessions + endpoint.sessionCount)
         }
         return totals
             .map { (region: $0.key, bytes: $0.value.bytes, sessions: $0.value.sessions) }
-            .sorted { $0.bytes < $1.bytes }
+            .sorted { ($0.bytes, $0.region.rawValue) < ($1.bytes, $1.region.rawValue) }
     }
 
     /// One row per remote address in view — the Flow surface's list side.
@@ -953,13 +966,21 @@ final class MainContentCoordinator {
     ///
     /// Correlation is computed over a time-bounded slice around the session
     /// rather than the whole capture. Grouping every session on demand would be
-    /// O(capture) on the main actor, and `CLAUDE.md` §7.7 keeps that work off the
-    /// hot path; a causal window of tens of seconds cannot reach further than
-    /// this slice anyway, so the narrower input costs no accuracy.
+    /// O(capture) on the main actor and violate the bounded UI publication path;
+    /// a causal window of tens of seconds cannot reach further than this slice
+    /// anyway, so the narrower input costs no accuracy.
     func activity(containing session: SessionSummary) -> Activity? {
+        // Correlation is time-dependent, so a session with no known start has no
+        // slice to correlate within and no action to belong to.
+        guard let anchor = session.startTime else {
+            return nil
+        }
         let window = ActivityBuilder.dnsCausalWindow
         let slice = presentedSessions.filter {
-            abs($0.startTime.timeIntervalSince(session.startTime)) <= window
+            guard let start = $0.startTime else {
+                return false
+            }
+            return abs(start.timeIntervalSince(anchor)) <= window
         }
         guard slice.count > 1 else {
             return nil
@@ -1088,6 +1109,7 @@ final class MainContentCoordinator {
         isViewingSavedCapture = false
         activeSavedCapture = nil
         savedCaptureActivity = nil
+        savedCaptureMetadata = nil
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1151,6 +1173,7 @@ final class MainContentCoordinator {
         isViewingSavedCapture = false
         activeSavedCapture = nil
         savedCaptureActivity = nil
+        savedCaptureMetadata = nil
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a
@@ -1485,7 +1508,7 @@ final class MainContentCoordinator {
             }
             return .group(SessionGroup(kind: kind, key: value, sessions: members))
         }
-        return (grouped + rows).sorted { $0.startTime < $1.startTime }
+        return (grouped + rows).sorted(by: SessionRow.orderedBefore)
     }
 
     private func rebuildActivities() {

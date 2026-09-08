@@ -78,6 +78,15 @@ struct InspectorView: View {
         }
     }
 
+    /// A session duration, or "Unknown" when the capture file left one of its
+    /// frames untimed. Never a formatted `0 s`, which would read as a measurement.
+    static func durationLabel(_ duration: TimeInterval?) -> String {
+        guard let duration else {
+            return "Unknown"
+        }
+        return String(format: "%.3f s", duration)
+    }
+
     // MARK: Private
 
     @State private var fieldQuery = ""
@@ -135,9 +144,10 @@ struct InspectorView: View {
             }
             Spacer(minLength: Theme.Metrics.spacingM)
             Button("Clear Citation") {
-                coordinator.cancelCitedFrame()
+                coordinator.clearCitedFrameAndReturn()
             }
             .controlSize(.small)
+            .help("Clear this citation and return to the facet it interrupted")
         }
         .font(Theme.Typography.caption)
         .padding(.horizontal, Theme.Metrics.spacingM)
@@ -354,7 +364,7 @@ struct InspectorView: View {
                 .font(Theme.Typography.chromeSecondary)
                 .foregroundStyle(.secondary)
                 footerDivider
-                Text(session.duration.formatted(.number.precision(.fractionLength(3))) + " s")
+                Text(Self.durationLabel(session.duration))
                     .font(Theme.Typography.chromeSecondary.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -485,9 +495,10 @@ struct InspectorView: View {
                     }
                     return false
                 }(),
+                // The coordinator owns the move to Layers and remembers the facet
+                // it interrupted; the view only clears its own byte selection.
                 inspectFrame: { provenance in
                     coordinator.inspectCitedFrame(sessionID: session.id, provenance: provenance)
-                    coordinator.activeWorkspace.inspectorTab = .layers
                     selectedRange = nil
                 }
             )
@@ -765,9 +776,14 @@ struct InspectorView: View {
                 // A lone conversation has no cross-protocol axis to draw, so it
                 // falls back to the honest phase split of its own duration.
                 let phases = timingPhases(session)
-                field("Total Duration", String(format: "%.3f s", session.duration))
+                field("Total Duration", Self.durationLabel(session.duration))
                 timingBar(phases, compact: false)
-                if session.latencyMilliseconds == nil {
+                if session.hasUnknownTiming {
+                    placeholder(
+                        "This capture file records no time for some of this session’s frames, "
+                            + "so its duration and latency can’t be measured."
+                    )
+                } else if session.latencyMilliseconds == nil {
                     placeholder("No handshake / TTFB latency was measured for this session.")
                 }
             }
@@ -889,7 +905,11 @@ struct InspectorView: View {
     private func timingPhases(_ session: SessionSummary) -> [TimingPhase] {
         // TODO: decoders (Core/) will populate real DNS/TCP/TLS phases later; until
         // then this is a two-segment latency/transfer split from real fields only.
-        let totalMs = max(session.duration * 1_000, 0)
+        // Unknown timing has no measured phase or zero-duration legend.
+        guard let duration = session.duration else {
+            return []
+        }
+        let totalMs = max(duration * 1_000, 0)
         guard let latency = session.latencyMilliseconds, latency >= 0, latency <= totalMs else {
             return [TimingPhase(
                 name: "Duration",
@@ -1005,13 +1025,15 @@ private struct CorrelatedActionTimeline: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
             header
-            VStack(spacing: 3) {
-                ForEach(activity.sessions) { member in
-                    row(member)
+            if hasKnownSpan {
+                VStack(spacing: 3) {
+                    ForEach(activity.sessions) { member in
+                        row(member)
+                    }
                 }
+                .background(alignment: .leading) { gridlines }
+                axis
             }
-            .background(alignment: .leading) { gridlines }
-            axis
             if let note = dominantPhaseNote {
                 Text(note)
                     .font(Theme.Typography.micro)
@@ -1028,13 +1050,25 @@ private struct CorrelatedActionTimeline: View {
     /// Ticks drawn across the plot, including both ends.
     private static let tickCount = 5
 
+    /// The plotted span. An action whose members include unknown timing has no span
+    /// to divide by; the tiny floor keeps the geometry total rather than trapping,
+    /// and ``hasKnownSpan`` is what decides whether the chart is shown at all.
     private var spanMilliseconds: Double {
-        max(activity.duration * 1_000, 0.0001)
+        max((activity.duration ?? 0) * 1_000, 0.0001)
+    }
+
+    /// Whether every member of the action is timed, so a correlated timeline is a
+    /// truthful drawing rather than one composed from partial instants.
+    private var hasKnownSpan: Bool {
+        activity.duration != nil && activity.startTime != nil
     }
 
     /// "142 ms to first byte · 296 ms complete" — the two numbers the action is
     /// judged on. The first is stated only when something measured a latency.
     private var headerDetail: String {
+        guard hasKnownSpan else {
+            return "Duration unknown — some frames have no capture time"
+        }
         let complete = "\(Self.ms(spanMilliseconds)) complete"
         guard let ttfb = firstByteMilliseconds else {
             return complete
@@ -1052,13 +1086,15 @@ private struct CorrelatedActionTimeline: View {
     /// first byte there is no single culprit, and naming one anyway would be the
     /// chart drawing a conclusion the numbers don't support.
     private var dominantPhaseNote: String? {
-        guard let ttfb = firstByteMilliseconds, ttfb > 0 else {
+        guard hasKnownSpan, let ttfb = firstByteMilliseconds, ttfb > 0 else {
             return nil
         }
-        guard let worst = activity.sessions.max(by: { $0.duration < $1.duration }) else {
+        guard let worst = activity.sessions.max(by: { ($0.duration ?? 0) < ($1.duration ?? 0) }),
+              let worstDuration = worst.duration else
+        {
             return nil
         }
-        let share = worst.duration * 1_000 / ttfb
+        let share = worstDuration * 1_000 / ttfb
         guard share >= 0.33, share <= 1 else {
             return nil
         }
@@ -1127,10 +1163,15 @@ private struct CorrelatedActionTimeline: View {
             .padding(.trailing, Theme.Metrics.spacingM)
 
             GeometryReader { geo in
-                let offset = member.startTime.timeIntervalSince(activity.startTime) * 1_000 / spanMilliseconds
-                let fraction = member.duration * 1_000 / spanMilliseconds
+                // Both coordinates come from real instants or they are not drawn:
+                // an unknown member start/duration collapses to a zero-offset,
+                // minimum-width bar labelled "—" rather than a plotted guess.
+                let offset = Self.offsetFraction(
+                    member: member, origin: activity.startTime, spanMilliseconds: spanMilliseconds
+                )
+                let fraction = (member.duration ?? 0) * 1_000 / spanMilliseconds
                 let width = max(geo.size.width * fraction, 3)
-                let label = Self.ms(member.duration * 1_000)
+                let label = member.duration.map { Self.ms($0 * 1_000) } ?? "—"
                 // The duration sits inside the bar when it fits, and trails it
                 // when it doesn't — so a short DNS lookup still shows its number.
                 let fitsInside = width > 46
@@ -1160,6 +1201,22 @@ private struct CorrelatedActionTimeline: View {
             .frame(height: 14)
         }
         .frame(height: 26)
+    }
+
+    /// Where a member's bar starts, as a fraction of the action's span. `0` when
+    /// either the member's start or the action's origin is unknown — no instant is
+    /// substituted to place it somewhere plausible.
+    private static func offsetFraction(
+        member: SessionSummary,
+        origin: Date?,
+        spanMilliseconds: Double
+    )
+        -> Double
+    {
+        guard let start = member.startTime, let origin else {
+            return 0
+        }
+        return start.timeIntervalSince(origin) * 1_000 / spanMilliseconds
     }
 
     /// What this step was actually talking to, so the row identifies itself

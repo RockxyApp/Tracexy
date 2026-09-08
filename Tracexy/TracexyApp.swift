@@ -34,6 +34,17 @@ struct TracexyApp: App {
             TracexySettingsCommands()
             TracexyProjectCommands(coordinator: coordinator)
 
+            // File ▸ Import Capture… (⌘O). It routes through the same coordinator
+            // panel action as the sidebar's Import buttons, so the menu, its
+            // shortcut and the sidebar cannot drift apart in what they accept or
+            // which Project they file a capture into.
+            CommandGroup(after: .newItem) {
+                Button("Import Capture…") {
+                    coordinator.presentCaptureImportPanel()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+            }
+
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
@@ -48,6 +59,20 @@ struct TracexyApp: App {
                     coordinator.beginSessionSearch()
                 }
                 .keyboardShortcut("f", modifiers: .command)
+            }
+
+            // View ▸ Back to Previous Scope (⌘[). The same single route the shared
+            // scope notice offers, so the menu and the notice can never disagree
+            // about what going back means.
+            //
+            // Disabled when the current source has no valid return point.
+            CommandGroup(after: .sidebar) {
+                Button(SessionScopeReturnAction.title) {
+                    coordinator.returnToPreviousSessionScope()
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!coordinator.canReturnToPreviousSessionScope)
+                Divider()
             }
 
             CommandGroup(after: .appInfo) {

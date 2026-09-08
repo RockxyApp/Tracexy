@@ -270,9 +270,12 @@ nonisolated enum PcapngReader {
             throw PacketError.malformed("pcapng: simple packet length mismatch")
         }
         let payload = try buffer.bytes(payloadStart, capturedLength)
+        // A Simple Packet Block carries no timestamp field at all. That absence is
+        // reported as `nil` — never as the Unix epoch, which is a real instant a
+        // genuine capture can legitimately carry.
         return CapturedFrame(
             bytes: payload,
-            timestamp: Date(timeIntervalSince1970: 0),
+            timestamp: nil,
             originalLength: originalLength,
             linkType: interface.linkType
         )

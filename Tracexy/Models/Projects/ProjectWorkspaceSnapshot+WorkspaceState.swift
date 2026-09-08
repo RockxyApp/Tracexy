@@ -23,6 +23,14 @@ extension ProjectWorkspaceSnapshot {
             hostFilter: workspace.hostFilter,
             processFilter: workspace.processFilter,
             ipFilter: workspace.ipFilter,
+            // Written only when something is actually intersecting, so a
+            // workspace that never used an aggregate drill-in produces exactly
+            // the document an older build would have.
+            aggregateProtocolFilters: workspace.aggregateProtocolFilters.isEmpty
+                ? nil
+                : workspace.aggregateProtocolFilters.map(\.rawValue).sorted(),
+            aggregateDestinationFilter: workspace.aggregateDestinationFilter,
+            aggregateRequiresFindings: workspace.aggregateRequiresFindings ? true : nil,
             filterRules: workspace.filterRules.map(ProjectFilterRuleSnapshot.init),
             isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
             isFilterBarVisible: workspace.isFilterBarVisible,
@@ -58,6 +66,17 @@ extension ProjectWorkspaceSnapshot {
         workspace.hostFilter = hostFilter
         workspace.processFilter = processFilter
         workspace.ipFilter = ipFilter
+        // Conservative like every other hydrated enum here: an absent key or a
+        // name this build does not recognize contributes no filter rather than a
+        // guessed one, and the bounded prefix keeps a hostile document from
+        // restoring an oversized set.
+        workspace.aggregateProtocolFilters = Set(
+            (aggregateProtocolFilters ?? [])
+                .prefix(ProjectLimits.maximumAggregateProtocolFilters)
+                .compactMap(ProtocolKind.init(rawValue:))
+        )
+        workspace.aggregateDestinationFilter = aggregateDestinationFilter
+        workspace.aggregateRequiresFindings = aggregateRequiresFindings ?? false
         workspace.filterRules = SessionFilterRule.normalized(
             filterRules.map(SessionFilterRule.init),
             limit: min(max(1, maxFilterRules), ProjectLimits.maximumFilterRules)

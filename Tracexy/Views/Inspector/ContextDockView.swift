@@ -602,11 +602,11 @@ struct ContextDockView: View {
         return selection
     }
 
+    /// The coordinator owns the move to Layers and remembers the facet it
+    /// interrupted, so this only has to make sure the dock is actually on screen.
     private func inspectCitation(_ provenance: SessionFrameProvenance, for session: SessionSummary) {
         coordinator.inspectCitedFrame(sessionID: session.id, provenance: provenance)
-        let workspace = coordinator.activeWorkspace
-        workspace.inspectorTab = .layers
-        if workspace.inspectorLayout == .hidden {
+        if coordinator.activeWorkspace.inspectorLayout == .hidden {
             coordinator.toggleInspectorBottom()
         }
     }
@@ -632,6 +632,9 @@ struct ContextDockView: View {
     /// decoders start emitting typed sub-phases (DNS · connect · handshake ·
     /// TTFB), they map onto this same shape and the bar renders unchanged.
     private func timePhases(_ activity: Activity) -> [TimeShare] {
+        guard activity.duration != nil else {
+            return []
+        }
         var order: [ProtocolKind] = []
         var totals: [ProtocolKind: Double] = [:]
         for session in activity.sessions {
@@ -639,7 +642,9 @@ struct ContextDockView: View {
             if totals[proto] == nil {
                 order.append(proto)
             }
-            totals[proto, default: 0] += session.duration * 1_000
+            // Only a measured duration contributes: a member with unknown timing
+            // adds nothing rather than an implicit zero-length phase.
+            totals[proto, default: 0] += (session.duration ?? 0) * 1_000
         }
         return order
             .map {
@@ -655,10 +660,20 @@ struct ContextDockView: View {
     /// The host's measured latencies over the last hour, oldest first, with the
     /// selected session marked so the sparkline can call it out.
     private func baselineHistory(for session: SessionSummary) -> [BaselinePoint] {
-        let cutoff = session.startTime.addingTimeInterval(-3_600)
+        // "The last hour" is a time window, so it needs a known anchor and known
+        // peer instants. Without them there is no baseline to draw.
+        guard let anchor = session.startTime else {
+            return []
+        }
+        let cutoff = anchor.addingTimeInterval(-3_600)
         return coordinator.presentedSessions
-            .filter { $0.host == session.host && $0.startTime >= cutoff }
-            .sorted { $0.startTime < $1.startTime }
+            .filter { peer in
+                guard let start = peer.startTime else {
+                    return false
+                }
+                return peer.host == session.host && start >= cutoff
+            }
+            .sorted(by: SessionChronology.ascending)
             .compactMap { peer in
                 peer.latencyMilliseconds.map {
                     BaselinePoint(id: peer.id, milliseconds: $0, isCurrent: peer.id == session.id)
@@ -681,7 +696,9 @@ struct ContextDockView: View {
     }
 
     private func relationLabel(_ peer: SessionSummary, to session: SessionSummary) -> String {
-        let time = peer.startTime.formatted(date: .omitted, time: .standard)
+        // An unknown start prints the standard em dash; the relation itself (same
+        // host / same process) is an observed fact and stays truthful without it.
+        let time = peer.startTime.map { $0.formatted(date: .omitted, time: .standard) } ?? "—"
         if peer.host == session.host {
             return "Same host · \(time)"
         }

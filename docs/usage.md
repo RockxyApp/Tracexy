@@ -66,6 +66,28 @@ file, and the Inspector reopens exactly one representative frame by validated fi
 session is selected. Opening another file, clearing, or starting live capture retires stale progress,
 results, and selected-evidence reads.
 
+**File → Import Capture… (⌘O)** and the sidebar's Import actions open the same panel and copy the
+chosen file into the active Project's Library. Tracexy decides the format from the file's own header,
+so a capture stored as `evidence.bin` or with no extension is accepted. Gzip PCAP/PCAPNG and the
+capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are expanded locally
+into a managed capture. Other compressed or session formats are refused with a concrete recovery
+message. Recognizing a header or archive is not a guarantee that the whole capture parses, so the
+streaming open above still reports truncated or malformed input. Importing never overwrites: a
+capture whose name is already taken is kept under a unique name beside the existing one, and the
+original source on disk is never moved. Switching Projects while the panel is open cancels the import
+rather than filing the capture into the new Project.
+
+Copying runs off the UI thread with progress and **Cancel Import**. Source-changing actions
+stay held until copying or cancellation cleanup finishes; switching Projects waits and keeps
+the copy in its original Project. A complete copy published just before cancellation stays
+in the Library but does not open automatically. See [Capture migration](capture-migration.md)
+for Wireshark and other tools, conversion tradeoffs, supported artifacts, and recovery.
+
+Sessions, Overview and Flow name the active scope and show visible sessions against the
+capture total. **Reset Session Filters** clears the current workspace’s filters and sidebar
+protocol lens. Noise Control and sessions removed from view have separate recovery actions;
+resetting a filter does not change those choices or another workspace.
+
 ## Projects
 
 A Project is a complete, isolated investigation. Use the Project selector in the main toolbar,
@@ -110,7 +132,7 @@ outgoing Project. Retry the Project change after recovery has settled; the missi
 reported as recovered.
 
 An accepted **Save Capture** or session export holds its capture source until it finishes or fails.
-During that time Start, Clear, opening another capture, import replacement, and Library trash are
+During that time Start, Clear, opening another capture, importing, and Library trash are
 refused so they cannot change the bytes being saved or exported. Stop remains available. Project
 changes wait for accepted saves; finish or cancel an export before changing Projects.
 Import and Trash explain when the capture source is busy rather than reporting a filesystem
@@ -300,11 +322,22 @@ Contains, Is, Starts With, Ends With, Does Not Contain, Is Not, and Regex; an in
 matches nothing. A build allows up to a fixed number of advanced rules (12 by default); the add buttons
 disable at that limit.
 
-**Investigate** opens a separate capture-local typed query editor. Its bounded rows can match process,
-host, exact IP address, CIDR block, port range, protocol, status, finding kind, start-time range, total
-bytes, or retained evidence. Choose **All** or **Any** across rows and optionally negate an individual
-row. **Apply** validates the complete draft first; an invalid row keeps its field-level error visible
-and does not replace the previous accepted query or result.
+**Investigate** opens a separate capture-local typed query editor. **Rows** provides bounded native
+controls for process, host, exact IP address, CIDR block, port range, protocol, status, finding kind,
+start-time range, total bytes, or retained evidence. Choose **All** or **Any** across rows and
+optionally negate an individual row.
+
+**Expression** accepts a bounded Session Expression over whole sessions. It supports lower-case
+protocol terms; `not`/`!`, `and`/`&&`, `or`/`||`, and parentheses; exact or CIDR endpoint matches;
+exact ports; quoted host/process contains matches; byte comparisons; and typed finding names. For
+example: `http and destination.port == 80`. This is Tracexy session syntax, not a Wireshark display
+filter: packet fields such as `ip.addr` and `tcp.port`, regex operators, and unsupported names are
+rejected with a position instead of being reinterpreted.
+
+Both modes retain their unfinished drafts when you switch. **Apply** validates the complete active
+draft first; an invalid row or expression keeps its error visible and does not replace the previous
+accepted query or result. Expression input is limited to 4,096 UTF-8 bytes, 256 tokens and eight
+levels of nesting before the existing typed-query bounds are applied.
 
 An accepted Investigation query composes with the existing pills, search, sidebar scopes, mute rules,
 and advanced filters. Its removable chip reports the current matched count. Evidence-dependent queries
@@ -416,3 +449,31 @@ as unknown rather than inventing one.
 Throughout, Tracexy shows what it captured and nothing more: a host with no resolvable name shows its
 IP, a session with no attributable process shows none, and an idle capture shows an empty list. Nothing
 in the UI is fabricated when data is missing.
+
+### Return from a scope drill-down
+
+After opening a host, client, IP address, or Findings scope, use **Back to Previous Scope** in the scope row or View menu (**Command-[**). Each workspace remembers up to eight drill-down origins, including the previous sidebar location and selected session. Returning keeps your current search text, advanced rules, Investigation query, Noise Control, and removed-session decisions. Reset Session Filters clears this return history. A source or Project generation change makes older entries unavailable.
+
+When an exact frame citation opens Layers, **Clear Citation** returns to the inspector tab that preceded the first citation. Selecting another session or changing the source discards that return point. Follow Stream keeps the existing session and filters.
+
+Selecting an IP in the sidebar matches the exact address in typed endpoints or DNS answers, including equivalent IPv6 spellings; it does not match parts of another IP address.
+
+### Open sessions from Overview and Flow
+
+Overview's host and protocol rows narrow the sessions already represented by the
+summary. Existing search, category chips, advanced rules, Investigation query and
+Noise Control remain active. Protocol counts overlap because one session can
+contain several protocol layers. Review Findings intersects the current scope
+with typed finding membership, including when Errors is already selected.
+
+Flow groups typed destination addresses; equivalent IPv6 spellings share one row.
+Show Sessions opens only sessions whose destination matches that row, while the
+sidebar IP command also matches source addresses and DNS answers. Sessions without
+a usable destination are counted as omitted from the address list. The map uses
+the same groups and describes registry regions, not physical server locations or
+the location of the machine that recorded an imported capture.
+
+Open Sessions and Overview's Open Flow Map keep the current scope. Explicit
+aggregate drill-downs support **Back to Previous Scope**. **Reset Session Filters**
+clears aggregate narrowing; Project configuration saves the filter intent, without
+captured data or navigation history.

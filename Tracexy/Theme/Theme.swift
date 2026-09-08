@@ -294,6 +294,7 @@ enum Theme {
     static func color(for kind: ProtocolKind) -> Color {
         switch kind {
         case .ethernet,
+             .linuxCooked,
              .other: .secondary
         case .ipv4,
              .ipv6: .teal

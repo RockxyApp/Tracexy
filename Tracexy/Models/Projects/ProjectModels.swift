@@ -10,6 +10,10 @@ nonisolated enum ProjectLimits {
     static let maximumNameLength = 80
     static let maximumStringLength = 512
     static let maximumFilterRules = 64
+    /// Upper bound on a persisted aggregate protocol intersection. The live set is
+    /// a finite enum, so this only has to stop a hand-edited or hostile catalog
+    /// from carrying an unbounded array through validation.
+    static let maximumAggregateProtocolFilters = 32
     static let maximumCatalogBytes = 2 * 1_024 * 1_024
     static let maximumPortableProjectBytes = 1 * 1_024 * 1_024
 }
@@ -127,6 +131,9 @@ nonisolated struct ProjectWorkspaceSnapshot: Codable, Hashable, Sendable, Identi
         hostFilter: String? = nil,
         processFilter: String? = nil,
         ipFilter: String? = nil,
+        aggregateProtocolFilters: [String]? = nil,
+        aggregateDestinationFilter: String? = nil,
+        aggregateRequiresFindings: Bool? = nil,
         filterRules: [ProjectFilterRuleSnapshot] = [ProjectFilterRuleSnapshot()],
         isAdvancedFilterVisible: Bool = false,
         isFilterBarVisible: Bool = true,
@@ -151,6 +158,9 @@ nonisolated struct ProjectWorkspaceSnapshot: Codable, Hashable, Sendable, Identi
         self.hostFilter = hostFilter
         self.processFilter = processFilter
         self.ipFilter = ipFilter
+        self.aggregateProtocolFilters = aggregateProtocolFilters
+        self.aggregateDestinationFilter = aggregateDestinationFilter
+        self.aggregateRequiresFindings = aggregateRequiresFindings
         self.filterRules = filterRules
         self.isAdvancedFilterVisible = isAdvancedFilterVisible
         self.isFilterBarVisible = isFilterBarVisible
@@ -178,6 +188,17 @@ nonisolated struct ProjectWorkspaceSnapshot: Codable, Hashable, Sendable, Identi
     var hostFilter: String?
     var processFilter: String?
     var ipFilter: String?
+    /// Raw `ProtocolKind` names of the conjunctive aggregate intersection.
+    ///
+    /// Optional, and written as `nil` when the intersection is empty, so a
+    /// catalog or `.tracexyproject` produced before this field existed decodes
+    /// with no new filter instead of failing — a missing key must never cost a
+    /// user their Projects. Unknown names are dropped on hydration.
+    var aggregateProtocolFilters: [String]?
+    /// The Flow destination-address scope, absent in older documents for the
+    /// same reason.
+    var aggregateDestinationFilter: String?
+    var aggregateRequiresFindings: Bool?
     var filterRules: [ProjectFilterRuleSnapshot]
     var isAdvancedFilterVisible: Bool
     var isFilterBarVisible: Bool
@@ -283,6 +304,7 @@ nonisolated enum ProjectCatalogValidationError: Error, Equatable, Sendable {
     case invalidWorkspaceName(workspaceID: UUID, ProjectNameNormalizationError)
     case duplicateWorkspaceName(projectID: UUID, name: String)
     case tooManyFilterRules(workspaceID: UUID, count: Int)
+    case tooManyAggregateProtocolFilters(workspaceID: UUID, count: Int)
     case stringTooLong(field: String, limit: Int)
     case invalidDate(projectID: UUID)
 }
@@ -365,6 +387,13 @@ extension ProjectCatalog {
                         count: workspace.filterRules.count
                     )
                 }
+                let aggregateProtocolCount = workspace.aggregateProtocolFilters?.count ?? 0
+                guard aggregateProtocolCount <= ProjectLimits.maximumAggregateProtocolFilters else {
+                    throw ProjectCatalogValidationError.tooManyAggregateProtocolFilters(
+                        workspaceID: workspace.id,
+                        count: aggregateProtocolCount
+                    )
+                }
                 try workspace.validateStrings()
                 project.workspaces[workspaceIndex] = workspace
             }
@@ -401,10 +430,14 @@ private extension ProjectWorkspaceSnapshot {
         for value in categoryFilters {
             try Self.validate(value, field: "categoryFilters")
         }
+        for value in aggregateProtocolFilters ?? [] {
+            try Self.validate(value, field: "aggregateProtocolFilters")
+        }
         for (field, value) in [
             ("hostFilter", hostFilter),
             ("processFilter", processFilter),
             ("ipFilter", ipFilter),
+            ("aggregateDestinationFilter", aggregateDestinationFilter),
         ] {
             if let value {
                 try Self.validate(value, field: field)

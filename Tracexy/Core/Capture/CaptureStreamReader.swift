@@ -26,8 +26,9 @@ nonisolated struct CaptureFrameReference: Sendable, Equatable {
     let capturedLength: Int
     /// The frame's original on-wire length (>= `capturedLength`).
     let originalLength: Int
-    /// Decoded capture timestamp.
-    let timestamp: Date
+    /// Decoded capture timestamp, or `nil` when the source block carried none (a
+    /// pcapng Simple Packet Block). Classic `.pcap` records always carry one.
+    let timestamp: Date?
     /// Link type of this specific frame. For classic `.pcap` this is the file's
     /// single link type; for `.pcapng` it is the frame's own interface link type,
     /// so a mixed-interface capture keeps each frame's real DLT.

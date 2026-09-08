@@ -155,7 +155,8 @@ struct PcapngStreamReaderTests {
             #expect(event.reference.linkType == LinkType.ethernet)
             #expect(event.progress.bytesConsumed == UInt64(file.count))
             #expect(event.progress.totalBytes == UInt64(file.count))
-            #expect(abs(event.reference.timestamp.timeIntervalSince1970 - 1_700_000_000.5) < 1e-6)
+            let instant = try #require(event.reference.timestamp)
+            #expect(abs(instant.timeIntervalSince1970 - 1_700_000_000.5) < 1e-6)
 
             #expect(try reader.next() == .end(PcapngStreamCompletion(
                 reason: .cleanEndOfFile,
@@ -179,7 +180,8 @@ struct PcapngStreamReaderTests {
             let reader = try PcapngStreamReader(contentsOf: url)
             let event = try Self.expectFrame(reader.next())
             #expect(event.bytes == payload)
-            #expect(abs(event.reference.timestamp.timeIntervalSince1970 - 2.0) < 1e-6)
+            let instant = try #require(event.reference.timestamp)
+            #expect(abs(instant.timeIntervalSince1970 - 2.0) < 1e-6)
         }
     }
 
@@ -209,7 +211,8 @@ struct PcapngStreamReaderTests {
             #expect(second.reference.sectionIndex == 1)
             #expect(second.reference.interfaceID == 0)
             #expect(second.reference.linkType == LinkType.raw)
-            #expect(abs(second.reference.timestamp.timeIntervalSince1970 - 3.0) < 1e-6)
+            let secondInstant = try #require(second.reference.timestamp)
+            #expect(abs(secondInstant.timeIntervalSince1970 - 3.0) < 1e-6)
         }
     }
 
@@ -229,13 +232,15 @@ struct PcapngStreamReaderTests {
             #expect(first.reference.interfaceID == 0)
             #expect(first.reference.linkType == LinkType.ethernet)
             // 2_500_000_000 ticks / 10^9 == 2.5 s
-            #expect(abs(first.reference.timestamp.timeIntervalSince1970 - 2.5) < 1e-6)
+            let firstInstant = try #require(first.reference.timestamp)
+            #expect(abs(firstInstant.timeIntervalSince1970 - 2.5) < 1e-6)
 
             let second = try Self.expectFrame(reader.next())
             #expect(second.reference.interfaceID == 1)
             #expect(second.reference.linkType == LinkType.raw)
             // 2_048 ticks / 2^10 == 2.0 s
-            #expect(abs(second.reference.timestamp.timeIntervalSince1970 - 2.0) < 1e-6)
+            let secondInstant = try #require(second.reference.timestamp)
+            #expect(abs(secondInstant.timeIntervalSince1970 - 2.0) < 1e-6)
         }
     }
 
@@ -249,14 +254,15 @@ struct PcapngStreamReaderTests {
         try Self.withTempFile(file) { url in
             let reader = try PcapngStreamReader(contentsOf: url)
             let event = try Self.expectFrame(reader.next())
-            #expect(abs(event.reference.timestamp.timeIntervalSince1970 - -999.5) < 1e-6)
+            let instant = try #require(event.reference.timestamp)
+            #expect(abs(instant.timeIntervalSince1970 - -999.5) < 1e-6)
         }
     }
 
     // MARK: - Simple Packet Block
 
     @Test
-    func simplePacketUsesInterfaceZeroSnapLengthAndEpoch() throws {
+    func simplePacketUsesInterfaceZeroSnapLengthAndUnknownTime() throws {
         let payload: [UInt8] = [0x71, 0x72, 0x73, 0x74, 0x75, 0x76]
         var file = PcapngFixture.sectionHeader(little: true)
         file += PcapngFixture.interfaceDescription(little: true, linkType: 1, snapLength: 6)
@@ -270,6 +276,23 @@ struct PcapngStreamReaderTests {
             #expect(event.reference.originalLength == 6)
             #expect(event.reference.interfaceID == 0)
             #expect(event.reference.linkType == LinkType.ethernet)
+            // A Simple Packet Block has no timestamp field, so the capture instant
+            // is unknown — deliberately not the Unix epoch, which a real capture
+            // can legitimately carry (see `realEpochTimestampStaysKnown`).
+            #expect(event.reference.timestamp == nil)
+        }
+    }
+
+    @Test("An Enhanced Packet Block at tick zero is a real, known Unix-epoch instant")
+    func realEpochTimestampStaysKnown() throws {
+        let payload: [UInt8] = [0x01]
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.interfaceDescription(little: true, linkType: 1)
+        file += PcapngFixture.enhancedPacket(little: true, ticks: 0, captured: payload)
+
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            let event = try Self.expectFrame(reader.next())
             #expect(event.reference.timestamp == Date(timeIntervalSince1970: 0))
         }
     }

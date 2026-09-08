@@ -36,7 +36,10 @@ enum ActivityBuilder {
         guard !sessions.isEmpty else {
             return Result()
         }
-        let ordered = sessions.sorted { $0.startTime < $1.startTime }
+        // Correlation is entirely time-dependent: both passes ask "how long after".
+        // A session whose start time is unknown therefore cannot be correlated at
+        // all — it is reported ungrouped rather than attached on a guessed instant.
+        let ordered = sessions.sorted(by: SessionChronology.ascending)
 
         // Which names claimed which address, so a contested address can be
         // detected instead of silently resolved to whichever came first.
@@ -65,6 +68,10 @@ enum ActivityBuilder {
             if consumed.contains(dns.id) {
                 continue
             }
+            // No known answer instant means no causal window can be applied.
+            guard let dnsStart = dns.startTime else {
+                continue
+            }
             let name = dns.dnsQuery ?? dns.host
             let answers = Set(dns.dnsAnswers.filter { !$0.isEmpty })
             guard !answers.isEmpty else {
@@ -79,18 +86,20 @@ enum ActivityBuilder {
                 for candidate in byAddress[answer] ?? [] {
                     guard candidate.id != dns.id,
                           !consumed.contains(candidate.id),
-                          !seenFollowers.contains(candidate.id) else
+                          !seenFollowers.contains(candidate.id),
+                          // An untimed connection cannot be placed inside the window.
+                          let candidateStart = candidate.startTime else
                     {
                         continue
                     }
-                    let delta = candidate.startTime.timeIntervalSince(dns.startTime)
+                    let delta = candidateStart.timeIntervalSince(dnsStart)
                     if delta >= 0, delta <= window {
                         seenFollowers.insert(candidate.id)
                         followers.append(candidate)
                     }
                 }
             }
-            followers.sort { $0.startTime < $1.startTime }
+            followers.sort(by: SessionChronology.ascending)
             guard !followers.isEmpty else {
                 continue
             }
@@ -131,7 +140,10 @@ enum ActivityBuilder {
         var buckets: [String: [SessionSummary]] = [:]
         for session in remaining {
             guard let process = Self.attributedProcess(of: session),
-                  let canonical = Self.canonicalName([session]) else
+                  let canonical = Self.canonicalName([session]),
+                  // The second pass is adjacency-gated, so an unknown start time
+                  // disqualifies the session from grouping rather than widening it.
+                  session.startTime != nil else
             {
                 result.ungrouped.append(session)
                 continue
@@ -159,8 +171,11 @@ enum ActivityBuilder {
                 if let canonical = Self.canonicalName(run) {
                     evidence.append(.canonicalNameMatch(name: canonical))
                 }
-                let spread = run[run.count - 1].startTime.timeIntervalSince(run[0].startTime)
-                evidence.append(.temporalAdjacency(seconds: spread))
+                // Every run member was gated on a known start above, so this spread
+                // is measured from real instants only.
+                if let last = run[run.count - 1].startTime, let first = run[0].startTime {
+                    evidence.append(.temporalAdjacency(seconds: last.timeIntervalSince(first)))
+                }
 
                 // Temporal adjacency alone never groups anything.
                 guard evidence.contains(where: { $0.tier > .weak }) else {
@@ -171,12 +186,31 @@ enum ActivityBuilder {
             }
         }
 
-        result.activities.sort { $0.startTime > $1.startTime }
-        result.ungrouped.sort { $0.startTime > $1.startTime }
+        result.activities.sort { Self.activityPrecedes($0, $1) }
+        result.ungrouped.sort(by: SessionChronology.descending)
         return result
     }
 
     // MARK: Private
+
+    /// Newest action first. Every grouped action has at least one known member
+    /// start (both passes require one), so this compares real instants and falls
+    /// back to the stable action id only on an exact tie.
+    private static func activityPrecedes(_ lhs: Activity, _ rhs: Activity) -> Bool {
+        switch (lhs.startTime, rhs.startTime) {
+        case let (left?, right?):
+            if left != right {
+                return left > right
+            }
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            break
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
 
     /// Destination address without the port. Endpoints are formatted `ip:port`,
     /// and IPv6 literals carry more than one colon, so split from the right.
@@ -219,13 +253,18 @@ enum ActivityBuilder {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    /// Splits a time-ordered bucket wherever the gap exceeds the window.
+    /// Splits a time-ordered bucket wherever the gap exceeds the window. Every
+    /// member is known-timed (the caller gates on that), so the gap is measured
+    /// from real instants and never inferred across a missing one.
     private static func runs(in bucket: [SessionSummary], window: TimeInterval) -> [[SessionSummary]] {
-        let ordered = bucket.sorted { $0.startTime < $1.startTime }
+        let ordered = bucket.sorted(by: SessionChronology.ascending)
         var runs: [[SessionSummary]] = []
         var current: [SessionSummary] = []
         for session in ordered {
-            if let last = current.last, session.startTime.timeIntervalSince(last.startTime) > window {
+            if let last = current.last?.startTime,
+               let start = session.startTime,
+               start.timeIntervalSince(last) > window
+            {
                 runs.append(current)
                 current = []
             }

@@ -150,6 +150,8 @@ extension MainContentCoordinator {
     }
 
     func flushProjectStateForTermination() async {
+        cancelCaptureImport()
+        await pendingCaptureImportTask?.value
         _ = await projectTransitionTask?.value
         await pendingCaptureIOTask?.value
         await waitForHistory()
@@ -357,6 +359,7 @@ extension MainContentCoordinator {
             && projectStore.loadState != .loading
             && pendingProjectSwitchConfirmation == nil
             && pendingCaptureIOTask == nil
+            && pendingCaptureImportTask == nil
             && historyMutationTask == nil
     }
 

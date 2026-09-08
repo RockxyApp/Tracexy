@@ -247,7 +247,8 @@ struct ActivityBuilderTests {
         let activity = try #require(ActivityBuilder.build(from: [dns, conn]).activities.first)
 
         // Overlapping sessions: summing would report 0.288 s for a 0.29 s action.
-        #expect(abs(activity.duration - 0.29) < 0.005)
+        let span = try #require(activity.duration)
+        #expect(abs(span - 0.29) < 0.005)
     }
 
     @Test("Rebuilding from the same sessions yields the same activity id")
@@ -335,12 +336,61 @@ struct ActivityBuilderTests {
         #expect(activity.id == pinned)
     }
 
+    @Test("A session with no capture time is never correlated into an action")
+    func untimedSessionsAreNeverGrouped() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let dns = Self.session(
+            host: "dns.google", at: base, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        // The connection that dialled the answered address, but with no capture
+        // time: no causal window can place it after the answer.
+        let untimedFollower = Self.session(
+            host: "api.example.com", at: nil, duration: nil, process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [dns, untimedFollower])
+        #expect(result.activities.isEmpty)
+        #expect(Set(result.ungrouped.map(\.id)) == Set([dns.id, untimedFollower.id]))
+        // Ungrouped is not "lost": both sessions are reported, unknown-time last.
+        #expect(result.ungrouped.last?.startTime == nil)
+    }
+
+    @Test("An untimed DNS answer cannot anchor a causal window")
+    func untimedDNSAnswerAnchorsNothing() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let dns = Self.session(
+            host: "dns.google", at: nil, duration: nil, process: "MyApp",
+            stack: [.udp, .dns], dnsQuery: "api.example.com", dnsAnswers: ["93.184.16.34"]
+        )
+        let follower = Self.session(
+            host: "api.example.com", at: base.addingTimeInterval(0.01), process: "MyApp",
+            stack: [.tcp, .tls], destination: "93.184.16.34:443", sni: "api.example.com"
+        )
+
+        let result = ActivityBuilder.build(from: [dns, follower])
+        #expect(result.activities.isEmpty)
+        #expect(result.ungrouped.count == 2)
+    }
+
+    @Test("Mixed known and unknown members do not imply a complete group time")
+    func mixedGroupTiming() {
+        let known = Self.session(host: "example.test", at: Date(timeIntervalSince1970: 0), stack: [.tcp])
+        let unknown = Self.session(host: "example.test", at: nil, duration: nil, stack: [.tcp])
+        let activity = Activity(sessions: [known, unknown], evidence: [])
+        #expect(activity.startTime == nil)
+        #expect(activity.duration == nil)
+        #expect(SessionGroup(kind: .host, key: "example.test", sessions: [known, unknown]).startTime == nil)
+        #expect(Activity(sessions: [known], evidence: []).startTime == Date(timeIntervalSince1970: 0))
+    }
+
     // MARK: Private
 
     private static func session(
         host: String,
-        at start: Date,
-        duration: TimeInterval = 0.05,
+        at start: Date?,
+        duration: TimeInterval? = 0.05,
         process: String? = "MyApp",
         stack: [ProtocolKind],
         destination: String = "93.184.16.34:443",
@@ -360,7 +410,7 @@ struct ActivityBuilderTests {
             destinationEndpoint: destination,
             protocolStack: stack,
             status: .ok,
-            latencyMilliseconds: duration * 1_000,
+            latencyMilliseconds: duration.map { $0 * 1_000 },
             bytesUp: 1_024,
             bytesDown: 2_048,
             decodedLayers: [],

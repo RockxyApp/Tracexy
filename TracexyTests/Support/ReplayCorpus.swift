@@ -373,8 +373,9 @@ enum ReplayCorpus {
     }
 
     /// A pcapng using a Simple Packet Block (interface 0 has `snaplen == 0`, the
-    /// no-limit value). The SPB carries no timestamp, so the frame is honestly at
-    /// the Unix epoch — asserted rather than papered over.
+    /// no-limit value). The SPB carries no timestamp field, so the frame's capture
+    /// instant is genuinely unknown — asserted rather than papered over with the
+    /// Unix epoch, which a real capture can also legitimately carry.
     static func pcapngSimplePacketBytes() -> [UInt8] {
         let frame = eth(PacketBuilder.dnsQueryFrame(
             name: "spb.example", src: "198.51.100.17", dst: "203.0.113.51", srcPort: 44_000

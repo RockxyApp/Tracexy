@@ -27,40 +27,65 @@ extension MainContentCoordinator {
 
     // MARK: Sidebar selection
 
-    /// Selects a top-level sidebar item, clearing any host/process/IP drill-down.
+    /// Selects a top-level sidebar item, clearing any host/process/IP drill-down
+    /// and the narrower Overview/Flow aggregate scope with it.
     func selectSidebarItem(_ item: SidebarItem) {
         let ws = activeWorkspace
         ws.sidebarSelection = item
         ws.hostFilter = nil
         ws.processFilter = nil
         ws.ipFilter = nil
+        ws.clearAggregateScope()
     }
 
     /// Drills into a single host/domain (from the sidebar "Domains"/"Pinned" groups).
+    ///
+    /// This replaces the scope the user was reading, so — unlike
+    /// ``selectSidebarItem(_:)`` above — it records a bounded way back first.
+    ///
+    /// It keeps the established *replacement* semantics: this is a global "show me
+    /// everything for this host" route, not an aggregate narrowing, so the
+    /// Overview/Flow aggregate scope goes with the sibling drill-downs it
+    /// replaces. Leaving it behind would silently hide sessions the user asked to
+    /// see. The scope-preserving counterparts live in `+AggregateNavigation`.
     func selectHost(_ host: String) {
         let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.processFilter = nil
-        ws.ipFilter = nil
-        ws.hostFilter = host
+        recordSessionScopeDrillIn(in: ws) {
+            ws.sidebarSelection = .sessions
+            ws.processFilter = nil
+            ws.ipFilter = nil
+            ws.clearAggregateScope()
+            ws.hostFilter = host
+        }
     }
 
     /// Drills into a single process (from the sidebar "Apps" group).
     func selectProcess(_ process: String) {
         let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.hostFilter = nil
-        ws.ipFilter = nil
-        ws.processFilter = process
+        recordSessionScopeDrillIn(in: ws) {
+            ws.sidebarSelection = .sessions
+            ws.hostFilter = nil
+            ws.ipFilter = nil
+            ws.clearAggregateScope()
+            ws.processFilter = process
+        }
     }
 
     /// Drills into a single IP address (a sub-IP under a domain).
+    ///
+    /// Sidebar IP semantics are deliberately wide — a typed source *or*
+    /// destination endpoint, or a DNS answer. Flow's address rows need the
+    /// destination-only predicate instead and use
+    /// ``showSessionsForAggregateDestination(_:)``.
     func selectIP(_ ip: String) {
         let ws = activeWorkspace
-        ws.sidebarSelection = .sessions
-        ws.hostFilter = nil
-        ws.processFilter = nil
-        ws.ipFilter = ip
+        recordSessionScopeDrillIn(in: ws) {
+            ws.sidebarSelection = .sessions
+            ws.hostFilter = nil
+            ws.processFilter = nil
+            ws.clearAggregateScope()
+            ws.ipFilter = ip
+        }
     }
 
     // MARK: Pinned hosts (Favorites)
@@ -122,6 +147,7 @@ extension MainContentCoordinator {
         ws.hostFilter = nil
         ws.processFilter = nil
         ws.ipFilter = nil
+        ws.clearAggregateScope()
         // A saved set may hold more rows than this build allows (it was saved on
         // a different build, or the cap changed). Clamp to capacity, and never
         // leave the builder with zero rows.
