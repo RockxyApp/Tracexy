@@ -385,7 +385,11 @@ nonisolated struct DatagramAssessor: Hashable, Sendable {
             return lhs.provenance.originalLength < rhs.provenance.originalLength
         }
         if lhs.provenance.timestamp != rhs.provenance.timestamp {
-            return lhs.provenance.timestamp < rhs.provenance.timestamp
+            // A documented total order over optional capture times: known precedes
+            // unknown. Used purely as a tie-break, never as elapsed time.
+            return SessionFrameProvenance.timeOrderedBefore(
+                lhs.provenance.timestamp, rhs.provenance.timestamp
+            )
         }
         if lhs.provenance.linkType != rhs.provenance.linkType {
             return lhs.provenance.linkType < rhs.provenance.linkType

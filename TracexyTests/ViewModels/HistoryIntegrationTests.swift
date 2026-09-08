@@ -340,7 +340,7 @@ struct HistoryIntegrationTests {
 
     @Test("Opening a saved capture persists exactly one saved, complete capture")
     func savedTerminalMapping() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "saved", frames: frames, in: environment.directory)
@@ -358,7 +358,7 @@ struct HistoryIntegrationTests {
 
     @Test("Reopening the same file is a distinct History event")
     func reopenIsDistinctEvent() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "reopen", frames: frames, in: environment.directory)
@@ -378,7 +378,7 @@ struct HistoryIntegrationTests {
 
     @Test("A truncated tail maps to incomplete completeness")
     func savedTruncatedCompleteness() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
         let capture = try Self.writeCapture(named: "truncated", frames: frames, in: environment.directory)
@@ -399,7 +399,7 @@ struct HistoryIntegrationTests {
 
     @Test("An empty saved capture uses the finite deterministic fallback instant")
     func emptySavedFallback() async throws {
-        let environment = try Self.makeSavedEnvironment()
+        let environment = try await Self.makeSavedEnvironment()
         defer { environment.teardown() }
         let capture = try Self.writeCapture(named: "empty", frames: [], in: environment.directory)
 
@@ -412,7 +412,33 @@ struct HistoryIntegrationTests {
         #expect(record.sourceKind == .saved)
         #expect(record.startedAt > 0)
         #expect(record.endedAt == record.startedAt)
+        // An empty capture has no capture lifetime of its own, so the stored
+        // instants are the real saved-open event and are labelled as such.
+        #expect(record.timeBasis == .opened)
         #expect(page.captures.first?.sessionCount == 0)
+    }
+
+    @Test("Saved History timing accounts for every accepted frame")
+    func savedHistoryLifetimeUsesFrameCoverage() throws {
+        let openedAt = 9_000.0
+        var metadata = CaptureMetadataAccumulator()
+        metadata.add(linkType: 1, timestamp: Date(timeIntervalSince1970: 1_000), hasDecodedLinkLayer: true)
+        metadata.add(linkType: 999, timestamp: Date(timeIntervalSince1970: 1_050), hasDecodedLinkLayer: false)
+        let captured = try MainContentCoordinator.historyLifetime(for: metadata.summary(), openedAt: openedAt)
+        #expect(captured.timeBasis == .captured)
+        #expect(captured.startedAt == 1_000)
+        #expect(captured.endedAt == 1_050)
+        metadata.add(linkType: 999, timestamp: nil, hasDecodedLinkLayer: false)
+        let opened = try MainContentCoordinator.historyLifetime(for: metadata.summary(), openedAt: openedAt)
+        #expect(opened.timeBasis == .opened)
+        #expect(opened.startedAt == openedAt)
+        #expect(opened.endedAt == openedAt)
+        let empty = try MainContentCoordinator.historyLifetime(for: .empty, openedAt: openedAt)
+        #expect(empty.timeBasis == .opened)
+        #expect(empty.startedAt == openedAt)
+        #expect(throws: HistoryStoreError.self) {
+            try MainContentCoordinator.historyLifetime(for: .empty, openedAt: .nan)
+        }
     }
 
     // MARK: Privacy masking end-to-end
@@ -618,20 +644,15 @@ struct HistoryIntegrationTests {
         await coordinator.waitForHistory()
     }
 
-    private static func makeSavedEnvironment(function: String = #function) throws -> SavedEnvironment {
-        let suiteName = "com.amunx.tracexy.history.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("tracexy-history-\(UUID().uuidString)", isDirectory: true)
+    private static func makeSavedEnvironment(function: String = #function) async throws -> SavedEnvironment {
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let store = try #require(coordinator.sessionStore)
+        let directory = isolation.root.appendingPathComponent("Fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = try SessionStore()
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults),
-            sessionStore: store
-        )
         return SavedEnvironment(coordinator: coordinator, store: store, directory: directory) {
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: directory)
+            isolation.tearDown()
         }
     }
 

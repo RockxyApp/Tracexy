@@ -12,7 +12,15 @@ nonisolated enum PcapWriter {
     static let snapLength: UInt32 = 262_144
 
     /// Serialize frames into classic `.pcap` bytes for `linkType`.
-    static func data(linkType: UInt32, frames: [CapturedFrame]) -> Data {
+    ///
+    /// - Throws: ``SessionExportError/untimedFramesRequirePcapng`` when any frame
+    ///   carries no capture time. The classic record header has a mandatory
+    ///   timestamp field with no way to spell "unknown", so writing one would
+    ///   fabricate an instant; the caller is pointed at pcapng instead.
+    static func data(linkType: UInt32, frames: [CapturedFrame]) throws -> Data {
+        guard frames.allSatisfy({ $0.timestamp != nil }) else {
+            throw SessionExportError.untimedFramesRequirePcapng
+        }
         var out = Data(capacity: globalHeaderSize + frames.reduce(0) { $0 + recordHeaderSize + $1.bytes.count })
 
         // Global header — magic written as raw bytes so the on-disk order is
@@ -27,11 +35,12 @@ nonisolated enum PcapWriter {
         append32(linkType, to: &out) // network / link type
 
         for frame in frames {
-            let interval = frame.timestamp.timeIntervalSince1970
-            let seconds = UInt32(max(0, min(interval.rounded(.down), Double(UInt32.max))))
-            let micros = UInt32(((interval - interval.rounded(.down)) * 1_000_000).rounded())
-            append32(seconds, to: &out)
-            append32(min(micros, 999_999), to: &out)
+            guard let timestamp = frame.timestamp else {
+                throw SessionExportError.untimedFramesRequirePcapng
+            }
+            let encoded = try CaptureTimestampEncoding.classic(timestamp)
+            append32(encoded.seconds, to: &out)
+            append32(encoded.microseconds, to: &out)
             append32(UInt32(frame.bytes.count), to: &out) // incl_len (captured)
             append32(UInt32(max(frame.originalLength, frame.bytes.count)), to: &out) // orig_len
             out.append(contentsOf: frame.bytes)
@@ -42,6 +51,17 @@ nonisolated enum PcapWriter {
     /// Write frames to a `.pcap` file at `url`.
     static func write(linkType: UInt32, frames: [CapturedFrame], to url: URL) throws {
         try data(linkType: linkType, frames: frames).write(to: url, options: .atomic)
+    }
+
+    /// Whether every frame can be represented in the classic record format, i.e.
+    /// each carries a capture time. Lets a caller choose a format before building.
+    static func canRepresent(frames: [CapturedFrame]) -> Bool {
+        frames.allSatisfy { frame in
+            guard let timestamp = frame.timestamp else {
+                return false
+            }
+            return (try? CaptureTimestampEncoding.classic(timestamp)) != nil
+        }
     }
 
     // MARK: Private

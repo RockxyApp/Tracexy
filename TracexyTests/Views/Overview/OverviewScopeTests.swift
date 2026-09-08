@@ -79,7 +79,9 @@ struct OverviewScopeTests {
         let activity = try #require(coordinator.savedCaptureActivity)
         #expect(activity.totalFrames == coordinator.retainedFrameCount)
         #expect(activity.totalFrames > 0)
-        #expect(activity.duration >= 0)
+        // Every frame in this fixture is timed, so the capture has a real duration.
+        #expect(activity.untimedFrameCount == 0)
+        #expect(try #require(activity.duration) >= 0)
         // A frames-over-time aggregation exists — the saved surface draws this, not
         // the live "waiting for traffic" throughput state.
         #expect(!activity.isEmpty)
@@ -99,11 +101,15 @@ struct OverviewScopeTests {
 
         try #require(coordinator.activeSavedCapture != nil)
         try #require(coordinator.savedCaptureActivity != nil)
+        try #require(coordinator.savedCaptureMetadata != nil)
 
         coordinator.clearSessions()
 
         #expect(coordinator.activeSavedCapture == nil)
         #expect(coordinator.savedCaptureActivity == nil)
+        // The metadata inventory describes the cleared file, so it is dropped with
+        // the rest of that file's identity rather than outliving it.
+        #expect(coordinator.savedCaptureMetadata == nil)
         #expect(!coordinator.isViewingSavedCapture)
     }
 
@@ -147,6 +153,34 @@ struct OverviewScopeTests {
 
         #expect(!findingSessionIDs.isEmpty)
         #expect(matchingSessionIDs == findingSessionIDs)
+    }
+
+    @Test("Overview findings narrow an Errors scope without replacing it and return cleanly")
+    func aggregateFindingDrillKeepsErrorsAndHost() async throws {
+        let env = try await makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        let workspace = coordinator.activeWorkspace
+        let target = try #require(coordinator.sessions.first { coordinator.findingSessionIDs.contains($0.id) })
+        let index = try #require(coordinator.sessions.firstIndex { $0.id == target.id })
+        coordinator.sessions[index].status = .error
+        workspace.sidebarSelection = .overview
+        workspace.hostFilter = target.host
+        workspace.categoryFilters = [.errors]
+        let before = Set(coordinator.visibleSessions.map(\.id))
+        let expected = before.intersection(coordinator.findingSessionIDs)
+        #expect(!expected.isEmpty)
+        coordinator.showAggregateFindingSessions()
+        #expect(Set(coordinator.visibleSessions.map(\.id)) == expected)
+        #expect(workspace.categoryFilters == [.errors])
+        #expect(workspace.hostFilter == target.host)
+        #expect(workspace.aggregateRequiresFindings)
+        #expect(coordinator.returnToPreviousSessionScope())
+        #expect(!workspace.aggregateRequiresFindings)
+        #expect(Set(coordinator.visibleSessions.map(\.id)) == before)
+        coordinator.showAggregateFindingSessions()
+        coordinator.resetSessionFilters()
+        #expect(!workspace.aggregateRequiresFindings)
     }
 
     @Test("Removing sessions hides them across presentation surfaces and remains reversible")
@@ -211,11 +245,9 @@ struct OverviewScopeTests {
     /// Writes the sample frames to a real `.pcap` and opens it through
     /// `openSavedCapture`, the same path the sidebar uses.
     private func makeLoadedCoordinator(function: String = #function) async throws -> Environment {
-        let suiteName = "com.amunx.tracexy.tests.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
-        )
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
 
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("tracexy-tests-\(UUID().uuidString)", isDirectory: true)
@@ -231,7 +263,7 @@ struct OverviewScopeTests {
         try #require(!coordinator.sessions.isEmpty, "opening the sample capture must produce sessions")
 
         return Environment(coordinator: coordinator) {
-            defaults.removePersistentDomain(forName: suiteName)
+            isolation.tearDown()
             try? FileManager.default.removeItem(at: directory)
         }
     }

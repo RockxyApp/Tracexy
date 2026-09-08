@@ -156,6 +156,61 @@ struct AutomationExportTests {
         #expect(text.contains("'-1+1"))
     }
 
+    // MARK: Internal — unknown timing
+
+    @Test("Unknown session timing is an explicit JSON null, never an omitted key")
+    func unknownTimingIsExplicitNull() throws {
+        let page = Self.sessionPage(
+            sessions: [Self.value(startTime: nil, duration: nil, disclosure: .minimum)],
+            examinedCount: 1,
+            nextCursor: nil,
+            disclosure: .minimum
+        )
+        let text = try #require(String(data: AutomationExport.json(sessionPage: page), encoding: .utf8))
+        // Timing is always disclosed, so the keys are present with a null value —
+        // distinguishable from a privacy-gated field, which stays absent entirely.
+        #expect(text.contains("\"startTime\":null"))
+        #expect(text.contains("\"duration\":null"))
+        #expect(!text.contains("\"host\""))
+        #expect(!text.contains("\"processName\""))
+    }
+
+    @Test("Unknown timing renders as empty CSV cells rather than a zero instant")
+    func unknownTimingIsEmptyCSVCells() throws {
+        let page = Self.sessionPage(
+            sessions: [Self.value(startTime: nil, duration: nil, disclosure: .minimum)],
+            examinedCount: 1,
+            nextCursor: nil,
+            disclosure: .minimum
+        )
+        let text = try #require(String(data: AutomationExport.csv(sessionPage: page), encoding: .utf8))
+        let row = try #require(text.components(separatedBy: "\r\n").dropFirst().first)
+        let cells = row.components(separatedBy: ",")
+        #expect(cells.count == 12)
+        #expect(cells[1].isEmpty) // start_time
+        #expect(cells[2].isEmpty) // duration
+    }
+
+    @Test("A capture always discloses whether its lifetime is captured or an open event")
+    func captureDisclosesTimeBasis() throws {
+        for (storage, spelling) in [(HistoryCaptureTimeBasis.captured, "captured"), (.opened, "opened")] {
+            let capture = AutomationCaptureValue(HistoryStoredCapture(
+                record: HistoryCaptureRecord(
+                    captureID: UUID(),
+                    startedAt: 1_000,
+                    endedAt: 2_000,
+                    sourceKind: .saved,
+                    completeness: .complete,
+                    timeBasis: storage
+                ),
+                sessionCount: 1
+            ))
+            let page = AutomationCapturePage(captures: [capture], nextCursor: nil, pageSize: 25)
+            let text = try #require(String(data: AutomationExport.json(capturePage: page), encoding: .utf8))
+            #expect(text.contains("\"timeBasis\":\"\(spelling)\""))
+        }
+    }
+
     // MARK: Internal — structural scan
 
     @Test("The automation sources import nothing forbidden and reference no rich types/fields")
@@ -206,8 +261,8 @@ struct AutomationExportTests {
 
     private static func value(
         sessionID: UUID = UUID(),
-        startTime: Double = 1_000,
-        duration: Double = 5,
+        startTime: Double? = 1_000,
+        duration: Double? = 5,
         processName: String? = "curl",
         host: String = "example.com",
         sourceEndpoint: String = "10.0.0.1:5000",

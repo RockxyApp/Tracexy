@@ -41,14 +41,18 @@ nonisolated enum AutomationExport {
     /// Deterministic RFC-4180 CSV for a session page: one fixed header row, then
     /// one row per matched session. Records are separated by CRLF and every field
     /// is quoted when it contains a comma, quote, CR or LF. Undisclosed/absent
-    /// values are empty cells.
+    /// values are empty cells — including `start_time`/`duration`, where an empty
+    /// cell means the session's own timing is unknown (never zero).
     static func csv(sessionPage page: AutomationSessionPage) -> Data {
         var rows = [encodeRow(sessionCSVHeader)]
         for session in page.sessions {
             rows.append(encodeRow([
                 session.sessionID.uuidString,
-                number(session.startTime),
-                number(session.duration),
+                // An empty timing cell means the session's own span is unknown —
+                // CSV has no null, so absence is spelled as an empty field rather
+                // than a zero that would read as a real instant/duration.
+                session.startTime.map(number) ?? "",
+                session.duration.map(number) ?? "",
                 session.protocols.joined(separator: " "),
                 session.status.rawValue,
                 session.latencyMilliseconds.map(number) ?? "",

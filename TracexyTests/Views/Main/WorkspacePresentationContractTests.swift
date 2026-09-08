@@ -6,6 +6,33 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
+    @Test("Project changes remount native layout and scoped editors without remounting launch setup")
+    func projectPresentationIdentity() throws {
+        let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let manager = try readProjectFile("Tracexy/Views/Projects/ProjectPresentation.swift")
+        #expect(root.contains("return ZStack {"))
+        #expect(root.contains(".id(activeProjectID)"))
+        #expect(root.contains("isSidebarPresented: sidebarVisibility"))
+        #expect(root.contains("coordinator.startGeneration == launchGeneration"))
+        #expect(app.contains(".defaultAppStorage(coordinator.activeProjectDefaults)"))
+        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 5)
+        #expect(root.contains("ProjectTransitionPresentation("))
+        #expect(manager.contains("ProjectTransitionPresentation("))
+        #expect(manager.contains("unsaved in-memory sessions and evidence"))
+    }
+
+    @Test("Synthetic Project composition isolates storage roots and application settings")
+    func demoProjectCompositionIsIsolated() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let settings = try readProjectFile("Tracexy/Views/Settings/SettingsView.swift")
+        #expect(app.contains("applicationSupportRoot: demoRoot.appendingPathComponent"))
+        #expect(app.contains("cacheRoot: demoRoot.appendingPathComponent"))
+        #expect(app.contains("applicationDefaults: Self.applicationDefaults"))
+        #expect(settings.contains("GeneralSettingsView(applicationDefaults: applicationDefaults)"))
+        #expect(settings.contains("applicationDefaults: applicationDefaults,"))
+    }
+
     @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
     func monitorOrder() {
         #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow, .history])
@@ -33,7 +60,7 @@ struct WorkspacePresentationContractTests {
         let source = try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
 
         #expect(source.contains("findingSummaryBar"))
-        #expect(source.contains("Review \\(all.count.formatted()) in Sessions"))
+        #expect(source.contains("coordinator.showAggregateFindingSessions()"))
         #expect(!source.contains("findingPreviewLimit"))
         #expect(!source.contains("findingRow("))
         #expect(!source.contains("Open evidence"))
@@ -66,7 +93,7 @@ struct WorkspacePresentationContractTests {
 
         #expect(inspector.contains("case .evidence: sessionEvidence(session)"))
         #expect(inspector.contains("Cited frame"))
-        #expect(inspector.contains("coordinator.cancelCitedFrame()"))
+        #expect(inspector.contains("coordinator.clearCitedFrameAndReturn()"))
         #expect(timeline.contains("Capture-level:"))
         #expect(timeline.contains("No replacement frame was loaded"))
         #expect(details.contains("SessionEvidenceContextSummaryView"))
@@ -112,7 +139,9 @@ struct WorkspacePresentationContractTests {
         let footer = try readProjectFile("Tracexy/Views/Common/WorkspaceFooterBar.swift")
 
         #expect(root.contains("commandDescriptors: sessionCommandDescriptors(workspace)"))
-        #expect(root.contains("onCommandAction: { performSessionCommand($0, workspace) }"))
+        #expect(root.contains(
+            "onCommandAction: { performSessionCommand($0, coordinator.activeWorkspace) }"
+        ))
         #expect(!commandBar.contains("TracexyGlassEffectGroup"))
         #expect(!commandBar.contains(".tracexyGlassEffect"))
         #expect(commandBar.contains(".tracexyGlassButtonStyle()"))
@@ -208,7 +237,7 @@ struct WorkspacePresentationContractTests {
         #expect(!settings.contains("TabView(selection:"))
     }
 
-    @Test("Main toolbar keeps workspace titles out and the capture picker in its native slot")
+    @Test("Main toolbar separates Project context from capture controls")
     func mainToolbarOwnsWorkspaceContext() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
         let chrome = try readProjectFile("Tracexy/Views/Common/NativeWorkspaceWindowChrome.swift")
@@ -217,7 +246,12 @@ struct WorkspacePresentationContractTests {
         #expect(!root.contains(".navigationSubtitle("))
         #expect(chrome.contains("window.title = TracexyIdentity.current.displayName"))
         #expect(chrome.contains("window.titleVisibility = .hidden"))
-        #expect(chrome.contains("Self.sidebarTrackingSeparatorIdentifier,\n            Self.interfacePickerIdentifier"))
+        #expect(chrome.contains(
+            "Self.sidebarTrackingSeparatorIdentifier,\n            Self.projectSelectorIdentifier,\n            .flexibleSpace"
+        ))
+        #expect(chrome.contains(
+            "Self.interfacePickerIdentifier,\n            Self.captureSeparatorIdentifier,\n            Self.captureActionIdentifier,\n            .space"
+        ))
     }
 
     @Test("Capture status uses the native toolbar as its only visible surface")
@@ -325,7 +359,7 @@ struct WorkspacePresentationContractTests {
         #expect(query.contains("Picker(\"Field\""))
         #expect(query.contains(".accessibilityLabel(\"Investigation field\")"))
         #expect(query.contains("DatePicker(\"From\""))
-        #expect(query.contains("A missing retained finding is never treated as proof"))
+        #expect(query.contains("Unavailable evidence stays unknown, including under negation."))
         #expect(query.contains(".accessibilityLabel(\"Investigation query editor\")"))
         #expect(!footer.contains("Investigate"))
         #expect(!footer.contains("Investigation"))
@@ -376,9 +410,10 @@ struct WorkspacePresentationContractTests {
         #expect(sidebar.contains("restoreLabel: \"Restore Hidden Domains\""))
         #expect(sidebar.contains("restoreLabel: \"Restore Hidden IP Addresses\""))
         #expect(sidebar.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
-        #expect(visibility.contains("sources.hiddenApps"))
-        #expect(visibility.contains("sources.hiddenDomains"))
-        #expect(visibility.contains("sources.hiddenIPs"))
+        #expect(visibility.contains("ProjectScopedSettingsKeys.hiddenSourceApps"))
+        #expect(visibility.contains("ProjectScopedSettingsKeys.hiddenSourceDomains"))
+        #expect(visibility.contains("ProjectScopedSettingsKeys.hiddenSourceIPs"))
+        #expect(visibility.contains("defaults: activeProjectDefaults"))
         #expect(visibility.contains("persistHiddenSources()"))
         #expect(!visibility.contains("sessions.removeAll"))
     }

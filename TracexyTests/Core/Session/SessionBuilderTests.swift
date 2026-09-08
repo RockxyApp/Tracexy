@@ -196,7 +196,9 @@ struct SessionBuilderTests {
         // so the live table appends at the tail instead of shifting downward.
         let result = SessionBuilder.build(from: TwoSessions.batchOne, linkType: LinkType.ethernet)
         #expect(result.count == 2)
-        let starts = result.map(\.startTime)
+        // Every frame in this corpus is timed, so every session has a real start.
+        let starts = result.compactMap(\.startTime)
+        #expect(starts.count == result.count)
         #expect(starts == starts.sorted())
         #expect(result.first?.sni == "one.example")
         #expect(result.last?.sni == "two.example")
@@ -237,7 +239,121 @@ struct SessionBuilderTests {
         // A second packet joined the session: more bytes and a real duration.
         #expect(after.totalBytes > before.totalBytes)
         #expect(before.duration == 0)
-        #expect(after.duration > 0)
+        #expect((after.duration ?? 0) > 0)
+    }
+
+    // MARK: - Missing capture time
+
+    @Test("One untimed frame makes a session's start, duration and latency unknown while keeping its bytes")
+    func untimedFrameMakesSessionTimingUnknown() throws {
+        let payload = PacketBuilder.tlsClientHello(sni: "mixed.example.com")
+        let cut = 3
+        let timedOnly = [
+            tcpFrame(payload: Array(payload[..<cut]), sequence: 9_000, timestamp: 1),
+            tcpFrame(payload: Array(payload[cut...]), sequence: 9_000 + UInt32(cut), timestamp: 2),
+        ]
+        let mixed = [
+            timedOnly[0],
+            untimedTCPFrame(payload: Array(payload[cut...]), sequence: 9_000 + UInt32(cut)),
+        ]
+
+        let known = try #require(SessionBuilder.build(from: timedOnly, linkType: LinkType.ethernet).first)
+        let partial = try #require(SessionBuilder.build(from: mixed, linkType: LinkType.ethernet).first)
+
+        // Known-only behaviour is untouched.
+        #expect(known.startTime == Date(timeIntervalSince1970: 1))
+        #expect(known.duration == 1)
+        #expect(!known.hasUnknownTiming)
+
+        // One untimed contributing frame makes the session's own span unknown.
+        #expect(partial.startTime == nil)
+        #expect(partial.duration == nil)
+        #expect(partial.latencyMilliseconds == nil)
+        #expect(partial.untimedFrameCount == 1)
+        #expect(partial.hasUnknownTiming)
+
+        // Every byte is still retained, and the identity/direction are unchanged.
+        #expect(partial.id == known.id)
+        #expect(partial.totalBytes == known.totalBytes)
+        #expect(partial.sourceEndpoint == known.sourceEndpoint)
+        #expect(partial.destinationEndpoint == known.destinationEndpoint)
+        #expect(partial.sni == known.sni)
+    }
+
+    @Test("A session whose first frame is untimed keeps its first-observed direction")
+    func firstObservedDirectionSurvivesUntimedFirstFrame() throws {
+        let request = PacketBuilder.tlsClientHello(sni: "direction.example.com")
+        // The reply is stamped *earlier* than anything, so a fold that treated the
+        // untimed first frame as comparable could flip the client/server roles.
+        let frames = [
+            untimedTCPFrame(payload: request, sequence: 7_000),
+            reverseTCPFrame(timestamp: 0),
+        ]
+        let session = try #require(SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first)
+        #expect(session.sourceEndpoint == "10.0.0.5:50000")
+        #expect(session.destinationEndpoint == "93.184.216.34:443")
+        #expect(session.startTime == nil)
+    }
+
+    @Test("A late untimed frame restores first-observed direction after a timed reversal")
+    func lateUntimedFrameRestoresFirstDirection() throws {
+        let first = tcpFrame(payload: [1], sequence: 7_000, timestamp: 10)
+        let reverse = reverseTCPFrame(timestamp: 1)
+        let unknown = untimedTCPFrame(payload: [2], sequence: 7_001)
+        let known = try #require(SessionBuilder.build(from: [first, reverse], linkType: 1).first)
+        #expect(known.sourceEndpoint == "93.184.216.34:443")
+        for frames in [[first, reverse, unknown], [first, unknown, reverse]] {
+            let session = try #require(SessionBuilder.build(from: frames, linkType: 1).first)
+            #expect(session.sourceEndpoint == "10.0.0.5:50000")
+            #expect(session.destinationEndpoint == "93.184.216.34:443")
+            #expect(session.bytesUp == first.originalLength + unknown.originalLength)
+            #expect(session.bytesDown == reverse.originalLength)
+            #expect(session.startTime == nil)
+        }
+    }
+
+    @Test("Sessions with unknown start order after known ones, by capture ordinal then id")
+    func chronologyPlacesUnknownStartsLast() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        func summary(name: String, start: Date?, ordinal: UInt64) -> SessionSummary {
+            var value = SessionSummary(
+                id: SessionBuilder.stableID("chronology-\(name)"),
+                startTime: start,
+                duration: start == nil ? nil : 0,
+                host: name,
+                sourceEndpoint: "—",
+                destinationEndpoint: "—",
+                protocolStack: [.tcp],
+                status: .ok,
+                bytesUp: 0,
+                bytesDown: 0
+            )
+            value.firstCaptureOrdinal = ordinal
+            value.untimedFrameCount = start == nil ? 1 : 0
+            return value
+        }
+
+        let later = summary(name: "later", start: base.addingTimeInterval(10), ordinal: 3)
+        let earlier = summary(name: "earlier", start: base, ordinal: 1)
+        let unknownEarlyOrdinal = summary(name: "unknown-a", start: nil, ordinal: 2)
+        let unknownLateOrdinal = summary(name: "unknown-b", start: nil, ordinal: 9)
+
+        let ordered = [unknownLateOrdinal, later, unknownEarlyOrdinal, earlier]
+            .sorted(by: SessionChronology.ascending)
+        // Known times keep their chronology; unknown-time sessions trail them and
+        // order by capture ordinal rather than at an invented instant.
+        #expect(ordered.map(\.host) == ["earlier", "later", "unknown-a", "unknown-b"])
+
+        let newestFirst = [earlier, unknownEarlyOrdinal, later].sorted(by: SessionChronology.descending)
+        #expect(newestFirst.map(\.host) == ["later", "earlier", "unknown-a"])
+
+        let rows = [unknownLateOrdinal, unknownEarlyOrdinal].map(SessionRow.session)
+            .sorted(by: SessionRow.orderedBefore)
+        #expect(rows.map(\.id) == [unknownEarlyOrdinal.id, unknownLateOrdinal.id])
+        let sameTime = summary(name: "same-time", start: base, ordinal: 99)
+        let tied = [earlier, sameTime].sorted(by: SessionChronology.ascending)
+        #expect(tied.map(\.id) == [earlier.id, sameTime.id].sorted { $0.uuidString < $1.uuidString })
+        #expect([earlier, sameTime].sorted(by: SessionChronology.descending).map(\.id) == tied.reversed().map(\.id))
     }
 
     // MARK: - Representative selection signal
@@ -528,6 +644,34 @@ struct SessionBuilderTests {
 
     private func sessions() -> [SessionSummary] {
         SessionBuilder.build(from: SampleCapture.frames(now: Date()), linkType: LinkType.ethernet)
+    }
+
+    /// The server-to-client segment of the same conversation, at an optional instant.
+    private func reverseTCPFrame(timestamp: TimeInterval?) -> CapturedFrame {
+        let bytes = PacketBuilder.ethernetIPv4(
+            proto: 6,
+            src: "93.184.216.34",
+            dst: "10.0.0.5",
+            payload: PacketBuilder.tcp(
+                srcPort: 443, dstPort: 50_000, flags: 0x18, payload: [0x00], sequence: 1
+            )
+        )
+        return CapturedFrame(
+            bytes: bytes,
+            timestamp: timestamp.map { Date(timeIntervalSince1970: $0) },
+            originalLength: bytes.count
+        )
+    }
+
+    /// The same TCP conversation with one segment's capture time removed.
+    private func untimedTCPFrame(payload: [UInt8], sequence: UInt32) -> CapturedFrame {
+        let timed = tcpFrame(payload: payload, sequence: sequence, timestamp: 0)
+        return CapturedFrame(
+            bytes: timed.bytes,
+            timestamp: nil,
+            originalLength: timed.originalLength,
+            capturedLength: timed.capturedLength
+        )
     }
 
     /// Wrap raw frame bytes in a `CapturedFrame` at a fixed instant for folding.

@@ -9,11 +9,22 @@ struct SettingsView: View {
 
     init(
         updater: AppUpdater,
+        applicationDefaults: UserDefaults = .standard,
+        activeProjectName: String? = nil,
+        isProjectReady: Bool = true,
         historyRetentionError: String? = nil,
         isHistoryDemoMode: Bool = false,
         onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
     ) {
         self.updater = updater
+        self.applicationDefaults = applicationDefaults
+        _selectedTab = AppStorage(
+            wrappedValue: SettingsTab.general.rawValue,
+            SettingsKeys.selectedSettingsTab,
+            store: applicationDefaults
+        )
+        self.activeProjectName = activeProjectName
+        self.isProjectReady = isProjectReady
         self.historyRetentionError = historyRetentionError
         self.isHistoryDemoMode = isHistoryDemoMode
         self.onAutoClearChange = onAutoClearChange
@@ -40,8 +51,10 @@ struct SettingsView: View {
             .navigationTitle("Settings")
         } detail: {
             selectedPane
+                .disabled(isProjectScopedPane && !isProjectReady)
                 .font(metrics.font())
                 .navigationTitle(selection.wrappedValue.title)
+                .navigationSubtitle(paneSubtitle)
         }
         .frame(
             minWidth: metrics.windowMinWidth,
@@ -55,9 +68,15 @@ struct SettingsView: View {
 
     // MARK: Private
 
-    @AppStorage(SettingsKeys.selectedSettingsTab) private var selectedTab = SettingsTab.general.rawValue
+    /// Which pane is open is an application preference, not a Project one, so it
+    /// names `.standard` explicitly and is unaffected by the per-Project store.
+    @AppStorage(SettingsKeys.selectedSettingsTab, store: .standard)
+    private var selectedTab = SettingsTab.general.rawValue
 
     private let updater: AppUpdater
+    private let applicationDefaults: UserDefaults
+    private let activeProjectName: String?
+    private let isProjectReady: Bool
     private let historyRetentionError: String?
     private let isHistoryDemoMode: Bool
     private let onAutoClearChange: (AutoClear) -> Void
@@ -70,12 +89,33 @@ struct SettingsView: View {
         )
     }
 
+    /// Name the Project whose preferences the pane is editing, so a per-Project
+    /// setting is never mistaken for an app-wide one.
+    private var paneSubtitle: String {
+        guard let activeProjectName, isProjectScopedPane else {
+            return ""
+        }
+        return String(localized: "Project: \(activeProjectName)")
+    }
+
+    private var isProjectScopedPane: Bool {
+        switch selection.wrappedValue {
+        case .capture,
+             .general,
+             .privacy: true
+        case .helper,
+             .mcp,
+             .updates: false
+        }
+    }
+
     @ViewBuilder private var selectedPane: some View {
         switch selection.wrappedValue {
-        case .general: GeneralSettingsView()
+        case .general: GeneralSettingsView(applicationDefaults: applicationDefaults)
         case .capture: CaptureSettingsView()
         case .helper: HelperSettingsView()
         case .privacy: PrivacySettingsView(
+                applicationDefaults: applicationDefaults,
                 historyRetentionError: historyRetentionError,
                 isHistoryDemoMode: isHistoryDemoMode,
                 onAutoClearChange: onAutoClearChange

@@ -1,5 +1,20 @@
 import Foundation
 
+// MARK: - SavedCaptureLoadOperation
+
+/// Off-main loading operation, injectable for deterministic cancellation tests.
+/// Production always uses the same bounded streaming parser.
+nonisolated struct SavedCaptureLoadOperation: Sendable {
+    static let streaming = Self { url, capacity, progress in
+        try SavedCaptureStreamLoader(
+            contentsOf: url,
+            configuration: .init(retainedCapacity: capacity)
+        ).load(onProgress: progress)
+    }
+
+    var run: @Sendable (URL, Int, @Sendable (PcapStreamProgress) -> Void) async throws -> SavedCaptureLoadResult
+}
+
 // MARK: - SavedCaptureOpenRequest
 
 /// One user intent to open a saved capture. The monotonically increasing ID is
@@ -17,18 +32,25 @@ nonisolated struct SavedCaptureOpenRequest: Sendable {
     let capture: SavedCapture
 }
 
-// MARK: - SavedCaptureProgressRelay
+// MARK: - CoordinatorProgressRelay
 
 /// A latest-value relay with at most one MainActor delivery task queued. A fast
-/// stream can emit progress for millions of tiny records without accumulating one
-/// UI task per callback; intermediate values collapse while the terminal remains
-/// monotonic and authoritative.
-nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
+/// stream can emit progress for millions of tiny records — or a copy for every
+/// chunk of a large file — without accumulating one UI task per callback;
+/// intermediate values collapse while the terminal remains monotonic and
+/// authoritative. `deliver` names which request state the value belongs to, so
+/// the saved-open and import pipelines share one bound without sharing state.
+nonisolated final class CoordinatorProgressRelay: @unchecked Sendable {
     // MARK: Lifecycle
 
-    init(coordinator: MainContentCoordinator, requestID: Int) {
+    init(
+        coordinator: MainContentCoordinator,
+        requestID: Int,
+        deliver: @escaping @Sendable @MainActor (MainContentCoordinator, PcapStreamProgress, Int) -> Void
+    ) {
         self.coordinator = coordinator
         self.requestID = requestID
+        self.deliver = deliver
     }
 
     // MARK: Internal
@@ -49,6 +71,7 @@ nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
 
     private weak var coordinator: MainContentCoordinator?
     private let requestID: Int
+    private let deliver: @Sendable @MainActor (MainContentCoordinator, PcapStreamProgress, Int) -> Void
     private let lock = NSLock()
     private var latest: PcapStreamProgress?
     private var deliveryScheduled = false
@@ -66,8 +89,8 @@ nonisolated private final class SavedCaptureProgressRelay: @unchecked Sendable {
         latest = nil
         lock.unlock()
 
-        if let progress {
-            coordinator?.publishSavedCaptureProgress(progress, requestID: requestID)
+        if let progress, let coordinator {
+            deliver(coordinator, progress, requestID)
         }
 
         lock.lock()
@@ -91,6 +114,25 @@ extension MainContentCoordinator {
     /// active, the request waits behind its final drain; the loader cannot start
     /// until that boundary calls ``resumePendingSavedCaptureOpenAfterLiveDrain``.
     func openSavedCapture(_ capture: SavedCapture) {
+        guard hasHydratedProjects, activeRuntime.projectID != nil else {
+            captureError = "Load or repair Projects before opening capture data."
+            return
+        }
+        // A Project transition is about to swap the Library, spool and store this
+        // request would publish into. It is refused rather than started and then
+        // silently discarded at the boundary. A stop's own final drain is *not* a
+        // refusal: waiting behind it is exactly this method's contract.
+        guard !projectTransitionStatus.isPending else {
+            captureError = "Tracexy is switching Projects. Open “\(capture.name)” again in a moment."
+            return
+        }
+        // Adopting a load resets the engine and the live spool, so an accepted Save
+        // or an in-flight export still reading that source refuses the open here
+        // rather than having its evidence reset out from under it.
+        if let held = captureSourceHoldMessage {
+            captureError = held
+            return
+        }
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         savedCaptureOpenRequestID &+= 1
@@ -107,39 +149,18 @@ extension MainContentCoordinator {
 
         if isCapturing || isStarting {
             stopCapture()
-        } else {
+        } else if !isFinalDrainPending {
             // Even an already-stopped capture can have one ordered ingest task
             // finishing. Wait for that exact task rather than sleeping/polling.
             queuePendingSavedCaptureOpenAfterCurrentIngest()
         }
     }
 
-    /// Imports an external `.pcap` file into the captures folder and opens it.
-    ///
-    /// Lossless and idempotent: a source that is already the managed file is
-    /// refreshed and reopened in place, and a name collision with a different
-    /// external file replaces the old copy only after the new one is fully
-    /// staged, so a failed import never destroys existing capture data.
-    func importCapture(from source: URL) {
-        guard let directory = Self.capturesDirectory() else {
-            return
-        }
-        let destination: URL
-        do {
-            destination = try CaptureImporter.importCapture(from: source, intoDirectory: directory)
-        } catch {
-            captureError = "Couldn’t import “\(source.lastPathComponent)”: \(error.localizedDescription)"
-            return
-        }
-        refreshSavedCaptures()
-        if let imported = savedCaptures.first(where: { $0.url == destination }) {
-            openSavedCapture(imported)
-        }
-    }
-
-    /// Rescans the captures folder and rebuilds `savedCaptures`, newest first.
+    /// Rescans the *active Project's* captures folder and rebuilds
+    /// `savedCaptures`, newest first. Each Project has its own Library folder, so
+    /// saving or trashing a capture in one never changes another's list.
     func refreshSavedCaptures() {
-        guard let directory = Self.capturesDirectory(),
+        guard let directory = capturesDirectory(),
               let urls = try? FileManager.default.contentsOfDirectory(
                   at: directory,
                   includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
@@ -149,7 +170,7 @@ extension MainContentCoordinator {
             return
         }
         savedCaptures = urls
-            .filter { ["pcap", "pcapng"].contains($0.pathExtension.lowercased()) }
+            .filter { CaptureImporter.libraryPathExtensions.contains($0.pathExtension.lowercased()) }
             .map { url in
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 return SavedCapture(
@@ -270,7 +291,8 @@ extension MainContentCoordinator {
     /// Called only after the final live helper batch has been folded/spooled, or
     /// after the direct/current ingest chain has drained.
     func resumePendingSavedCaptureOpenAfterLiveDrain() {
-        guard let request = pendingSavedCaptureOpen,
+        guard !isFinalDrainPending, !projectTransitionStatus.isPending,
+              let request = pendingSavedCaptureOpen,
               request.id == savedCaptureOpenRequestID else
         {
             return
@@ -288,6 +310,7 @@ extension MainContentCoordinator {
             guard let self,
                   !Task.isCancelled,
                   self.savedCaptureOpenRequestID == requestID,
+                  !self.isFinalDrainPending,
                   !self.isCapturing,
                   !self.isStarting else
             {
@@ -307,22 +330,26 @@ extension MainContentCoordinator {
         savedCaptureBoundaryTask = nil
 
         let expectedStartGeneration = startGeneration
-        let retainedCapacity = CaptureSettingsResolver.retainCapacity()
-        let progressRelay = SavedCaptureProgressRelay(coordinator: self, requestID: request.id)
+        let retainedCapacity = CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
+        let originProjectID = activeRuntime.projectID
+        let operation = savedCaptureLoadOperation
+        let progressRelay = CoordinatorProgressRelay(
+            coordinator: self,
+            requestID: request.id
+        ) { coordinator, progress, id in
+            coordinator.publishSavedCaptureProgress(progress, requestID: id)
+        }
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let loader = try SavedCaptureStreamLoader(
-                    contentsOf: request.capture.url,
-                    configuration: .init(retainedCapacity: retainedCapacity)
-                )
-                let result = try loader.load { progress in
+                let result = try await operation.run(request.capture.url, retainedCapacity) { progress in
                     progressRelay.submit(progress)
                 }
                 try Task.checkCancellation()
                 await self?.adoptSavedCaptureResult(
                     result,
                     request: request,
-                    expectedStartGeneration: expectedStartGeneration
+                    expectedStartGeneration: expectedStartGeneration,
+                    originProjectID: originProjectID
                 )
             } catch is CancellationError {
                 await self?.finishCancelledSavedCaptureOpen(requestID: request.id)
@@ -336,7 +363,7 @@ extension MainContentCoordinator {
         savedCaptureOpenTask = task
     }
 
-    fileprivate func publishSavedCaptureProgress(_ progress: PcapStreamProgress, requestID: Int) {
+    private func publishSavedCaptureProgress(_ progress: PcapStreamProgress, requestID: Int) {
         guard requestID == savedCaptureOpenRequestID, isOpeningSavedCapture else {
             return
         }
@@ -351,9 +378,27 @@ extension MainContentCoordinator {
     private func adoptSavedCaptureResult(
         _ result: SavedCaptureLoadResult,
         request: SavedCaptureOpenRequest,
-        expectedStartGeneration: Int
+        expectedStartGeneration: Int,
+        originProjectID: UUID?
     ) {
+        // A load that finishes after a Project change belongs to the Project that
+        // asked for it. Adopting it into another Project would publish one
+        // Project's sessions, evidence and History event under another's identity.
+        guard activeRuntime.projectID == originProjectID else {
+            return
+        }
         guard request.id == savedCaptureOpenRequestID else {
+            return
+        }
+        // A Save accepted while this load was running owns the current source, and
+        // the adoption below resets the engine and spool it is copying. Refuse the
+        // adoption instead — the load is retired with a visible reason, and the
+        // capture the user asked to keep stays intact.
+        if let held = captureSourceHoldMessage {
+            failSavedCaptureOpen(
+                message: "Couldn’t open “\(request.capture.name)” — \(held)",
+                requestID: request.id
+            )
             return
         }
         guard startGeneration == expectedStartGeneration,
@@ -395,6 +440,7 @@ extension MainContentCoordinator {
         isViewingSavedCapture = true
         activeSavedCapture = request.capture
         savedCaptureActivity = result.activity
+        savedCaptureMetadata = result.metadata
         savedCaptureEvidence = result.evidence
         savedCaptureEvidenceURL = request.capture.url
         stoppedCaptureReadyGeneration = nil
@@ -516,12 +562,19 @@ extension MainContentCoordinator {
     /// one runloop turn so it can't reload an `NSTableView` reentrantly from inside
     /// a click currently being handled, and it re-checks the capture generation
     /// *and* the expected capture state so a late generation publishes no half.
+    ///
+    /// The deferred publication is returned so the final-drain boundary can await
+    /// the *actual* adoption and terminal History enqueue rather than treating the
+    /// scheduling of this task as the end of the capture.
+    @discardableResult
     func publishLiveDetailed(
         _ snapshot: InvestigationSnapshot,
         expectedGeneration: Int,
         isCapturing expectedCaptureState: Bool,
         terminalHistoryCompleteness: HistoryCompleteness? = nil
-    ) {
+    )
+        -> Task<Void, Never>
+    {
         ProcessResolver.shared.refresh()
         var built = snapshot.sessions
         for index in built.indices where built[index].processName == nil {
@@ -533,7 +586,7 @@ extension MainContentCoordinator {
         }
         let applied = built
         let publishedSnapshot = snapshot.replacingSessions(with: applied)
-        Task { @MainActor in
+        return Task { @MainActor in
             guard self.startGeneration == expectedGeneration,
                   self.isCapturing == expectedCaptureState else
             {

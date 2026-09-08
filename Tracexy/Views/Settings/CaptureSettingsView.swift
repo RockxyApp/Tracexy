@@ -64,6 +64,19 @@ struct CaptureSettingsView: View {
                         .frame(minHeight: metrics.controlHeight)
                         .disabled(filterMode != CaptureFilterMode.custom.rawValue)
                 }
+
+                SettingsDivider()
+
+                SettingsIndented {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button("Import Capture Filter…") { isImportingFilter = true }
+                            .accessibilityLabel("Import Capture Filter")
+                        SettingsFootnote(
+                            "Reuse a named BPF expression from a capture-filter list file. "
+                                + "Applying one replaces this Project’s custom expression; nothing else in the file is imported."
+                        )
+                    }
+                }
             }
 
             SettingsSection("Buffer") {
@@ -101,6 +114,9 @@ struct CaptureSettingsView: View {
             }
         }
         .onAppear { interfaceGroups = NetworkInterfaces.grouped() }
+        .sheet(isPresented: $isImportingFilter) {
+            CaptureFilterImportSheet(bpf: $bpf, filterMode: $filterMode)
+        }
     }
 
     // MARK: Private
@@ -114,6 +130,7 @@ struct CaptureSettingsView: View {
     @AppStorage(SettingsKeys.retainPackets) private var retainPackets = 8_000
 
     @State private var interfaceGroups: [InterfaceGroup] = []
+    @State private var isImportingFilter = false
 
     private let metrics = SettingsDisplayMetrics.standard
 

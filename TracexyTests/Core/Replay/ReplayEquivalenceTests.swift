@@ -124,15 +124,30 @@ struct ReplayEquivalenceTests {
             #expect(result.totalFrames == 1)
             let session = try #require(result.sessions.first)
             let expected = Date(timeIntervalSince1970: 1_700_000_001)
-            #expect(abs(session.startTime.timeIntervalSince(expected)) < 1e-6)
+            let start = try #require(session.startTime)
+            #expect(abs(start.timeIntervalSince(expected)) < 1e-6)
+            #expect(session.untimedFrameCount == 0)
+            #expect(result.activity.untimedFrameCount == 0)
         }
-        // A Simple Packet Block carries no timestamp, so the frame is honestly at
-        // the Unix epoch — not invented.
+        // A Simple Packet Block carries no timestamp field at all. The session's own
+        // timing is therefore unknown — previously this asserted the Unix epoch,
+        // which is indistinguishable from a real 1970 capture.
         try ReplayCorpus.withTemporaryFile(ReplayCorpus.pcapngSimplePacketBytes(), ext: "pcapng") { url in
             let result = try SavedCaptureStreamLoader(contentsOf: url).load()
             #expect(result.totalFrames == 1)
             let session = try #require(result.sessions.first)
-            #expect(session.startTime == Date(timeIntervalSince1970: 0))
+            #expect(session.startTime == nil)
+            #expect(session.duration == nil)
+            #expect(session.latencyMilliseconds == nil)
+            #expect(session.untimedFrameCount == 1)
+            // Bytes and frames are all still retained, and the metadata inventory
+            // reports the coverage rather than the activity chart implying it.
+            #expect(session.totalBytes > 0)
+            #expect(result.activity.duration == nil)
+            #expect(result.activity.untimedFrameCount == 1)
+            #expect(result.metadata.untimedFrameCount == 1)
+            #expect(result.metadata.totalFrames == 1)
+            #expect(result.metadata.linkTypeCounts.map(\.frameCount) == [1])
         }
     }
 

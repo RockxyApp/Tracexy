@@ -119,8 +119,12 @@ struct SessionSnapshot: Codable, Equatable {
 
     init(_ summary: SessionSummary) {
         id = summary.id.uuidString
-        startMicros = Self.micros(summary.startTime.timeIntervalSince1970)
-        durationMicros = Self.micros(summary.duration)
+        // Unknown timing is absent, not zero: for a known-time corpus these encode
+        // exactly as before (a present optional emits the same number), so goldens
+        // are unchanged, while an untimed session omits the key instead of pinning
+        // a sentinel that would read as a real 1970 instant.
+        startMicros = summary.startTime.map { Self.micros($0.timeIntervalSince1970) }
+        durationMicros = summary.duration.map { Self.micros($0) }
         processName = summary.processName
         host = summary.host
         source = summary.sourceEndpoint
@@ -141,8 +145,8 @@ struct SessionSnapshot: Codable, Equatable {
     // MARK: Internal
 
     let id: String
-    let startMicros: Int64
-    let durationMicros: Int64
+    let startMicros: Int64?
+    let durationMicros: Int64?
     let processName: String?
     let host: String
     let source: String

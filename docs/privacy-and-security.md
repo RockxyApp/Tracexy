@@ -17,6 +17,29 @@ page states plainly what the app does and does not do today.
   evidence-preserving formats. When a Privacy protection is enabled, every raw export requires explicit
   acknowledgement before the save panel opens.
 
+### Project isolation
+
+Each Project keeps its capture sessions, saved-capture Library folder, local History database, and
+capture/privacy preferences separate from every other Project. Privacy protections and History
+Auto-clear are therefore *per Project*: enabling IP masking or a short retention window in one
+investigation does not silently change what another exports or retains. A new Project starts from the
+shipped protective defaults and never inherits another Project's values.
+
+Isolation is arranged by scoping storage, never by copying or deleting user data. Data written before
+Project isolation existed keeps its original location and is attached to exactly one Project the first
+time the catalog is loaded; that ownership is persisted before any capture, History write, or Library
+scan is allowed and is never reassigned — not when the owning Project is deleted, and not when the
+catalog is repaired. Repair deliberately leaves that data unattached rather than handing one person's
+capture history to a freshly created Project.
+
+Deleting a Project removes it from the catalog and discards its unsaved in-memory sessions and
+evidence. Its saved captures and History remain on disk and are not deleted; they simply stop being
+reachable from the app. Configuration-only `.tracexyproject`
+exports are unchanged: they never carry packets, payloads, paths, selection, findings, or History.
+
+Sessions held only in memory are not checkpointed. They survive Project switches for the life of the
+app session and are lost on quit unless saved — Tracexy does not claim otherwise.
+
 ### Protected session export
 
 Settings → Privacy controls the native `.tracexysession` export path. Redacting payloads, stripping

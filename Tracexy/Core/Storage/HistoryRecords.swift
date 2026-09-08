@@ -49,6 +49,25 @@ nonisolated enum HistorySessionStatus: Int, Sendable, Equatable, CaseIterable {
     case error = 2
 }
 
+// MARK: - HistoryCaptureTimeBasis
+
+/// What a capture's stored `started_at`/`ended_at` instants actually describe.
+/// Persisted as a stable `INTEGER`; an unknown value read back is fail-closed
+/// corruption, never a silent default.
+///
+/// `captured` means the instants came from the capture itself — a live capture's
+/// confirmed start/stop, or a saved capture in which *every* accepted frame
+/// carried a known time. `opened` means the capture's own timing could not be
+/// established, so the instants are the real, indexable moment the file was opened
+/// in this app. The two are never conflated: an `opened` lifetime is labelled as
+/// such rather than presented as when the traffic happened.
+nonisolated enum HistoryCaptureTimeBasis: Int, Sendable, Equatable, CaseIterable {
+    case captured = 0
+    case opened = 1
+    /// Saved by schema v1, before capture-time provenance was recorded.
+    case legacy = 2
+}
+
 // MARK: - HistoryCaptureRecord
 
 /// The neutral, storage-owned identity and lifetime of one persisted capture. It
@@ -56,6 +75,26 @@ nonisolated enum HistorySessionStatus: Int, Sendable, Equatable, CaseIterable {
 /// finite start/end timestamps. The database derives the session count from the
 /// rows inserted alongside it; the record never supplies or trusts one.
 nonisolated struct HistoryCaptureRecord: Sendable, Equatable {
+    // MARK: Lifecycle
+
+    init(
+        captureID: UUID,
+        startedAt: Double,
+        endedAt: Double,
+        sourceKind: HistorySourceKind,
+        completeness: HistoryCompleteness,
+        timeBasis: HistoryCaptureTimeBasis = .captured
+    ) {
+        self.captureID = captureID
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.sourceKind = sourceKind
+        self.completeness = completeness
+        self.timeBasis = timeBasis
+    }
+
+    // MARK: Internal
+
     /// Durable capture identity, stable across launches.
     let captureID: UUID
     /// Finite capture start (seconds since 1970).
@@ -64,6 +103,8 @@ nonisolated struct HistoryCaptureRecord: Sendable, Equatable {
     let endedAt: Double
     let sourceKind: HistorySourceKind
     let completeness: HistoryCompleteness
+    /// Whether the lifetime above is the capture's own or the app's open event.
+    let timeBasis: HistoryCaptureTimeBasis
 
     /// Validate every finite/ordering invariant before any SQL touches this record.
     func validate() throws {
@@ -91,10 +132,13 @@ nonisolated struct HistoryCaptureRecord: Sendable, Equatable {
 nonisolated struct HistorySessionRecord: Sendable, Equatable, Identifiable {
     /// The deterministic, tuple-derived session identity within its capture.
     let sessionID: UUID
-    /// Finite session start (seconds since 1970).
-    let startTime: Double
-    /// Finite, non-negative session duration in seconds.
-    let duration: Double
+    /// Finite session start (seconds since 1970), or `nil` when the session's own
+    /// start could not be established because a contributing frame carried no
+    /// capture time. Persisted as SQL `NULL`, never as a numeric stand-in.
+    let startTime: Double?
+    /// Finite, non-negative session duration in seconds, or `nil` on the same
+    /// condition as ``startTime``.
+    let duration: Double?
     /// Optional attributed process name.
     let processName: String?
     /// Rendered neutral host label.
@@ -121,14 +165,18 @@ nonisolated struct HistorySessionRecord: Sendable, Equatable, Identifiable {
     /// string byte bounds are re-checked while binding, so an oversized string can
     /// never reach SQLite even if a caller mutated it after validation.
     func validate() throws {
-        guard startTime.isFinite else {
-            throw HistoryStoreError.nonFiniteValue(field: "startTime")
+        if let startTime {
+            guard startTime.isFinite else {
+                throw HistoryStoreError.nonFiniteValue(field: "startTime")
+            }
         }
-        guard duration.isFinite else {
-            throw HistoryStoreError.nonFiniteValue(field: "duration")
-        }
-        guard duration >= 0 else {
-            throw HistoryStoreError.negativeValue(field: "duration")
+        if let duration {
+            guard duration.isFinite else {
+                throw HistoryStoreError.nonFiniteValue(field: "duration")
+            }
+            guard duration >= 0 else {
+                throw HistoryStoreError.negativeValue(field: "duration")
+            }
         }
         if let latencyMilliseconds {
             guard latencyMilliseconds.isFinite else {

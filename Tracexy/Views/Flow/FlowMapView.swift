@@ -4,8 +4,8 @@ import SwiftUI
 
 // MARK: - FlowMapView
 
-/// Where this Mac's traffic is going — a registry map beside the list of actual
-/// addresses behind it.
+/// Where the captured traffic was addressed — a registry overview beside the
+/// list of actual destination addresses behind it.
 ///
 /// **What this map does and does not claim.** Tracexy ships no geolocation
 /// database, so it does not know where a server physically is. What it can
@@ -15,6 +15,10 @@ import SwiftUI
 /// a location — an ARIN block can be announced from anywhere — and drawing a
 /// precise pin from an imprecise fact would be the kind of confident lie the
 /// rest of this app refuses to tell.
+///
+/// It makes no claim about the *source* either. A capture can be an imported
+/// file recorded on another machine entirely, so the routes leave a neutral
+/// capture anchor rather than anything that reads as this device.
 ///
 /// **Why there is a list.** A map of five registry regions is, by construction,
 /// the coarsest view of a capture the app can draw — and it was the *only* view
@@ -57,7 +61,7 @@ struct FlowMapView: View {
             length: Theme.Metrics.footerBarHeight + Theme.Glass.functionalBarVerticalInset * 2
         )
         .tracexyDenseScrollEdge()
-        .tracexySafeAreaBar(edge: .top) { header }
+        .tracexySafeAreaBar(edge: .top) { topBar }
         // Keyed by the set of addresses (plus capture mode), not by bytes or row
         // order, so a saved capture reveals exactly once and a live one re-reveals
         // only when a genuinely new address appears — never on a byte-count tick.
@@ -130,17 +134,24 @@ struct FlowMapView: View {
         endpoints.count { !$0.isMappable }
     }
 
+    /// Sessions in view that carry no usable typed destination address, so they
+    /// are in none of the rows. Reported rather than dropped in silence.
+    private var omittedSessionCount: Int {
+        FlowEndpoint.omittedSessionCount(in: coordinator.visibleSessions)
+    }
+
     private var maxBytes: Int {
         max(routes.map(\.bytes).max() ?? 1, 1)
     }
 
-    /// The "This Mac" anchor: a fixed, neutral point in the mid-Atlantic that every
-    /// route leaves from. Tracexy does not geolocate this device, so this is
-    /// deliberately *not* a position — a mid-ocean placeholder is chosen precisely
-    /// because it cannot be read as a city, and the legend and its help say so.
-    /// Keeping it constant is also what lets a saved capture reveal identically
-    /// every time.
-    private var origin: CLLocationCoordinate2D {
+    /// The capture anchor: a fixed, neutral point in the mid-Atlantic that every
+    /// route leaves from. It is deliberately *not* a position — not this Mac's,
+    /// and not the capture's, which for an imported file was recorded somewhere
+    /// this app cannot know. A mid-ocean placeholder is chosen precisely because
+    /// it cannot be read as a city, and the legend and its help say so. Keeping
+    /// it constant is also what lets a saved capture reveal identically every
+    /// time.
+    private var captureAnchor: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: 32, longitude: -40)
     }
 
@@ -168,7 +179,7 @@ struct FlowMapView: View {
     /// points once. The reveal draws a growing prefix of `points`; the last point
     /// is the region-centre marker.
     private var sampledRoutes: [SampledRoute] {
-        let start = origin
+        let start = captureAnchor
         return routes.map { route in
             let point = route.region.coordinate
             let destination = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
@@ -190,13 +201,37 @@ struct FlowMapView: View {
 
     private var mapEmptyReason: String {
         if coordinator.visibleSessions.isEmpty {
-            return "Start a capture to see where traffic is going."
+            return coordinator.sessions.isEmpty
+                ? "Open or start a capture to inspect its addresses."
+                : "Sessions exist in this capture, but none match the current scope."
         }
         if unmappableCount > 0 {
             return "All \(unmappableCount) addresses so far are private, loopback or unallocated — "
                 + "they have no registry region to place. They are listed on the right."
         }
         return "Everything captured so far stayed on the local network."
+    }
+
+    /// The existing header plus the shared scope line. Flow draws the same
+    /// filtered session set as the table, so it says so in the same words — and,
+    /// having no filter shelf of its own, carries the same single reset route.
+    private var topBar: some View {
+        // The scope is read here so the line's own padding is added only when
+        // there is a line; an empty notice must not reserve height in the bar.
+        let shownCount = coordinator.visibleSessions.count
+        let scope = coordinator.sessionScope(shownCount: shownCount)
+        return VStack(alignment: .leading, spacing: 0) {
+            header
+            if scope.isConstrained || coordinator.canReturnToPreviousSessionScope {
+                SessionScopeNotice(
+                    coordinator: coordinator,
+                    shownCount: shownCount,
+                    showsResetAction: true
+                )
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.bottom, Theme.Metrics.spacingM)
+            }
+        }
     }
 
     private var header: some View {
@@ -238,8 +273,8 @@ struct FlowMapView: View {
 
     private var map: some View {
         Map(position: $camera, interactionModes: [.pan, .zoom]) {
-            Annotation("This Mac", coordinate: origin) {
-                thisMacAnchor
+            Annotation("Captured traffic", coordinate: captureAnchor) {
+                anchorMarker
             }
 
             ForEach(sampledRoutes) { route in
@@ -273,10 +308,14 @@ struct FlowMapView: View {
         .mapControlVisibility(.hidden)
     }
 
-    /// The "This Mac" anchor. A laptop glyph on a neutral disc, with a one-shot
-    /// pop after the routes land. Labelled everywhere as a *visual* anchor, never
-    /// as this device's location — Tracexy ships no geolocation of its own egress.
-    private var thisMacAnchor: some View {
+    /// The capture anchor. A neutral marker disc, with a one-shot pop after the
+    /// routes land.
+    ///
+    /// It carries no device glyph on purpose: a laptop reads as "this Mac", and
+    /// an opened capture file may have been recorded anywhere, by anything. The
+    /// anchor is a drawing convention holding one end of every route, never a
+    /// claim about where the traffic came from.
+    private var anchorMarker: some View {
         ZStack {
             Circle()
                 .stroke(Color.secondary.opacity(pulseEnvelope * 0.5), lineWidth: 1)
@@ -286,15 +325,14 @@ struct FlowMapView: View {
                 .fill(.regularMaterial)
                 .frame(width: 22, height: 22)
                 .overlay(Circle().stroke(Color.secondary.opacity(0.55), lineWidth: 1))
-            Image(systemName: "laptopcomputer")
+            Image(systemName: "smallcircle.filled.circle")
                 .font(.system(size: Theme.Icon.small))
                 .foregroundStyle(.secondary)
                 .scaleEffect(1 + pulseEnvelope * 0.12)
         }
-        .accessibilityLabel("This Mac — visual anchor")
-        .accessibilityHint("A fixed visual starting point for the route lines, not this device's location.")
-        .help("This Mac — a fixed visual anchor for the routes, not this device's location. "
-            + "Tracexy does not geolocate your Mac.")
+        .accessibilityLabel("Captured traffic")
+        .accessibilityHint("Traffic recorded in the current capture. Its origin location is not shown.")
+        .help("Traffic recorded in the current capture")
     }
 
     /// The map's own empty state, which names the reason instead of saying "no
@@ -306,7 +344,8 @@ struct FlowMapView: View {
             Image(systemName: "globe.americas")
                 .font(.system(size: Theme.Icon.hero))
                 .foregroundStyle(.tertiary)
-            Text("Nothing routed yet")
+            Text(coordinator.visibleSessions.isEmpty && !coordinator.sessions.isEmpty
+                ? "No Matching Sessions" : "No Mappable Addresses")
                 .font(Theme.Typography.surfaceTitle)
             Text(mapEmptyReason)
                 .font(Theme.Typography.caption)
@@ -345,10 +384,8 @@ struct FlowMapView: View {
                     Spacer(minLength: 0)
                 }
             }
-            Text("Lines link a neutral “This Mac” anchor to the centre of each registry region "
-                + "administering an address block (ARIN, RIPE, APNIC, LACNIC, AFRINIC). The anchor is a "
-                + "fixed visual starting point, not this device's location; the lines show reach and "
-                + "concentration, not geographic server locations, network paths, or direction.")
+            Text("Destination addresses grouped by registry region. Map positions indicate address "
+                + "administration, not server locations; the capture origin is not shown.")
                 .font(Theme.Typography.micro)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -374,6 +411,20 @@ struct FlowMapView: View {
             )
             .padding(.horizontal, Theme.Metrics.spacingL)
             .padding(.vertical, Theme.Metrics.spacingM)
+            if omittedSessionCount > 0 {
+                // Rows are grouped by the typed destination address. A session
+                // the fold could not give one to belongs in no row, and saying
+                // how many is the difference between a bounded list and a list
+                // that quietly describes less than the surface claims.
+                Text("\(omittedSessionCount.formatted()) session"
+                    + "\(omittedSessionCount == 1 ? "" : "s") not listed — no destination address decoded.")
+                    .font(Theme.Typography.micro)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Theme.Metrics.spacingL)
+                    .padding(.bottom, Theme.Metrics.spacingM)
+                    .accessibilityIdentifier("flow-endpoints-omitted-notice")
+            }
             Divider()
             if listedEndpoints.isEmpty {
                 listEmpty
@@ -397,7 +448,9 @@ struct FlowMapView: View {
         VStack(spacing: Theme.Metrics.spacingM) {
             Spacer()
             Text(coordinator.visibleSessions.isEmpty
-                ? "No traffic captured yet."
+                ?
+                (coordinator.sessions
+                    .isEmpty ? "No sessions in this capture." : "No addresses match the current scope.")
                 : "No addresses in this region.")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
@@ -524,7 +577,9 @@ struct FlowMapView: View {
             }
 
             Button {
-                coordinator.selectIP(endpoint.address)
+                // The destination-only drill-in, matching exactly the fact this
+                // row is grouped by, so the list it opens is the count above it.
+                coordinator.showSessionsForAggregateDestination(endpoint.address)
             } label: {
                 Label("Show \(endpoint.sessionCount) sessions", systemImage: "arrow.right.circle")
                     .font(Theme.Typography.caption)
@@ -532,6 +587,10 @@ struct FlowMapView: View {
             }
             .tracexyGlassButtonStyle()
             .controlSize(.small)
+            .disabled(isStaleDestination(endpoint))
+            .help(isStaleDestination(endpoint)
+                ? "The session list is already scoped to another destination address."
+                : "Narrow the current scope to sessions sent to \(endpoint.address)")
             .padding(.top, 2)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
@@ -546,10 +605,12 @@ struct FlowMapView: View {
     @ViewBuilder
     private func rowMenu(_ endpoint: FlowEndpoint) -> some View {
         Button("Show Sessions", systemImage: "arrow.right.circle") {
-            coordinator.selectIP(endpoint.address)
+            coordinator.showSessionsForAggregateDestination(endpoint.address)
         }
+        .disabled(isStaleDestination(endpoint))
         if let name = endpoint.names.first {
-            Button("Show Everything for \(name)", systemImage: "globe") {
+            // Opens the global host scope while retaining search and category filters.
+            Button("Show Sessions for \(name)", systemImage: "globe") {
                 coordinator.selectHost(name)
             }
         }
@@ -596,6 +657,17 @@ struct FlowMapView: View {
             result.append(points[clamped].coordinate)
         }
         return result
+    }
+
+    /// Whether this row can no longer narrow anything, because the list is
+    /// already scoped to a different destination. Such a click is a no-op rather
+    /// than a replacement — swapping the address would widen past the row that
+    /// produced the current scope.
+    private func isStaleDestination(_ endpoint: FlowEndpoint) -> Bool {
+        guard let current = coordinator.activeWorkspace.aggregateDestinationFilter else {
+            return false
+        }
+        return IPAddressValue(parsing: current) != IPAddressValue(parsing: endpoint.address)
     }
 
     /// Advances the route reveal once, then fires a single settle pop.
@@ -649,7 +721,7 @@ struct FlowMapView: View {
         guard signature != fittedRegionSignature else {
             return
         }
-        let coordinates = [origin] + sampledRoutes.flatMap(\.points)
+        let coordinates = [captureAnchor] + sampledRoutes.flatMap(\.points)
         guard let first = coordinates.first else {
             return
         }

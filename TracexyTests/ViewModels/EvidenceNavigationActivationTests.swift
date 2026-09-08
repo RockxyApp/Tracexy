@@ -16,7 +16,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("Selecting a session publishes its projection; a new selection supersedes it")
     func projectionPublishesAndSupersedes() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -36,7 +36,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A late projection cannot publish across a session/workspace/generation guard")
     func projectionGuardsRejectStalePublication() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -69,7 +69,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A saved cited frame reads and decodes exactly the cited bytes")
     func savedCitedFrameSucceeds() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -92,7 +92,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A forged source token fails the saved cited-frame read with neutral copy")
     func savedCitedFrameWrongTokenFails() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -116,7 +116,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A nil locator is an explicit unavailable state and triggers no read")
     func nilLocatorIsUnavailable() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -133,7 +133,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A current-epoch active-live spool read resolves exactly one frame")
     func liveCitedFrameSucceeds() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -167,7 +167,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A stopped-live generation still resolves a citation from its finalized spool")
     func stoppedLiveCitedFrameSucceeds() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -203,7 +203,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("A locator from a superseded live spool fails without reading another frame")
     func liveCitedFrameStaleSourceFails() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         let frames = ReplayCorpus.tcpConnectionCapturedFrames()
@@ -239,7 +239,7 @@ struct EvidenceNavigationActivationTests {
 
     @Test("Selection and capture boundaries retire the cited frame and projection")
     func boundariesRetireEvidenceNavigation() async throws {
-        let environment = try makeEnvironment()
+        let environment = try await makeEnvironment()
         defer { environment.teardown() }
         let coordinator = environment.coordinator
         try await openConnectionCapture(coordinator, in: environment.directory)
@@ -305,19 +305,14 @@ struct EvidenceNavigationActivationTests {
         )
     }
 
-    private func makeEnvironment(function: String = #function) throws -> Environment {
-        let suiteName = "com.amunx.tracexy.evidence-nav.\(function).\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("tracexy-evidence-nav-\(UUID().uuidString)", isDirectory: true)
+    private func makeEnvironment(function: String = #function) async throws -> Environment {
+        let isolation = ProjectIsolationEnvironment(name: function)
+        let coordinator = isolation.makeCoordinator()
+        await coordinator.hydrateProjectsOnLaunch()
+        let directory = isolation.root.appendingPathComponent("Fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let coordinator = MainContentCoordinator(
-            layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults),
-            liveCaptureSpool: LiveCaptureSpool(directory: directory.appendingPathComponent("spool"))
-        )
         return Environment(coordinator: coordinator, directory: directory) {
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: directory)
+            isolation.tearDown()
         }
     }
 

@@ -124,6 +124,32 @@ struct HistoryRecordProjectionTests {
         #expect(try await store.capture(id: output.capture.captureID)?.sessionCount == 2)
     }
 
+    @Test("Unknown session timing projects to NULL rather than a zero instant")
+    func unknownTimingProjectsAsNull() throws {
+        let output = HistoryRecordProjection.project(Self.input(
+            sessions: [Self.summary(startTime: nil, duration: nil)],
+            sourceKind: .saved,
+            timeBasis: .opened
+        ))
+        let record = try #require(output.sessions.first)
+        #expect(record.startTime == nil)
+        #expect(record.duration == nil)
+        // The rest of the row is untouched: the session is still fully recorded.
+        #expect(record.bytesUp == 100)
+        #expect(record.protocols == ["tcp", "tls"])
+        // The capture's lifetime is explicitly labelled as the open event.
+        #expect(output.capture.timeBasis == .opened)
+    }
+
+    @Test("A capture whose own timing is known keeps the captured time basis")
+    func knownTimingKeepsCapturedBasis() throws {
+        let output = HistoryRecordProjection.project(Self.input(sessions: [Self.summary()], sourceKind: .saved))
+        #expect(output.capture.timeBasis == .captured)
+        let record = try #require(output.sessions.first)
+        #expect(record.startTime == 1_000)
+        #expect(record.duration == 5)
+    }
+
     // MARK: Private
 
     private static func input(
@@ -132,6 +158,7 @@ struct HistoryRecordProjectionTests {
         completeness: HistoryCompleteness = .complete,
         startedAt: Double = 1_000,
         endedAt: Double = 2_000,
+        timeBasis: HistoryCaptureTimeBasis = .captured,
         maskIPAddresses: Bool = false
     )
         -> HistoryRecordProjection.Input
@@ -142,6 +169,7 @@ struct HistoryRecordProjectionTests {
             endedAt: endedAt,
             sourceKind: sourceKind,
             completeness: completeness,
+            timeBasis: timeBasis,
             sessions: sessions,
             maskIPAddresses: maskIPAddresses
         )
@@ -155,14 +183,16 @@ struct HistoryRecordProjectionTests {
         status: SessionStatus = .ok,
         latencyMilliseconds: Double? = 12.5,
         bytesUp: Int = 100,
-        bytesDown: Int = 200
+        bytesDown: Int = 200,
+        startTime: Date? = Date(timeIntervalSince1970: 1_000),
+        duration: TimeInterval? = 5
     )
         -> SessionSummary
     {
         SessionSummary(
             id: UUID(),
-            startTime: Date(timeIntervalSince1970: 1_000),
-            duration: 5,
+            startTime: startTime,
+            duration: duration,
             processName: "curl",
             host: host,
             sourceEndpoint: sourceEndpoint,

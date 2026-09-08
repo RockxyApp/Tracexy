@@ -8,12 +8,18 @@ final class WorkspaceStore {
     /// `maxWorkspaces` arrives as a plain number: the store enforces a cap, it
     /// does not decide one. The composition root resolves it from the app
     /// policy and hands the value in.
-    init(maxWorkspaces: Int, layoutPreferences: WorkspaceLayoutPreferences? = nil) {
+    /// `defaults` is the active Project's preferences suite, so "Default view" is
+    /// resolved per Project rather than app-wide.
+    init(
+        maxWorkspaces: Int,
+        layoutPreferences: WorkspaceLayoutPreferences? = nil,
+        defaults: UserDefaults = .standard
+    ) {
         self.maxWorkspaces = maxWorkspaces
-        let preferences = layoutPreferences ?? WorkspaceLayoutPreferences()
+        let preferences = layoutPreferences ?? WorkspaceLayoutPreferences(defaults: defaults)
         self.layoutPreferences = preferences
         // Honor the General → "Default view" preference for the first workspace.
-        let stored = UserDefaults.standard.string(forKey: SettingsKeys.defaultView)
+        let stored = defaults.string(forKey: SettingsKeys.defaultView)
         let landing = stored.flatMap(DefaultView.init(rawValue:))?.sidebarItem ?? .sessions
         // Both panels start closed, whatever the remembered preference is.
         //
@@ -83,6 +89,36 @@ final class WorkspaceStore {
         if activeWorkspaceID == id {
             activeWorkspaceID = workspaces[max(0, index - 1)].id
         }
+    }
+
+    /// Captures only the bounded, durable view intent owned by the active
+    /// Project. Session selection, Investigation results, and capture evidence
+    /// deliberately remain outside the Project catalog.
+    func captureProjectWorkspaces() -> [ProjectWorkspaceSnapshot] {
+        workspaces.map(ProjectWorkspaceSnapshot.init(capturing:))
+    }
+
+    /// Replaces the live workspace set from a validated Project snapshot. This
+    /// changes presentation only: the coordinator's capture/session/History
+    /// state is app-wide and is never swapped or cleared by Project navigation.
+    func applyProjectWorkspaces(
+        _ snapshots: [ProjectWorkspaceSnapshot],
+        activeWorkspaceID desiredActiveWorkspaceID: UUID,
+        maxFilterRules: Int
+    ) {
+        let hydrated = snapshots.map {
+            $0.hydrateWorkspaceState(
+                maxFilterRules: maxFilterRules,
+                allowsAutomaticInspectorReveal: layoutPreferences.allowsAutomaticInspectorReveal
+            )
+        }
+        guard !hydrated.isEmpty else {
+            return
+        }
+        workspaces = hydrated
+        activeWorkspaceID = hydrated.contains { $0.id == desiredActiveWorkspaceID }
+            ? desiredActiveWorkspaceID
+            : hydrated[0].id
     }
 
     // MARK: Private

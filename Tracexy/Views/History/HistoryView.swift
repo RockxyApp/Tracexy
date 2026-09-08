@@ -295,8 +295,17 @@ struct HistoryView: View {
             Divider()
             Table(coordinator.historySessions) {
                 TableColumn("Time") { session in
-                    Text(date(session.startTime), format: .dateTime.hour().minute().second())
-                        .font(Theme.Typography.caption.monospacedDigit())
+                    // A stored NULL start means the capture recorded no time for
+                    // this session's frames; it prints as unknown, not as 1970.
+                    if let startTime = session.startTime {
+                        Text(date(startTime), format: .dateTime.hour().minute().second())
+                            .font(Theme.Typography.caption.monospacedDigit())
+                    } else {
+                        Text("—")
+                            .font(Theme.Typography.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .help("This capture recorded no time for these frames.")
+                    }
                 }
                 .width(min: 76, ideal: 88)
                 TableColumn("Process") { session in
@@ -320,7 +329,7 @@ struct HistoryView: View {
                 }
                 .width(min: 78, ideal: 90)
                 TableColumn("Duration") { session in
-                    Text(duration(session.duration))
+                    Text(session.duration.map { duration($0) } ?? "—")
                         .font(Theme.Typography.caption.monospacedDigit())
                 }
                 .width(min: 72, ideal: 82)
@@ -410,8 +419,17 @@ struct HistoryView: View {
         .background(Color.orange.opacity(0.08))
     }
 
+    /// The capture's stored instant, labelled by what it actually describes. A
+    /// capture whose own timing could not be established stores the moment it was
+    /// opened here, and says "Opened" rather than implying the traffic happened then.
     private func captureDate(_ record: HistoryCaptureRecord) -> String {
-        Date(timeIntervalSince1970: record.endedAt).formatted(date: .abbreviated, time: .shortened)
+        let formatted = Date(timeIntervalSince1970: record.endedAt)
+            .formatted(date: .abbreviated, time: .shortened)
+        switch record.timeBasis {
+        case .captured: return formatted
+        case .opened: return "Opened \(formatted)"
+        case .legacy: return "Recorded \(formatted)"
+        }
     }
 
     private func date(_ value: Double) -> Date {
@@ -478,6 +496,17 @@ private struct HistoryCaptureRow: View {
                     Text(capture.record.sourceKind == .live ? "Live" : "Saved")
                     Text("·")
                     Text(capture.sessionCount == 1 ? "1 session" : "\(capture.sessionCount.formatted()) sessions")
+                    // The row's headline instant is the open event, not the
+                    // capture's own time, whenever the file left frames untimed.
+                    if capture.record.timeBasis == .opened {
+                        Text("·")
+                        Text("Opened here")
+                            .help("This capture's own time is unknown, so this is when it was opened.")
+                    } else if capture.record.timeBasis == .legacy {
+                        Text("·")
+                        Text("Legacy time")
+                            .help("Saved before capture-time provenance was tracked. The recorded times are preserved.")
+                    }
                 }
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)

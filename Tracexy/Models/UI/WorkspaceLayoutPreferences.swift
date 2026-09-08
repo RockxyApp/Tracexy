@@ -47,12 +47,9 @@ struct WorkspaceLayoutPreferences {
 
     // MARK: Private
 
-    private static let inspectorLayoutKey = TracexyIdentity.current
-        .defaultsKey("workspace.inspectorLayout")
-    private static let contextDockKey = TracexyIdentity.current
-        .defaultsKey("workspace.contextDockVisible")
-    private static let automaticRevealKey = TracexyIdentity.current
-        .defaultsKey("workspace.allowsAutomaticInspectorReveal")
+    private static let inspectorLayoutKey = ProjectScopedSettingsKeys.inspectorLayout
+    private static let contextDockKey = ProjectScopedSettingsKeys.contextDockVisible
+    private static let automaticRevealKey = ProjectScopedSettingsKeys.allowsAutomaticInspectorReveal
 
     private let defaults: UserDefaults
 }

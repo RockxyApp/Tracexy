@@ -15,7 +15,7 @@ struct SessionGroup: Identifiable, Hashable {
     init(kind: Kind, key: String, sessions: [SessionSummary]) {
         self.kind = kind
         self.key = key
-        self.sessions = sessions.sorted { $0.startTime < $1.startTime }
+        self.sessions = sessions.sorted(by: SessionChronology.ascending)
         id = Self.identifier(kind: kind, key: key)
     }
 
@@ -38,8 +38,12 @@ struct SessionGroup: Identifiable, Hashable {
         key
     }
 
-    var startTime: Date {
-        sessions.first?.startTime ?? .distantPast
+    /// The earliest member start, or `nil` when any member's timing is unknown.
+    var startTime: Date? {
+        guard !sessions.contains(where: \.hasUnknownTiming) else {
+            return nil
+        }
+        return sessions.compactMap(\.startTime).min()
     }
 
     /// Worst status across the group: one failed member makes the group failed.

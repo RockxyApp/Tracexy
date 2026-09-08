@@ -99,18 +99,26 @@ struct SessionFilterBar: View {
 
             if workspace.hasActiveFilters {
                 Button {
-                    reset(workspace)
+                    coordinator.resetSessionFilters(in: workspace)
                 } label: {
                     ViewThatFits(in: .horizontal) {
-                        Label("Reset Filters", systemImage: "arrow.clockwise")
-                        Image(systemName: "arrow.clockwise")
+                        Label(
+                            SessionScopeAction.resetTitle,
+                            systemImage: SessionScopeAction.resetSystemImage
+                        )
+                        Label(
+                            SessionScopeAction.resetShortTitle,
+                            systemImage: SessionScopeAction.resetSystemImage
+                        )
+                        Image(systemName: SessionScopeAction.resetSystemImage)
                     }
                 }
                 .buttonStyle(.borderless)
                 .font(Theme.Typography.chromeAction)
                 .foregroundStyle(.secondary)
-                .help("Clear all session filters")
-                .accessibilityLabel("Reset filters")
+                .help(SessionScopeAction.resetHelp)
+                .accessibilityLabel(SessionScopeAction.resetTitle)
+                .accessibilityHint(SessionScopeAction.resetHelp)
             }
         }
         .padding(.horizontal, 8)
@@ -441,20 +449,6 @@ struct SessionFilterBar: View {
         } else {
             workspace.categoryFilters.insert(category)
         }
-    }
-
-    /// Reset clears the quick categories, the search text, the sidebar drill-down
-    /// scopes, and the advanced rules (back to a single blank row), then hides the
-    /// advanced editor. It does not touch Noise Control or any capture state.
-    private func reset(_ workspace: WorkspaceState) {
-        workspace.categoryFilters = []
-        workspace.filterText = ""
-        workspace.hostFilter = nil
-        workspace.processFilter = nil
-        workspace.ipFilter = nil
-        workspace.filterRules = [SessionFilterRule()]
-        workspace.isAdvancedFilterVisible = false
-        coordinator.clearInvestigationQuery(in: workspace)
     }
 }
 

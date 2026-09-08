@@ -82,8 +82,11 @@ extension MainContentCoordinator {
     )
         -> SessionSummary?
     {
-        sessions.max {
-            ($0.startTime, $0.id.uuidString) < ($1.startTime, $1.id.uuidString)
-        }
+        // "Newest" is a chronological claim, so only a known-time session can be it.
+        // A capture whose sessions are all untimed has no newest session to follow,
+        // and says so rather than picking one by an invented instant.
+        sessions
+            .filter { $0.startTime != nil }
+            .max { SessionChronology.ascending($0, $1) }
     }
 }

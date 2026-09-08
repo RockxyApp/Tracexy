@@ -9,10 +9,13 @@ struct PrivacySettingsView: View {
     // MARK: Lifecycle
 
     init(
+        applicationDefaults: UserDefaults = .standard,
         historyRetentionError: String? = nil,
         isHistoryDemoMode: Bool = false,
         onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
     ) {
+        _localOnly = AppStorage(wrappedValue: true, SettingsKeys.localOnly, store: applicationDefaults)
+        _shareAnalytics = AppStorage(wrappedValue: false, SettingsKeys.shareAnalytics, store: applicationDefaults)
         self.historyRetentionError = historyRetentionError
         self.isHistoryDemoMode = isHistoryDemoMode
         self.onAutoClearChange = onAutoClearChange
@@ -110,12 +113,17 @@ struct PrivacySettingsView: View {
 
     // MARK: Private
 
+    // Export protections and History Auto-clear are per-Project: one investigation
+    // may need masked, redacted exports and a short retention window while another
+    // keeps everything. "Local only" and analytics describe the application and
+    // stay in the shared domain explicitly.
     @AppStorage(SettingsKeys.redactBodies) private var redactBodies = true
     @AppStorage(SettingsKeys.stripCredentials) private var stripCredentials = true
     @AppStorage(SettingsKeys.maskIPs) private var maskIPs = false
-    @AppStorage(SettingsKeys.localOnly) private var localOnly = true
     @AppStorage(SettingsKeys.autoClear) private var autoClear = AutoClear.never.rawValue
-    @AppStorage(SettingsKeys.shareAnalytics) private var shareAnalytics = false
+
+    @AppStorage(SettingsKeys.localOnly, store: .standard) private var localOnly = true
+    @AppStorage(SettingsKeys.shareAnalytics, store: .standard) private var shareAnalytics = false
 
     private let historyRetentionError: String?
     private let isHistoryDemoMode: Bool

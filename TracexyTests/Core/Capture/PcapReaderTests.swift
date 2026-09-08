@@ -34,7 +34,9 @@ struct PcapReaderTests {
 
         let result = try PcapReader.read(file)
         let expected = Date(timeIntervalSince1970: 1_700_000_000.5)
-        #expect(abs(result.frames[0].timestamp.timeIntervalSince1970 - expected.timeIntervalSince1970) < 0.0001)
+        // Classic records always carry a timestamp field, so this is never unknown.
+        let instant = try #require(result.frames[0].timestamp)
+        #expect(abs(instant.timeIntervalSince1970 - expected.timeIntervalSince1970) < 0.0001)
     }
 
     @Test
@@ -144,9 +146,10 @@ struct PcapReaderTests {
                 #expect(streamedFrame.bytes == memoryFrame.bytes)
                 #expect(streamedFrame.originalLength == memoryFrame.originalLength)
                 #expect(streamedFrame.capturedLength == memoryFrame.capturedLength)
+                let streamedInstant = try #require(streamedFrame.timestamp)
+                let memoryInstant = try #require(memoryFrame.timestamp)
                 #expect(abs(
-                    streamedFrame.timestamp.timeIntervalSince1970
-                        - memoryFrame.timestamp.timeIntervalSince1970
+                    streamedInstant.timeIntervalSince1970 - memoryInstant.timeIntervalSince1970
                 ) < 0.0001)
             }
         }

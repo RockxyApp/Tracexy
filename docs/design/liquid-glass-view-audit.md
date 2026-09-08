@@ -2,12 +2,16 @@
 
 Audited 2026-08-24 against the production `Tracexy/Views` tree and every app scene in `TracexyApp.swift`. This inventory is exhaustive for current source. It distinguishes functional chrome from data content so “more glass” never becomes glass behind packet text, tables or evidence.
 
+Toolbar entries reconciled 2026-09-04: Project context and capture-source controls now have separate native toolbar ownership and responsive interface labeling. A noninteractive native vertical separator distinguishes the source menu from Start/Stop; Export retains its native bordered surface even when disabled.
+
 ## Window and split hierarchy
 
 | Source | Disposition |
 | --- | --- |
-| `TracexyApp.swift` | The main workspace keeps a hidden semantic title with a unified native toolbar, so no view title or tagline displaces the capture picker. Settings, Focus Set and Noise Control remain titled Mac windows. |
-| `Common/NativeWorkspaceWindowChrome.swift` | Hidden semantic title, unified toolbar, leading interface picker, centered status, visible native export menu and one grouped capture/inspector action family. |
+| `TracexyApp.swift` | The main workspace keeps a hidden semantic title with a unified native toolbar, so no view title or tagline displaces the Project selector. Settings, Focus Set and Noise Control remain titled Mac windows. |
+| `Common/NativeWorkspaceWindowChrome.swift` | Hidden semantic title, unified toolbar, standalone leading Project selector, centered status, trailing interface picker beside Start/Stop, then a native gap before Export and grouped inspector controls. |
+| `Common/CaptureInterfaceToolbarPicker.swift` | Native menu with a bounded friendly interface label, icon-only at compact widths, and full interface identity retained in the menu, tooltip and accessibility value. Hosting constraints preserve spacing across resize round trips. |
+| `Projects/ProjectPresentation.swift` | Standalone native Project menu and management sheets; bounded configuration-only content stays separate from capture-source controls. |
 | `Main/NativeWorkspaceSplitView.swift` | Native sidebar, workspace and trailing inspector split items; owns resizing and collapse semantics. |
 | `Main/NativeBottomInspectorSplitView.swift` | Native resizable evidence inspector below the session workspace. |
 | `Main/RootView.swift` | Owns toolbar controls, top session command safe-area bar and bottom status safe-area bar. |

@@ -91,7 +91,7 @@ struct Activity: Identifiable, Hashable, Sendable {
     // MARK: Lifecycle
 
     init(id: UUID? = nil, sessions: [SessionSummary], evidence: [ActivityEvidence], competingNames: [String] = []) {
-        let ordered = sessions.sorted { $0.startTime < $1.startTime }
+        let ordered = sessions.sorted(by: SessionChronology.ascending)
         self.sessions = ordered
         self.evidence = evidence
         self.competingNames = competingNames
@@ -138,18 +138,33 @@ struct Activity: Identifiable, Hashable, Sendable {
         sessions.compactMap(\.processName).first
     }
 
-    var startTime: Date {
-        sessions.first?.startTime ?? .distantPast
+    /// The earliest member start, or `nil` when any member's timing is unknown.
+    var startTime: Date? {
+        guard !sessions.contains(where: \.hasUnknownTiming) else {
+            return nil
+        }
+        return sessions.compactMap(\.startTime).min()
     }
 
     /// Wall-clock span of the whole action, not the sum of its parts — the
     /// sessions overlap, so summing durations would overstate it.
-    var duration: TimeInterval {
-        guard let first = sessions.first else {
-            return 0
+    ///
+    /// `nil` when any member's own timing is unknown: a span computed from the
+    /// timed members alone would silently present a partial action as complete.
+    var duration: TimeInterval? {
+        guard !sessions.isEmpty, sessions.allSatisfy({ !$0.hasUnknownTiming && $0.duration != nil }) else {
+            return nil
         }
-        let end = sessions.map { $0.startTime.addingTimeInterval($0.duration) }.max() ?? first.startTime
-        return end.timeIntervalSince(first.startTime)
+        guard let first = sessions.compactMap(\.startTime).min() else {
+            return nil
+        }
+        let end = sessions.compactMap { session -> Date? in
+            guard let start = session.startTime, let duration = session.duration else {
+                return nil
+            }
+            return start.addingTimeInterval(duration)
+        }.max() ?? first
+        return max(0, end.timeIntervalSince(first))
     }
 
     /// Worst status across the action: one failed step makes the action failed.

@@ -65,6 +65,41 @@ struct HistoryRecordsTests {
         }
     }
 
+    @Test("Session accepts unknown start and duration without a numeric stand-in")
+    func sessionAcceptsUnknownTiming() throws {
+        let record = HistorySessionRecord(
+            sessionID: UUID(),
+            startTime: nil,
+            duration: nil,
+            processName: nil,
+            host: "example.com",
+            sourceEndpoint: "10.0.0.1:5000",
+            destinationEndpoint: "93.184.216.34:443",
+            protocols: ["tcp"],
+            status: .ok,
+            latencyMilliseconds: nil,
+            bytesUp: 10,
+            bytesDown: 20
+        )
+        try record.validate()
+        #expect(record.startTime == nil)
+        #expect(record.duration == nil)
+    }
+
+    @Test("A capture record defaults to the captured time basis and preserves an explicit one")
+    func captureTimeBasis() {
+        #expect(Self.capture().timeBasis == .captured)
+        let opened = HistoryCaptureRecord(
+            captureID: UUID(),
+            startedAt: 1_000,
+            endedAt: 1_000,
+            sourceKind: .saved,
+            completeness: .complete,
+            timeBasis: .opened
+        )
+        #expect(opened.timeBasis == .opened)
+    }
+
     @Test("Session accepts a nil latency and zero byte counts")
     func sessionAcceptsNilLatencyAndZeroBytes() throws {
         try Self.session(latencyMilliseconds: nil, bytesUp: 0, bytesDown: 0).validate()

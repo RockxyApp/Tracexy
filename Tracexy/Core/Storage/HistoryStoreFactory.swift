@@ -16,8 +16,9 @@ import Foundation
 enum HistoryStoreFactory {
     // MARK: Internal
 
-    /// The result of attempting to compose the production store.
-    enum Outcome: Sendable {
+    /// The result of attempting to compose the production store. `nonisolated`
+    /// because ``make(databaseURL:fileManager:)`` produces it off the main actor.
+    nonisolated enum Outcome: Sendable {
         /// A migrated, writable store is ready for terminal writes and reads.
         case ready(SessionStore)
         /// History is unavailable; the reason is suitable for a History-specific
@@ -49,7 +50,11 @@ enum HistoryStoreFactory {
 
     /// Open a writable store at `databaseURL`, isolating directory-creation and
     /// open/migration failures as ``Outcome/unavailable``.
-    static func make(databaseURL: URL, fileManager: FileManager = .default) -> Outcome {
+    ///
+    /// Deliberately `nonisolated`: creating the folder and opening/migrating the
+    /// SQLite database is real file I/O, and a Project change prepares it off the
+    /// main actor rather than blocking the UI on it.
+    nonisolated static func make(databaseURL: URL, fileManager: FileManager = .default) -> Outcome {
         let directory = databaseURL.deletingLastPathComponent()
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -70,7 +75,7 @@ enum HistoryStoreFactory {
 
     // MARK: Private
 
-    private static func errorDescription(_ error: Error) -> String {
+    nonisolated private static func errorDescription(_ error: Error) -> String {
         if let error = error as? HistoryStoreError {
             return String(describing: error)
         }

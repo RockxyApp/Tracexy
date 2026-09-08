@@ -43,6 +43,10 @@ actor LiveCaptureSpool {
         /// The locator's length/offset is out of bounds, overruns the current
         /// file, or the exact read came up short/truncated.
         case invalidEvidence(String)
+        /// A frame arrived with no capture time. Live frames come from the helper's
+        /// validated `pcap_pkthdr`, which always carries one, so this is rejected
+        /// rather than written with a substituted instant.
+        case untimedFrame
 
         // MARK: Internal
 
@@ -52,6 +56,7 @@ actor LiveCaptureSpool {
             case .empty: "The live capture spool has no frames."
             case .staleEvidence: "The requested capture evidence is no longer available."
             case let .invalidEvidence(message): "The capture evidence is invalid: \(message)"
+            case .untimedFrame: "A live capture frame arrived without a capture time and was not recorded."
             }
         }
     }
@@ -105,10 +110,20 @@ actor LiveCaptureSpool {
         guard failure == nil, let handle, let token = sourceToken else {
             throw Failure.unavailable(failure ?? "The local capture spool is unavailable.")
         }
+        // The spool writes Enhanced Packet Blocks, whose timestamp field is
+        // mandatory. A live frame always carries one (the helper validates its
+        // `pcap_pkthdr` before the frame is built), so an untimed frame is rejected
+        // outright rather than written with the epoch or the current clock.
+        let timedFrames = try frames.map { frame -> (CapturedFrame, UInt64) in
+            guard let timestamp = frame.timestamp else {
+                throw Failure.untimedFrame
+            }
+            return try (frame, CaptureTimestampEncoding.microseconds(timestamp))
+        }
         var locators: [SessionEvidenceLocator] = []
         locators.reserveCapacity(frames.count)
         do {
-            for frame in frames {
+            for (frame, microseconds) in timedFrames {
                 let linkType = frame.linkType ?? defaultLinkType
                 let interfaceID: UInt32
                 if let existing = interfaceIDs[linkType] {
@@ -125,7 +140,7 @@ actor LiveCaptureSpool {
                     try advanceWriteOffset(by: idb.count)
                     interfaceIDs[linkType] = interfaceID
                 }
-                let block = Self.enhancedPacketBlock(frame: frame, interfaceID: interfaceID)
+                let block = Self.enhancedPacketBlock(frame: frame, interfaceID: interfaceID, microseconds: microseconds)
                 // The absolute payload-byte offset of this frame's captured bytes
                 // inside its enhanced packet block (fixed prefix past the block and
                 // record headers). Independent of any link-type mix.
@@ -276,9 +291,8 @@ actor LiveCaptureSpool {
         }
     }
 
-    private static func enhancedPacketBlock(frame: CapturedFrame, interfaceID: UInt32) -> Data {
+    private static func enhancedPacketBlock(frame: CapturedFrame, interfaceID: UInt32, microseconds: UInt64) -> Data {
         block(type: 0x00000006) { body in
-            let microseconds = timestampMicroseconds(frame.timestamp)
             append32(interfaceID, to: &body)
             append32(UInt32(microseconds >> 32), to: &body)
             append32(UInt32(microseconds & UInt64(UInt32.max)), to: &body)
@@ -301,11 +315,6 @@ actor LiveCaptureSpool {
         data.append(body)
         append32(totalLength, to: &data)
         return data
-    }
-
-    private static func timestampMicroseconds(_ date: Date) -> UInt64 {
-        let interval = max(0, date.timeIntervalSince1970)
-        return UInt64(min((interval * 1_000_000).rounded(), Double(UInt64.max)))
     }
 
     private static func append16(_ value: UInt16, to data: inout Data) {

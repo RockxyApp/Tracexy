@@ -5,6 +5,27 @@ import SwiftUI
 /// Appearance, default landing view, byte units, and launch behavior.
 /// Appearance and Default view take effect immediately; the rest persist.
 struct GeneralSettingsView: View {
+    // MARK: Lifecycle
+
+    init(applicationDefaults: UserDefaults = .standard) {
+        _appearance = AppStorage(
+            wrappedValue: AppAppearance.system.rawValue,
+            SettingsKeys.appearance,
+            store: applicationDefaults
+        )
+        _byteUnits = AppStorage(
+            wrappedValue: ByteUnits.binary.rawValue,
+            SettingsKeys.byteUnits,
+            store: applicationDefaults
+        )
+        _confirmQuit = AppStorage(
+            wrappedValue: true,
+            SettingsKeys.confirmQuitWhileCapturing,
+            store: applicationDefaults
+        )
+        _restoreWorkspace = AppStorage(wrappedValue: true, SettingsKeys.restoreWorkspace, store: applicationDefaults)
+    }
+
     // MARK: Internal
 
     var body: some View {
@@ -55,11 +76,15 @@ struct GeneralSettingsView: View {
 
     // MARK: Private
 
-    @AppStorage(SettingsKeys.appearance) private var appearance = AppAppearance.system.rawValue
+    /// Appearance, byte units, quit confirmation and workspace restoration describe
+    /// the application, so they stay in the shared domain explicitly. "Default
+    /// view" is a per-Project layout preference and follows the injected store.
+    @AppStorage(SettingsKeys.appearance, store: .standard) private var appearance = AppAppearance.system.rawValue
+    @AppStorage(SettingsKeys.byteUnits, store: .standard) private var byteUnits = ByteUnits.binary.rawValue
+    @AppStorage(SettingsKeys.confirmQuitWhileCapturing, store: .standard) private var confirmQuit = true
+    @AppStorage(SettingsKeys.restoreWorkspace, store: .standard) private var restoreWorkspace = true
+
     @AppStorage(SettingsKeys.defaultView) private var defaultView = DefaultView.sessions.rawValue
-    @AppStorage(SettingsKeys.byteUnits) private var byteUnits = ByteUnits.binary.rawValue
-    @AppStorage(SettingsKeys.confirmQuitWhileCapturing) private var confirmQuit = true
-    @AppStorage(SettingsKeys.restoreWorkspace) private var restoreWorkspace = true
 
     private let metrics = SettingsDisplayMetrics.standard
 }

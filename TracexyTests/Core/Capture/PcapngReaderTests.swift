@@ -37,14 +37,15 @@ struct PcapngReaderTests {
         #expect(result.frames.count == 1)
         #expect(result.frames[0].bytes == payload)
         #expect(result.frames[0].linkType == LinkType.ethernet)
-        #expect(abs(result.frames[0].timestamp.timeIntervalSince1970 - 1_700_000_000.5) < 0.0001)
+        let instant = try #require(result.frames[0].timestamp)
+        #expect(abs(instant.timeIntervalSince1970 - 1_700_000_000.5) < 0.0001)
     }
 
     @Test
     func captureFileReaderSniffsClassicPcap() throws {
         // A classic .pcap must still route correctly through the sniffing reader.
         let frame = CapturedFrame(bytes: [0x01, 0x02], timestamp: Date(timeIntervalSince1970: 1), originalLength: 2)
-        let pcap = [UInt8](PcapWriter.data(linkType: LinkType.ethernet, frames: [frame]))
+        let pcap = try [UInt8](PcapWriter.data(linkType: LinkType.ethernet, frames: [frame]))
         #expect(!PcapngReader.isPcapng(pcap))
         let result = try CaptureFileReader.read(pcap)
         #expect(result.frames.count == 1)
@@ -79,6 +80,9 @@ struct PcapngReaderTests {
         #expect(result.frames[0].bytes == [0x01, 0x02, 0x03, 0x04])
         #expect(result.frames[0].originalLength == 9)
         #expect(result.frames[0].linkType == LinkType.ethernet)
+        // No timestamp field exists in a Simple Packet Block, so the instant is
+        // unknown rather than the Unix epoch a real capture could also carry.
+        #expect(result.frames[0].timestamp == nil)
     }
 
     @Test
@@ -160,7 +164,14 @@ struct PcapngReaderTests {
                 #expect(lhs.bytes == rhs.bytes)
                 #expect(lhs.originalLength == rhs.originalLength)
                 #expect(lhs.linkType == rhs.linkType)
-                #expect(abs(lhs.timestamp.timeIntervalSince1970 - rhs.timestamp.timeIntervalSince1970) < 1e-9)
+                // Both paths report the same optional instant, so an untimed frame
+                // stays untimed on both sides rather than differing by an epoch.
+                switch (lhs.timestamp, rhs.timestamp) {
+                case let (left?, right?):
+                    #expect(abs(left.timeIntervalSince1970 - right.timeIntervalSince1970) < 1e-9)
+                default:
+                    #expect(lhs.timestamp == nil && rhs.timestamp == nil)
+                }
             }
         }
     }

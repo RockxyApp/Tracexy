@@ -91,7 +91,7 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
 nonisolated struct DecodedPacket {
     // MARK: Lifecycle
 
-    init(timestamp: Date, originalLength: Int) {
+    init(timestamp: Date?, originalLength: Int) {
         self.timestamp = timestamp
         self.originalLength = originalLength
         layers = []
@@ -100,7 +100,10 @@ nonisolated struct DecodedPacket {
 
     // MARK: Internal
 
-    var timestamp: Date
+    /// When the frame was captured, or `nil` when the source carried no capture
+    /// time at all (a pcapng Simple Packet Block). Absence stays absent: it is
+    /// never replaced by the Unix epoch, the file's open instant, or "now".
+    var timestamp: Date?
     var originalLength: Int
     /// The captured on-wire bytes of this packet (≤ snaplen), retained for the
     /// inspector's hex pane. Empty if not built from a real frame.
@@ -145,8 +148,14 @@ nonisolated struct DecodedPacket {
     var tcpPayloadBytes: [UInt8] = []
 
     /// Protocol stack outer→inner, e.g. [.tcp, .tls]. Used by the session list.
+    ///
+    /// Outer link framing is excluded: Ethernet and Linux cooked capture (SLL)
+    /// describe how the frame was carried, not what the session is, and dropping
+    /// them keeps the bounded history capacity for inner protocols.
     var protocolStack: [ProtocolKind] {
         var seen = Set<ProtocolKind>()
-        return layers.map(\.proto).filter { $0 != .ethernet && seen.insert($0).inserted }
+        return layers.map(\.proto).filter {
+            $0 != .ethernet && $0 != .linuxCooked && seen.insert($0).inserted
+        }
     }
 }

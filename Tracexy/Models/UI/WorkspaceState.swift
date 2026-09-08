@@ -75,6 +75,37 @@ final class WorkspaceState: Identifiable {
     var processFilter: String?
     var ipFilter: String?
 
+    /// Protocols added by an explicit aggregate drill-in (an Overview Protocol Mix
+    /// row), as a finite set of recognized ``ProtocolKind`` values.
+    ///
+    /// These are **conjunctive**: a session must carry every kind in the set. That
+    /// is deliberately not how ``categoryFilters`` behaves — the category group is
+    /// OR-ed, so writing a drill-in into it could *widen* the list past the
+    /// aggregate that was clicked. Keeping the two separate is what lets an
+    /// aggregate promise the count it displayed, and lets a second drill-in
+    /// intersect with the first instead of replacing it.
+    var aggregateProtocolFilters: Set<ProtocolKind> = []
+
+    /// One remote address chosen from the Flow address list.
+    ///
+    /// Matched against the **typed binary destination endpoint only** — never the
+    /// source endpoint and never a DNS answer, which is what separates it from
+    /// ``ipFilter``. Flow groups its rows by exactly this fact, so the row's
+    /// session count and the resulting list are the same set.
+    var aggregateDestinationFilter: String?
+    /// Findings membership AND-ed with the existing category group.
+    var aggregateRequiresFindings = false
+
+    /// Bounded per-workspace history of the scopes explicit host/process/IP and
+    /// Findings drill-ins replaced, oldest first and capped at
+    /// ``SessionScopeReturnPoint/maximumDepth``.
+    ///
+    /// Ordinary sidebar navigation and ⌘F are not drill-ins and never push here.
+    /// It holds view intent only — no rules, query, search text, noise, removal
+    /// or raw evidence — and is capture-local: it is never persisted into a
+    /// Project snapshot and never crosses into another workspace.
+    var sessionScopeReturnStack: [SessionScopeReturnPoint] = []
+
     /// Advanced filter builder: the AND/OR rule rows (always at least one row).
     var filterRules: [SessionFilterRule] = [SessionFilterRule()]
     /// Whether the advanced rule builder is revealed below the category tabs.
@@ -122,15 +153,35 @@ final class WorkspaceState: Identifiable {
         isSearchEnabled && !filterText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// True when any user filter is active, including the separate capture-local
-    /// Investigation query. The query remains disjoint from persisted advanced rules.
+    /// True when any user filter is active, including the sidebar protocol lens
+    /// and the separate capture-local Investigation query. The query remains
+    /// disjoint from persisted advanced rules.
+    ///
+    /// The sidebar lens counts because it constrains the list exactly like the
+    /// category pills do (see ``MainContentCoordinator/visibleSessions(in:)``);
+    /// omitting it left a user looking at a filtered list with no visible reason
+    /// and no reset affordance.
     var hasActiveFilters: Bool {
-        isSearchActive
+        sidebarSelection.protocolFilter != nil
+            || isSearchActive
             || !categoryFilters.isEmpty
             || hostFilter != nil
             || processFilter != nil
             || ipFilter != nil
+            || !aggregateProtocolFilters.isEmpty
+            || aggregateDestinationFilter != nil
+            || aggregateRequiresFindings
             || !activeFilterRules.isEmpty
             || hasActiveInvestigationQuery
+            || isEvaluatingInvestigationQuery
+    }
+
+    /// Drops both aggregate narrowing fields, for the global navigation routes
+    /// that replace a scope rather than narrow one. Kept here so no caller can
+    /// clear one and forget the other.
+    func clearAggregateScope() {
+        aggregateProtocolFilters = []
+        aggregateDestinationFilter = nil
+        aggregateRequiresFindings = false
     }
 }

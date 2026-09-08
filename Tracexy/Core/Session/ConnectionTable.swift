@@ -259,6 +259,33 @@ nonisolated struct ConnectionTable {
 
     // MARK: Application integration
 
+    /// The eviction ordering key described on ``leastRecentlyUsedTuple()``. It is a
+    /// plain comparable tuple of already-known facts, so no optional `Date` is ever
+    /// compared against another optional directly.
+    private struct RecencyKey {
+        let isTimed: Bool
+        let timestamp: Date?
+        let lastOrdinal: UInt64
+        let firstOrdinal: UInt64
+
+        func precedes(_ other: RecencyKey) -> Bool {
+            if isTimed != other.isTimed {
+                return isTimed
+            }
+            if isTimed, let mine = timestamp, let theirs = other.timestamp, mine != theirs {
+                return mine < theirs
+            }
+            if !isTimed, lastOrdinal != other.lastOrdinal {
+                return lastOrdinal < other.lastOrdinal
+            }
+            return firstOrdinal < other.firstOrdinal
+        }
+
+        func equals(_ other: RecencyKey) -> Bool {
+            !precedes(other) && !other.precedes(self)
+        }
+    }
+
     /// The bounded first-record probe inputs for one segment, projected out of the
     /// decoded packet in `ingest` so the fold helpers stay packet-agnostic.
     private struct ApplicationInput {
@@ -811,25 +838,35 @@ nonisolated struct ConnectionTable {
         }
     }
 
-    /// The connection with the least last-capture timestamp; the earliest first
-    /// ordinal, then tuple order, break ties — all deterministic.
+    /// The eviction victim, chosen by a documented total order that never compares
+    /// two optionals directly and never infers elapsed time from a missing one:
+    ///
+    /// 1. Connections whose last frame carried a capture time are ranked ahead of
+    ///    those whose last frame did not, and compare among themselves by that
+    ///    timestamp (least recent first). An unknown last-capture time is not a
+    ///    small time, so such a connection is only evicted once every timed
+    ///    connection has been considered.
+    /// 2. Connections with no known last-capture time compare among themselves by
+    ///    their last frame's capture **ordinal** — the named source-order fallback,
+    ///    used purely for ordering.
+    /// 3. Remaining ties break on the earliest first ordinal, then tuple order.
     private func leastRecentlyUsedTuple() -> FiveTuple? {
         var victim: FiveTuple?
-        var bestTime = Date.distantFuture
-        var bestOrdinal = UInt64.max
+        var best: RecencyKey?
         for (tuple, state) in active {
-            let time = state.lastProvenance.timestamp
-            let ordinal = state.firstProvenance.ordinal.rawValue
-            let better: Bool = if time != bestTime {
-                time < bestTime
-            } else if ordinal != bestOrdinal {
-                ordinal < bestOrdinal
+            let candidate = RecencyKey(
+                isTimed: state.lastProvenance.timestamp != nil,
+                timestamp: state.lastProvenance.timestamp,
+                lastOrdinal: state.lastProvenance.ordinal.rawValue,
+                firstOrdinal: state.firstProvenance.ordinal.rawValue
+            )
+            let better: Bool = if let best {
+                candidate.precedes(best) || (candidate.equals(best) && isLower(tuple, than: victim))
             } else {
-                isLower(tuple, than: victim)
+                true
             }
             if better {
-                bestTime = time
-                bestOrdinal = ordinal
+                best = candidate
                 victim = tuple
             }
         }
@@ -993,7 +1030,9 @@ nonisolated struct ConnectionTable {
         -> ConnectionEvent
     {
         precondition(!provenances.isEmpty)
-        let timestamp = provenances.last?.timestamp ?? Date(timeIntervalSince1970: 0)
+        // The completing frame's own capture time — `nil` when it carried none.
+        // There is deliberately no epoch fallback here.
+        let timestamp = provenances.last?.timestamp
         return ConnectionEvent(
             connectionID: id, kind: kind, timestamp: timestamp,
             provenance: provenances[0], relatedProvenance: Array(provenances.dropFirst()),

@@ -262,6 +262,51 @@ struct LiveCaptureSpoolTests {
         withExtendedLifetime(spool) {}
     }
 
+    @Test("An untimed frame is refused rather than spooled with a substituted instant")
+    func untimedFrameIsRefused() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 3)
+        let good = frame(byte: 1, timestamp: 1, linkType: LinkType.ethernet)
+        let untimed = CapturedFrame(
+            bytes: [0xEE, 0xEE],
+            timestamp: nil,
+            originalLength: 2,
+            linkType: LinkType.ethernet
+        )
+
+        var thrown: LiveCaptureSpool.Failure?
+        do {
+            _ = try await spool.append([good, untimed], defaultLinkType: LinkType.ethernet, epoch: 3)
+        } catch let error as LiveCaptureSpool.Failure {
+            thrown = error
+        }
+        guard case .untimedFrame? = thrown else {
+            Issue.record("Expected an untimed-frame refusal, got \(String(describing: thrown))")
+            return
+        }
+        // The whole batch was rejected before any write, so nothing was recorded.
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.capture()
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("A rejected untimed batch preserves earlier valid spool evidence")
+    func rejectedBatchPreservesPriorFrames() async throws {
+        let spool = LiveCaptureSpool(directory: Self.uniqueDirectory())
+        try await spool.reset(epoch: 4)
+        let good = frame(byte: 1, timestamp: 1, linkType: 1)
+        try await spool.append([good], defaultLinkType: 1, epoch: 4)
+        let unknown = CapturedFrame(bytes: [2], timestamp: nil, originalLength: 1)
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            try await spool.append([good, unknown], defaultLinkType: 1, epoch: 4)
+        }
+        let capture = try await spool.capture()
+        #expect(capture.frames.count == 1)
+        #expect(capture.frames.first?.bytes == good.bytes)
+    }
+
     // MARK: Private
 
     private enum AppendExpectationError: Error {

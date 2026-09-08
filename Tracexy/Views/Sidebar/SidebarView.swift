@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - SidebarView
 
@@ -263,7 +262,9 @@ struct SidebarView: View {
                 coordinator.saveCurrentCapture()
             }
             .disabled(!coordinator.canSaveCapture)
-            Button("Import Capture…", systemImage: "tray.and.arrow.down") { importCapture() }
+            Button("Import Capture…", systemImage: "tray.and.arrow.down") {
+                coordinator.presentCaptureImportPanel()
+            }
         }
     }
 
@@ -411,7 +412,7 @@ struct SidebarView: View {
                         }
                 }
             }
-            Button { importCapture() } label: {
+            Button { coordinator.presentCaptureImportPanel() } label: {
                 Label("Import…", systemImage: "tray.and.arrow.down")
                     .font(Theme.Typography.caption).foregroundStyle(.secondary)
             }
@@ -423,7 +424,9 @@ struct SidebarView: View {
                         coordinator.saveCurrentCapture()
                     }
                     .disabled(!coordinator.canSaveCapture)
-                    Button("Import…", systemImage: "tray.and.arrow.down") { importCapture() }
+                    Button("Import…", systemImage: "tray.and.arrow.down") {
+                        coordinator.presentCaptureImportPanel()
+                    }
                 }
         }
     }
@@ -759,17 +762,6 @@ struct SidebarView: View {
             get: { workspace.navigatorMode },
             set: { workspace.navigatorMode = $0 }
         )
-    }
-
-    /// Presents an open panel and imports the chosen `.pcap`/`.pcapng` file.
-    private func importCapture() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["pcap", "pcapng"].compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url {
-            coordinator.importCapture(from: url)
-        }
     }
 
     private func moveCaptureToTrash(_ capture: SavedCapture) {

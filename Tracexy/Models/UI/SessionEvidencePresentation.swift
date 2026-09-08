@@ -18,7 +18,10 @@ struct SessionEvidenceItem: Identifiable, Hashable {
     let kind: Kind
     let title: String
     let detail: String
-    let timestamp: Date
+    /// The cited frame's capture time, or `nil` when the capture file recorded
+    /// none. Ordering is already the frame ordinal, so an unknown instant costs the
+    /// chronology nothing and is never replaced by a stand-in.
+    let timestamp: Date?
     let ordinal: FrameOrdinal
     let provenance: [SessionFrameProvenance]
 

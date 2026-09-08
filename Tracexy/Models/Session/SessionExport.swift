@@ -107,6 +107,16 @@ nonisolated enum SessionExportError: LocalizedError {
     case mixedLinkTypes
     case unsupportedLinkType
     case rawExportRequiresAcknowledgement
+    /// Classic pcap has a mandatory per-record timestamp with no "unknown" value,
+    /// so a frame that carries no capture time cannot be written without inventing
+    /// one. pcapng can represent it as a Simple Packet Block.
+    case untimedFramesRequirePcapng
+    /// An untimed frame captured zero bytes of a non-empty wire frame. A Simple
+    /// Packet Block derives its captured length from the interface snap length, and
+    /// no snap length yields "captured nothing of a longer frame", so the lengths
+    /// cannot be preserved exactly.
+    case untimedFrameNotRepresentable
+    case timestampNotRepresentable
 
     // MARK: Internal
 
@@ -125,6 +135,25 @@ nonisolated enum SessionExportError: LocalizedError {
                 localized: """
                 Raw pcap/pcapng export cannot apply the active privacy protections. \
                 Explicitly acknowledge an unredacted raw export, or export the protected session document instead.
+                """
+            )
+        case .untimedFramesRequirePcapng:
+            String(
+                localized: """
+                This session contains frames the capture file recorded without a time. \
+                Classic pcap requires a timestamp on every packet, so exporting it would invent one. \
+                Use pcapng to retain missing timestamps.
+                """
+            )
+        case .timestampNotRepresentable:
+            String(
+                localized: "This capture contains a time outside the range supported by this export format. Save the original capture to preserve it."
+            )
+        case .untimedFrameNotRepresentable:
+            String(
+                localized: """
+                This session contains an untimed frame whose captured length can’t be preserved in pcapng. \
+                Export the original capture file instead, which keeps its bytes untouched.
                 """
             )
         }
@@ -184,7 +213,7 @@ nonisolated enum SessionExporter {
             guard linkTypes.count == 1, let linkType = linkTypes.first else {
                 throw SessionExportError.mixedLinkTypes
             }
-            data = PcapWriter.data(linkType: linkType, frames: frames)
+            data = try PcapWriter.data(linkType: linkType, frames: frames)
         case .pcapng:
             guard !privacy.hasProtections else {
                 throw SessionExportError.rawExportRequiresAcknowledgement
@@ -201,8 +230,10 @@ nonisolated enum SessionExporter {
 
     // MARK: Private
 
-    /// Unprotected native document. Version 1; carries raw frame bytes and is
-    /// preserved for backward compatibility whenever the policy is ``none``.
+    /// Unprotected native document. Carries raw frame bytes. `formatVersion` is 1
+    /// whenever every timing value is known — byte-for-byte the historical output —
+    /// and 3 when any timing field is `null`, so a reader can tell from the version
+    /// alone whether nullable timing may appear.
     private struct Document: Codable {
         let formatVersion: Int
         let exportedAt: Date
@@ -210,8 +241,9 @@ nonisolated enum SessionExporter {
         let frames: [Frame]
     }
 
-    /// Protected native document. Version 2; omits the `bytes` key entirely and
-    /// carries machine-readable ``PrivacyMetadata`` describing what was applied.
+    /// Protected native document. Omits the `bytes` key entirely and carries
+    /// machine-readable ``PrivacyMetadata`` describing what was applied.
+    /// `formatVersion` is 2 for known-only timing and 4 when any timing is `null`.
     private struct ProtectedDocument: Codable {
         let formatVersion: Int
         let exportedAt: Date
@@ -231,8 +263,11 @@ nonisolated enum SessionExporter {
 
     private struct Summary: Codable {
         let id: UUID
-        let startTime: Date
-        let duration: TimeInterval
+        /// Present and `null` when the session's own start is unknown. Timing keys
+        /// are always emitted so a reader can distinguish unknown from omitted; the
+        /// remaining optionals keep their historical omit-when-absent encoding.
+        let startTime: Date?
+        let duration: TimeInterval?
         let processName: String?
         let host: String
         let sourceEndpoint: String
@@ -246,25 +281,65 @@ nonisolated enum SessionExporter {
         let dnsQuery: String?
         let dnsAnswers: [String]
         let summary: String
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(startTime, forKey: .startTime)
+            try container.encode(duration, forKey: .duration)
+            try container.encodeIfPresent(processName, forKey: .processName)
+            try container.encode(host, forKey: .host)
+            try container.encode(sourceEndpoint, forKey: .sourceEndpoint)
+            try container.encode(destinationEndpoint, forKey: .destinationEndpoint)
+            try container.encode(protocols, forKey: .protocols)
+            try container.encode(status, forKey: .status)
+            try container.encodeIfPresent(latencyMilliseconds, forKey: .latencyMilliseconds)
+            try container.encode(bytesUp, forKey: .bytesUp)
+            try container.encode(bytesDown, forKey: .bytesDown)
+            try container.encodeIfPresent(sni, forKey: .sni)
+            try container.encodeIfPresent(dnsQuery, forKey: .dnsQuery)
+            try container.encode(dnsAnswers, forKey: .dnsAnswers)
+            try container.encode(summary, forKey: .summary)
+        }
     }
 
     private struct Frame: Codable {
-        let timestamp: Date
+        /// Present and `null` when the capture file recorded no time for the frame.
+        let timestamp: Date?
         let originalLength: Int
         let capturedLength: Int
         let linkType: UInt32
         let processName: String?
         let bytes: Data
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(timestamp, forKey: .timestamp)
+            try container.encode(originalLength, forKey: .originalLength)
+            try container.encode(capturedLength, forKey: .capturedLength)
+            try container.encode(linkType, forKey: .linkType)
+            try container.encodeIfPresent(processName, forKey: .processName)
+            try container.encode(bytes, forKey: .bytes)
+        }
     }
 
     /// Frame metadata with the `bytes` key deliberately absent, so no raw payload
     /// can survive in a protected document.
     private struct ProtectedFrame: Codable {
-        let timestamp: Date
+        let timestamp: Date?
         let originalLength: Int
         let capturedLength: Int
         let linkType: UInt32
         let processName: String?
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(timestamp, forKey: .timestamp)
+            try container.encode(originalLength, forKey: .originalLength)
+            try container.encode(capturedLength, forKey: .capturedLength)
+            try container.encode(linkType, forKey: .linkType)
+            try container.encodeIfPresent(processName, forKey: .processName)
+        }
     }
 
     private static func sessionDocumentData(
@@ -279,9 +354,16 @@ nonisolated enum SessionExporter {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
+        // Version is decided by the data, not the policy: a document only announces
+        // the nullable-timing versions when a timing value is actually absent, so a
+        // known-only export stays byte-compatible with existing readers.
+        let hasNullableTiming = session.startTime == nil
+            || session.duration == nil
+            || frames.contains { $0.timestamp == nil }
+
         guard privacy.removesRawFrameBytes else {
             let document = Document(
-                formatVersion: 1,
+                formatVersion: hasNullableTiming ? 3 : 1,
                 exportedAt: Date(),
                 session: summary(for: session, privacy: privacy),
                 frames: frames.map { frame in
@@ -299,7 +381,7 @@ nonisolated enum SessionExporter {
         }
 
         let document = ProtectedDocument(
-            formatVersion: 2,
+            formatVersion: hasNullableTiming ? 4 : 2,
             exportedAt: Date(),
             privacy: PrivacyMetadata(
                 redactedPayloadBodies: privacy.redactPayloadBodies,

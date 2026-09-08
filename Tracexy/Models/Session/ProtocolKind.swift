@@ -2,6 +2,9 @@ import Foundation
 
 nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
     case ethernet
+    /// Linux cooked capture (SLL / SLL2) framing. Like Ethernet this is outer
+    /// framing, not a session protocol.
+    case linuxCooked
     case ipv4
     case ipv6
     case arp
@@ -28,6 +31,7 @@ nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
     nonisolated var label: String {
         switch self {
         case .ethernet: "ETH"
+        case .linuxCooked: "SLL"
         case .ipv4: "IPv4"
         case .ipv6: "IPv6"
         case .arp: "ARP"
