@@ -6,6 +6,29 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.7.0</title>
+            <pubDate>Tue, 08 Sep 2026 18:22:58 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.7.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.7.0 (build 12)
+
+## Added
+
+- Organize investigations into isolated Projects, each with its own workspaces, saved captures, History, and capture and privacy settings.
+- Import PCAP and PCAPNG captures into a chosen Project, including gzip-compressed files, TCP Viewer session archives, and Linux cooked captures.
+- Query whole sessions with bounded Session Expressions, return from host, client, IP, or Findings drill-downs with filters intact, and import named BPF capture filters.
+- Export and import configuration-only `.tracexyproject` files without packets, payloads, capture paths, findings, or History.
+
+## Changed
+
+- Keep Project transitions safe by waiting for accepted capture and save work, preserving the current investigation when a transition cannot complete.
+- Reorganize the native toolbar so Project selection, capture source, and Start/Stop controls remain distinct and easier to follow.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.7.0/Tracexy-0.7.0-12.dmg" length="9115968" type="application/octet-stream" sparkle:edSignature="cF2GjosQk+wI+KZMUsc4cCBD4RNFulbztp0RLxG3RO7khvL4UOY+bdCXLx9c9/YF9EshfPmnEjr2irm9bBFdCA=="/>
+        </item>
+        <item>
             <title>0.6.0</title>
             <pubDate>Wed, 02 Sep 2026 12:04:26 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.6.0</sparkle:fullReleaseNotesLink>
@@ -52,21 +75,6 @@
 - Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.5.0/Tracexy-0.5.0-10.dmg" length="7730076" type="application/octet-stream" sparkle:edSignature="L95RguL0MwbkoTbO8+Sj1vuCg/IQqh2nlhnOBtB1Flsr5cBKnzx8B6b6GAwUtIXTKfshxMxhE3ue8g2l+QtCBg=="/>
-        </item>
-        <item>
-            <title>0.4.1</title>
-            <pubDate>Wed, 19 Aug 2026 11:01:05 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.4.1</sparkle:fullReleaseNotesLink>
-            <sparkle:version>9</sparkle:version>
-            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.4.1 (build 9)
-
-## Fixed
-
-- Continue to the save panel after the user explicitly confirms an unprotected raw pcap/pcapng export.
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.4.1/Tracexy-0.4.1-9.dmg" length="6519016" type="application/octet-stream" sparkle:edSignature="Fy/VSqPSygws/KeXtorEnqQp5xCua3ByIjiB2hSGzGaA5kv6ZfYBYuZYW9VFfTDrq3brrx229JzZ/t2TYBwlAA=="/>
         </item>
     </channel>
 </rss>
