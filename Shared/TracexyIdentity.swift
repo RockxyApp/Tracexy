@@ -130,10 +130,6 @@ struct TracexyIdentity {
         "\(sharedUTTypePrefix).session"
     }
 
-    var projectUTTypeIdentifier: String {
-        "\(sharedUTTypePrefix).project"
-    }
-
     var harUTTypeIdentifier: String {
         "\(sharedUTTypePrefix).har"
     }

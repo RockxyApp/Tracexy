@@ -4,6 +4,12 @@ import UniformTypeIdentifiers
 
 // MARK: - Configuration-only Project transfer
 
+private extension TracexyIdentity {
+    var projectUTTypeIdentifier: String {
+        "\(sharedUTTypePrefix).project"
+    }
+}
+
 extension MainContentCoordinator {
     @discardableResult
     func exportProjectConfiguration(_ project: Project) -> Bool {

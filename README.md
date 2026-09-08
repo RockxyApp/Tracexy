@@ -122,6 +122,8 @@ interfaces, processes, protocols, and session relationships.
   activity with visible confidence and contested-attribution states.
 - **Native investigation workflow.** The app uses SwiftUI and AppKit for a real macOS sidebar,
   table, toolbar, split views, inspectors, menus, keyboard behavior, and SF Symbols.
+- **Isolated Projects.** Keep separate investigations with their own workspaces, saved captures,
+  History, filters, and capture and privacy settings.
 - **Evidence stays available.** Summaries lead to decoded layers, field ranges, and raw hex without
   leaving the selected session.
 - **Honest unknowns.** Missing process, hostname, protocol, or timing evidence is shown as unknown;
@@ -133,13 +135,14 @@ interfaces, processes, protocols, and session relationships.
 
 | Area | Available now |
 |---|---|
-| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; classic PCAP and PCAPNG read/write |
+| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; PCAP/PCAPNG read/write; managed gzip, TCP Viewer archive, and Linux cooked capture import |
 | **Decode** | Ethernet, loopback and tunnel framing; ARP; IPv4/IPv6; ICMP/ICMPv6; TCP/UDP; DNS, TLS, HTTP/1, STUN, and QUIC summaries |
 | **Sessions** | Direction-normalized five-tuple grouping, byte/timing summaries, bounded TCP lifecycle and sequence evidence, and higher-level activity correlation |
 | **Investigation** | Overview, session table, flow map, scoped search, typed queries, evidence-linked findings, bounded Follow Stream, decoded fields, and hex evidence |
 | **History** | Local SQLite terminal capture/session summaries with bounded reads, explicit refresh, confirmed clear, and no packet-payload persistence |
 | **Automation core** | Read-only one-page History projections with minimum disclosure, deterministic JSON, and spreadsheet-safe RFC-4180 CSV; no executable or network transport |
 | **Workspace** | Native sidebar, independent workspace tabs, vertical or bottom inspector layouts, status/footer surfaces, Focus Sets, and Noise Control |
+| **Projects** | Isolated investigations with separate workspaces, saved-capture Library, History, capture/privacy settings, and configuration-only import/export |
 | **Attribution** | Best-effort process ownership from `pktap` metadata with a local socket-to-process fallback |
 
 ## Comparison at a glance

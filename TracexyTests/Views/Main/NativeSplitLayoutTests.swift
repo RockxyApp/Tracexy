@@ -355,20 +355,16 @@ struct NativeSplitLayoutTests {
         coordinator.retainedFrames.append(contentsOf: frames)
         coordinator.sessions = SessionBuilder.build(from: frames, linkType: LinkType.ethernet)
         try coordinator.select(#require(coordinator.sessions.first))
-        await Task.yield()
-        #expect(item.isEnabled)
+        #expect(await waitForToolbarState { item.isEnabled })
         #expect(item.isBordered)
 
         coordinator.setSessionExporting(true)
-        await Task.yield()
-        #expect(!item.isEnabled)
+        #expect(await waitForToolbarState { !item.isEnabled })
         #expect(item.isBordered)
         coordinator.setSessionExporting(false)
-        await Task.yield()
-        #expect(item.isEnabled)
+        #expect(await waitForToolbarState { item.isEnabled })
         coordinator.workspaces.activeWorkspace.selectedSessionID = nil
-        await Task.yield()
-        #expect(!item.isEnabled)
+        #expect(await waitForToolbarState { !item.isEnabled })
         #expect(item.isBordered)
     }
 
@@ -452,6 +448,17 @@ struct NativeSplitLayoutTests {
     }
 
     // MARK: Private
+
+    @MainActor
+    private func waitForToolbarState(_ condition: () -> Bool) async -> Bool {
+        for _ in 0 ..< 100 {
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return condition()
+    }
 
     /// A laid-out three-pane workspace controller for the toolbar chrome tests.
     @MainActor

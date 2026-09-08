@@ -11,7 +11,8 @@ This documentation describes what is actually in the source today, and clearly m
 | Doc | What it covers |
 |---|---|
 | [Getting started](getting-started.md) | Requirements, signing setup, build/test commands, capture vs. saved files |
-| [Usage](usage.md) | Live capture, opening `.pcap`/`.pcapng`, sessions, correlation, focus sets, inspector |
+| [Usage](usage.md) | Projects, live capture, saved captures, sessions, correlation, Session Expressions, focus sets, inspector |
+| [Capture migration](capture-migration.md) | Importing PCAP/PCAPNG, gzip and TCP Viewer archives, Linux captures, and named BPF filter lists |
 | [Architecture](architecture.md) | The capture → protocol → session → UI pipeline, repository map, boundaries |
 | [Protocol support](protocol-support.md) | The accurate, per-layer decode matrix and its limits |
 | [Privacy & security](privacy-and-security.md) | Local-first posture, the privileged helper, and the trust boundary |
@@ -19,11 +20,13 @@ This documentation describes what is actually in the source today, and clearly m
 
 ## Status at a glance
 
-**Implemented:** live libpcap capture through a signed helper, PCAP/PCAPNG read/write and disk-backed
-live-save, interface discovery, a bounds-checked packet decoder, incremental five-tuple sessions, a
-bounded TCP connection/evidence table, selected evidence-linked findings, deterministic replay,
-protected session export, terminal-summary SQLite History with boundary-triggered automatic retention,
-and a native SwiftUI/AppKit investigation workspace with typed queries and explicit bounded Follow
+**Implemented:** isolated Projects with separate workspaces, saved-capture Library, History and
+capture/privacy settings; live libpcap capture through a signed helper; managed PCAP/PCAPNG, gzip,
+TCP Viewer archive and Linux cooked capture import; disk-backed live-save; interface discovery; a
+bounds-checked packet decoder; incremental five-tuple sessions; a bounded TCP connection/evidence
+table; selected evidence-linked findings; deterministic replay; protected session export;
+terminal-summary SQLite History with boundary-triggered automatic retention; and a native
+SwiftUI/AppKit investigation workspace with typed Session Expressions and explicit bounded Follow
 Stream.
 
 **Partial:** application-layer decode remains metadata-focused — DNS records, TLS handshake and record

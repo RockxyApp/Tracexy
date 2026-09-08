@@ -8,9 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Organize investigations into isolated Projects, each with its own workspaces, saved captures, History, and capture and privacy settings.
+- Import PCAP and PCAPNG captures into a chosen Project, including gzip-compressed files, TCP Viewer session archives, and Linux cooked captures.
+- Query whole sessions with bounded Session Expressions, return from host, client, IP, or Findings drill-downs with filters intact, and import named BPF capture filters.
+- Export and import configuration-only `.tracexyproject` files without packets, payloads, capture paths, findings, or History.
+
 ### Fixed
 
 ### Changed
+
+- Keep Project transitions safe by waiting for accepted capture and save work, preserving the current investigation when a transition cannot complete.
+- Reorganize the native toolbar so Project selection, capture source, and Start/Stop controls remain distinct and easier to follow.
 
 ## [0.6.0] - 2026-09-02
 
