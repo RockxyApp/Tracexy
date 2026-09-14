@@ -14,12 +14,17 @@ struct SettingsView: View {
         isProjectReady: Bool = true,
         historyRetentionError: String? = nil,
         isHistoryDemoMode: Bool = false,
+        mcpScope: MCPGrantScope? = nil,
+        assistant: AssistantSessionModel? = nil,
+        mcpAccess: MCPAccessModel? = nil,
         onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
     ) {
         self.updater = updater
         self.applicationDefaults = applicationDefaults
         _selectedTab = AppStorage(
-            wrappedValue: SettingsTab.general.rawValue,
+            wrappedValue: Self.automationStartsOnMCP
+                ? SettingsTab.mcp.rawValue
+                : SettingsTab.general.rawValue,
             SettingsKeys.selectedSettingsTab,
             store: applicationDefaults
         )
@@ -27,6 +32,12 @@ struct SettingsView: View {
         self.isProjectReady = isProjectReady
         self.historyRetentionError = historyRetentionError
         self.isHistoryDemoMode = isHistoryDemoMode
+        self.mcpScope = mcpScope
+        // A preview or a test can open the pane without a coordinator; the pane
+        // itself always has a model to read, and an unattached one is simply
+        // disconnected.
+        self.assistant = assistant ?? AssistantSessionModel()
+        self.mcpAccess = mcpAccess ?? MCPAccessModel()
         self.onAutoClearChange = onAutoClearChange
     }
 
@@ -35,11 +46,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(SettingsTab.allCases, selection: selection) { tab in
-                Label(tab.title, systemImage: tab.systemImage)
-                    .font(metrics.font(
-                        weight: selection.wrappedValue == tab ? .semibold : .regular
-                    ))
-                    .tag(tab)
+                HStack(spacing: Theme.Metrics.spacingS) {
+                    Image(systemName: tab.systemImage)
+                        .accessibilityHidden(true)
+                    Text(tab.title)
+                    Spacer(minLength: 0)
+                }
+                .font(metrics.font(
+                    weight: selection.wrappedValue == tab ? .semibold : .regular
+                ))
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(tab.title)
+                .accessibilityIdentifier("settings.tab.\(tab.rawValue)")
+                .tag(tab)
             }
             .listStyle(.sidebar)
             .tracexySoftScrollEdge()
@@ -68,6 +88,14 @@ struct SettingsView: View {
 
     // MARK: Private
 
+    /// UI automation can open the bounded MCP surface directly without relying
+    /// on restored Settings-window navigation state. The flag is ignored outside
+    /// an identity-isolated test process.
+    private static var automationStartsOnMCP: Bool {
+        TracexyIdentity.isRunningTests
+            && CommandLine.arguments.contains("--mcp-settings")
+    }
+
     /// Which pane is open is an application preference, not a Project one, so it
     /// names `.standard` explicitly and is unaffected by the per-Project store.
     @AppStorage(SettingsKeys.selectedSettingsTab, store: .standard)
@@ -79,6 +107,9 @@ struct SettingsView: View {
     private let isProjectReady: Bool
     private let historyRetentionError: String?
     private let isHistoryDemoMode: Bool
+    private let mcpScope: MCPGrantScope?
+    private let assistant: AssistantSessionModel
+    private let mcpAccess: MCPAccessModel
     private let onAutoClearChange: (AutoClear) -> Void
     private let metrics = SettingsDisplayMetrics.standard
 
@@ -120,7 +151,7 @@ struct SettingsView: View {
                 isHistoryDemoMode: isHistoryDemoMode,
                 onAutoClearChange: onAutoClearChange
             )
-        case .mcp: MCPSettingsView()
+        case .mcp: MCPSettingsView(scope: mcpScope, assistant: assistant, access: mcpAccess)
         case .updates: UpdatesSettingsView(updater: updater)
         }
     }
