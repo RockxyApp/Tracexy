@@ -28,7 +28,11 @@ the control off yields that follow behavior. **Jump to Latest** is a one-time ju
 Follow Live setting. Both actions honor the current filters. The in-memory inspection window is bounded,
 while accepted live frames are also written to a local disk-backed spool for complete save/export. If
 the helper is not yet approved, Tracexy tells you to approve it in System Settings → Login Items and
-press Start again.
+press Start again. If the capture source stops on its own — the interface goes away or is
+reconfigured — Tracexy settles the capture exactly as an explicit Stop would (final fold, History
+entry, save eligibility) and shows the reason instead of leaving "Capturing" on with nothing arriving.
+Quitting while a capture runs asks for confirmation unless you turn that off in
+**Settings → General**.
 
 The centered capture status in the toolbar opens **Capture Readiness**. It reports the selected
 interface, helper or direct-capture path, BPF filter, packet snapshot and promiscuous settings, bounded
@@ -67,8 +71,14 @@ session is selected. Opening another file, clearing, or starting live capture re
 results, and selected-evidence reads.
 
 **File → Import Capture… (⌘O)** and the sidebar's Import actions open the same panel and copy the
-chosen file into the active Project's Library. Tracexy decides the format from the file's own header,
-so a capture stored as `evidence.bin` or with no extension is accepted. Gzip PCAP/PCAPNG and the
+chosen file into the active Project's Library. Opening a `.pcap`, `.cap`, `.pcapng` or `.ntar` file
+from Finder (**Open With → Tracexy**, or dropping it on the Dock icon) and dropping a capture file
+anywhere on the main window take the same import path; Tracexy registers as an alternate viewer for
+those types and does not claim them as the default. One capture is imported per drop — a multi-file
+drop is refused with a message rather than importing only its first file — and a file opened
+before the app has finished loading Projects is imported once loading completes. Tracexy decides the
+format from the file's own header, so a capture stored as `evidence.bin` or with no extension is
+accepted. Gzip PCAP/PCAPNG and the
 capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are expanded locally
 into a managed capture. Other compressed or session formats are refused with a concrete recovery
 message. Recognizing a header or archive is not a guarantee that the whole capture parses, so the
@@ -228,17 +238,28 @@ file and in the decoded session/activity totals; window eviction is not reported
 ## Sessions
 
 Frames are grouped by their canonical **five-tuple** (protocol + the two endpoints, direction-
-normalized) so both directions of a conversation land in one session. Each session summary carries:
+normalized) so both directions of a conversation land in one session. The session's **client** is
+the endpoint that sent the captured SYN. When no SYN was captured — the capture began mid-stream —
+a session first seen from a service port (an IANA system port, or a common registered service port
+such as 3306 or 8443) toward an ephemeral port is oriented toward the service, so the remote host
+rather than this Mac's ephemeral socket reads as the destination. Two ephemeral or two service ports
+keep the first-observed direction. Each session summary carries:
 
 - endpoints and a resolved **host** (from TLS SNI or a DNS name where available, otherwise the peer IP);
 - the **protocol stack** (outer→inner, e.g. TCP · TLS);
 - **byte counts** up and down, packet timing, and duration;
-- a **status** (OK / Warning / Error) that drives its color and icon;
+- a **status** (OK / Warning / Error) that drives its color and icon — a TCP reset observed at any
+  point, including after an orderly close, marks the session as an error and is recorded as a reset
+  observation in its evidence;
 - a concise **info line** derived from the real decode — a DNS query and its answer, a TLS host, or the
   innermost layer's summary — never placeholder text.
 
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
+
+Click a column header to sort the flat table by that column; click again to reverse it. The default
+order stays the stable capture order (oldest→newest, rows updating in place); a sort you choose is
+kept while you keep working in that window.
 
 The first rounded control shelf keeps a stable icon cluster beside search: **Follow Live**, **Jump to
 Latest**, a divider, **Clear Capture Data**, and **More Session Actions**. The order does not change at
