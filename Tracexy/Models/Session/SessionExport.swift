@@ -181,6 +181,41 @@ nonisolated enum SessionExporter {
         }
     }
 
+    /// The frames of one session read straight from a capture file, one record at
+    /// a time. Only the matching frames are ever held in memory, so exporting one
+    /// session out of a multi-gigabyte capture costs that session's bytes — not the
+    /// whole file twice over. A truncated tail ends the walk after every complete
+    /// prior record, exactly as opening the file does.
+    static func frames(
+        matching sessionID: SessionSummary.ID,
+        streamingFrom url: URL
+    )
+        throws -> (linkType: UInt32, frames: [CapturedFrame])
+    {
+        let reader = try CaptureStreamReader(contentsOf: url)
+        var matched: [CapturedFrame] = []
+        walk: while true {
+            switch try reader.next() {
+            case let .frame(event):
+                let frame = CapturedFrame(
+                    bytes: event.bytes,
+                    timestamp: event.reference.timestamp,
+                    originalLength: event.reference.originalLength,
+                    capturedLength: event.reference.capturedLength,
+                    linkType: event.reference.linkType
+                )
+                let packet = SessionBuilder.decodePacket(frame, linkType: event.reference.linkType)
+                if let key = packet.fiveTuple, SessionBuilder.sessionID(for: key) == sessionID {
+                    matched.append(frame)
+                }
+            case .end:
+                break walk
+            }
+        }
+        let linkType = reader.defaultLinkType ?? matched.first?.linkType ?? LinkType.ethernet
+        return (linkType, matched)
+    }
+
     static func artifact(
         for session: SessionSummary,
         frames: [CapturedFrame],

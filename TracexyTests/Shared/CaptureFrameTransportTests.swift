@@ -141,6 +141,21 @@ struct CaptureFrameTransportTests {
         #expect(unknown.stats == nil)
     }
 
+    @Test("A source read failure travels with the batch, and an older reply reads as no failure")
+    func readFailureRoundTripsAndDefaultsToNil() throws {
+        let failed = try roundTrip(FrameBatchMessage(
+            frames: [], bufferDroppedCount: 0, captureLinkType: 1, stats: nil,
+            readFailure: "en0: The interface went down"
+        ))
+        #expect(failed.readFailure == "en0: The interface went down")
+
+        // A helper that predates the key encodes nothing for it.
+        let healthy = try roundTrip(FrameBatchMessage(
+            frames: [], bufferDroppedCount: 0, captureLinkType: 1, stats: nil
+        ))
+        #expect(healthy.readFailure == nil)
+    }
+
     // MARK: Private
 
     private func roundTrip(_ batch: FrameBatchMessage) throws -> FrameBatchMessage {

@@ -55,11 +55,15 @@ final class PcapCapture: @unchecked Sendable {
     /// it returns the interface's real link type (DLT) *before* the worker starts,
     /// so the caller can report an authoritative link type even before the first
     /// frame arrives.
+    /// - `onReadFailure` fires once, from the worker, when libpcap reports a read
+    ///   error (the interface went away, the device was reconfigured) and the loop
+    ///   ends on its own. It never fires for an ordinary `stop()`.
     @discardableResult
     func start(
         configuration: CaptureConfiguration,
         onBatch: @escaping @Sendable ([CapturedFrameMessage]) -> Void,
-        onStatistics: @escaping @Sendable (HelperCaptureStats?) -> Void
+        onStatistics: @escaping @Sendable (HelperCaptureStats?) -> Void,
+        onReadFailure: @escaping @Sendable (String) -> Void = { _ in }
     )
         throws -> UInt32
     {
@@ -100,7 +104,7 @@ final class PcapCapture: @unchecked Sendable {
         lifecycle.start(name: "com.amunx.tracexy.helper.capture") { [weak self] isRunning in
             self?.loop(
                 handle: owned.handle, linkType: linkType, isRunning: isRunning,
-                onBatch: onBatch, onStatistics: onStatistics
+                onBatch: onBatch, onStatistics: onStatistics, onReadFailure: onReadFailure
             )
             // Close on the SAME thread that read from it, and only after the loop
             // has fully exited. See the type comment.
@@ -247,10 +251,12 @@ final class PcapCapture: @unchecked Sendable {
         linkType: UInt32,
         isRunning: () -> Bool,
         onBatch: @escaping @Sendable ([CapturedFrameMessage]) -> Void,
-        onStatistics: @escaping @Sendable (HelperCaptureStats?) -> Void
+        onStatistics: @escaping @Sendable (HelperCaptureStats?) -> Void,
+        onReadFailure: @escaping @Sendable (String) -> Void
     ) {
         var batch: [CapturedFrameMessage] = []
         var lastFlush = Date()
+        var readFailure: String?
         while isRunning() {
             var headerRaw: UnsafeMutableRawPointer?
             var dataPointer: UnsafePointer<UInt8>?
@@ -267,6 +273,13 @@ final class PcapCapture: @unchecked Sendable {
                     linkType: linkType
                 ))
             } else if result < 0 {
+                // A read error ends the capture on the source's terms. Report why so
+                // the app can stop and say so, instead of showing a capture that is
+                // still "running" while nothing arrives any more.
+                readFailure = filterErrorMessage(
+                    handle: handle,
+                    fallback: "the capture source stopped delivering packets."
+                )
                 break
             }
             if !batch.isEmpty, Date().timeIntervalSince(lastFlush) > 0.25 {
@@ -283,5 +296,8 @@ final class PcapCapture: @unchecked Sendable {
         }
         // Final reading, so a short capture still reports its loss.
         onStatistics(sampleStatistics(handle: handle))
+        if let readFailure {
+            onReadFailure(readFailure)
+        }
     }
 }

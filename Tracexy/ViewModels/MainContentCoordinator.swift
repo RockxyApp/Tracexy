@@ -31,6 +31,7 @@ final class MainContentCoordinator {
     ) {
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
+        applicationDefaults = settingsDefaults ?? .standard
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         let provider = projectDataProvider ?? DefaultProjectDataProvider()
@@ -248,6 +249,10 @@ final class MainContentCoordinator {
     var captureImportProgress: PcapStreamProgress?
     var captureImportName: String?
     var isCancellingCaptureImport = false
+    /// A capture handed in from outside the app's own picker (Finder "Open With",
+    /// a file dropped on the window) before Projects finished hydrating at launch.
+    /// Replayed exactly once when hydration completes; never persisted.
+    var pendingExternalCaptureURL: URL?
     @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
     @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
 
@@ -421,6 +426,10 @@ final class MainContentCoordinator {
     /// Injectable wall clock for History age policy. Production uses `Date()`;
     /// integration tests freeze it so cutoff behavior never depends on timing.
     let historyNow: @Sendable () -> Date
+
+    /// The app-wide settings store (General preferences that are not per Project).
+    /// Production uses `.standard`; the demo launch composes an isolated suite.
+    let applicationDefaults: UserDefaults
 
     /// The currently effective Auto-clear preference. The composition root sets
     /// it from persisted defaults at launch; Settings updates it synchronously
@@ -1638,6 +1647,12 @@ extension MainContentCoordinator {
                 // the last sample.
                 self.captureStatistics = statistics
                 self.ingest(frames, linkType: batchLinkType)
+                if let readFailure = batch.readFailure {
+                    // The frames above are the complete tail the source delivered
+                    // before it failed; settle the capture at that boundary.
+                    self.captureSourceDidFail(readFailure, captureToken: captureToken)
+                    return
+                }
                 if self.helperStopRequested {
                     self.performStopCapture()
                 }
@@ -1697,6 +1712,7 @@ extension MainContentCoordinator {
         }
         // Open + compile the filter synchronously so a bad snap length or BPF fails
         // before the capture is reported started, rather than after.
+        let token = startGeneration
         do {
             try live.start(
                 configuration: configuration,
@@ -1711,6 +1727,12 @@ extension MainContentCoordinator {
                         return
                     }
                     Task { @MainActor in coordinator.captureStatistics = sample }
+                },
+                onReadFailure: { [weak self] message in
+                    guard let coordinator = self else {
+                        return
+                    }
+                    Task { @MainActor in coordinator.captureSourceDidFail(message, captureToken: token) }
                 }
             )
         } catch {
@@ -1938,6 +1960,19 @@ extension MainContentCoordinator {
                 }
             }
         }
+    }
+
+    /// The capture source stopped on its own (libpcap reported a read error: the
+    /// interface went away or was reconfigured). Everything received so far is a
+    /// valid, complete-to-that-instant capture, so settle it exactly like an
+    /// explicit Stop — final fold, History entry, saved-file eligibility — and keep
+    /// the reason visible instead of leaving "Capturing" on with nothing arriving.
+    func captureSourceDidFail(_ message: String, captureToken: Int) {
+        guard isCapturing, startGeneration == captureToken else {
+            return
+        }
+        performStopCapture()
+        captureError = "Capture ended because the source stopped: \(message)"
     }
 
     private func handleCaptureError(_ message: String) {
