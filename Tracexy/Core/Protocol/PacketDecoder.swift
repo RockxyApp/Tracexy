@@ -180,6 +180,9 @@ nonisolated enum PacketDecoder {
         let versionIHL = try buf.u8(0)
         let ihl = Int(versionIHL & 0x0F) * 4
         let totalLength = try Int(buf.u16(2))
+        let flagsFragment = try buf.u16(6)
+        let moreFragments = flagsFragment & 0x2000 != 0
+        let fragmentOffset = Int(flagsFragment & 0x1FFF) * 8
         let ttl = try buf.u8(8)
         let proto = try buf.u8(9)
         let src = try ipv4Address(buf, 12)
@@ -188,6 +191,14 @@ nonisolated enum PacketDecoder {
             ranged("Version", "4", in: buf, at: 0, 1),
             ranged("Header Length", "\(ihl) bytes", in: buf, at: 0, 1),
             ranged("Total Length", "\(totalLength)", in: buf, at: 2, 2),
+        ]
+        if moreFragments || fragmentOffset > 0 {
+            fields.append(ranged(
+                "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
+                in: buf, at: 6, 2
+            ))
+        }
+        fields += [
             ranged("TTL", "\(ttl)", in: buf, at: 8, 1),
             ranged("Protocol", ipProtoName(proto), in: buf, at: 9, 1),
             ranged("Source", src, in: buf, at: 12, 4),
@@ -202,8 +213,37 @@ nonisolated enum PacketDecoder {
             fields: fields,
             byteRange: span(buf, ihl)
         ))
-        let payload = try buf.subset(from: ihl)
+        // An IHL below the fixed header is not an IPv4 header; reading a transport
+        // header out of the address bytes would invent endpoints. The layer above
+        // keeps the facts actually read.
+        guard ihl >= 20 else {
+            throw PacketError.malformed("Invalid IPv4 header length")
+        }
+        // A non-first fragment carries no transport header at all: its first bytes
+        // are payload of a segment/datagram whose header travelled in fragment 0.
+        // Stop at the IP layer rather than decoding those bytes as ports.
+        guard fragmentOffset == 0 else {
+            return
+        }
+        // Bound the payload by the declared total length so link-layer trailers
+        // (the zero padding every sub-60-byte Ethernet frame carries) are never
+        // counted as transport payload — that would fabricate TCP sequence space.
+        // A declared length of zero is TCP segmentation offload leaving the field
+        // unset; a declared length below the header is bogus. Both keep the
+        // captured bytes rather than guessing a tighter bound.
+        let payload = try ipPayload(buf, headerLength: ihl, declaredEnd: totalLength)
         try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
+    }
+
+    /// The transport payload after an IP header, clamped to the IP-declared end
+    /// when that end is trustworthy: not zero (offload left the field unset), not
+    /// inside the header, and not beyond the captured bytes (snapshot truncation
+    /// keeps whatever was captured).
+    private static func ipPayload(_ buf: PacketBuffer, headerLength: Int, declaredEnd: Int) throws -> PacketBuffer {
+        guard declaredEnd > 0, declaredEnd >= headerLength, declaredEnd < buf.length else {
+            return try buf.subset(from: headerLength)
+        }
+        return try buf.subset(from: headerLength, count: declaredEnd - headerLength)
     }
 
     /// Parses the IPv4 option list (offset 20 → `end`), RFC 791 type/length/value.
@@ -281,27 +321,48 @@ nonisolated enum PacketDecoder {
         var proto = nextHeader
         var offset = 40
         var guardCounter = 0
+        // The declared end of the IPv6 packet: fixed header plus payload length.
+        // Zero means a jumbogram or offload left it unset; then the captured bytes
+        // are the only bound.
+        let declaredEnd = payloadLength > 0 ? 40 + payloadLength : buf.length
         while Self.ipv6ExtensionHeaders.contains(proto), offset + 2 <= buf.length, guardCounter < 16 {
             guardCounter += 1
             let extNext = try buf.u8(offset)
             let extLen = try ipv6ExtensionLength(proto: proto, buf: buf, at: offset)
+            var fields = [
+                ranged("Next Header", ipProtoName(extNext), in: buf, at: offset, 1),
+                ranged("Length", "\(extLen) bytes", in: buf, at: offset + 1, 1),
+            ]
+            var isLaterFragment = false
+            if proto == 44, let fragmentField = try? buf.u16(offset + 2) {
+                // RFC 8200 §4.5: offset in 8-octet units (high 13 bits), M flag bit 0.
+                let fragmentOffset = Int(fragmentField >> 3) * 8
+                let moreFragments = fragmentField & 0x01 != 0
+                fields.append(ranged(
+                    "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
+                    in: buf, at: offset + 2, 2
+                ))
+                isLaterFragment = fragmentOffset > 0
+            }
             packet.layers.append(DecodedLayer(
                 proto: .ipv6, title: "IPv6 \(ipv6ExtensionName(proto))",
                 summary: "next \(ipProtoName(extNext))",
-                fields: [
-                    ranged("Next Header", ipProtoName(extNext), in: buf, at: offset, 1),
-                    ranged("Length", "\(extLen) bytes", in: buf, at: offset + 1, 1),
-                ],
+                fields: fields,
                 byteRange: span(buf, offset + extLen)
             ))
             proto = extNext
             offset += extLen
+            // A non-first fragment carries no transport header: stop at the IP
+            // layer rather than reading ports out of mid-datagram payload bytes.
+            if isLaterFragment {
+                return
+            }
         }
 
         guard offset < buf.length else {
             return
         }
-        let payload = try buf.subset(from: offset)
+        let payload = try ipPayload(buf, headerLength: offset, declaredEnd: min(declaredEnd, buf.length))
         try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
     }
 

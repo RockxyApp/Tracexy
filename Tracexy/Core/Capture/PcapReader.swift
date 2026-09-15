@@ -131,7 +131,8 @@ nonisolated enum PcapReader {
             throw PacketError.malformed(String(format: "pcap: unknown magic 0x%08X", rawMagic))
         }
 
-        let linkType = format.littleEndian ? try buffer.u32le(20) : try buffer.u32(20)
+        let rawLinkType = format.littleEndian ? try buffer.u32le(20) : try buffer.u32(20)
+        let linkType = MagicFormat.linkType(fromHeaderField: rawLinkType)
 
         var frames: [CapturedFrame] = []
         var offset = globalHeaderSize
@@ -224,6 +225,15 @@ nonisolated struct MagicFormat {
 
     let littleEndian: Bool
     let nanosecond: Bool
+
+    /// The `DLT_*` value carried in a classic global header's link-type word. Newer
+    /// libpcap writers fold an FCS-length nibble (bits 28–31) and a reserved flag
+    /// (bit 27) into the same 32-bit field; only the low 16 bits name the link type.
+    /// Reading the whole word turned an ordinary Ethernet file written with an FCS
+    /// hint into an unknown link type and an empty session list.
+    static func linkType(fromHeaderField field: UInt32) -> UInt32 {
+        field & 0x0000FFFF
+    }
 
     /// Convert a record's seconds + fractional field into a `Date`.
     func timestamp(seconds: UInt32, fraction: UInt32) -> Date {

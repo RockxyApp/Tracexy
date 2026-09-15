@@ -26,6 +26,26 @@ struct PcapReaderTests {
         #expect(result.frames[1].bytes == tls)
     }
 
+    @Test("An FCS-length hint in the link-type word does not hide the link type")
+    func linkTypeWordWithFCSBitsStillNamesEthernet() throws {
+        let dns = PacketBuilder.dnsQueryFrame(name: "example.com", src: "192.168.1.2", dst: "1.1.1.1")
+        var file = littleEndianHeader()
+        // libpcap ≥ 1.9 may write fcs_len (4 bits at 28–31) and the P flag (bit 27)
+        // into the same word as LINKTYPE_ETHERNET (1): 0x2800_0001 = FCS 2 words, P set.
+        file.replaceSubrange(20 ..< 24, with: le32(0x28000001))
+        file += littleEndianRecord(dns, tsSec: 1_700_000_000, tsUsec: 0)
+
+        let result = try PcapReader.read(file)
+        #expect(result.linkType == LinkType.ethernet)
+        let decoded = PacketDecoder.decode(
+            PacketBuffer(result.frames[0].bytes),
+            linkType: result.linkType,
+            timestamp: result.frames[0].timestamp,
+            originalLength: result.frames[0].originalLength
+        )
+        #expect(decoded.appProtocol == .dns)
+    }
+
     @Test
     func littleEndianTimestampDecodes() throws {
         let dns = PacketBuilder.dnsQueryFrame(name: "example.com", src: "192.168.1.2", dst: "1.1.1.1")

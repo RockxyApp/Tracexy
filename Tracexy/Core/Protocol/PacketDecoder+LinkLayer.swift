@@ -44,10 +44,13 @@ extension PacketDecoder {
 
     // MARK: Private
 
+    /// IEEE 802.1Q (C-VLAN) and 802.1ad (S-VLAN / QinQ) tag protocol identifiers.
+    private static let vlanTagEtherTypes: Set<UInt16> = [0x8100, 0x88A8]
+
     private static func ethernet(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
         let dst = try mac(buf, 0)
         let src = try mac(buf, 6)
-        let etherType = try buf.u16(12)
+        var etherType = try buf.u16(12)
         packet.layers.append(DecodedLayer(
             proto: .ethernet, title: "Ethernet II", summary: "\(src) → \(dst)",
             fields: [
@@ -57,7 +60,34 @@ extension PacketDecoder {
             ],
             byteRange: span(buf, 14)
         ))
-        let payload = try buf.subset(from: 14)
+        // VLAN tags sit between the source address and the real EtherType: a
+        // 2-byte TCI followed by the encapsulated type. A tagged frame from a
+        // trunk-port or mirrored capture otherwise reads as "type 0x8100" and
+        // silently yields no session. At most two tags (QinQ) are walked; the
+        // tag is framing, so like Ethernet itself it never enters a protocol stack.
+        var offset = 14
+        var tagCount = 0
+        while Self.vlanTagEtherTypes.contains(etherType), tagCount < 2 {
+            tagCount += 1
+            let tci = try buf.u16(offset)
+            let inner = try buf.u16(offset + 2)
+            let vlanID = tci & 0x0FFF
+            let priority = tci >> 13
+            try packet.layers.append(DecodedLayer(
+                proto: .ethernet,
+                title: etherType == 0x88A8 ? "802.1ad Service VLAN" : "802.1Q Virtual LAN",
+                summary: "VLAN \(vlanID)",
+                fields: [
+                    ranged("Priority", "\(priority)", in: buf, at: offset, 1),
+                    ranged("VLAN ID", "\(vlanID)", in: buf, at: offset, 2),
+                    ranged("Type", etherTypeName(inner), in: buf, at: offset + 2, 2)
+                ],
+                byteRange: span(buf.subset(from: offset), 4)
+            ))
+            etherType = inner
+            offset += 4
+        }
+        let payload = try buf.subset(from: offset)
         switch etherType {
         case 0x0800: try network(.ipv4, payload, into: &packet)
         case 0x86DD: try network(.ipv6, payload, into: &packet)
@@ -291,6 +321,8 @@ extension PacketDecoder {
         case 0x0800: "IPv4 (0x0800)"
         case 0x86DD: "IPv6 (0x86DD)"
         case 0x0806: "ARP (0x0806)"
+        case 0x8100: "802.1Q VLAN (0x8100)"
+        case 0x88A8: "802.1ad VLAN (0x88A8)"
         default: String(format: "0x%04x", type)
         }
     }
