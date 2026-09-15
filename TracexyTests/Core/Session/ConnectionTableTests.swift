@@ -236,6 +236,41 @@ struct ConnectionTableTests {
         #expect(closed.packetCount == 6)
     }
 
+    @Test("A reset after an orderly close is still recorded as a reset observation")
+    func lateResetAfterOrderlyCloseIsObserved() throws {
+        var table = ConnectionTable()
+        establishThreeWay(&table)
+        ingest(&table, from: clientA, to: serverA, flags: [.fin, .ack], seq: 1_001, ack: 5_001, ordinal: 4, at: 4)
+        ingest(&table, from: serverA, to: clientA, flags: [.fin, .ack], seq: 5_001, ack: 1_002, ordinal: 5, at: 5)
+        ingest(&table, from: clientA, to: serverA, flags: [.rst, .ack], seq: 1_002, ack: 5_002, ordinal: 6, at: 6)
+
+        let closed = try #require(table.snapshot().summaries.first)
+        #expect(closed.phase == .closed)
+        // The first observed close reason stands; the reset does not rewrite it.
+        #expect(closed.closeReason == .orderly)
+        #expect(closed.events.contains { $0.kind == .lateSegmentAfterClose })
+        let reset = try #require(closed.events.first { $0.kind == .rst })
+        #expect(reset.provenance.contains { $0.ordinal == FrameOrdinal(6) })
+        #expect(reset.direction == .aToB)
+    }
+
+    @Test("A reset after finalized publication is still recorded as a reset observation")
+    func lateResetAfterPublicationIsObserved() throws {
+        let config = ConnectionTable.Configuration(maxActiveConnections: 1)
+        var table = ConnectionTable(configuration: config)
+        establishThreeWay(&table)
+        ingest(&table, from: clientA, to: serverA, flags: [.fin, .ack], seq: 1_001, ack: 5_001, ordinal: 4, at: 4)
+        ingest(&table, from: serverA, to: clientA, flags: [.fin, .ack], seq: 5_001, ack: 1_002, ordinal: 5, at: 5)
+        let closedID = try #require(table.snapshot().summaries.first).id
+        // A second tuple pushes the terminal connection into the published budget.
+        ingest(&table, from: clientB, to: serverB, flags: [.syn], seq: 2_000, ordinal: 6, at: 6)
+        ingest(&table, from: serverA, to: clientA, flags: [.rst], seq: 5_002, ordinal: 7, at: 7)
+
+        let closed = try #require(table.snapshot().summaries.first { $0.id == closedID })
+        #expect(closed.closeReason == .orderly)
+        #expect(closed.events.contains { $0.kind == .rst && $0.provenance.contains { $0.ordinal == FrameOrdinal(7) } })
+    }
+
     // MARK: Byte totals & truncation
 
     @Test("Captured and original byte totals accumulate and mark truncation")

@@ -307,8 +307,11 @@ private extension SessionAccumulator {
         }
 
         func summary(key: FiveTuple, resolved: [String: String]) -> SessionSummary {
-            let client = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
-            let server = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
+            let observedClient = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
+            let observedServer = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
+            let (client, server) = Self.orient(
+                client: observedClient, server: observedServer, synSource: synSource, proto: key.proto
+            )
 
             let httpHost = rich.layers.first { $0.proto == .http }?
                 .fields.first { $0.name == "Host" }?.value
@@ -371,6 +374,16 @@ private extension SessionAccumulator {
         /// order. Beyond this, further unique answers are counted, not stored.
         private static let dnsAnswerPublicationCap = 64
 
+        /// IANA system ports plus the registered service ports a client on this
+        /// Mac commonly dials. A session whose *first captured* frame came from one
+        /// of these while the other end used an ephemeral port was almost certainly
+        /// captured mid-stream from the server side; the same likely-server-port
+        /// rule Zeek uses to orient a connection (concept only).
+        private static let likelyServerPorts: Set<UInt16> = [
+            1_080, 1_194, 1_433, 1_521, 3_128, 3_306, 3_389, 5_060, 5_061, 5_222, 5_223, 5_228,
+            5_432, 5_900, 6_379, 8_000, 8_080, 8_443, 8_883, 27_017,
+        ]
+
         /// Earliest packet by timestamp (first-seen tie-break), used for fully
         /// timed session direction/start. Mixed sessions use the first endpoint
         /// pair and expose unknown timing instead.
@@ -389,6 +402,9 @@ private extension SessionAccumulator {
         /// Contributing frames that carried no capture time. One is enough to make
         /// the session's start, duration and latency unknown.
         private var untimedFrameCount = 0
+        /// The endpoint that sent the first pure SYN, when one was captured: the
+        /// strongest evidence of which side opened the connection.
+        private var synSource: IPEndpoint?
 
         /// Cumulative `originalLength` per source endpoint. Within a canonical
         /// five-tuple this holds at most the two directions; "up" vs "down" is
@@ -444,6 +460,35 @@ private extension SessionAccumulator {
             packet.tcpFacts?.flags.contains(.rst) ?? false
         }
 
+        private static func isLikelyServerPort(_ port: UInt16) -> Bool {
+            port != 0 && (port < 1_024 || likelyServerPorts.contains(port))
+        }
+
+        /// Decide which observed endpoint is the client. A captured SYN names the
+        /// opener outright. Without one, a connection first seen from a service
+        /// port toward an ephemeral port is flipped so the remote service — not
+        /// this Mac's ephemeral socket — reads as the host. Anything else keeps
+        /// the first-observed direction: nothing is inferred from two ephemeral
+        /// or two service ports, and port-0 sessions (ARP, ICMP) never flip.
+        private static func orient(
+            client: IPEndpoint?, server: IPEndpoint?, synSource: IPEndpoint?, proto: ProtocolKind
+        )
+            -> (client: IPEndpoint?, server: IPEndpoint?)
+        {
+            guard let client, let server else {
+                return (client, server)
+            }
+            if let synSource {
+                return synSource == server ? (server, client) : (client, server)
+            }
+            guard proto == .tcp || proto == .udp,
+                  isLikelyServerPort(client.port), !isLikelyServerPort(server.port) else
+            {
+                return (client, server)
+            }
+            return (server, client)
+        }
+
         private func applicationRichness(_ packet: DecodedPacket) -> Int {
             func layerScore(_ layer: DecodedLayer) -> Int {
                 layer.fields.count + layer.children.reduce(0) { $0 + 1 + layerScore($1) }
@@ -489,17 +534,26 @@ private extension SessionAccumulator {
             }
             dnsAnswersOmittedCount += packet.dnsAnswersOmittedCount
 
-            // Only a timed DNS frame can contribute a handshake instant.
+            // Only a timed DNS frame can contribute a handshake instant. The
+            // header's QR bit decides query versus response; an answerless reply
+            // (NXDOMAIN, NODATA, a refused query) is still the response that ends
+            // the exchange, so it must not be mistaken for a second query.
             if packet.appProtocol == .dns, let instant = packet.timestamp {
-                if packet.dnsAnswers.isEmpty {
-                    dnsQueryTime = earlier(dnsQueryTime, instant)
-                } else {
+                let isResponse = packet.dnsFacts?.isResponse ?? !packet.dnsAnswers.isEmpty
+                if isResponse {
                     dnsResponseTime = earlier(dnsResponseTime, instant)
+                } else {
+                    dnsQueryTime = earlier(dnsQueryTime, instant)
                 }
             }
 
             if !anyTCPRST, Self.hasTCPRST(packet) {
                 anyTCPRST = true
+            }
+            if synSource == nil, let facts = packet.tcpFacts,
+               facts.flags.contains(.syn), !facts.flags.contains(.ack)
+            {
+                synSource = packet.sourceEndpoint
             }
         }
 
