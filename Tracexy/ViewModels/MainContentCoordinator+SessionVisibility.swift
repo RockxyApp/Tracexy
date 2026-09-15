@@ -56,7 +56,21 @@ extension MainContentCoordinator {
     /// several layers, so these counts legitimately overlap and do not sum to the
     /// session total. Every surface presenting them has to say so.
     func count(for proto: ProtocolKind) -> Int {
-        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
+        visibleProtocolCounts[proto] ?? 0
+    }
+
+    /// Every protocol's visible-session count from one pass over the visible set.
+    /// A surface that shows several counts at once (the sidebar lenses, the
+    /// Overview protocol mix) reads this once per render instead of re-filtering
+    /// the whole session list once per protocol on every live refresh.
+    var visibleProtocolCounts: [ProtocolKind: Int] {
+        var totals: [ProtocolKind: Int] = [:]
+        for session in visibleSessions {
+            for proto in Set(session.protocolStack) {
+                totals[proto, default: 0] += 1
+            }
+        }
+        return totals
     }
 
     /// Whether a session matches a single quick-filter chip. Finding membership
