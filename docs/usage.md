@@ -216,14 +216,33 @@ sessions, traffic, duration, activity, storage, top talkers, protocol mix, obser
 compact findings severity summary are kept in one native dashboard. Overview never duplicates the
 finding evidence list; its analysis summary links to the existing filtered Sessions workflow.
 
-For a live capture, the activity chart shows measured throughput and the storage card distinguishes
-kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
-Window trimming does not remove accumulated sessions or frames from the disk-backed live spool, and is
-never reported as capture-source loss.
-For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
-capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
-what was missed when it was recorded. Frames outside the local inspection window remain in the source
-file and in the decoded session/activity totals; window eviction is not reported as capture loss.
+Overview is a capture report. The headline row shows frames, sessions, traffic, duration, and
+fidelity. **Traffic over time** plots every accepted frame's wire bytes on the real capture clock for
+live and opened captures alike, split into bytes **sent by clients** and **received from servers** —
+the same client/server split each session's byte columns use. Slices start at one second and widen only
+when a long capture would otherwise exceed the bounded bucket count; the caption states the current slice
+width. Hovering a column reads its exact figures. Findings in the current scope are pinned along the
+top of the plot at the instant of their first cited frame; a bounded number are placed and the footer
+says when it is a subset. Frames that carry no capture time count in the totals and are named in a
+notice, never drawn. The chart is capture-wide — session filters narrow the panels below it, not the
+frames.
+
+Beneath it, three compact charts summarize the scope: **Protocols** partitions session bytes by each
+session's innermost protocol (bars sum to the scope; click a bar to narrow to that protocol),
+**Sessions started** counts new conversations per slice on the same clock, and **Findings** shows the
+severity split with a route to review those sessions. **Top hosts** and **Top apps** are native tables
+of sessions, sent, received, and total bytes with an in-row share bar (client-sent and
+server-received against the leading row); double-click a row (or use its context menu) to narrow
+the session list to exactly that host or app. Sessions with no attributed process are never listed as an
+app. **Sources** counts observed apps, domains, and addresses and opens the Flow Map.
+
+**Capture health** shows fidelity with kernel/interface loss, helper-buffer drops, and the bounded
+in-memory inspection window. Window trimming does not remove accumulated sessions or frames from the
+disk-backed live spool, and is never reported as capture-source loss. For an opened file the panel
+shows provenance; fidelity and original drop counters remain **Unknown** because a savefile cannot
+reconstruct what was missed when it was recorded. Frames outside the local inspection window remain in
+the source file and in the decoded session/activity totals; window eviction is not reported as capture
+loss.
 
 ## Sessions
 
@@ -460,11 +479,12 @@ Selecting an IP in the sidebar matches the exact address in typed endpoints or D
 
 ### Open sessions from Overview and Flow
 
-Overview's host and protocol rows narrow the sessions already represented by the
-summary. Existing search, category chips, advanced rules, Investigation query and
-Noise Control remain active. Protocol counts overlap because one session can
-contain several protocol layers. Review Findings intersects the current scope
-with typed finding membership, including when Errors is already selected.
+Overview's host, app and protocol rows narrow the sessions already represented by
+the summary. Existing search, category chips, advanced rules, Investigation query
+and Noise Control remain active. A host or app row under a different host or app
+scope is stale and does nothing rather than widening the list. Review Findings
+intersects the current scope with typed finding membership, including when Errors
+is already selected.
 
 Flow groups typed destination addresses; equivalent IPv6 spellings share one row.
 Show Sessions opens only sessions whose destination matches that row, while the

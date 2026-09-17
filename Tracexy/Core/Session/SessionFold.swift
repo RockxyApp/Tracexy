@@ -61,4 +61,22 @@ nonisolated struct SessionFoldSnapshot: Sendable {
     /// per-frame records are retained with exact provenance; multi-frame recovered
     /// records are excluded-counted, never cited.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded capture-wide bytes over time, split by session direction, for the
+    /// same accepted frames. Additive; callers that assemble a snapshot from parts
+    /// without a timeline get an empty one.
+    let trafficTimeline: TrafficTimeline
+
+    init(
+        sessions: [SessionSummary],
+        connections: ConnectionTable.Snapshot,
+        datagramEvidence: DatagramEvidenceTable.Snapshot,
+        tlsEvidence: TLSEvidenceTable.Snapshot,
+        trafficTimeline: TrafficTimeline = .empty
+    ) {
+        self.sessions = sessions
+        self.connections = connections
+        self.datagramEvidence = datagramEvidence
+        self.tlsEvidence = tlsEvidence
+        self.trafficTimeline = trafficTimeline
+    }
 }

@@ -1,32 +1,42 @@
 import Charts
 import SwiftUI
 
-/// The capture-centric Overview: a bounded, truthful summary of the capture the
-/// user is looking at, answering *what am I looking at, what happened, who is
-/// involved, what needs attention, and where is it stored* — for both a live
-/// capture and an opened saved file.
+/// The capture report: what this capture is, how its bytes moved over time, who
+/// carried them, what needs attention, and where it lives — one chart-led page
+/// whose every panel ends in an existing Tracexy flow (Sessions, Flow Map,
+/// Findings, Sources, Library, Save).
 ///
-/// Every number is derived from real decoded/captured data via the coordinator.
-/// Live and saved are deliberately distinguished: a live capture reports running
-/// state, live throughput, kernel/helper fidelity, and local save-buffer
-/// retention; a saved file reports its provenance, an activity-over-time chart
-/// built from real frame timestamps, and an explicitly *unknown* fidelity — never
-/// a fabricated clean figure, and never the live "waiting for traffic" state.
+/// Capture-wide figures (frames, wire bytes, the traffic timeline) come from the
+/// adopted investigation snapshot and describe every accepted frame. Scoped panels
+/// (talkers, protocols, findings, sources) describe the visible session set and
+/// say so through the scope notice. A live capture reports kernel/helper fidelity
+/// and local retention; a saved file reports provenance and an explicitly
+/// *unknown* fidelity — never a fabricated clean figure.
 struct OverviewView: View {
     // MARK: Internal
 
     var coordinator: MainContentCoordinator
 
     var body: some View {
+        // Every scoped figure on this page derives from one filtered session set
+        // and one findings projection, both computed exactly once per render.
+        // Panels read the report rather than re-filtering the coordinator, so a
+        // 1 Hz live refresh costs one pass over the sessions, not ten.
+        let report = Report(coordinator: coordinator)
         GeometryReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                    scopeNotice
-                    summaryStrip
-                    if proxy.size.width >= Self.wideDashboardMinimumWidth {
-                        wideBody
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL + 4) {
+                    if report.hasTraffic {
+                        figuresCard(report)
+                        activityCard(report)
+                        if proxy.size.width >= Self.wideDashboardMinimumWidth {
+                            wideBody(report)
+                        } else {
+                            compactBody(report)
+                        }
                     } else {
-                        compactBody
+                        emptyCard
+                        healthCard
                     }
                 }
                 // A vertical ScrollView otherwise accepts the dashboard's ideal
@@ -43,7 +53,7 @@ struct OverviewView: View {
                 .padding(Theme.Metrics.spacingL)
             }
             .tracexyDenseScrollEdge()
-            .tracexySafeAreaBar(edge: .top) { overviewHeader }
+            .tracexySafeAreaBar(edge: .top) { reportShelf(report) }
         }
     }
 
@@ -59,7 +69,78 @@ struct OverviewView: View {
             + "have no capture time, so this range isn’t the whole capture."
     }
 
+    /// The same statement for the traffic timeline, which counts every accepted
+    /// frame of a live or saved capture.
+    nonisolated static func untimedCoverageLabel(_ timeline: TrafficTimeline) -> String {
+        let untimed = timeline.untimedFrameCount.formatted()
+        let total = timeline.totals.frames
+        guard total - timeline.untimedFrameCount > 0 else {
+            return "This capture records no time for any of its \(untimed) frames, "
+                + "so there is no capture timeline to show."
+        }
+        return "Timed frames only — \(untimed) of \(total.formatted()) frames "
+            + "have no capture time, so this range isn’t the whole capture."
+    }
+
+    /// Every `count / limit`-th element of an ordered list, deterministic, keeping
+    /// the first element; the whole list when it already fits.
+    nonisolated static func sampled<Element>(_ elements: [Element], limit: Int) -> [Element] {
+        guard limit > 0 else {
+            return []
+        }
+        guard elements.count > limit else {
+            return elements
+        }
+        let stride = Double(elements.count) / Double(limit)
+        return (0 ..< limit).map { elements[Int((Double($0) * stride).rounded(.down))] }
+    }
+
     // MARK: Private
+
+    /// The per-render snapshot of everything scoped: the visible sessions, the
+    /// findings among them, the traffic timeline and its rendered columns, and
+    /// the rollups the panels draw. Built once at the top of `body`.
+    private struct Report {
+        let sessions: [SessionSummary]
+        let findings: [Finding]
+        let timeline: TrafficTimeline
+        let points: [TrafficTimelinePoint]
+        let scopedBytes: Int
+        let protocolShare: [(kind: ProtocolKind?, bytes: Int)]
+        let topHosts: [TrafficRankingEntry]
+        let topApps: [TrafficRankingEntry]
+        let sources: (apps: Int, domains: Int, addresses: Int)
+        let findingMarkers: [OverviewFindingMarker]
+        let hasTraffic: Bool
+        let presentedSessionCount: Int
+
+        init(coordinator: MainContentCoordinator) {
+            let sessions = coordinator.visibleSessions
+            let visibleIDs = Set(sessions.map(\.id))
+            let findings = coordinator.findings.filter { visibleIDs.contains($0.sessionID) }
+            let timeline = coordinator.trafficTimeline
+            self.sessions = sessions
+            self.findings = findings
+            self.timeline = timeline
+            points = timeline.points()
+            scopedBytes = sessions.reduce(0) { $0 + $1.totalBytes }
+            protocolShare = MainContentCoordinator.protocolByteShare(of: sessions, limit: 5)
+            topHosts = MainContentCoordinator.topHostTraffic(of: sessions, limit: 10)
+            topApps = MainContentCoordinator.topProcesses(of: sessions, limit: 10)
+            sources = MainContentCoordinator.sourceSummary(of: sessions)
+            findingMarkers = OverviewView.findingMarkers(for: findings)
+            presentedSessionCount = coordinator.presentedSessions.count
+            hasTraffic = !timeline.isEmpty || presentedSessionCount > 0
+        }
+
+        /// Width of one rendered column; chooses whether the axis needs seconds.
+        var columnWidth: TimeInterval {
+            guard points.count >= 2 else {
+                return timeline.bucketWidth
+            }
+            return points[1].date.timeIntervalSince(points[0].date)
+        }
+    }
 
     private static let percent: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -68,28 +149,20 @@ struct OverviewView: View {
         return formatter
     }()
 
-    private static let summaryHorizontalMinimumWidth: CGFloat = 760
-    /// The three-column dashboard needs enough *workspace* width to preserve its
-    /// readable card columns. Below this point it reflows instead of relying on
-    /// intrinsic measurement that can extend beneath the native sidebar.
-    private static let wideDashboardMinimumWidth: CGFloat = 1_280
+    /// The two-column rows need enough *workspace* width to keep the talker bars
+    /// and the protocol legend readable side by side. Below this point they stack
+    /// instead of relying on intrinsic measurement that can extend beneath the
+    /// native sidebar.
+    private static let wideDashboardMinimumWidth: CGFloat = 960
+    private static let figuresRowMinimumWidth: CGFloat = 720
+    private static let chartHeight: CGFloat = 250
+    private static let secondaryChartHeight: CGFloat = 132
+    /// Findings pinned onto the activity axis are bounded; the findings panel
+    /// still counts every finding in scope.
+    private static let maximumFindingMarkers = 64
 
-    private let compactColumns = [
-        GridItem(.adaptive(minimum: 260), spacing: Theme.Metrics.spacingL),
-    ]
-
-    /// True while an opened saved capture is on screen (versus a live/idle one).
     private var isSaved: Bool {
         coordinator.isViewingSavedCapture
-    }
-
-    /// Scoped like every other rollup here. This summary describes the same
-    /// filtered session set as the surrounding charts.
-    private var scopedFindings: [Finding] {
-        let visibleIDs = Set(coordinator.visibleSessions.map(\.id))
-        return coordinator.findings.filter { finding in
-            visibleIDs.contains(finding.sessionID)
-        }
     }
 
     // MARK: Presentation values
@@ -103,15 +176,39 @@ struct OverviewView: View {
 
     private var identitySubtitle: String {
         if isSaved {
-            return "Saved capture · \(savedFormat) · \(linkTypeName)"
+            return "\(savedFormat) file, \(linkTypeName)"
         }
-        let state = switch coordinator.captureDisplayState {
-        case .capturing: "Live capture"
+        return "Live capture on \(linkTypeName)"
+    }
+
+    private func statusTitle(hasTraffic: Bool) -> String {
+        if coordinator.isOpeningSavedCapture {
+            return "Loading"
+        }
+        if isSaved {
+            return "Saved"
+        }
+        return switch coordinator.captureDisplayState {
+        case .capturing: "Running"
         case .starting: "Starting"
-        case .error: "Capture error"
-        case .stopped: coordinator.sessions.isEmpty ? "Idle" : "Stopped capture"
+        case .error: "Error"
+        case .stopped: hasTraffic ? "Stopped" : "Ready"
         }
-        return "\(state) · \(linkTypeName)"
+    }
+
+    private var statusTint: Color {
+        if coordinator.isOpeningSavedCapture {
+            return .secondary
+        }
+        if isSaved {
+            return .purple
+        }
+        return switch coordinator.captureDisplayState {
+        case .capturing: .green
+        case .starting: .blue
+        case .error: .red
+        case .stopped: .secondary
+        }
     }
 
     private var savedFormat: String {
@@ -121,61 +218,28 @@ struct OverviewView: View {
 
     private var linkTypeName: String {
         if let metadata = coordinator.savedCaptureMetadata, metadata.hasMixedLinkTypes {
-            return "Mixed link types"
+            return "mixed link types"
         }
         return switch coordinator.currentLinkType {
         case LinkType.ethernet: "Ethernet"
         case LinkType.linuxSLL: "Linux cooked SLL"
         case LinkType.linuxSLL2: "Linux cooked SLL2"
-        case LinkType.raw: "Raw IP"
-        case LinkType.null: "Loopback"
-        default: "Link type \(coordinator.currentLinkType)"
+        case LinkType.raw: "raw IP"
+        case LinkType.null: "loopback"
+        default: "link type \(coordinator.currentLinkType)"
         }
     }
 
-    /// Frames shown in the KPI strip: exact for a saved file; the kernel-received
-    /// count for a live capture when available, otherwise the frames currently
-    /// held. Never a fabricated total.
-    private var frameCount: Int {
+    /// Exact for a saved file; the kernel-received count for a live capture when
+    /// available, otherwise the frames the fold accepted. Never a fabricated total.
+    private func frameCount(_ timeline: TrafficTimeline) -> Int {
         if isSaved {
-            return coordinator.savedCaptureActivity?.totalFrames ?? coordinator.retainedFrameCount
+            return coordinator.savedCaptureActivity?.totalFrames ?? timeline.totals.frames
         }
         if let received = coordinator.captureStatistics?.received {
             return Int(received)
         }
-        return coordinator.retainedFrameCount
-    }
-
-    /// The span of the currently accumulated live sessions, for a stopped capture.
-    private var sessionsSpanLabel: String {
-        let sessions = coordinator.presentedSessions
-        guard !sessions.isEmpty else {
-            return "—"
-        }
-        // A span across sessions whose own timing is unknown would silently be the
-        // timed subset's span presented as the whole.
-        guard !sessions.contains(where: \.hasUnknownTiming) else {
-            return "Unknown"
-        }
-        guard let earliest = sessions.compactMap(\.startTime).min() else {
-            return "Unknown"
-        }
-        let latest = sessions
-            .compactMap { session -> Date? in
-                guard let start = session.startTime, let duration = session.duration else {
-                    return nil
-                }
-                return start.addingTimeInterval(duration)
-            }
-            .max() ?? earliest
-        return secondsLabel(max(0, latest.timeIntervalSince(earliest)))
-    }
-
-    private var activitySubtitle: String {
-        if isSaved {
-            return "Frames over capture time"
-        }
-        return "Throughput · live bytes per second"
+        return timeline.totals.frames
     }
 
     private var fidelityValue: String {
@@ -198,615 +262,670 @@ struct OverviewView: View {
         return (stats.isLossy || coordinator.helperBufferDropCount > 0) ? .orange : .green
     }
 
-    /// Captured payload currently available for immediate packet inspection.
-    /// This is deliberately not labelled as a save estimate: the complete live
-    /// capture is stored independently in the disk-backed pcapng spool.
-    private var inspectionWindowBytes: Int {
-        coordinator.retainedCapturedByteCount
-    }
-
-    private var overviewHeader: some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
-            Label("Overview", systemImage: "chart.xyaxis.line")
-                .font(Theme.Typography.title)
-            Text(identitySubtitle)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingM)
+    /// Scoped findings placed at the instant of their first timed cited frame, in
+    /// time order, sampled evenly past the cap so the axis shows where findings
+    /// cluster across the whole capture. A finding whose evidence carries no
+    /// capture time cannot be placed and is counted only in the findings panel.
+    private static func findingMarkers(for findings: [Finding]) -> [OverviewFindingMarker] {
+        let placed = findings
+            .compactMap { finding -> OverviewFindingMarker? in
+                guard let date = finding.citedFrames.compactMap(\.timestamp).min() else {
+                    return nil
+                }
+                return OverviewFindingMarker(
+                    id: finding.id, date: date, severity: finding.severity, title: finding.title
+                )
+            }
+            .sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
+        return Self.sampled(placed, limit: Self.maximumFindingMarkers)
     }
 
     // MARK: Layout
 
-    private var wideBody: some View {
-        Grid(
-            alignment: .topLeading,
-            horizontalSpacing: Theme.Metrics.spacingL,
-            verticalSpacing: Theme.Metrics.spacingL
-        ) {
-            GridRow(alignment: .top) {
-                activityCard
+    /// Hero chart, then a row of compact secondary charts, then the detail
+    /// tables — the report reads top-down from shape to figures.
+    private func wideBody(_ report: Report) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL + 4) {
+            HStack(alignment: .top, spacing: Theme.Metrics.spacingL + 4) {
+                protocolsCard(report)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .gridCellColumns(2)
-                storageCard
+                sessionStartCard(report)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-            GridRow(alignment: .top) {
-                topTalkersCard
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                protocolMixCard
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                sourceSummaryCard
+                findingsCard(report)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-        }
-    }
-
-    private var compactBody: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            activityCard
-            storageCard
-            LazyVGrid(columns: compactColumns, alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                topTalkersCard
-                protocolMixCard
-                sourceSummaryCard
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: Theme.Metrics.spacingL + 4) {
+                hostsTableCard(report)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                appsTableCard(report)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-        }
-    }
-
-    /// Says out loud when the numbers below describe a filtered subset, naming
-    /// every layer doing the narrowing. Without this the surface and the session
-    /// list can disagree with no visible reason.
-    ///
-    /// Overview has no filter shelf of its own, so it carries the shared reset —
-    /// the same route the shelf and the empty state use.
-    private var scopeNotice: some View {
-        SessionScopeNotice(
-            coordinator: coordinator,
-            shownCount: coordinator.visibleSessions.count,
-            showsResetAction: true
-        )
-    }
-
-    // MARK: Summary strip (identity + KPIs + fidelity)
-
-    private var summaryStrip: some View {
-        card {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Theme.Metrics.spacingL) {
-                    identityBlock
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    kpiRow
-                }
-                .frame(minWidth: Self.summaryHorizontalMinimumWidth, alignment: .topLeading)
-                VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-                    identityBlock
-                    kpiRow
-                }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: Theme.Metrics.spacingL + 4) {
+                sourcesCard(report)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                healthCard
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Divider()
-            findingSummaryBar
-        }
-    }
-
-    private var identityBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SectionHeader("Overview")
-            Text(identityTitle)
-                .font(Theme.Typography.title)
-                .lineLimit(1)
-            Text(identitySubtitle)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if isSaved {
-                Button("View in Library") {
-                    coordinator.activeWorkspace.navigatorMode = .library
-                }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-                .help("Reveal this file in the Library navigator")
-                .padding(.top, 2)
-            }
-        }
-    }
-
-    private var kpiRow: some View {
-        HStack(alignment: .top, spacing: Theme.Metrics.spacingL) {
-            kpi("Frames", value: frameCount.formatted())
-            kpi("Sessions", value: coordinator.presentedSessions.count.formatted())
-            kpi("Traffic", value: byteString(coordinator.totalBytes))
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                kpi("Duration", value: durationValue(at: context.date))
-            }
-            kpi("Fidelity", value: fidelityValue, tint: fidelityTint)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // MARK: Capture activity
-
-    /// Live shows the live throughput plot; a saved file shows a bounded
-    /// frames-over-time chart built from real captured timestamps — never the
-    /// live "waiting for traffic" empty state.
-    private var activityCard: some View {
-        card {
-            HStack(spacing: Theme.Metrics.spacingM) {
-                sectionLabel("Capture Activity", systemImage: "waveform.path.ecg")
-                Spacer()
-                Button(
-                    isSaved ? "Open Sessions" : "Open live sessions"
-                ) {
-                    coordinator.openSessionsPreservingScope()
-                }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-                .help("Open these sessions in the full table, keeping the current scope")
-            }
-            Text(activitySubtitle)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-            if isSaved {
-                savedActivityChart
-            } else {
-                ThroughputChart(samples: coordinator.throughputSamples)
-                    .frame(height: 168)
-                    .overlay(alignment: .center) {
-                        if coordinator.throughputSamples.isEmpty {
-                            Text("Waiting for traffic…")
-                                .font(Theme.Typography.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-            }
-        }
-    }
-
-    @ViewBuilder private var savedActivityChart: some View {
-        if let activity = coordinator.savedCaptureActivity, !activity.buckets.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                Chart(activity.buckets) { bucket in
-                    BarMark(
-                        x: .value("Bucket", bucket.index),
-                        y: .value("Frames", bucket.frameCount)
-                    )
-                    .foregroundStyle(Color.accentColor.gradient)
-                    .cornerRadius(2)
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                        AxisGridLine().foregroundStyle(.quaternary)
-                        AxisValueLabel {
-                            if let frames = value.as(Int.self) {
-                                Text(frames.formatted()).font(Theme.Typography.micro)
-                            }
-                        }
-                    }
-                }
-                .frame(height: 168)
-                HStack {
-                    Text("0 s").font(Theme.Typography.micro).foregroundStyle(.tertiary)
-                    Spacer()
-                    Text(secondsLabel(activity.timedSpan))
-                        .font(Theme.Typography.micro).foregroundStyle(.tertiary)
-                }
-                if activity.untimedFrameCount > 0 {
-                    Text(Self.untimedCoverageLabel(activity))
-                        .font(Theme.Typography.micro)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("saved-activity-untimed-notice")
-                }
-            }
-        } else if let activity = coordinator.savedCaptureActivity, !activity.isEmpty {
-            // Frames exist, but the file recorded no time for any of them, so there
-            // is no time axis to plot. That is a different statement from "empty".
-            Text(Self.untimedCoverageLabel(activity))
-                .font(Theme.Typography.body)
-                .foregroundStyle(.secondary)
-                .frame(height: 168, alignment: .center)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("saved-activity-untimed-notice")
-        } else {
-            Text("No frames in this capture")
-                .font(Theme.Typography.body)
-                .foregroundStyle(.secondary)
-                .frame(height: 168, alignment: .center)
-                .frame(maxWidth: .infinity)
-        }
-    }
-
-    // MARK: Storage
-
-    /// Where the capture lives: a live capture's bounded inspection buffer plus
-    /// complete disk-backed spool, or a saved file's on-disk provenance. Fidelity and drops
-    /// are reported here so a green figure never implies a complete capture and an
-    /// absent one never reads as clean.
-    private var storageCard: some View {
-        card {
-            sectionLabel(isSaved ? "Local Storage" : "Live Buffer", systemImage: "internaldrive")
-            Text(isSaved ? "Saved file" : "Unsaved capture")
-                .font(Theme.Typography.bodyMedium)
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                if isSaved {
-                    savedStorageRows
-                } else {
-                    liveStorageRows
-                }
-            }
-            Divider()
-            if isSaved {
-                Button("Open in Saved Captures") {
-                    coordinator.activeWorkspace.navigatorMode = .library
-                }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-            } else {
-                Button("Save Capture…", systemImage: "square.and.arrow.down") {
-                    coordinator.saveCurrentCapture()
-                }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-                .disabled(!coordinator.canSaveCapture)
-                .help("Write the complete disk-backed capture to a .pcapng under Application Support")
-            }
-        }
-    }
-
-    @ViewBuilder private var savedStorageRows: some View {
-        storageRow("Format", savedFormat)
-        storageRow("File size", byteString(coordinator.activeSavedCapture?.byteCount ?? 0))
-        storageRow("Frames", frameCount.formatted())
-        storageRow("Fidelity", "Unknown", tint: .orange)
-        storageRow("Drop counters", "Unavailable in file")
-        Text(
-            "A saved file carries no kernel accounting; any loss during the original capture is not recoverable from it."
-        )
-        .font(Theme.Typography.micro)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    @ViewBuilder private var liveStorageRows: some View {
-        let stats = coordinator.captureStatistics
-        let helperDrops = coordinator.helperBufferDropCount
-        storageRow(
-            "Retention",
-            "\(coordinator.retainedFrameCount.formatted()) / \(coordinator.retainedFrameCapacity.formatted()) frames"
-        )
-        storageRow("Window bytes", byteString(inspectionWindowBytes))
-        storageRow("Save format", "PCAPNG")
-        if let fidelity = stats?.fidelity {
-            let incomplete = (stats?.isLossy ?? false) || helperDrops > 0
-            storageRow(
-                "Capture health",
-                Self.percent.string(from: fidelity as NSNumber) ?? "—",
-                tint: incomplete ? .orange : .green
-            )
-        } else {
-            storageRow("Capture health", "Unknown", tint: .orange)
-        }
-        storageRow("Drop counters", dropCountersText(stats, helperDrops: helperDrops))
-        if stats?.isLossy == true {
-            Text("Packets were dropped by the capture source, so the figures above understate the traffic.")
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        if coordinator.retainedFrameEvictionCount > 0 {
-            Text(
-                "\(coordinator.retainedFrameEvictionCount.formatted()) older frames left the inspection window — the complete disk-backed capture and sessions are unaffected."
-            )
-            .font(Theme.Typography.micro)
-            .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    // MARK: Top talkers
-
-    private var topTalkersCard: some View {
-        let talkers = coordinator.topHosts()
-        let maxBytes = talkers.map(\.bytes).max() ?? 0
-        return card {
-            HStack(spacing: Theme.Metrics.spacingM) {
-                sectionLabel("Top Talkers", systemImage: "chart.bar.xaxis")
-                Spacer()
-                if !talkers.isEmpty {
-                    Button("Open Sessions") { coordinator.openSessionsPreservingScope() }
-                        .buttonStyle(.link)
-                        .font(Theme.Typography.captionMedium)
-                        .help("Open these sessions in the full table, keeping the current scope")
-                }
-            }
-            if talkers.isEmpty {
-                Text(coordinator.sessions.isEmpty ? "No sessions in this capture" : "No hosts match the current scope")
-                    .font(Theme.Typography.body).foregroundStyle(.secondary)
-            } else {
-                ForEach(talkers, id: \.host) { entry in
-                    talkerRow(host: entry.host, bytes: entry.bytes, maxBytes: maxBytes)
-                }
-            }
+    private func compactBody(_ report: Report) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL + 4) {
+            protocolsCard(report)
+            sessionStartCard(report)
+            findingsCard(report)
+            hostsTableCard(report)
+            appsTableCard(report)
+            sourcesCard(report)
+            healthCard
         }
     }
 
-    // MARK: Protocol mix
+    /// Says out loud when the numbers below describe a filtered subset, naming
+    /// every layer doing the narrowing. Overview has no filter shelf of its own,
+    /// so it carries the shared reset.
+    private func scopeNotice(_ report: Report) -> some View {
+        SessionScopeNotice(
+            coordinator: coordinator,
+            shownCount: report.sessions.count,
+            showsResetAction: true
+        )
+    }
 
-    private var protocolMixCard: some View {
-        let kinds: [ProtocolKind] = [.dns, .tcp, .udp, .tls, .http, .http2, .quic, .stun]
-        let entries = kinds
-            .map { (kind: $0, hits: coordinator.count(for: $0)) }
-            .filter { $0.hits > 0 }
-        let maxHits = entries.map(\.hits).max() ?? 0
-        return card {
-            sectionLabel("Protocol Mix", systemImage: "chart.bar")
-            // These are session counts over a layered stack, so one session is
-            // counted in several rows and the rows do not sum to the capture.
-            // Saying so is the difference between an honest rollup and a chart
-            // that reads as a share of traffic it never measured.
-            Text("Sessions containing each layer — one session carries several, so these overlap.")
+    // MARK: Report shelf
+
+    /// The page's functional chrome — what this capture is, its state, and the
+    /// routes out of the report — on one Liquid Glass shelf in the safe area,
+    /// the same surface family the Sessions shelf and History header use. The
+    /// cards below stay opaque content surfaces.
+    private func reportShelf(_ report: Report) -> some View {
+        let shape = RoundedRectangle(
+            cornerRadius: Theme.Glass.sessionShelfCornerRadius,
+            style: .continuous
+        )
+        return VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+            TracexyGlassEffectGroup(spacing: Theme.Glass.sessionShelfSectionSpacing) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: Theme.Metrics.spacingL) {
+                        identityBlock(report)
+                        Spacer(minLength: Theme.Metrics.spacingL)
+                        headerActions(report)
+                    }
+                    .frame(minWidth: 640)
+                    VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                        identityBlock(report)
+                        headerActions(report)
+                    }
+                }
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.vertical, Theme.Metrics.spacingM)
+                .tracexyGlassEffect(in: shape)
+            }
+            .padding(.horizontal, Theme.Glass.sessionShelfOuterPadding)
+            .padding(.top, Theme.Glass.sessionShelfOuterPadding)
+            scopeNotice(report)
+                .padding(.horizontal, Theme.Metrics.spacingL)
+        }
+        .padding(.bottom, Theme.Glass.sessionShelfBottomPadding)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func identityBlock(_ report: Report) -> some View {
+        let status = statusTitle(hasTraffic: report.hasTraffic)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                Label("Overview", systemImage: "chart.xyaxis.line")
+                    .font(Theme.Typography.title)
+                Text(identityTitle)
+                    .font(Theme.Typography.title)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                statusPill(status)
+            }
+            Text(identitySubtitle)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if entries.isEmpty {
-                Text(coordinator.sessions
-                    .isEmpty ? "No protocols decoded yet" : "No listed protocols match the current scope")
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(entries, id: \.kind) { entry in
-                    protocolRow(kind: entry.kind, hits: entry.hits, maxHits: maxHits)
-                }
-            }
+                .lineLimit(1)
         }
+        .accessibilityElement(children: .combine)
     }
 
-    // MARK: Source summary
-
-    /// Who is involved, from the same observed data the sidebar's Sources groups
-    /// build on — no fabricated apps, domains, or IPs.
-    private var sourceSummaryCard: some View {
-        let sources = coordinator.visibleSourceSummary
-        let attributedApps = sources.apps
-        return card {
-            sectionLabel("Source Summary", systemImage: "person.2")
-            sourceRow(
-                "Apps",
-                attributedApps > 0 ? "\(attributedApps.formatted()) observed" : "No attribution",
-                tint: attributedApps > 0 ? .primary : .orange
-            )
-            sourceRow("Domains", "\(sources.domains.formatted()) observed")
-            sourceRow("IP Addresses", "\(sources.addresses.formatted()) observed")
-            Divider()
-            Button("Open Flow Map") { coordinator.openFlowPreservingScope() }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-                .help("See where this traffic is going")
+    private func statusPill(_ statusTitle: String) -> some View {
+        HStack(spacing: Theme.Metrics.controlSpacing) {
+            StatusDot(statusTint, size: 6)
+            Text(statusTitle).font(Theme.Typography.microEmphasis)
         }
+        .foregroundStyle(statusTint)
+        .padding(.horizontal, Theme.Metrics.spacingM)
+        .padding(.vertical, 3)
+        .background(statusTint.opacity(Theme.Glass.semanticFillOpacity), in: Capsule())
+        .accessibilityLabel("Capture status, \(statusTitle)")
     }
 
-    // MARK: Findings summary
-
-    /// Overview summarizes typed observations without duplicating the evidence list.
-    /// Individual sessions belong in the scalable Sessions/Findings workflow.
-    private var findingSummaryBar: some View {
-        let all = scopedFindings
-        let sessionCount = Set(all.map(\.sessionID)).count
-        return HStack(spacing: Theme.Metrics.spacingM) {
-            sectionLabel("Findings", systemImage: "sparkle.magnifyingglass")
-            if all.isEmpty {
-                emptyFindings
-            } else {
-                findingSeveritySummary(all)
-                Spacer(minLength: Theme.Metrics.spacingM)
-                Button(sessionCount == 1 ? "Review 1 Session" : "Review \(sessionCount.formatted()) Sessions") {
-                    coordinator.showAggregateFindingSessions()
-                }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
-                .help("Show sessions with typed findings in the full session table")
-            }
-        }
-    }
-
-    private var emptyFindings: some View {
+    private func headerActions(_ report: Report) -> some View {
         HStack(spacing: Theme.Metrics.spacingM) {
-            Image(systemName: "checkmark.seal").foregroundStyle(.green)
-            Text("No findings in the current scope")
-                .font(Theme.Typography.body)
-                .foregroundStyle(.secondary)
+            Button {
+                coordinator.openSessionsPreservingScope()
+            } label: {
+                Label("Sessions", systemImage: "list.bullet.rectangle")
+            }
+            .tracexyGlassButtonStyle(prominent: true)
+            .help("Open these sessions in the full table, keeping the current scope")
+            Button {
+                coordinator.openFlowPreservingScope()
+            } label: {
+                Label("Flow Map", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            .tracexyGlassButtonStyle()
+            .disabled(report.sessions.isEmpty)
+            .help("See where this traffic is going")
+            if isSaved {
+                Button {
+                    coordinator.activeWorkspace.navigatorMode = .library
+                } label: {
+                    Label("Library", systemImage: "books.vertical")
+                }
+                .tracexyGlassButtonStyle()
+                .help("Reveal this file in the Library navigator")
+            }
         }
-        .padding(.vertical, 2)
+        .controlSize(.small)
     }
 
-    private func kpi(_ label: String, value: String, tint: Color = .primary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label.uppercased())
-                .font(Theme.Typography.micro)
-                .tracking(0.5)
+    // MARK: Headline figures
+
+    private func figuresCard(_ report: Report) -> some View {
+        let frames = frameCount(report.timeline).formatted()
+        let sessions = report.presentedSessionCount.formatted()
+        let traffic = byteString(report.timeline.totals.bytes)
+        return card(padding: 0) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    figure("Frames", value: frames)
+                    figureDivider
+                    figure("Sessions", value: sessions)
+                    figureDivider
+                    figure("Traffic", value: traffic)
+                    figureDivider
+                    durationFigure(report.timeline)
+                    figureDivider
+                    figure("Fidelity", value: fidelityValue, tint: fidelityTint)
+                }
+                .frame(minWidth: Self.figuresRowMinimumWidth)
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(minimum: 120), spacing: 0), count: 3),
+                    spacing: 0
+                ) {
+                    figure("Frames", value: frames)
+                    figure("Sessions", value: sessions)
+                    figure("Traffic", value: traffic)
+                    durationFigure(report.timeline)
+                    figure("Fidelity", value: fidelityValue, tint: fidelityTint)
+                }
+            }
+            .padding(.vertical, Theme.Metrics.spacingS)
+        }
+    }
+
+    /// The only figure that ticks: a running capture's elapsed time. Scoping the
+    /// timeline to this cell keeps the 1 Hz tick from re-rendering the page.
+    private func durationFigure(_ timeline: TrafficTimeline) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            figure("Duration", value: durationValue(at: context.date, timeline: timeline))
+        }
+    }
+
+    private var figureDivider: some View {
+        Divider().padding(.vertical, Theme.Metrics.spacingL)
+    }
+
+    private func figure(_ label: String, value: String, tint: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            Text(label)
+                .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(Theme.Typography.title)
+                .font(Theme.Typography.metric)
                 .foregroundStyle(tint)
                 .monospacedDigit()
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Theme.Metrics.spacingL + 4)
+        .padding(.vertical, Theme.Metrics.spacingL)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label): \(value)")
     }
 
-    private func storageRow(_ label: String, _ value: String, tint: Color = .primary) -> some View {
-        HStack(alignment: .firstTextBaseline) {
+    // MARK: Traffic over time
+
+    /// Every accepted frame's wire bytes on the real capture clock, split by
+    /// session direction, with the scoped findings pinned where their evidence
+    /// sits. Capture-wide: session filters narrow the panels below, not the frames.
+    private func activityCard(_ report: Report) -> some View {
+        let timeline = report.timeline
+        return OverviewPanel("Traffic over time", caption: activityCaption(timeline)) {
+            activityChart(report)
+            activityFooter(report)
+        } accessory: {
+            HStack(spacing: Theme.Metrics.spacingL) {
+                if timeline.totals.hasDirectionalBytes {
+                    valueChip("Sent", value: byteString(timeline.totals.sentBytes), color: Theme.Traffic.sent)
+                    valueChip("Received", value: byteString(timeline.totals.receivedBytes), color: Theme.Traffic.received)
+                } else {
+                    valueChip("Total", value: byteString(timeline.totals.bytes), color: .accentColor)
+                }
+            }
+        }
+    }
+
+    private func activityCaption(_ timeline: TrafficTimeline) -> String {
+        if timeline.firstTimedFrame == nil {
+            return timeline.isEmpty ? "Waiting for traffic" : "No timed frames"
+        }
+        let width = timeline.bucketWidth
+        let slices = width < 60 ? "\(Int(width))-second" : "\(Int(width / 60))-minute"
+        return "Wire bytes in \(slices) slices across the whole capture"
+    }
+
+    @ViewBuilder private func activityChart(_ report: Report) -> some View {
+        let timeline = report.timeline
+        if timeline.firstTimedFrame != nil {
+            OverviewTrafficTimelineChart(
+                timeline: timeline, points: report.points, findingMarkers: report.findingMarkers
+            )
+            .frame(height: Self.chartHeight)
+        } else if !timeline.isEmpty {
+            Text(Self.untimedCoverageLabel(timeline))
+                .font(Theme.Typography.body)
+                .foregroundStyle(.secondary)
+                .frame(height: Self.chartHeight, alignment: .center)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("saved-activity-untimed-notice")
+        } else {
+            Text("Waiting for traffic…")
+                .font(Theme.Typography.body)
+                .foregroundStyle(.tertiary)
+                .frame(height: Self.chartHeight, alignment: .center)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder private func activityFooter(_ report: Report) -> some View {
+        let timeline = report.timeline
+        let markers = report.findingMarkers
+        let total = report.findings.count
+        if !markers.isEmpty || timeline.untimedFrameCount > 0 {
+            HStack(spacing: Theme.Metrics.spacingL) {
+                if !markers.isEmpty {
+                    HStack(spacing: Theme.Metrics.spacingS) {
+                        Image(systemName: "diamond.fill")
+                            .font(.system(size: Theme.Icon.small))
+                            .foregroundStyle(.secondary)
+                        Text(findingAxisLabel(placed: markers.count, total: total))
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if timeline.untimedFrameCount > 0 {
+                    Text(Self.untimedCoverageLabel(timeline))
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("saved-activity-untimed-notice")
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func findingAxisLabel(placed: Int, total: Int) -> String {
+        if placed < total {
+            return "\(placed.formatted()) of \(total.formatted()) findings on the axis"
+        }
+        return total == 1 ? "1 finding on the axis" : "\(total.formatted()) findings on the axis"
+    }
+
+    // MARK: Secondary charts
+
+    /// Session bytes partitioned by innermost protocol — every session lands in
+    /// exactly one bar, so the bars sum to the scope. Tap a bar to drill in.
+    private func protocolsCard(_ report: Report) -> some View {
+        let share = report.protocolShare
+        let total = max(1, share.reduce(0) { $0 + $1.bytes })
+        let rows = share.map { entry in
+            OverviewProtocolShare(
+                id: entry.kind?.rawValue ?? "other",
+                title: entry.kind?.label ?? "Other",
+                bytes: entry.bytes,
+                fraction: Double(entry.bytes) / Double(total),
+                color: entry.kind.map(Theme.color(for:)) ?? .secondary,
+                kind: entry.kind
+            )
+        }
+        return OverviewPanel("Protocols", caption: "Session bytes in scope") {
+            if rows.isEmpty {
+                emptyLine(coordinator.sessions.isEmpty ? "No sessions yet" : "Nothing in the current scope")
+                    .frame(height: Self.secondaryChartHeight)
+            } else {
+                OverviewProtocolChart(rows: rows) { kind in
+                    coordinator.showSessionsForAggregateProtocol(kind)
+                }
+                .frame(height: Self.secondaryChartHeight)
+                .help("Click a bar to narrow the scope to sessions that carry that protocol")
+            }
+        }
+    }
+
+    /// New conversations per slice on the same clock as the traffic chart.
+    private func sessionStartCard(_ report: Report) -> some View {
+        let columns = Self.sessionStartColumns(report)
+        return OverviewPanel("Sessions started", caption: "New conversations in scope") {
+            if columns.isEmpty {
+                emptyLine(report.timeline.isEmpty ? "No sessions yet" : "No timed sessions in scope")
+                    .frame(height: Self.secondaryChartHeight)
+            } else {
+                OverviewSessionStartChart(columns: columns, width: report.columnWidth)
+                    .frame(height: Self.secondaryChartHeight)
+            }
+        }
+    }
+
+    /// Visible sessions bucketed by start instant onto the rendered traffic
+    /// columns, so the two charts share one axis and one slice width.
+    private static func sessionStartColumns(_ report: Report) -> [OverviewSessionStartChart.Column] {
+        let points = report.points
+        guard let first = points.first else {
+            return []
+        }
+        let width = report.columnWidth
+        var counts = [Int](repeating: 0, count: points.count)
+        for session in report.sessions {
+            guard let start = session.startTime else {
+                continue
+            }
+            let offset = start.timeIntervalSince(first.date)
+            let index = width > 0 ? Int((offset / width).rounded(.down)) : 0
+            guard index >= 0, index < counts.count else {
+                continue
+            }
+            counts[index] += 1
+        }
+        guard counts.contains(where: { $0 > 0 }) else {
+            return []
+        }
+        return points.indices.map { OverviewSessionStartChart.Column(date: points[$0].date, count: counts[$0]) }
+    }
+
+    // MARK: Detail tables
+
+    private func hostsTableCard(_ report: Report) -> some View {
+        let rows = report.topHosts
+        return OverviewPanel("Top hosts", caption: "By bytes in scope") {
+            if rows.isEmpty {
+                emptyLine(coordinator.sessions.isEmpty ? "No sessions yet" : "Nothing in the current scope")
+            } else {
+                OverviewTalkerTable(kind: .hosts, rows: rows, scopedBytes: report.scopedBytes) { row in
+                    coordinator.showSessionsForAggregateHost(row.name)
+                }
+                .help("Double-click a host to narrow the scope to its sessions")
+            }
+        } accessory: {
+            Button("Open Sessions") { coordinator.openSessionsPreservingScope() }
+                .buttonStyle(.link)
+                .font(Theme.Typography.captionMedium)
+                .help("Open these sessions in the full table, keeping the current scope")
+        }
+    }
+
+    private func appsTableCard(_ report: Report) -> some View {
+        let rows = report.topApps
+        return OverviewPanel("Top apps", caption: "Attributed processes by bytes in scope") {
+            if rows.isEmpty {
+                emptyLine(report.sessions.isEmpty ? "Nothing in the current scope" : "No app attribution in scope")
+            } else {
+                OverviewTalkerTable(kind: .apps, rows: rows, scopedBytes: report.scopedBytes) { row in
+                    coordinator.showSessionsForAggregateProcess(row.name)
+                }
+                .help("Double-click an app to narrow the scope to its sessions")
+            }
+        }
+    }
+
+    // MARK: Findings
+
+    private func findingsCard(_ report: Report) -> some View {
+        OverviewPanel("Findings", caption: "Typed observations in scope") {
+            findingSummaryBar(report.findings)
+        }
+    }
+
+    /// The severity rollup and its single route into the Sessions workflow.
+    /// Overview never duplicates the finding evidence list.
+    @ViewBuilder private func findingSummaryBar(_ all: [Finding]) -> some View {
+        let sessionCount = Set(all.map(\.sessionID)).count
+        if all.isEmpty {
+            Label("None in scope", systemImage: "checkmark.seal")
+                .font(Theme.Typography.body)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: Self.secondaryChartHeight, alignment: .center)
+        } else {
+            OverviewSeverityChart(rows: Finding.Severity.allCases.map { severity in
+                OverviewSeverityChart.Row(
+                    severity: severity,
+                    title: severityTitle(severity),
+                    count: all.filter { $0.severity == severity }.count
+                )
+            })
+            .frame(height: Self.secondaryChartHeight - 26)
+            Button(sessionCount == 1 ? "Review 1 Session" : "Review \(sessionCount.formatted()) Sessions") {
+                coordinator.showAggregateFindingSessions()
+            }
+            .buttonStyle(.link)
+            .font(Theme.Typography.captionMedium)
+            .help("Show sessions with typed findings in the full session table")
+        }
+    }
+
+    // MARK: Sources
+
+    /// Who is involved, from the same observed data the sidebar's Sources groups
+    /// build on — no fabricated apps, domains, or IPs.
+    private func sourcesCard(_ report: Report) -> some View {
+        let sources = report.sources
+        return OverviewPanel("Sources", caption: "Observed in scope") {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingL + 8) {
+                sourceFigure(sources.apps, label: "Apps", missing: "No attribution")
+                sourceFigure(sources.domains, label: "Domains", missing: "None")
+                sourceFigure(sources.addresses, label: "Addresses", missing: "None")
+            }
+        } accessory: {
+            Button("Open Flow Map") { coordinator.openFlowPreservingScope() }
+                .buttonStyle(.link)
+                .font(Theme.Typography.captionMedium)
+                .disabled(report.sessions.isEmpty)
+                .help("See where this traffic is going")
+        }
+    }
+
+    private func sourceFigure(_ count: Int, label: String, missing: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if count > 0 {
+                Text(count.formatted())
+                    .font(Theme.Typography.metric)
+                    .monospacedDigit()
+            } else {
+                Text(missing)
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(.orange)
+                    .frame(minHeight: 31, alignment: .bottomLeading)
+            }
             Text(label)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
-            Spacer(minLength: Theme.Metrics.spacingM)
-            Text(value)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(tint)
-                .monospacedDigit()
-                .multilineTextAlignment(.trailing)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(count > 0 ? count.formatted() : missing)")
     }
 
-    private func talkerRow(host: String, bytes: Int, maxBytes: Int) -> some View {
-        Button {
-            // Narrows to this host inside the scope the row was computed over —
-            // not the sidebar's global "everything for this host", which would
-            // drop the complementary client/IP/aggregate scope and could show
-            // more sessions than this row counted.
-            coordinator.showSessionsForAggregateHost(host)
-        } label: {
-            HStack(spacing: Theme.Metrics.spacingM) {
-                Text(host)
+    // MARK: Capture health and storage
+
+    /// Where the capture lives and how complete it is. Drops are reported here so
+    /// a green figure never implies a complete capture and an absent one never
+    /// reads as clean.
+    private var healthCard: some View {
+        OverviewPanel(isSaved ? "File" : "Capture health", caption: isSaved ? "Saved on disk" : "Unsaved live capture") {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
+                Text(fidelityValue)
+                    .font(Theme.Typography.metric)
+                    .foregroundStyle(fidelityTint)
+                    .monospacedDigit()
+                Text("fidelity")
                     .font(Theme.Typography.caption)
-                    .lineLimit(1)
-                    .frame(width: 118, alignment: .leading)
-                proportionBar(fraction: maxBytes > 0 ? Double(bytes) / Double(maxBytes) : 0, tint: .accentColor)
-                Text(byteString(bytes))
-                    .font(Theme.Typography.monoMicro)
                     .foregroundStyle(.secondary)
-                    .frame(width: 62, alignment: .trailing)
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(talkerHelp(host: host, bytes: bytes))
-    }
-
-    private func protocolRow(kind: ProtocolKind, hits: Int, maxHits: Int) -> some View {
-        Button {
-            // Adds a conjunctive protocol to the current scope. Every listed
-            // kind drills in, including the ones with no sidebar lens of their
-            // own (UDP, HTTP/2), which previously left a dead row.
-            coordinator.showSessionsForAggregateProtocol(kind)
-        } label: {
-            HStack(spacing: Theme.Metrics.spacingM) {
-                Text(kind.label)
-                    .font(Theme.Typography.caption)
-                    .lineLimit(1)
-                    .frame(width: 60, alignment: .leading)
-                proportionBar(fraction: maxHits > 0 ? Double(hits) / Double(maxHits) : 0, tint: Theme.color(for: kind))
-                Text(hits.formatted())
-                    .font(Theme.Typography.monoMicro)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 40, alignment: .trailing)
+            .accessibilityElement(children: .combine)
+            OverviewFactTable(rows: isSaved ? savedHealthRows : liveHealthRows)
+        } accessory: {
+            if isSaved {
+                Button("Show in Library") { coordinator.activeWorkspace.navigatorMode = .library }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+            } else {
+                Button("Save Capture…") { coordinator.saveCurrentCapture() }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+                    .disabled(!coordinator.canSaveCapture)
+                    .help("Write the complete disk-backed capture to a .pcapng under Application Support")
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("\(kind.label): \(hits.formatted()) session\(hits == 1 ? "" : "s") in this scope. "
-            + "Narrow the current scope to sessions that also carry \(kind.label).")
-    }
-
-    private func sourceRow(_ label: String, _ value: String, tint: Color = .primary) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).font(Theme.Typography.caption).foregroundStyle(.secondary)
-            Spacer(minLength: Theme.Metrics.spacingM)
-            Text(value).font(Theme.Typography.caption).foregroundStyle(tint).monospacedDigit()
         }
     }
 
-    private func findingSeveritySummary(_ findings: [Finding]) -> some View {
-        HStack(spacing: Theme.Metrics.spacingS) {
-            ForEach(Finding.Severity.allCases, id: \.self) { severity in
-                let count = findings.filter { $0.severity == severity }.count
-                if count > 0 {
-                    Label(count.formatted(), systemImage: severity.systemImage)
-                        .font(Theme.Typography.microMedium)
-                        .foregroundStyle(severity.tint)
-                        .padding(.horizontal, Theme.Metrics.spacingM)
-                        .padding(.vertical, Theme.Metrics.spacingS)
-                        .background(severity.tint.opacity(0.1), in: Capsule())
-                        .accessibilityLabel("\(severityTitle(severity)): \(count.formatted())")
-                }
+    private var savedHealthRows: [OverviewFactTable.Row] {
+        [
+            .init(label: "Format", value: savedFormat),
+            .init(label: "Size", value: byteString(coordinator.activeSavedCapture?.byteCount ?? 0)),
+            .init(label: "Frames", value: frameCount(coordinator.trafficTimeline).formatted()),
+            .init(label: "Dropped", value: "Not recorded in the file"),
+        ]
+    }
+
+    private var liveHealthRows: [OverviewFactTable.Row] {
+        let stats = coordinator.captureStatistics
+        let helperDrops = coordinator.helperBufferDropCount
+        var rows: [OverviewFactTable.Row] = [
+            .init(
+                label: "Dropped",
+                value: "Kernel \(stats.map { $0.totalDropped.formatted() } ?? "—"), helper \(helperDrops.formatted())",
+                tint: (stats?.isLossy == true || helperDrops > 0) ? .orange : .primary
+            ),
+            .init(
+                label: "In memory",
+                value: "\(coordinator.retainedFrameCount.formatted()) of \(coordinator.retainedFrameCapacity.formatted()) frames"
+            ),
+            .init(label: "Save format", value: "PCAPNG"),
+        ]
+        if coordinator.retainedFrameEvictionCount > 0 {
+            rows.append(.init(label: "On disk only", value: "\(coordinator.retainedFrameEvictionCount.formatted()) older frames"))
+        }
+        return rows
+    }
+
+    // MARK: Empty state
+
+    private var emptyCard: some View {
+        card {
+            ContentUnavailableView {
+                Label(isSaved ? "No frames in this file" : "No traffic yet", systemImage: "waveform.path.ecg")
+            } description: {
+                Text(isSaved
+                    ? "This file holds no accepted frames."
+                    : "Start a capture or open a file. The report fills in as frames arrive.")
             }
+            .frame(maxWidth: .infinity, minHeight: 220)
         }
     }
 
     // MARK: Building blocks
 
-    private func card(@ViewBuilder _ content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+    private func card(
+        padding: CGFloat = Theme.Metrics.spacingL + 4,
+        @ViewBuilder _ content: () -> some View
+    )
+        -> some View
+    {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             content()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(Theme.Metrics.spacingL)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(padding)
         .tracexyContentSurface(
-            in: RoundedRectangle(
-                cornerRadius: Theme.Metrics.cornerRadius,
-                style: .continuous
-            )
+            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius + 4, style: .continuous)
         )
     }
 
-    private func sectionLabel(_ title: String, systemImage: String) -> some View {
-        SectionHeader(title, systemImage: systemImage)
-    }
-
-    /// A thin proportional fill over a track — the row-level bar used by Top
-    /// Talkers and Protocol Mix. Bounded to `0...1`; a zero fraction shows the bare
-    /// track rather than trapping.
-    private func proportionBar(fraction: Double, tint: Color) -> some View {
-        let clamped = min(max(fraction, 0), 1)
-        return GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary.opacity(0.5))
-                Capsule().fill(tint.gradient)
-                    .frame(width: max(0, proxy.size.width * clamped))
+    /// A legend chip: series colour, name and (optionally) its total.
+    private func valueChip(_ title: String, value: String?, color: Color) -> some View {
+        HStack(spacing: Theme.Metrics.controlSpacing) {
+            StatusDot(color, size: 8)
+            Text(title)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+            if let value {
+                Text(value)
+                    .font(Theme.Typography.captionEmphasis)
+                    .monospacedDigit()
             }
         }
-        .frame(height: 6)
-        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
-    /// A stale row — the workspace is already scoped to a different host — cannot
-    /// narrow anything, so the help says that instead of promising a filter the
-    /// click will not apply.
-    private func talkerHelp(host: String, bytes: Int) -> String {
-        let current = coordinator.activeWorkspace.hostFilter
-        if let current, current != host {
-            return "\(host): \(byteString(bytes)). The list is already scoped to \(current)."
-        }
-        return "Narrow the current scope to \(host)"
+    private func emptyLine(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.Typography.body)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
     }
 
-    private func durationValue(at now: Date) -> String {
+    private func durationValue(at now: Date, timeline: TrafficTimeline) -> String {
         if isSaved {
             guard let activity = coordinator.savedCaptureActivity else {
                 return "—"
             }
-            // A capture containing frames the file recorded without a time has no
-            // whole-capture duration to state. Say so instead of showing the timed
-            // subset's span as if it covered everything.
             guard let duration = activity.duration else {
                 return "Unknown"
             }
-            return secondsLabel(duration)
+            return durationLabel(duration)
         }
         if coordinator.captureDisplayState == .capturing,
            let startedAt = coordinator.captureStartedAt
         {
-            return secondsLabel(now.timeIntervalSince(startedAt))
+            return durationLabel(now.timeIntervalSince(startedAt))
         }
-        return sessionsSpanLabel
+        guard timeline.firstTimedFrame != nil else {
+            return timeline.isEmpty ? "—" : "Unknown"
+        }
+        return timeline.untimedFrameCount == 0 ? durationLabel(timeline.timedSpan) : "Unknown"
     }
 
-    private func dropCountersText(_ stats: CaptureStatistics?, helperDrops: UInt64) -> String {
-        let kernel = stats.map { $0.totalDropped.formatted() } ?? "—"
-        return "Kernel \(kernel) · helper \(helperDrops.formatted())"
+    private func percentText(_ fraction: Double) -> String {
+        let clamped = min(max(fraction, 0), 1)
+        if clamped > 0, clamped < 0.01 {
+            return "<1%"
+        }
+        return clamped.formatted(.percent.precision(.fractionLength(0)))
     }
 
     private func byteString(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
     }
 
-    /// A human duration for the KPI strip and activity axis: milliseconds under a
-    /// second, seconds otherwise, always non-negative.
-    private func secondsLabel(_ seconds: TimeInterval) -> String {
+    private func durationLabel(_ seconds: TimeInterval) -> String {
         let value = max(0, seconds)
         if value == 0 {
             return "0 s"
@@ -814,7 +933,14 @@ struct OverviewView: View {
         if value < 1 {
             return "\(Int((value * 1_000).rounded())) ms"
         }
-        return String(format: "%.2f s", value)
+        if value < 60 {
+            return String(format: "%.1f s", value)
+        }
+        let whole = Int(value.rounded(.down))
+        if whole < 3_600 {
+            return "\(whole / 60)m \(whole % 60)s"
+        }
+        return "\(whole / 3_600)h \((whole % 3_600) / 60)m"
     }
 
     private func severityTitle(_ severity: Finding.Severity) -> String {
