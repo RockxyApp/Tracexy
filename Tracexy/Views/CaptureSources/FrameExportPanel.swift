@@ -129,16 +129,12 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
 
     private static let pcapType = UTType(filenameExtension: "pcap") ?? .data
     private static let pcapngType = UTType(filenameExtension: "pcapng") ?? .data
-    private static let gzipType = UTType.gzip
 
     private let context: Context
     private let accessory: FrameExportAccessoryView
 
     private func currentFormat(_ panel: NSSavePanel?) -> FrameExportFormat {
-        if #available(macOS 15.0, *), let panel, panel.showsContentTypes {
-            if accessory.compressesWithGzip {
-                return accessory.systemFormat
-            }
+        if #available(macOS 15.0, *), let panel, panel.showsContentTypes, !accessory.showsFormatControl {
             return panel.currentContentType == Self.pcapType ? .pcap : .pcapng
         }
         return accessory.selectedFormat
@@ -154,17 +150,36 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
         for ext in ["gz", "pcapng", "pcap"] where stem.lowercased().hasSuffix(".\(ext)") {
             stem = String(stem.dropLast(ext.count + 1))
         }
+        // A second pass strips ".pcapng.gz" / ".pcap.gz" back to the stem.
+        for ext in ["pcapng", "pcap"] where stem.lowercased().hasSuffix(".\(ext)") {
+            stem = String(stem.dropLast(ext.count + 1))
+        }
         if accessory.compressesWithGzip {
-            panel.allowedContentTypes = [Self.gzipType]
-            panel.nameFieldStringValue = "\(stem).\(format.fileExtension)"
+            // With one allowed type the system pop-up disappears, so the format
+            // choice moves into the accessory while gzip is on.
+            // No content-type gate while gzip is on: the panel would otherwise
+            // replace ".pcapng" with ".gz" instead of appending it. The exporter
+            // writes a gzip member whatever the name says.
+            panel.allowedContentTypes = []
+            panel.nameFieldStringValue = "\(stem).\(format.fileExtension).gz"
+            if !accessory.showsFormatControl {
+                accessory.selectFormat(accessory.systemFormat)
+                accessory.showsFormatControl = true
+                accessory.formatControlIsGzipFallback = true
+            }
         } else {
+            if accessory.formatControlIsGzipFallback {
+                accessory.systemFormat = accessory.selectedFormat
+                accessory.showsFormatControl = false
+                accessory.formatControlIsGzipFallback = false
+            }
             panel.allowedContentTypes = [Self.pcapngType, Self.pcapType]
             if #available(macOS 15.0, *), panel.showsContentTypes {
-                panel.currentContentType = format == .pcap ? Self.pcapType : Self.pcapngType
+                panel.currentContentType = accessory.systemFormat == .pcap ? Self.pcapType : Self.pcapngType
             }
             panel.nameFieldStringValue = stem
         }
-        accessory.refreshEstimate(format: format)
+        accessory.refreshEstimate(format: currentFormat(panel))
     }
 }
 
@@ -278,6 +293,10 @@ final class FrameExportAccessoryView: NSView {
     /// the gzip name extension follows it.
     var systemFormat: FrameExportFormat = .pcapng
 
+    /// True while the accessory pop-up stands in for the hidden system pop-up
+    /// (gzip on, macOS 15+).
+    var formatControlIsGzipFallback = false
+
     var showsFormatControl = true {
         didSet {
             grid.row(at: 2).isHidden = !showsFormatControl
@@ -295,7 +314,12 @@ final class FrameExportAccessoryView: NSView {
     }
 
     var selectedFormat: FrameExportFormat {
-        showsFormatControl ? (formatPopUp.indexOfSelectedItem == 1 ? .pcap : .pcapng) : systemFormat
+        guard showsFormatControl else {
+            return systemFormat
+        }
+        let chosen: FrameExportFormat = formatPopUp.indexOfSelectedItem == 1 ? .pcap : .pcapng
+        // A disabled PCAP item cannot be chosen; a stale selection falls back.
+        return chosen == .pcap && context.pcapUnavailableReason != nil ? .pcapng : chosen
     }
 
     var preservesMetadata: Bool {
@@ -304,6 +328,10 @@ final class FrameExportAccessoryView: NSView {
 
     var compressesWithGzip: Bool {
         gzipCheckbox.state == .on
+    }
+
+    func selectFormat(_ format: FrameExportFormat) {
+        formatPopUp.selectItem(at: format == .pcap ? 1 : 0)
     }
 
     func refreshEstimate(format: FrameExportFormat) {

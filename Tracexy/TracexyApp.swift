@@ -85,6 +85,9 @@ struct TracexyApp: App {
         .defaultSize(width: 600, height: 420)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -103,6 +106,9 @@ struct TracexyApp: App {
         .defaultSize(width: 460, height: 560)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -138,6 +144,7 @@ struct TracexyApp: App {
         .defaultSize(width: 900, height: 640)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified(showsTitle: true))
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -380,6 +387,9 @@ private struct SessionInspectorWindowScene: Scene {
         .defaultSize(width: 1_040, height: 680)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
 
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
@@ -430,9 +440,11 @@ private struct TracexyCaptureFileCommands: Commands {
                 coordinator.presentCaptureImportPanel()
             }
             .keyboardShortcut("o", modifiers: [.command, .option])
+        }
 
-            Divider()
-
+        // After the system Close items, in HIG order: Close Capture (⇧⌘W, the
+        // "Close File" slot), Reload, Get Info, File Set.
+        CommandGroup(after: .saveItem) {
             Button("Close Capture") {
                 coordinator.closeCapture()
             }
@@ -506,6 +518,9 @@ private struct CaptureInfoWindowScene: Scene {
         .defaultSize(width: 680, height: 620)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
 
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)

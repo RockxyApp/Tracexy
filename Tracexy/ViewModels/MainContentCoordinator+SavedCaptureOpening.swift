@@ -135,9 +135,20 @@ extension MainContentCoordinator {
         }
         // A reference whose file moved or changed is a distinct, recoverable state
         // (Locate… / Reload), never an open attempt against stale bytes.
-        guard capture.isReadable else {
-            unavailableReferencedCapture = capture
-            return
+        // Re-check a reference at open time rather than trusting the last Library
+        // refresh: the file may have moved since the list was built.
+        if let reference = capture.reference {
+            let availability = reference.currentAvailability()
+            guard availability.isReadable else {
+                refreshSavedCaptures()
+                unavailableReferencedCapture = savedCaptures.first { $0.id == capture.id } ?? capture
+                return
+            }
+            if availability != capture.availability {
+                // The file came back (or was restored) since the list was built:
+                // the badge follows what is true now.
+                refreshSavedCaptures()
+            }
         }
         unavailableReferencedCapture = nil
         cancelFollowStream(clearResult: true)
