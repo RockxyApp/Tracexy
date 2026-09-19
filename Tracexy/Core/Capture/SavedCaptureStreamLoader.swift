@@ -195,6 +195,10 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     /// Bounded neutral metadata inventory (encountered link types, untimed frames,
     /// frames with no decodable link layer) folded from the same accepted frames.
     let metadata: CaptureMetadataSummary
+    /// What the container says about itself: format variant, sections, interfaces
+    /// and their options, statistics blocks, comments, secrets-block presence and
+    /// unknown-block counts. Folded by the reader in the same single pass.
+    let properties: CaptureFileProperties
     let completeness: CaptureLoadCompleteness
     /// Total frames accepted (independent of the retained-tail window size).
     let totalFrames: Int
@@ -357,6 +361,7 @@ nonisolated final class SavedCaptureStreamLoader {
             retainedTail: tail,
             activity: activity.activity(),
             metadata: metadata.summary(),
+            properties: reader.fileProperties,
             completeness: completeness,
             totalFrames: totalFrames,
             finalProgress: completion.progress

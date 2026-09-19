@@ -732,7 +732,7 @@ enum ReplayCorpus {
     }
 
     /// Microsecond ticks for a pcapng EPB at the default `if_tsresol` (10⁻⁶).
-    private static func microTicks(_ frame: Frame) -> UInt64 {
+    static func microTicks(_ frame: Frame) -> UInt64 {
         UInt64(1_700_000_000 + frame.offsetSeconds) * 1_000_000
     }
 

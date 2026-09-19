@@ -349,6 +349,14 @@ final class MainContentCoordinator {
     /// comments, options or annotations.
     var savedCaptureMetadata: CaptureMetadataSummary?
 
+    /// What the open saved capture's container says about itself (format
+    /// variant, sections, interfaces and options, statistics blocks, comments and
+    /// skipped-block counts). Folded in the same single pass as
+    /// ``savedCaptureMetadata``; `nil` for live and idle captures. Shown only in the
+    /// Get Info window and the interface context; file-authored strings never enter
+    /// Sources, History, automation or the Assistant brief through this value.
+    var savedCaptureProperties: CaptureFileProperties?
+
     /// Saved-file opening is an off-main, final-only transaction. The previous
     /// workspace remains intact while this is true; only monotonic byte progress
     /// crosses back to the UI before the immutable result is adopted.
@@ -367,6 +375,19 @@ final class MainContentCoordinator {
     // Saved-open/evidence task state is kept here so the separate activation
     // extension can own the workflow without weakening the coordinator's actor
     // boundary. Request IDs retire every late progress/result callback.
+    /// A referenced Library item the user tried to open whose file is missing or
+    /// changed. Drives the inline notice with Locate… / Reload; cleared by any
+    /// successful open, Clear, or Project switch.
+    var unavailableReferencedCapture: SavedCapture?
+    /// Mirror of `NSDocumentController`'s recent list so the File ▸ Open Recent
+    /// submenu rebuilds when it changes. Names only reach the menu; paths stay here.
+    var recentCaptureURLs: [URL] = []
+    /// True when the open saved capture's file no longer matches the identity it
+    /// was read with (replaced, truncated or grown on disk). Enables Reload.
+    var activeSavedCaptureChangedOnDisk = false
+    /// The in-flight format recognition for an external open (test seam).
+    var externalCaptureOpenTask: Task<Void, Never>?
+
     var savedCaptureOpenRequestID = 0
     var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
     var savedCaptureBoundaryTask: Task<Void, Never>?
@@ -1119,6 +1140,9 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1183,6 +1207,9 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a

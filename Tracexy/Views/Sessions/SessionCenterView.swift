@@ -245,6 +245,12 @@ struct SessionCenterView: View {
             } else if coordinator.isOpeningSavedCapture {
                 savedCaptureOpeningNotice
                 Divider()
+            } else if let unavailable = coordinator.unavailableReferencedCapture {
+                unavailableSourceNotice(unavailable)
+                Divider()
+            } else if coordinator.canReloadActiveSavedCapture {
+                changedOnDiskNotice
+                Divider()
             } else if let warning = coordinator.savedCaptureWarning {
                 savedCaptureWarningNotice(warning)
                 Divider()
@@ -277,6 +283,65 @@ struct SessionCenterView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// A referenced capture whose file is missing or changed. An inline notice
+    /// with one recovery action, never an alert (HIG: alerts are not for
+    /// information). The Library item and any adopted sessions stay intact.
+    private func unavailableSourceNotice(_ capture: SavedCapture) -> some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "doc.questionmark")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(capture.availability == .missing ? "“\(capture.name)” can’t be found" : "“\(capture.name)” changed on disk")
+                    .font(Theme.Typography.bodyEmphasis)
+                Text(
+                    capture.availability == .missing
+                        ? "This Library item refers to a file that is no longer at \(capture.url.path). Locate it to open the capture."
+                        : "The file at \(capture.url.path) no longer matches the capture this item refers to. Locate the original, or reload to read the current file."
+                )
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+            if capture.availability == .changed {
+                Button("Reload") { coordinator.reloadReferencedCapture(capture) }
+            }
+            Button("Locate…") { coordinator.locateReferencedCapture(capture) }
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.06))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("capture-source-unavailable")
+    }
+
+    /// The open saved capture's file changed underneath it. Reload re-reads it;
+    /// the sessions shown are from the bytes as they were when opened.
+    private var changedOnDiskNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "arrow.clockwise.circle")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("The capture file changed on disk")
+                    .font(Theme.Typography.bodyEmphasis)
+                Text("Sessions shown are from the file as it was when it was opened. Reload to read the current file.")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Reload") { coordinator.reloadActiveSavedCapture() }
+                .keyboardShortcut("r", modifiers: .command)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.06))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("capture-changed-on-disk")
     }
 
     private func savedCaptureWarningNotice(_ warning: String) -> some View {

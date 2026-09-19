@@ -39,6 +39,9 @@ nonisolated struct PcapngFrameReference: Sendable, Equatable {
     let interfaceID: Int
     /// Link type of the interface this frame was captured on.
     let linkType: UInt32
+    /// Whether the block carried at least one `opt_comment`. The text is not
+    /// retained on the reference.
+    let hasComment: Bool
 }
 
 // MARK: - PcapngFrameEvent
@@ -157,6 +160,13 @@ nonisolated final class PcapngStreamReader {
     /// adapter, which must report a file-level link type.
     private(set) var firstDeclaredLinkType: UInt32?
 
+    /// The bounded container inventory folded so far: sections, interfaces and
+    /// their options, statistics, and counts of blocks this reader skips. Complete
+    /// once ``next()`` has returned a terminal.
+    var fileProperties: CaptureFileProperties {
+        properties.snapshot(fileSize: metadata.identity.size)
+    }
+
     /// Pull the next frame.
     ///
     /// Non-frame blocks (section headers, interface descriptions, unknown blocks)
@@ -220,17 +230,57 @@ nonisolated final class PcapngStreamReader {
         let timestampOffsetSeconds: Int64
     }
 
+    /// Per-interface option values gathered while walking one IDB.
+    private struct InterfaceFacts {
+        var ticksPerSecond: UInt64 = 1_000_000
+        var offsetSeconds: Int64 = 0
+        var name: CaptureBoundedText?
+        var description: CaptureBoundedText?
+        var filter: CaptureBoundedText?
+        var filterKind: UInt8?
+        var operatingSystem: CaptureBoundedText?
+        var hardware: CaptureBoundedText?
+        var fcsLength: UInt8?
+        var speed: UInt64?
+        var comments: CaptureBoundedTextList = .empty
+    }
+
     private static let blockHeaderPrefix = 8
     private static let sectionHeaderTypeBytes: [UInt8] = [0x0A, 0x0D, 0x0D, 0x0A]
     private static let interfaceDescriptionType: UInt32 = 0x00000001
+    private static let obsoletePacketType: UInt32 = 0x00000002
     private static let simplePacketType: UInt32 = 0x00000003
+    private static let nameResolutionType: UInt32 = 0x00000004
+    private static let interfaceStatisticsType: UInt32 = 0x00000005
     private static let enhancedPacketType: UInt32 = 0x00000006
+    private static let systemdJournalType: UInt32 = 0x00000009
+    private static let decryptionSecretsType: UInt32 = 0x0000000A
+    private static let customCopyableType: UInt32 = 0x00000BAD
+    private static let customPrivateType: UInt32 = 0x40000BAD
     private static let byteOrderMagicBig: UInt32 = 0x1A2B3C4D
     private static let byteOrderMagicLittle: UInt32 = 0x4D3C2B1A
     private static let minSectionHeaderLength: UInt64 = 28
     private static let optionEndOfOptions: UInt16 = 0
+    private static let optionComment: UInt16 = 1
+    private static let optionSectionHardware: UInt16 = 2
+    private static let optionSectionOS: UInt16 = 3
+    private static let optionSectionApplication: UInt16 = 4
+    private static let optionInterfaceName: UInt16 = 2
+    private static let optionInterfaceDescription: UInt16 = 3
+    private static let optionInterfaceSpeed: UInt16 = 8
     private static let optionTimestampResolution: UInt16 = 9
+    private static let optionInterfaceFilter: UInt16 = 11
+    private static let optionInterfaceOS: UInt16 = 12
+    private static let optionInterfaceFCSLength: UInt16 = 13
     private static let optionTimestampOffset: UInt16 = 14
+    private static let optionInterfaceHardware: UInt16 = 15
+    private static let optionStatisticsStart: UInt16 = 2
+    private static let optionStatisticsEnd: UInt16 = 3
+    private static let optionStatisticsReceived: UInt16 = 4
+    private static let optionStatisticsDropped: UInt16 = 5
+    private static let optionStatisticsFilterAccepted: UInt16 = 6
+    private static let optionStatisticsOSDropped: UInt16 = 7
+    private static let optionStatisticsDelivered: UInt16 = 8
 
     private let handle: FileHandle
     private let configuration: Configuration
@@ -251,6 +301,8 @@ nonisolated final class PcapngStreamReader {
     /// Interfaces declared in the current section, in declaration order. Reset on
     /// every new section header.
     private var interfaces: [SectionInterface] = []
+    /// Bounded container inventory; see ``fileProperties``.
+    private var properties = CaptureFilePropertiesAccumulator(container: .pcapng)
 
     /// Minimum aligned total length for a block of the given type.
     private static func minimumLength(forType type: UInt32) -> UInt64 {
@@ -258,6 +310,8 @@ nonisolated final class PcapngStreamReader {
         case interfaceDescriptionType: 20
         case enhancedPacketType: 32
         case simplePacketType: 16
+        case interfaceStatisticsType: 24
+        case decryptionSecretsType: 20
         default: 12
         }
     }
@@ -429,11 +483,34 @@ nonisolated final class PcapngStreamReader {
         }
         let versionBuffer = PacketBuffer([UInt8](versionData))
         let major = try little ? versionBuffer.u16le(0) : versionBuffer.u16(0)
+        let minor = try little ? versionBuffer.u16le(2) : versionBuffer.u16(2)
         guard major == 1 else {
             throw PacketError.malformed("pcapng: unsupported version \(major)")
         }
         // The 8-byte section length at blockStart+16 is intentionally ignored: it
         // never drives allocation or bounds.
+        properties.beginSection(littleEndian: little, majorVersion: major, minorVersion: minor)
+        // Fixed SHB body: 4 type + 4 length + 4 BOM + 4 version + 8 section length.
+        let optionsStart = try Self.checkedAdd(blockStart, 24)
+        let optionsEnd = try Self.checkedAdd(blockStart, totalLength - 4)
+        try walkOptions(optionsStart: optionsStart, optionsEnd: optionsEnd, little: little) { code, length in
+            switch code {
+            case Self.optionComment:
+                let text = try self.readBoundedText(length: length)
+                self.properties.updateCurrentSection { $0.comments.append(text) }
+            case Self.optionSectionHardware:
+                let text = try self.readBoundedText(length: length)
+                self.properties.updateCurrentSection { $0.hardware = $0.hardware ?? text }
+            case Self.optionSectionOS:
+                let text = try self.readBoundedText(length: length)
+                self.properties.updateCurrentSection { $0.operatingSystem = $0.operatingSystem ?? text }
+            case Self.optionSectionApplication:
+                let text = try self.readBoundedText(length: length)
+                self.properties.updateCurrentSection { $0.application = $0.application ?? text }
+            default:
+                break
+            }
+        }
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
         littleEndian = little
         haveSection = true
@@ -466,8 +543,17 @@ nonisolated final class PcapngStreamReader {
                 return try readSimplePacket(
                     blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
                 )
+            case Self.interfaceStatisticsType:
+                return try readInterfaceStatistics(
+                    blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
+                )
+            case Self.decryptionSecretsType:
+                return try readDecryptionSecretsSummary(
+                    blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
+                )
             default:
                 return try skipUnknown(
+                    type: type,
                     blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
                 )
             }
@@ -520,32 +606,105 @@ nonisolated final class PcapngStreamReader {
         let snapLength = try little ? buffer.u32le(4) : buffer.u32(4)
         let optionsStart = try Self.checkedAdd(blockStart, 16)
         let optionsEnd = try Self.checkedAdd(blockStart, totalLength - 4)
-        let resolution = try readInterfaceOptions(optionsStart: optionsStart, optionsEnd: optionsEnd, little: little)
+        var facts = InterfaceFacts()
+        try walkOptions(optionsStart: optionsStart, optionsEnd: optionsEnd, little: little) { code, length in
+            try self.readInterfaceOption(code: code, length: length, little: little, into: &facts)
+        }
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
         interfaces.append(SectionInterface(
             linkType: linkType,
             snapLength: snapLength,
-            ticksPerSecond: resolution.ticksPerSecond,
-            timestampOffsetSeconds: resolution.offsetSeconds
+            ticksPerSecond: facts.ticksPerSecond,
+            timestampOffsetSeconds: facts.offsetSeconds
         ))
         if firstDeclaredLinkType == nil {
             firstDeclaredLinkType = linkType
         }
+        var interface = CaptureInterface(
+            id: CaptureInterface.ID(sectionIndex: max(sectionIndex, 0), interfaceID: interfaces.count - 1),
+            linkType: linkType,
+            snapLength: snapLength,
+            ticksPerSecond: facts.ticksPerSecond,
+            timestampOffsetSeconds: facts.offsetSeconds
+        )
+        interface.name = facts.name
+        interface.interfaceDescription = facts.description
+        interface.filter = facts.filter
+        interface.filterKind = facts.filterKind
+        interface.operatingSystem = facts.operatingSystem
+        interface.hardware = facts.hardware
+        interface.fcsLength = facts.fcsLength
+        interface.speedBitsPerSecond = facts.speed
+        interface.comments = facts.comments
+        properties.addInterface(interface)
         offset = blockEndTotal
         return .advanced
     }
 
-    /// Walk an interface's options for `if_tsresol` (9) and `if_tsoffset` (14),
-    /// reading only the tiny values it needs and seeking past everything else.
-    private func readInterfaceOptions(
+    private func readInterfaceOption(
+        code: UInt16,
+        length: Int,
+        little: Bool,
+        into facts: inout InterfaceFacts
+    )
+        throws
+    {
+        switch code {
+        case Self.optionTimestampResolution:
+            facts.ticksPerSecond = try readTimestampResolution(length: length)
+        case Self.optionTimestampOffset:
+            facts.offsetSeconds = try readTimestampOffset(length: length, little: little)
+        case Self.optionComment:
+            try facts.comments.append(readBoundedText(length: length))
+        case Self.optionInterfaceName:
+            facts.name = try facts.name ?? readBoundedText(length: length)
+        case Self.optionInterfaceDescription:
+            facts.description = try facts.description ?? readBoundedText(length: length)
+        case Self.optionInterfaceFilter:
+            guard length >= 1 else {
+                throw PacketError.malformed("pcapng: if_filter without a type byte")
+            }
+            let kind = try readFully(1)
+            guard kind.count == 1 else {
+                throw PacketError.malformed("pcapng: truncated if_filter")
+            }
+            let text = try readBoundedText(length: length - 1)
+            if facts.filter == nil {
+                facts.filterKind = [UInt8](kind)[0]
+                facts.filter = text
+            }
+        case Self.optionInterfaceOS:
+            facts.operatingSystem = try facts.operatingSystem ?? readBoundedText(length: length)
+        case Self.optionInterfaceHardware:
+            facts.hardware = try facts.hardware ?? readBoundedText(length: length)
+        case Self.optionInterfaceFCSLength:
+            guard length == 1 else {
+                throw PacketError.malformed("pcapng: if_fcslen length \(length)")
+            }
+            let value = try readFully(1)
+            guard value.count == 1 else {
+                throw PacketError.malformed("pcapng: truncated if_fcslen")
+            }
+            facts.fcsLength = [UInt8](value)[0]
+        case Self.optionInterfaceSpeed:
+            facts.speed = try readU64(length: length, little: little, name: "if_speed")
+        default:
+            break
+        }
+    }
+
+    /// Walk an option list, handing each `(code, length)` to `handler` with the
+    /// cursor positioned at the value. The handler may read up to `length` bytes;
+    /// the walker reseeks to the next option regardless of how much it consumed,
+    /// and every value is bounds-checked against the block before the handler runs.
+    private func walkOptions(
         optionsStart: UInt64,
         optionsEnd: UInt64,
-        little: Bool
+        little: Bool,
+        handler: (_ code: UInt16, _ length: Int) throws -> Void
     )
-        throws -> (ticksPerSecond: UInt64, offsetSeconds: Int64)
+        throws
     {
-        var ticksPerSecond: UInt64 = 1_000_000
-        var offsetSeconds: Int64 = 0
         var cursor = optionsStart
         while try Self.checkedAdd(cursor, 4) <= optionsEnd {
             try checkCancellation()
@@ -566,19 +725,43 @@ nonisolated final class PcapngStreamReader {
             }
             let valueEnd = try Self.checkedAdd(cursor, UInt64(Self.roundUpToWord(length)))
             guard valueEnd <= optionsEnd else {
-                throw PacketError.malformed("pcapng: interface option length overruns block")
+                throw PacketError.malformed("pcapng: option length overruns block")
             }
-            switch code {
-            case Self.optionTimestampResolution:
-                ticksPerSecond = try readTimestampResolution(length: length)
-            case Self.optionTimestampOffset:
-                offsetSeconds = try readTimestampOffset(length: length, little: little)
-            default:
-                break
-            }
+            try handler(code, length)
             cursor = valueEnd
         }
-        return (ticksPerSecond, offsetSeconds)
+    }
+
+    /// Read at most ``CaptureBoundedText/maxBytes`` of a `length`-byte string
+    /// option. The remainder is left for the option walker to seek past.
+    private func readBoundedText(length: Int) throws -> CaptureBoundedText {
+        let wanted = min(length, CaptureBoundedText.maxBytes)
+        let data = try readFully(wanted)
+        guard data.count == wanted else {
+            throw PacketError.malformed("pcapng: truncated string option")
+        }
+        return CaptureBoundedText(bytes: [UInt8](data), declaredLength: length)
+    }
+
+    private func readU64(length: Int, little: Bool, name: String) throws -> UInt64 {
+        guard length == 8 else {
+            throw PacketError.malformed("pcapng: \(name) length \(length)")
+        }
+        let value = try readFully(8)
+        guard value.count == 8 else {
+            throw PacketError.malformed("pcapng: truncated \(name)")
+        }
+        let buffer = PacketBuffer([UInt8](value))
+        let high: UInt64
+        let low: UInt64
+        if little {
+            low = try UInt64(buffer.u32le(0))
+            high = try UInt64(buffer.u32le(4))
+        } else {
+            high = try UInt64(buffer.u32(0))
+            low = try UInt64(buffer.u32(4))
+        }
+        return (high << 32) | low
     }
 
     private func readTimestampResolution(length: Int) throws -> UInt64 {
@@ -593,24 +776,7 @@ nonisolated final class PcapngStreamReader {
     }
 
     private func readTimestampOffset(length: Int, little: Bool) throws -> Int64 {
-        guard length == 8 else {
-            throw PacketError.malformed("pcapng: if_tsoffset length \(length)")
-        }
-        let value = try readFully(8)
-        guard value.count == 8 else {
-            throw PacketError.malformed("pcapng: truncated if_tsoffset")
-        }
-        let buffer = PacketBuffer([UInt8](value))
-        let high: UInt64
-        let low: UInt64
-        if little {
-            low = try UInt64(buffer.u32le(0))
-            high = try UInt64(buffer.u32le(4))
-        } else {
-            high = try UInt64(buffer.u32(0))
-            low = try UInt64(buffer.u32(4))
-        }
-        return Int64(bitPattern: (high << 32) | low)
+        try Int64(bitPattern: readU64(length: length, little: little, name: "if_tsoffset"))
     }
 
     private func readEnhancedPacket(
@@ -663,8 +829,17 @@ nonisolated final class PcapngStreamReader {
             ticksPerSecond: interface.ticksPerSecond,
             offsetSeconds: interface.timestampOffsetSeconds
         )
+        // Options follow the padded payload. Only comment presence is folded; no
+        // comment text, hash, or verdict is retained per frame.
+        var hasComment = false
+        try walkOptions(optionsStart: paddedEnd, optionsEnd: blockEnd, little: little) { code, _ in
+            if code == Self.optionComment {
+                hasComment = true
+            }
+        }
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
         offset = blockEndTotal
+        properties.noteFrame(interfaceID: interfaceID, timestamp: timestamp, hasComment: hasComment)
         let reference = PcapngFrameReference(
             blockOffset: blockStart,
             payloadOffset: payloadOffset,
@@ -673,7 +848,8 @@ nonisolated final class PcapngStreamReader {
             timestamp: timestamp,
             sectionIndex: sectionIndex,
             interfaceID: interfaceID,
-            linkType: interface.linkType
+            linkType: interface.linkType,
+            hasComment: hasComment
         )
         return .frame(PcapngFrameEvent(
             reference: reference,
@@ -724,6 +900,7 @@ nonisolated final class PcapngStreamReader {
         }
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
         offset = blockEndTotal
+        properties.noteFrame(interfaceID: 0, timestamp: nil, hasComment: false)
         let reference = PcapngFrameReference(
             blockOffset: blockStart,
             payloadOffset: payloadOffset,
@@ -732,7 +909,8 @@ nonisolated final class PcapngStreamReader {
             timestamp: nil,
             sectionIndex: sectionIndex,
             interfaceID: 0,
-            linkType: interface.linkType
+            linkType: interface.linkType,
+            hasComment: false
         )
         return .frame(PcapngFrameEvent(
             reference: reference,
@@ -741,9 +919,106 @@ nonisolated final class PcapngStreamReader {
         ))
     }
 
-    /// A block Tracexy does not decode (name resolution, statistics, custom, …):
-    /// validate its trailer and seek past it without allocating its body.
+    /// An Interface Statistics Block: fold its counters onto the retained
+    /// interface (last block wins) without retaining anything else.
+    private func readInterfaceStatistics(
+        blockStart: UInt64,
+        totalLength: UInt64,
+        blockEndTotal: UInt64,
+        little: Bool
+    )
+        throws -> Step
+    {
+        try checkCancellation()
+        let fixed = try readFully(12)
+        guard fixed.count == 12 else {
+            throw PacketError.malformed("pcapng: truncated interface statistics block")
+        }
+        let buffer = PacketBuffer([UInt8](fixed))
+        let interfaceID = try Int(little ? buffer.u32le(0) : buffer.u32(0))
+        // The block's own timestamp is informational; ISB start/end options carry
+        // the span this reader reports.
+        guard interfaces.indices.contains(interfaceID) else {
+            throw PacketError.malformed("pcapng: statistics block references undeclared interface \(interfaceID)")
+        }
+        let interface = interfaces[interfaceID]
+        var statistics = CaptureInterfaceStatistics()
+        let optionsStart = try Self.checkedAdd(blockStart, 20)
+        let optionsEnd = try Self.checkedAdd(blockStart, totalLength - 4)
+        try walkOptions(optionsStart: optionsStart, optionsEnd: optionsEnd, little: little) { code, length in
+            switch code {
+            case Self.optionStatisticsStart:
+                let ticks = try self.readU64(length: length, little: little, name: "isb_starttime")
+                statistics.startTime = try Self.timestamp(
+                    ticksHigh: ticks >> 32, ticksLow: ticks & 0xFFFFFFFF,
+                    ticksPerSecond: interface.ticksPerSecond, offsetSeconds: interface.timestampOffsetSeconds
+                )
+            case Self.optionStatisticsEnd:
+                let ticks = try self.readU64(length: length, little: little, name: "isb_endtime")
+                statistics.endTime = try Self.timestamp(
+                    ticksHigh: ticks >> 32, ticksLow: ticks & 0xFFFFFFFF,
+                    ticksPerSecond: interface.ticksPerSecond, offsetSeconds: interface.timestampOffsetSeconds
+                )
+            case Self.optionStatisticsReceived:
+                statistics.received = try self.readU64(length: length, little: little, name: "isb_ifrecv")
+            case Self.optionStatisticsDropped:
+                statistics.dropped = try self.readU64(length: length, little: little, name: "isb_ifdrop")
+            case Self.optionStatisticsFilterAccepted:
+                statistics.filterAccepted = try self.readU64(length: length, little: little, name: "isb_filteraccept")
+            case Self.optionStatisticsOSDropped:
+                statistics.osDropped = try self.readU64(length: length, little: little, name: "isb_osdrop")
+            case Self.optionStatisticsDelivered:
+                statistics.delivered = try self.readU64(length: length, little: little, name: "isb_usrdeliv")
+            default:
+                break
+            }
+        }
+        try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
+        properties.updateBlocks { $0.interfaceStatisticsBlockCount += 1 }
+        properties.updateInterface(interfaceID) { retained in
+            statistics.blockCount = (retained.statistics?.blockCount ?? 0) + 1
+            retained.statistics = statistics
+        }
+        offset = blockEndTotal
+        return .advanced
+    }
+
+    /// A Decryption Secrets Block: record its declared type and length only. The
+    /// secrets bytes are never read.
+    private func readDecryptionSecretsSummary(
+        blockStart: UInt64,
+        totalLength: UInt64,
+        blockEndTotal: UInt64,
+        little: Bool
+    )
+        throws -> Step
+    {
+        try checkCancellation()
+        let fixed = try readFully(8)
+        guard fixed.count == 8 else {
+            throw PacketError.malformed("pcapng: truncated decryption secrets block")
+        }
+        let buffer = PacketBuffer([UInt8](fixed))
+        let secretsType = try little ? buffer.u32le(0) : buffer.u32(0)
+        let secretsLength = try UInt64(little ? buffer.u32le(4) : buffer.u32(4))
+        let blockEnd = try Self.checkedAdd(blockStart, totalLength - 4)
+        let secretsEnd = try Self.checkedAdd(Self.checkedAdd(blockStart, 16), secretsLength)
+        guard secretsEnd <= blockEnd else {
+            throw PacketError.malformed("pcapng: decryption secrets length overruns block")
+        }
+        try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
+        properties.updateBlocks {
+            $0.noteSecrets(CaptureSecretsBlockSummary(secretsType: secretsType, secretsLength: secretsLength))
+        }
+        offset = blockEndTotal
+        return .advanced
+    }
+
+    /// A block Tracexy does not decode (name resolution, custom, obsolete packet,
+    /// journal, or unknown): count it, validate its trailer and seek past it
+    /// without allocating its body.
     private func skipUnknown(
+        type: UInt32,
         blockStart: UInt64,
         totalLength: UInt64,
         blockEndTotal: UInt64,
@@ -753,6 +1028,16 @@ nonisolated final class PcapngStreamReader {
     {
         try checkCancellation()
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
+        properties.updateBlocks { inventory in
+            switch type {
+            case Self.nameResolutionType: inventory.nameResolutionBlockCount += 1
+            case Self.customCopyableType,
+                 Self.customPrivateType: inventory.customBlockCount += 1
+            case Self.obsoletePacketType: inventory.obsoletePacketBlockCount += 1
+            case Self.systemdJournalType: inventory.systemdJournalBlockCount += 1
+            default: inventory.noteUnknown(type: type)
+            }
+        }
         offset = blockEndTotal
         return .advanced
     }

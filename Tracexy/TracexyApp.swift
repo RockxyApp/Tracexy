@@ -171,16 +171,12 @@ struct TracexyApp: App {
             TracexySettingsCommands()
             TracexyProjectCommands(coordinator: coordinator)
 
-            // File ▸ Import Capture… (⌘O). It routes through the same coordinator
-            // panel action as the sidebar's Import buttons, so the menu, its
-            // shortcut and the sidebar cannot drift apart in what they accept or
-            // which Project they file a capture into.
-            CommandGroup(after: .newItem) {
-                Button("Import Capture…") {
-                    coordinator.presentCaptureImportPanel()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
+            // File menu, in the HIG's order: Open… ⌘O (in place), Open Recent ▸,
+            // Import into Library… ⌥⌘O (managed copy), Close Capture ⇧⌘W, Reload ⌘R,
+            // Get Info ⌘I. Every item is always listed and disabled when it does
+            // not apply, and each routes through the same coordinator action the
+            // sidebar and toolbar use, so the routes cannot drift apart.
+            TracexyCaptureFileCommands(coordinator: coordinator)
 
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
@@ -383,6 +379,63 @@ private struct SessionInspectorWindowScene: Scene {
             return base.restorationBehavior(.disabled)
         } else {
             return base
+        }
+    }
+}
+
+// MARK: - TracexyCaptureFileCommands
+
+private struct TracexyCaptureFileCommands: Commands {
+    let coordinator: MainContentCoordinator
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open…") {
+                coordinator.presentCaptureOpenPanel()
+            }
+            .keyboardShortcut("o", modifiers: .command)
+
+            Menu("Open Recent") {
+                ForEach(coordinator.recentCaptureURLs, id: \.self) { url in
+                    Button {
+                        coordinator.openRecentCapture(url)
+                    } label: {
+                        // Names only — never paths — with the file's own icon, as
+                        // the HIG describes the standard Open Recent submenu.
+                        Label {
+                            Text(url.lastPathComponent)
+                        } icon: {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        }
+                    }
+                }
+                if !coordinator.recentCaptureURLs.isEmpty {
+                    Divider()
+                }
+                Button("Clear Menu") {
+                    coordinator.clearRecentCaptures()
+                }
+                .disabled(coordinator.recentCaptureURLs.isEmpty)
+            }
+
+            Button("Import into Library…") {
+                coordinator.presentCaptureImportPanel()
+            }
+            .keyboardShortcut("o", modifiers: [.command, .option])
+
+            Divider()
+
+            Button("Close Capture") {
+                coordinator.closeCapture()
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(!coordinator.canCloseCapture)
+
+            Button("Reload") {
+                coordinator.reloadActiveSavedCapture()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!coordinator.canReloadActiveSavedCapture)
         }
     }
 }
