@@ -537,8 +537,9 @@ struct OverviewView: View {
 
     private var protocolMixCard: some View {
         let kinds: [ProtocolKind] = [.dns, .tcp, .udp, .tls, .http, .http2, .quic, .stun]
+        let counts = coordinator.visibleProtocolCounts
         let entries = kinds
-            .map { (kind: $0, hits: coordinator.count(for: $0)) }
+            .map { (kind: $0, hits: counts[$0] ?? 0) }
             .filter { $0.hits > 0 }
         let maxHits = entries.map(\.hits).max() ?? 0
         return card {
@@ -801,7 +802,7 @@ struct OverviewView: View {
     }
 
     private func byteString(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
+        ByteUnits.string(Int64(bytes))
     }
 
     /// A human duration for the KPI strip and activity axis: milliseconds under a

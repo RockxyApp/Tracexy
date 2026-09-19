@@ -71,7 +71,7 @@ struct ContextDockView: View {
             sessionCount: 1,
             primaryProtocol: session.primaryProtocol.label,
             formattedBytes: session.totalBytes > 0
-                ? Int64(session.totalBytes).formatted(.byteCount(style: .memory))
+                ? ByteUnits.string(Int64(session.totalBytes))
                 : nil
         )
     }

@@ -312,7 +312,7 @@ struct LinuxCookedDecodeTests {
 
     @Test(
         "An unrecognized protocol value keeps the header and invents no session",
-        arguments: [0x0000, 0x0805, 0x0807, 0x8100, 0x88CC, 0x86DC]
+        arguments: [0x0000, 0x0805, 0x0807, 0x88CC, 0x86DC]
     )
     func unsupportedProtocolRetainsHeaderOnly(protocolNumber: Int) throws {
         for version in Self.versions {
@@ -326,6 +326,21 @@ struct LinuxCookedDecodeTests {
             // The number is still shown, honestly, as the value it is.
             let header = try #require(packet.layers.first)
             try expectField(header, "Protocol", String(format: "0x%04x", UInt16(protocolNumber)))
+        }
+    }
+
+    @Test("A VLAN protocol value is named but still not handed on: cooked framing carries no tag")
+    func vlanProtocolIsNamedButNotHandedOn() throws {
+        for version in Self.versions {
+            let frame = LinuxCookedFixture.frame(
+                version, protocolNumber: 0x8100,
+                payload: LinuxCookedFixture.ipv4DNSPayload()
+            )
+            let packet = decode(frame, version: version)
+            #expect(packet.layers.map(\.proto) == [.linuxCooked])
+            expectNoSession(packet)
+            let header = try #require(packet.layers.first)
+            try expectField(header, "Protocol", "802.1Q VLAN (0x8100)")
         }
     }
 

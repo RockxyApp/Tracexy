@@ -104,11 +104,13 @@ nonisolated final class FrameBatchMessage: NSObject, NSSecureCoding, @unchecked 
         frames: [CapturedFrameMessage],
         bufferDroppedCount: UInt64,
         captureLinkType: UInt32,
-        stats: HelperCaptureStats?
+        stats: HelperCaptureStats?,
+        readFailure: String? = nil
     ) {
         self.frames = frames
         self.bufferDroppedCount = bufferDroppedCount
         self.captureLinkType = captureLinkType
+        self.readFailure = readFailure
         statsAvailable = stats != nil
         statsReceived = stats?.received ?? 0
         statsDroppedByKernel = stats?.droppedByKernel ?? 0
@@ -126,6 +128,8 @@ nonisolated final class FrameBatchMessage: NSObject, NSSecureCoding, @unchecked 
         statsReceived = UInt32(bitPattern: coder.decodeInt32(forKey: Key.statsReceived))
         statsDroppedByKernel = UInt32(bitPattern: coder.decodeInt32(forKey: Key.statsDroppedByKernel))
         statsDroppedByInterface = UInt32(bitPattern: coder.decodeInt32(forKey: Key.statsDroppedByInterface))
+        // Absent from replies of a helper older than this key: no failure known.
+        readFailure = coder.decodeObject(of: NSString.self, forKey: Key.readFailure) as? String
     }
 
     // MARK: Internal
@@ -148,6 +152,10 @@ nonisolated final class FrameBatchMessage: NSObject, NSSecureCoding, @unchecked 
     let statsReceived: UInt32
     let statsDroppedByKernel: UInt32
     let statsDroppedByInterface: UInt32
+    /// libpcap's reason when the helper's read loop ended on its own (the interface
+    /// went away, the device was reconfigured). The frames in this batch are the
+    /// complete tail delivered before that; `nil` while the source is still read.
+    let readFailure: String?
 
     /// The kernel/interface accounting, or `nil` when `pcap_stats` was unavailable.
     var stats: HelperCaptureStats? {
@@ -169,6 +177,9 @@ nonisolated final class FrameBatchMessage: NSObject, NSSecureCoding, @unchecked 
         coder.encode(Int32(bitPattern: statsReceived), forKey: Key.statsReceived)
         coder.encode(Int32(bitPattern: statsDroppedByKernel), forKey: Key.statsDroppedByKernel)
         coder.encode(Int32(bitPattern: statsDroppedByInterface), forKey: Key.statsDroppedByInterface)
+        if let readFailure {
+            coder.encode(readFailure as NSString, forKey: Key.readFailure)
+        }
     }
 
     // MARK: Private
@@ -178,6 +189,7 @@ nonisolated final class FrameBatchMessage: NSObject, NSSecureCoding, @unchecked 
         static let bufferDropped = "d"
         static let captureLinkType = "lt"
         static let statsAvailable = "sa"
+        static let readFailure = "rf"
         static let statsReceived = "sr"
         static let statsDroppedByKernel = "sk"
         static let statsDroppedByInterface = "si"

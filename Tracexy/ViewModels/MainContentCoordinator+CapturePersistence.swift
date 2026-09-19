@@ -162,11 +162,13 @@ extension MainContentCoordinator {
         }
     }
 
-    /// Complete source for session export. A saved file is re-read directly; a
-    /// live capture is read from its spool after queued ingests have completed.
-    /// The spool reference is taken before awaiting so an export can never read a
-    /// different Project's evidence than the one it was started from.
-    func completeCaptureForExport() async throws -> (
+    /// The frames of one session for export, streamed off the complete source so
+    /// only that session's bytes are held in memory. A saved file is re-read
+    /// directly; a live capture is read from an immutable temporary copy of its
+    /// spool after queued ingests have completed. The spool reference is taken
+    /// before awaiting so an export can never read a different Project's evidence
+    /// than the one it was started from.
+    func sessionFramesForExport(matching sessionID: SessionSummary.ID) async throws -> (
         linkType: UInt32,
         frames: [CapturedFrame],
         incompletenessReason: String?
@@ -176,11 +178,17 @@ extension MainContentCoordinator {
         await ingestChain?.value
         if let savedSource {
             let capture = try await Task.detached(priority: .userInitiated) {
-                try CaptureFileReader.read(contentsOf: savedSource)
+                try SessionExporter.frames(matching: sessionID, streamingFrom: savedSource)
             }.value
             return (capture.linkType, capture.frames, nil)
         }
-        let capture = try await spool.capture()
+        let capture = try await Task.detached(priority: .userInitiated) {
+            let temporaryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("tracexy-export-\(UUID().uuidString).pcapng")
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            try await spool.copy(to: temporaryURL)
+            return try SessionExporter.frames(matching: sessionID, streamingFrom: temporaryURL)
+        }.value
         return await (
             capture.linkType,
             capture.frames,

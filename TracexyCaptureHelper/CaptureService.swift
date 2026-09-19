@@ -55,6 +55,7 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
             buffer.reset()
             latestStats = nil
             statsAvailable = false
+            readFailure = nil
             lock.unlock()
 
             // `start` validates the configuration, opens the handle, and compiles
@@ -81,6 +82,17 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
                 self.latestStats = sample
                 self.statsAvailable = sample != nil
                 self.lock.unlock()
+            }, onReadFailure: { [weak self] message in
+                guard let self else {
+                    return
+                }
+                // Keep the failure with the buffered tail: the next fetch or stop
+                // reply carries both, so the app sees every frame that arrived
+                // before the source failed and the reason it stopped.
+                self.lock.lock()
+                self.readFailure = message
+                self.lock.unlock()
+                Self.logger.error("capture read failed: \(message, privacy: .public)")
             })
 
             lock.lock()
@@ -122,11 +134,13 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
             frames: buffer.drain(),
             bufferDroppedCount: buffer.droppedCount,
             captureLinkType: captureLinkType,
-            stats: statsAvailable ? latestStats : nil
+            stats: statsAvailable ? latestStats : nil,
+            readFailure: readFailure
         )
         buffer.reset()
         latestStats = nil
         statsAvailable = false
+        readFailure = nil
         lock.unlock()
         reply(finalBatch)
     }
@@ -137,12 +151,14 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
         let dropped = buffer.droppedCount
         let stats = statsAvailable ? latestStats : nil
         let link = captureLinkType
+        let failure = readFailure
         lock.unlock()
         reply(FrameBatchMessage(
             frames: drained,
             bufferDroppedCount: dropped,
             captureLinkType: link,
-            stats: stats
+            stats: stats,
+            readFailure: failure
         ))
     }
 
@@ -167,6 +183,9 @@ final class CaptureService: NSObject, TracexyHelperProtocol {
     /// Latest `pcap_stats` sample, or `nil` when accounting is unavailable.
     private var latestStats: HelperCaptureStats?
     private var statsAvailable = false
+    /// libpcap's reason when the worker's read loop ended on its own. Delivered
+    /// with the next batch reply and cleared at every capture boundary.
+    private var readFailure: String?
     /// Representative outer DLT of the running capture, for a faithful savefile.
     private var captureLinkType: UInt32 = 1
 }

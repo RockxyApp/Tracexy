@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - RootView
 
@@ -57,6 +58,12 @@ struct RootView: View {
             .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
         }
         .ignoresSafeArea(.container, edges: .top)
+        // A capture dropped anywhere on the window imports through the same
+        // Library path as ⌘O and Finder "Open With". File promises and non-file
+        // payloads are ignored; the coordinator refuses multi-file drops itself.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            handleCaptureDrop(providers)
+        }
         .onChange(of: coordinator.workspaces.activeWorkspaceID) {
             coordinator.evidenceNavigationDidChangeSelection()
         }
@@ -138,6 +145,26 @@ struct RootView: View {
 
     static func bottomInspectorSplitAutosaveName(projectID: UUID) -> String {
         "\(bottomInspectorSplitAutosaveName).\(projectID.uuidString)"
+    }
+
+    /// Resolves every dropped file URL off the drag pasteboard, then hands the
+    /// complete set to the coordinator in one call so its one-at-a-time rule sees
+    /// the whole drop. Returns whether any provider could carry a file URL.
+    func handleCaptureDrop(_ providers: [NSItemProvider]) -> Bool {
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else {
+            return false
+        }
+        Task { @MainActor in
+            var urls: [URL] = []
+            for provider in fileProviders {
+                if let url = await provider.loadFileURL() {
+                    urls.append(url)
+                }
+            }
+            coordinator.importExternalCaptures(urls)
+        }
+        return true
     }
 
     // MARK: Private
@@ -595,4 +622,22 @@ struct CaptureStatusView: View {
 #Preview {
     RootView(coordinator: MainContentCoordinator())
         .frame(width: 1_200, height: 760)
+}
+
+// MARK: - NSItemProvider file URL loading
+
+private extension NSItemProvider {
+    /// The file URL a drag provider carries, or `nil` when it carries none or the
+    /// pasteboard data is not a URL. Completion-based loading bridged once, here.
+    func loadFileURL() async -> URL? {
+        await withCheckedContinuation { continuation in
+            _ = loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                guard let data, let url = URL(dataRepresentation: data, relativeTo: nil), url.isFileURL else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: url)
+            }
+        }
+    }
 }

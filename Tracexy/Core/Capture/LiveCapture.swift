@@ -43,11 +43,14 @@ nonisolated final class LiveCapture: @unchecked Sendable {
     /// filter, so the caller never reports a started capture that isn't running or
     /// silently dropped its filter. On success it returns the interface's real
     /// link type before the worker starts.
+    /// `onReadFailure` fires once, from the worker, when libpcap reports a read
+    /// error and the loop ends on its own — never for an ordinary `stop()`.
     @discardableResult
     func start(
         configuration: CaptureConfiguration,
         onBatch: @escaping @Sendable ([CapturedFrame], UInt32) -> Void,
-        onStatistics: (@Sendable (CaptureStatistics) -> Void)? = nil
+        onStatistics: (@Sendable (CaptureStatistics) -> Void)? = nil,
+        onReadFailure: (@Sendable (String) -> Void)? = nil
     )
         throws -> UInt32
     {
@@ -83,7 +86,10 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         finished = done
         let closeHandle = closeHandle
         let worker = Thread { [weak self] in
-            self?.loop(handle: handle, linkType: linkType, onBatch: onBatch, onStatistics: onStatistics)
+            self?.loop(
+                handle: handle, linkType: linkType,
+                onBatch: onBatch, onStatistics: onStatistics, onReadFailure: onReadFailure
+            )
             // Close the handle on the SAME thread that read from it, and only
             // after the read loop has fully exited. Closing it from another
             // thread while `pcap_next_ex` is mid-read frees the handle under the
@@ -241,10 +247,12 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         handle: OpaquePointer,
         linkType: UInt32,
         onBatch: @escaping @Sendable ([CapturedFrame], UInt32) -> Void,
-        onStatistics: (@Sendable (CaptureStatistics) -> Void)?
+        onStatistics: (@Sendable (CaptureStatistics) -> Void)?,
+        onReadFailure: (@Sendable (String) -> Void)?
     ) {
         var batch: [CapturedFrame] = []
         var lastFlush = Date()
+        var readFailure: String?
         while running {
             var headerRaw: UnsafeMutableRawPointer?
             var dataPointer: UnsafePointer<UInt8>?
@@ -257,6 +265,14 @@ nonisolated final class LiveCapture: @unchecked Sendable {
                     Date(timeIntervalSince1970: Double(header.ts.tv_sec) + Double(header.ts.tv_usec) / 1_000_000)
                 batch.append(CapturedFrame(bytes: bytes, timestamp: timestamp, originalLength: Int(header.len)))
             } else if result < 0 {
+                // A read error ends the capture on the source's terms (the interface
+                // went away, the device was reconfigured). Report why so the owner
+                // can stop and say so instead of showing a capture that is still
+                // "running" while nothing arrives any more.
+                readFailure = filterErrorMessage(
+                    handle: handle,
+                    fallback: "the capture source stopped delivering packets."
+                )
                 break
             }
             if !batch.isEmpty, Date().timeIntervalSince(lastFlush) > 0.25 {
@@ -276,6 +292,9 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         // Final reading, so a short capture still reports its loss.
         if let onStatistics, let sample = sampleStatistics(handle: handle) {
             onStatistics(sample)
+        }
+        if let readFailure, let onReadFailure {
+            onReadFailure(readFailure)
         }
     }
 }

@@ -212,6 +212,18 @@ enum ByteUnits: String, CaseIterable, Identifiable {
         case .decimal: .decimal
         }
     }
+
+    /// The app-wide Units preference. Read from the application defaults on each
+    /// use so every byte figure in the app follows the General → Units setting.
+    nonisolated static func current(defaults: UserDefaults = .standard) -> ByteUnits {
+        defaults.string(forKey: SettingsKeys.byteUnits).flatMap(ByteUnits.init(rawValue:)) ?? .binary
+    }
+
+    /// Formats a byte count in the preferred units — the single formatter every
+    /// byte figure in the UI goes through.
+    nonisolated static func string(_ bytes: Int64, defaults: UserDefaults = .standard) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: current(defaults: defaults).countStyle)
+    }
 }
 
 // MARK: - CaptureFilterMode
