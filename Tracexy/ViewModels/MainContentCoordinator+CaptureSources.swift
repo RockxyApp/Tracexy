@@ -162,6 +162,43 @@ extension MainContentCoordinator {
         }
     }
 
+    // MARK: File sets
+
+    /// The ring-buffer set the open saved capture belongs to, if its name follows
+    /// the `<prefix>_<NNNNN>_<YYYYMMDDHHMMSS>` rotation pattern. Read from disk on
+    /// each call so a set still being written stays current.
+    var activeCaptureFileSet: CaptureFileSet? {
+        guard isViewingSavedCapture, let capture = activeSavedCapture, capture.isReadable else {
+            return nil
+        }
+        return CaptureFileSet(member: capture.url)
+    }
+
+    var canOpenNextInFileSet: Bool {
+        activeCaptureFileSet?.next != nil && !isOpeningSavedCapture && !isCaptureSourceHeld && !isProjectBoundaryBusy
+    }
+
+    var canOpenPreviousInFileSet: Bool {
+        activeCaptureFileSet?
+            .previous != nil && !isOpeningSavedCapture && !isCaptureSourceHeld && !isProjectBoundaryBusy
+    }
+
+    /// File ▸ File Set ▸ Next File: open the next member in place (never a copy —
+    /// a set can be hundreds of files).
+    func openNextInFileSet() {
+        guard let member = activeCaptureFileSet?.next else {
+            return
+        }
+        openExternalCapture(member.url, copiesIntoLibrary: false)
+    }
+
+    func openPreviousInFileSet() {
+        guard let member = activeCaptureFileSet?.previous else {
+            return
+        }
+        openExternalCapture(member.url, copiesIntoLibrary: false)
+    }
+
     // MARK: References
 
     /// Record `source` as an in-place reference and open it. The sidecar takes the

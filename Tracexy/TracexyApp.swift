@@ -452,6 +452,24 @@ private struct TracexyCaptureFileCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: .command)
             .disabled(!coordinator.canShowCaptureInfo)
+
+            // Ring-buffer sets (dumpcap/tcpdump rotation): step through the
+            // members in place. Always listed; disabled when the open capture is
+            // not a member or has no neighbour.
+            Menu("File Set") {
+                Button("Next File") {
+                    coordinator.openNextInFileSet()
+                }
+                .disabled(!coordinator.canOpenNextInFileSet)
+                Button("Previous File") {
+                    coordinator.openPreviousInFileSet()
+                }
+                .disabled(!coordinator.canOpenPreviousInFileSet)
+                if let set = coordinator.activeCaptureFileSet {
+                    Divider()
+                    Text("File \(set.currentIndex + 1) of \(set.count) in “\(set.prefix)”")
+                }
+            }
         }
 
         // File ▸ Export Frames… sits with the other export items (HIG: prefer a
