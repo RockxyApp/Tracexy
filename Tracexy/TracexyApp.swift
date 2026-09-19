@@ -9,6 +9,7 @@ struct TracexyApp: App {
     static let focusSetEditorWindowID = "focus-set-editor"
     static let noiseControlWindowID = "noise-control"
     static let sessionInspectorWindowID = "session-inspector"
+    static let captureInfoWindowID = "capture-info"
 
     var body: some Scene {
         mainWindowScene
@@ -24,6 +25,11 @@ struct TracexyApp: App {
             coordinator: coordinator,
             colorScheme: colorScheme
         )
+
+        // File ▸ Get Info (⌘I). A regular auxiliary window, not a panel: it keeps
+        // the facts of the capture it was opened for (HIG Panels), re-binds only
+        // when a different capture is adopted, and closes with the Project.
+        CaptureInfoWindowScene(coordinator: coordinator, colorScheme: colorScheme)
 
         settingsScene
     }
@@ -386,6 +392,8 @@ private struct SessionInspectorWindowScene: Scene {
 // MARK: - TracexyCaptureFileCommands
 
 private struct TracexyCaptureFileCommands: Commands {
+    // MARK: Internal
+
     let coordinator: MainContentCoordinator
 
     var body: some Commands {
@@ -436,6 +444,45 @@ private struct TracexyCaptureFileCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: .command)
             .disabled(!coordinator.canReloadActiveSavedCapture)
+
+            Divider()
+
+            Button("Get Info") {
+                openWindow(id: TracexyApp.captureInfoWindowID)
+            }
+            .keyboardShortcut("i", modifiers: .command)
+            .disabled(!coordinator.canShowCaptureInfo)
+        }
+    }
+
+    // MARK: Private
+
+    @Environment(\.openWindow) private var openWindow
+}
+
+// MARK: - CaptureInfoWindowScene
+
+private struct CaptureInfoWindowScene: Scene {
+    let coordinator: MainContentCoordinator
+    let colorScheme: ColorScheme?
+
+    var body: some Scene {
+        let base = Window("Capture Info", id: TracexyApp.captureInfoWindowID) {
+            CaptureInfoView(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .id(coordinator.captureInfoIdentityToken)
+                .disabled(coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .commandsRemoved()
+        .defaultSize(width: 680, height: 620)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
         }
     }
 }

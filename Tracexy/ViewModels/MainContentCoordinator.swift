@@ -387,6 +387,10 @@ final class MainContentCoordinator {
     var activeSavedCaptureChangedOnDisk = false
     /// The in-flight format recognition for an external open (test seam).
     var externalCaptureOpenTask: Task<Void, Never>?
+    /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
+    var captureHashState: CaptureHashState = .idle
+    var captureHashTask: Task<Void, Never>?
+    var captureHashRequestID = 0
 
     var savedCaptureOpenRequestID = 0
     var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
@@ -1114,6 +1118,7 @@ final class MainContentCoordinator {
         savedCaptureProperties = nil
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
+        resetCaptureHash()
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1181,6 +1186,7 @@ final class MainContentCoordinator {
         savedCaptureProperties = nil
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
+        resetCaptureHash()
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a

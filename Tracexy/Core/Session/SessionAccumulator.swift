@@ -68,7 +68,7 @@ nonisolated struct SessionAccumulator {
     ///   it are unchanged.
     @discardableResult
     mutating func add(_ packet: DecodedPacket) -> UUID? {
-        foldSession(packet, hasReassembledApplication: false, ordinal: nil)
+        foldSession(packet, hasReassembledApplication: false, ordinal: nil, interfaceID: nil)
     }
 
     /// The common production fold shared by batch, live and saved paths. Assigns
@@ -123,7 +123,10 @@ nonisolated struct SessionAccumulator {
         // recovered facts are never propagated onto `enriched`/the representative.
         tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
         return foldSession(
-            enriched, hasReassembledApplication: hasReassembledApplication, ordinal: provenance.ordinal
+            enriched,
+            hasReassembledApplication: hasReassembledApplication,
+            ordinal: provenance.ordinal,
+            interfaceID: context.interfaceID
         )
     }
 
@@ -223,7 +226,8 @@ nonisolated struct SessionAccumulator {
     private mutating func foldSession(
         _ packet: DecodedPacket,
         hasReassembledApplication: Bool,
-        ordinal: FrameOrdinal?
+        ordinal: FrameOrdinal?,
+        interfaceID: Int?
     )
         -> UUID?
     {
@@ -234,10 +238,13 @@ nonisolated struct SessionAccumulator {
         let becameRepresentative: Bool
         if var state = states[key] {
             becameRepresentative = state.merge(packet, hasReassembledApplication: hasReassembledApplication)
+            state.noteInterface(interfaceID)
             states[key] = state
         } else {
             order.append(key)
-            states[key] = State(first: packet, ordinal: ordinal)
+            var state = State(first: packet, ordinal: ordinal)
+            state.noteInterface(interfaceID)
+            states[key] = state
             becameRepresentative = true
         }
         return becameRepresentative ? SessionBuilder.sessionID(for: key) : nil
@@ -364,8 +371,27 @@ private extension SessionAccumulator {
                 dnsAnswers: dnsAnswers,
                 dnsAnswersOmittedCount: dnsAnswersOmittedCount,
                 firstCaptureOrdinal: firstOrdinal?.rawValue,
-                untimedFrameCount: untimedFrameCount
+                untimedFrameCount: untimedFrameCount,
+                captureInterfaceIDs: interfaceIDs.sorted(),
+                captureInterfaceOverflow: interfaceOverflow
             )
+        }
+
+        /// Record which capture interface a contributing frame came from. Bounded
+        /// to ``SessionSummary/maxCaptureInterfaces`` distinct ids; further ids set
+        /// the overflow flag rather than growing the set.
+        mutating func noteInterface(_ interfaceID: Int?) {
+            guard let interfaceID else {
+                return
+            }
+            if interfaceIDs.contains(interfaceID) {
+                return
+            }
+            if interfaceIDs.count < SessionSummary.maxCaptureInterfaces {
+                interfaceIDs.insert(interfaceID)
+            } else {
+                interfaceOverflow = true
+            }
         }
 
         // MARK: Private
@@ -402,6 +428,8 @@ private extension SessionAccumulator {
         /// Contributing frames that carried no capture time. One is enough to make
         /// the session's start, duration and latency unknown.
         private var untimedFrameCount = 0
+        private var interfaceIDs: Set<Int> = []
+        private var interfaceOverflow = false
         /// The endpoint that sent the first pure SYN, when one was captured: the
         /// strongest evidence of which side opened the connection.
         private var synSource: IPEndpoint?

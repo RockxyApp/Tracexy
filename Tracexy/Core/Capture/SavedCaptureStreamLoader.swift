@@ -444,7 +444,8 @@ nonisolated final class SavedCaptureStreamLoader {
             locator: SessionEvidenceLocator(
                 sourceToken: sourceToken, offset: event.reference.payloadOffset
             ),
-            loss: .unknown
+            loss: .unknown,
+            interfaceID: event.reference.interfaceID
         )
 
         // A returned id means this frame became its session's representative, so
