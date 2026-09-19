@@ -101,7 +101,8 @@ sidecar and never touches the file; **Copy into Library** turns a reference into
 **File → Close Capture (⇧⌘W)** clears the workspace; **File → Reload (⌘R)** is enabled when
 the open capture changed on disk. Captures written in rotation by `dumpcap` or `tcpdump`
 (`name_00001_20260919120000.pcapng`, …) can be stepped through with **File → File Set →
-Next File / Previous File**, always in place.
+Next File / Previous File**, always in place; a member's Library row also carries a **File Set**
+menu that lists the set with the open file checked, so any member opens from there.
 
 Copying runs off the UI thread with progress and **Cancel Import**. Source-changing actions
 stay held until copying or cancellation cleanup finishes; switching Projects waits and keeps
@@ -138,9 +139,9 @@ several interfaces, the Context dock shows **Captured on** for the selected sess
 ### Frames
 
 The bottom inspector's **Frames** facet lists every frame of the selected session in capture
-order — number, time relative to the session's first frame, direction, length, TCP flags, a
-one-line summary and a comment marker — rescanned on demand from the stable source (the open
-file, or a copy of the stopped live spool). Selecting a row loads that exact frame into Layers,
+order — number, time relative to the session's first frame, direction, length, TCP flags, the
+capture interface when a PCAPNG declares more than one, a one-line summary and a comment marker —
+rescanned on demand from the stable source (the open file, or a copy of the stopped live spool). Selecting a row loads that exact frame into Layers,
 Payload and Hex through the same guarded path as finding citations. The list holds references
 only, never bytes, and is bounded at 10,000 frames; the footer says when it is a prefix of a
 larger session and when the source ends mid-record. **Rescan** re-reads the source; an active
@@ -299,10 +300,15 @@ For a live capture, the activity chart shows measured throughput and the storage
 kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
 Window trimming does not remove accumulated sessions or frames from the disk-backed live spool, and is
 never reported as capture-source loss.
-For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
-capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
-what was missed when it was recorded. Frames outside the local inspection window remain in the source
-file and in the decoded session/activity totals; window eviction is not reported as capture loss.
+For an opened file, Overview shows file provenance and activity derived from its real frame timestamps:
+the container the reader recognised (PCAP or PCAPNG, not the extension), size, frames, and the
+interfaces a PCAPNG declares. Fidelity and drop counters come only from the Interface Statistics
+Blocks the capturing tool wrote (`isb_ifrecv`, `isb_ifdrop`, `isb_osdrop`); when a file carries
+none they read **Not recorded**, because a savefile cannot reconstruct what was missed when it was
+recorded, and when only some interfaces recorded them the row says so. **Get Info** opens the full
+capture information window from the storage card. Frames outside the local inspection window
+remain in the source file and in the decoded session/activity totals; window eviction is not
+reported as capture loss.
 
 ## Sessions
 

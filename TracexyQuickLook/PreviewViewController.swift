@@ -1,10 +1,12 @@
 import AppKit
 import QuickLookUI
 import SwiftUI
-#if canImport(Tracexy)
+#if TRACEXY_TEST_HOST
 // The unit-test host compiles this file beside the app module so the extension's
 // logic is covered; the extension target itself compiles the CaptureFormat
-// sources directly and has no such module.
+// sources directly. The condition is set only on TracexyTests — `canImport`
+// would flip on whenever a stale Tracexy.swiftmodule sits in the products
+// directory and turn the app's embed dependency into a build cycle.
 @testable import Tracexy
 #endif
 

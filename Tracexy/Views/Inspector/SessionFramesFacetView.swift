@@ -54,6 +54,65 @@ struct SessionFramesFacetView: View {
     @State private var selection: UInt64?
     @State private var sortOrder: [KeyPathComparator<SessionFrameReference>] = [KeyPathComparator(\.ordinal)]
 
+    /// Interface names by pcapng interface id, only when the file declares more
+    /// than one — a single interface (or a classic pcap) adds nothing per row.
+    private var interfaceNames: [Int: String]? {
+        guard let properties = coordinator.savedCaptureProperties,
+              case .pcapng = properties.container,
+              properties.interfaceCount > 1 else
+        {
+            return nil
+        }
+        return properties.allInterfaces.reduce(into: [:]) { names, interface in
+            names[interface.id.interfaceID] = names[interface.id.interfaceID] ?? interface.displayName
+        }
+    }
+
+    /// Column groups, not views: SwiftFormat rewrites `Group` inside a
+    /// `@ViewBuilder` body, so the builder is named explicitly.
+    @TableColumnBuilder<SessionFrameReference, KeyPathComparator<SessionFrameReference>>
+    private var leadingColumns: some TableColumnContent<
+        SessionFrameReference,
+        KeyPathComparator<SessionFrameReference>
+    > {
+        TableColumn("No.", value: \SessionFrameReference.ordinal) { frame in
+            Text(frame.ordinal.formatted()).monospacedDigit()
+        }
+        .width(min: 56, ideal: 72)
+        TableColumn("Time") { frame in
+            Text(Self.timeText(frame)).monospacedDigit()
+        }
+        .width(min: 84, ideal: 110)
+        TableColumn("Direction") { frame in
+            Label(Self.directionText(frame.direction), systemImage: Self.directionSymbol(frame.direction))
+                .labelStyle(.titleAndIcon)
+        }
+        .width(min: 90, ideal: 120)
+        TableColumn("Length", value: \SessionFrameReference.provenance.originalLength) { frame in
+            Text(Self.lengthText(frame)).monospacedDigit()
+        }
+        .width(min: 64, ideal: 88)
+        TableColumn("Flags") { frame in
+            Text(frame.tcpFlags.map(Self.flagsText) ?? "")
+                .font(Theme.Typography.monoSmall)
+        }
+        .width(min: 70, ideal: 96)
+    }
+
+    private var summaryColumn: some TableColumnContent<SessionFrameReference, Never> {
+        TableColumn("Summary") { frame in
+            HStack(spacing: Theme.Metrics.spacingS) {
+                Text(frame.summary).lineLimit(1).truncationMode(.tail)
+                if frame.hasComment {
+                    Image(systemName: "text.bubble")
+                        .foregroundStyle(.secondary)
+                        .help("This frame carries a comment in the capture file (shown in Get Info)")
+                        .accessibilityLabel("Has comment")
+                }
+            }
+        }
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: Theme.Metrics.spacingM) {
             VStack(alignment: .leading, spacing: 3) {
@@ -110,38 +169,22 @@ struct SessionFramesFacetView: View {
     }
 
     private func table(_ result: SessionFramesResult) -> some View {
-        Table(result.frames, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("No.", value: \.ordinal) { frame in
-                Text(frame.ordinal.formatted()).monospacedDigit()
-            }
-            .width(min: 56, ideal: 72)
-            TableColumn("Time") { frame in
-                Text(Self.timeText(frame)).monospacedDigit()
-            }
-            .width(min: 84, ideal: 110)
-            TableColumn("Direction") { frame in
-                Label(Self.directionText(frame.direction), systemImage: Self.directionSymbol(frame.direction))
-                    .labelStyle(.titleAndIcon)
-            }
-            .width(min: 90, ideal: 120)
-            TableColumn("Length", value: \.provenance.originalLength) { frame in
-                Text(Self.lengthText(frame)).monospacedDigit()
-            }
-            .width(min: 64, ideal: 88)
-            TableColumn("Flags") { frame in
-                Text(frame.tcpFlags.map(Self.flagsText) ?? "")
-                    .font(Theme.Typography.monoSmall)
-            }
-            .width(min: 70, ideal: 96)
-            TableColumn("Summary") { frame in
-                HStack(spacing: Theme.Metrics.spacingS) {
-                    Text(frame.summary).lineLimit(1).truncationMode(.tail)
-                    if frame.hasComment {
-                        Image(systemName: "text.bubble")
-                            .foregroundStyle(.secondary)
-                            .help("This frame carries a comment in the capture file (shown in Get Info)")
-                            .accessibilityLabel("Has comment")
+        Group {
+            if let interfaceNames {
+                Table(result.frames, selection: $selection, sortOrder: $sortOrder) {
+                    leadingColumns
+                    TableColumn("Interface", value: \SessionFrameReference.interfaceID) { frame in
+                        Text(interfaceNames[frame.interfaceID] ?? "Interface \(frame.interfaceID)")
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
+                    .width(min: 80, ideal: 110)
+                    summaryColumn
+                }
+            } else {
+                Table(result.frames, selection: $selection, sortOrder: $sortOrder) {
+                    leadingColumns
+                    summaryColumn
                 }
             }
         }

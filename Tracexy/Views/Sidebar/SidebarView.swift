@@ -49,6 +49,8 @@ struct SidebarView: View {
 
     // MARK: Private
 
+    private static let fileSetMenuLimit = 24
+
     @Environment(\.openWindow) private var openWindow
 
     /// Live sidebar-search text. Deliberately *local* to the sidebar: it scopes
@@ -572,6 +574,9 @@ struct SidebarView: View {
                 }
                 .disabled(!coordinator.canExportFrames)
             }
+            if capture.isReadable, let fileSet = CaptureFileSet(member: capture.url) {
+                fileSetMenu(fileSet)
+            }
             if capture.isReferenced {
                 Divider()
                 Button("Locate…", systemImage: "magnifyingglass") {
@@ -592,6 +597,49 @@ struct SidebarView: View {
                 Button("Move to Trash…", systemImage: "trash", role: .destructive) {
                     capturePendingRemoval = capture
                 }
+            }
+        }
+    }
+
+    /// The ring-buffer set a Library item belongs to, listed in sequence order
+    /// with the open member checked; every member opens in place. Read from disk
+    /// when the menu opens so a set still being written stays current.
+    private func fileSetMenu(_ fileSet: CaptureFileSet) -> some View {
+        let listed = fileSet.members.prefix(Self.fileSetMenuLimit)
+        return Menu("File Set", systemImage: "doc.on.doc") {
+            Button("Next File") {
+                if let next = fileSet.next {
+                    coordinator.openFileSetMember(next)
+                }
+            }
+            .disabled(fileSet.next == nil || !coordinator.canOpenCaptureSource)
+            Button("Previous File") {
+                if let previous = fileSet.previous {
+                    coordinator.openFileSetMember(previous)
+                }
+            }
+            .disabled(fileSet.previous == nil || !coordinator.canOpenCaptureSource)
+            Divider()
+            Picker(
+                "Files in “\(fileSet.prefix)”",
+                selection: Binding(
+                    get: { fileSet.currentIndex },
+                    set: { index in
+                        guard index != fileSet.currentIndex, fileSet.members.indices.contains(index) else {
+                            return
+                        }
+                        coordinator.openFileSetMember(fileSet.members[index])
+                    }
+                )
+            ) {
+                ForEach(Array(listed.enumerated()), id: \.offset) { index, member in
+                    Text(member.url.lastPathComponent).tag(index)
+                }
+            }
+            .pickerStyle(.inline)
+            .disabled(!coordinator.canOpenCaptureSource)
+            if fileSet.count > listed.count {
+                Text("\((fileSet.count - listed.count).formatted()) more files — use Next File")
             }
         }
     }

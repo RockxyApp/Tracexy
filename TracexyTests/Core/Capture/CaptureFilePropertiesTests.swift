@@ -75,6 +75,37 @@ struct CaptureFilePropertiesTests {
         #expect(blocks.decryptionSecrets.first?.kindLabel == "TLS key log")
         #expect(blocks.decryptionSecrets.first?.secretsLength == UInt64("CLIENT_RANDOM 00 11\n".utf8.count))
         #expect(blocks.unknownBlockTypes == [0x000000F0: 1])
+
+        // Loss is summed over the interfaces that reported statistics: en0
+        // received 1 234 / dropped 5, the second interface received 1.
+        let loss = try #require(properties.reportedLoss)
+        #expect(loss.received == 1_235)
+        #expect(loss.dropped == 5)
+        #expect(loss.reportingInterfaceCount == 2)
+        #expect(!loss.isPartial)
+        let fidelity = try #require(loss.fidelity)
+        #expect(abs(fidelity - 1_235.0 / 1_240.0) < 1e-9)
+    }
+
+    @Test
+    func reportedLossIsAbsentWithoutInterfaceStatistics() throws {
+        let classic = try Self.load(ReplayCorpus.classicPcapBytes(ReplayCorpus.conversation(), variant: .littleNano))
+        #expect(classic.reportedLoss == nil)
+
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.interfaceDescription(little: true)
+        file += PcapngFixture.interfaceDescription(little: true)
+        file += CaptureContainerFixtures.interfaceStatistics(
+            little: true,
+            interfaceID: 0,
+            options: .init(received: 10, dropped: 2)
+        )
+        let partial = try Self.load(file)
+        let loss = try #require(partial.reportedLoss)
+        #expect(loss.isPartial)
+        #expect(loss.reportingInterfaceCount == 1)
+        #expect(loss.interfaceCount == 2)
+        #expect(loss.dropped == 2)
     }
 
     @Test

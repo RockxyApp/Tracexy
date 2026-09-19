@@ -74,6 +74,8 @@ struct OverviewView: View {
     /// intrinsic measurement that can extend beneath the native sidebar.
     private static let wideDashboardMinimumWidth: CGFloat = 1_280
 
+    @Environment(\.openWindow) private var openWindow
+
     private let compactColumns = [
         GridItem(.adaptive(minimum: 260), spacing: Theme.Metrics.spacingL),
     ]
@@ -114,9 +116,38 @@ struct OverviewView: View {
         return "\(state) · \(linkTypeName)"
     }
 
+    /// The container the reader actually recognised, not the file's extension.
     private var savedFormat: String {
+        if let properties = coordinator.savedCaptureProperties {
+            return switch properties.container {
+            case .pcap: "PCAP"
+            case .pcapng: "PCAPNG"
+            }
+        }
         let ext = coordinator.activeSavedCapture?.url.pathExtension ?? "pcap"
         return ext.isEmpty ? "PCAP" : ext.uppercased()
+    }
+
+    /// Interface names the file declares, bounded to a row: the first three by
+    /// name, then a count. Classic pcap declares none.
+    private var savedInterfacesText: String? {
+        guard let properties = coordinator.savedCaptureProperties, properties.interfaceCount > 0 else {
+            return nil
+        }
+        let names = properties.allInterfaces.prefix(3).map(\.displayName)
+        let remainder = properties.interfaceCount - names.count
+        return remainder > 0 ? names.joined(separator: ", ") + " +\(remainder.formatted())" : names
+            .joined(separator: ", ")
+    }
+
+    private var savedDropCountersText: String {
+        guard let loss = savedLoss else {
+            return "Not recorded in file"
+        }
+        let dropped = "\(loss.dropped.formatted()) dropped"
+        return loss.isPartial
+            ? "\(dropped) on \(loss.reportingInterfaceCount.formatted()) of \(loss.interfaceCount.formatted()) interfaces"
+            : dropped
     }
 
     private var linkTypeName: String {
@@ -178,9 +209,18 @@ struct OverviewView: View {
         return "Throughput · live bytes per second"
     }
 
+    /// Loss accounting a saved file carries: the Interface Statistics Blocks the
+    /// capturing tool wrote, if any. Read from the typed properties, never inferred.
+    private var savedLoss: CaptureReportedLoss? {
+        coordinator.savedCaptureProperties?.reportedLoss
+    }
+
     private var fidelityValue: String {
         if isSaved {
-            return "Unknown"
+            guard let fidelity = savedLoss?.fidelity else {
+                return "Not recorded"
+            }
+            return Self.percent.string(from: fidelity as NSNumber) ?? "—"
         }
         guard let fidelity = coordinator.captureStatistics?.fidelity else {
             return "Unknown"
@@ -190,7 +230,10 @@ struct OverviewView: View {
 
     private var fidelityTint: Color {
         if isSaved {
-            return .orange
+            guard let loss = savedLoss, loss.fidelity != nil else {
+                return .orange
+            }
+            return (loss.dropped > 0 || loss.isPartial) ? .orange : .green
         }
         guard let stats = coordinator.captureStatistics, stats.fidelity != nil else {
             return .orange
@@ -203,6 +246,18 @@ struct OverviewView: View {
     /// capture is stored independently in the disk-backed pcapng spool.
     private var inspectionWindowBytes: Int {
         coordinator.retainedCapturedByteCount
+    }
+
+    private var savedLossNote: String {
+        guard let loss = savedLoss else {
+            return "This file carries no interface statistics; any loss during the original capture is not recoverable from it."
+        }
+        if loss.dropped > 0 {
+            return "The capturing tool recorded drops, so the figures above understate the traffic."
+        }
+        return loss.isPartial
+            ? "Loss figures cover only the interfaces that recorded statistics."
+            : "Loss figures come from the interface statistics the capturing tool wrote."
     }
 
     private var overviewHeader: some View {
@@ -439,11 +494,20 @@ struct OverviewView: View {
             }
             Divider()
             if isSaved {
-                Button("Open in Saved Captures") {
-                    coordinator.activeWorkspace.navigatorMode = .library
+                HStack(spacing: Theme.Metrics.spacingL) {
+                    Button("Get Info") {
+                        openWindow(id: TracexyApp.captureInfoWindowID)
+                    }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+                    .disabled(!coordinator.canShowCaptureInfo)
+                    .help("Open the capture's file, section, and interface details (⌘I)")
+                    Button("Open in Saved Captures") {
+                        coordinator.activeWorkspace.navigatorMode = .library
+                    }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
                 }
-                .buttonStyle(.link)
-                .font(Theme.Typography.captionMedium)
             } else {
                 Button("Save Capture…", systemImage: "square.and.arrow.down") {
                     coordinator.saveCurrentCapture()
@@ -460,14 +524,15 @@ struct OverviewView: View {
         storageRow("Format", savedFormat)
         storageRow("File size", byteString(coordinator.activeSavedCapture?.byteCount ?? 0))
         storageRow("Frames", frameCount.formatted())
-        storageRow("Fidelity", "Unknown", tint: .orange)
-        storageRow("Drop counters", "Unavailable in file")
-        Text(
-            "A saved file carries no kernel accounting; any loss during the original capture is not recoverable from it."
-        )
-        .font(Theme.Typography.micro)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+        if let savedInterfacesText {
+            storageRow("Interfaces", savedInterfacesText)
+        }
+        storageRow("Fidelity", fidelityValue, tint: fidelityTint)
+        storageRow("Drop counters", savedDropCountersText, tint: (savedLoss?.dropped ?? 0) > 0 ? .orange : .primary)
+        Text(savedLossNote)
+            .font(Theme.Typography.micro)
+            .foregroundStyle((savedLoss?.dropped ?? 0) > 0 ? .orange : .secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private var liveStorageRows: some View {

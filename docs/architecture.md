@@ -18,7 +18,8 @@ container's own facts (`CaptureFileProperties`: sections, interfaces and options
 comment presence, skipped-block counts) and produces the bounded Open-panel preview
 (`CapturePreviewScanner`). It compiles into the app and into the Quick Look and Spotlight
 extensions, so Finder previews and search index exactly what the app opens. `PacketBuffer` lives
-here too.
+here too. The extension targets never depend on the app module; `TracexyTests` compiles their
+sources beside the app under the `TRACEXY_TEST_HOST` condition to cover them.
 
 **Capture** (`Tracexy/Core/Capture`) acquires frames and reads/writes capture files. Live capture
 runs through the privileged helper over libpcap; the app also opens classic PCAP and PCAPNG files in

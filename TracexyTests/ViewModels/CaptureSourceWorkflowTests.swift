@@ -199,6 +199,36 @@ struct CaptureSourceWorkflowTests {
         #expect(!env.coordinator.canCloseCapture)
     }
 
+    @Test("A ring-buffer member opens its neighbours in place from the set")
+    func fileSetMembersOpenInPlace() async throws {
+        let env = try await makeEnvironment()
+        defer { env.tearDown() }
+        let first = try env.externalCapture("ring_00001_20260919120100")
+        let second = try env.externalCapture("ring_00002_20260919120200")
+        _ = try env.externalCapture("ring_00003_20260919120300")
+
+        env.coordinator.openExternalCapture(second, copiesIntoLibrary: false)
+        await env.coordinator.waitForExternalCaptureOpen()
+        let set = try #require(env.coordinator.activeCaptureFileSet)
+        #expect(set.count == 3)
+        #expect(set.currentIndex == 1)
+        #expect(env.coordinator.canOpenNextInFileSet)
+        #expect(env.coordinator.canOpenPreviousInFileSet)
+        #expect(env.coordinator.canOpenCaptureSource)
+
+        // The Library row's File Set menu opens any member through the same
+        // in-place route as File ▸ File Set; nothing is copied.
+        env.coordinator.openFileSetMember(set.members[0])
+        await env.coordinator.waitForExternalCaptureOpen()
+        #expect(env.coordinator.activeSavedCapture?.url.standardizedFileURL == first.standardizedFileURL)
+        #expect(env.coordinator.activeSavedCapture?.isReferenced == true)
+        #expect(env.coordinator.activeCaptureFileSet?.currentIndex == 0)
+        #expect(!env.coordinator.canOpenPreviousInFileSet)
+        let directory = try #require(env.coordinator.capturesDirectory())
+        let contents = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        #expect(contents == ["ring_00001_20260919120100.tracexyref", "ring_00002_20260919120200.tracexyref"])
+    }
+
     @Test("Open Recent refuses a vanished file with a message and keeps the list fresh")
     func openRecentMissingFile() async throws {
         let env = try await makeEnvironment()

@@ -199,6 +199,11 @@ extension MainContentCoordinator {
         openExternalCapture(member.url, copiesIntoLibrary: false)
     }
 
+    /// Open one member of a set chosen from a Library row's File Set menu.
+    func openFileSetMember(_ member: CaptureFileSet.Member) {
+        openExternalCapture(member.url, copiesIntoLibrary: false)
+    }
+
     // MARK: References
 
     /// Record `source` as an in-place reference and open it. The sidecar takes the
@@ -356,6 +361,12 @@ extension MainContentCoordinator {
     }
 
     // MARK: Private
+
+    /// Whether an external capture can be opened right now (no hold, a Project
+    /// present, no transition). Menus that open files enable on this.
+    var canOpenCaptureSource: Bool {
+        captureOpenRefusal == nil
+    }
 
     private var captureOpenRefusal: String? {
         if let held = captureSourceHoldMessage {

@@ -311,6 +311,36 @@ nonisolated struct CaptureFileProperties: Sendable, Equatable {
         sections.flatMap(\.interfaces)
     }
 
+    /// Loss accounting the capturing tool wrote as Interface Statistics Blocks:
+    /// received (`isb_ifrecv`) and dropped (`isb_ifdrop` + `isb_osdrop`) summed over
+    /// every interface that reported them — the same received / offered ratio the live
+    /// `pcap_stats` fidelity uses. `nil` when no interface carries either counter — a classic
+    /// pcap file or a pcapng without ISBs records no loss, which is not "no loss".
+    var reportedLoss: CaptureReportedLoss? {
+        var received: UInt64 = 0
+        var dropped: UInt64 = 0
+        var reportingInterfaces = 0
+        for interface in allInterfaces {
+            guard let statistics = interface.statistics,
+                  statistics.received != nil || statistics.dropped != nil || statistics.osDropped != nil else
+            {
+                continue
+            }
+            reportingInterfaces += 1
+            received &+= statistics.received ?? 0
+            dropped &+= (statistics.dropped ?? 0) &+ (statistics.osDropped ?? 0)
+        }
+        guard reportingInterfaces > 0 else {
+            return nil
+        }
+        return CaptureReportedLoss(
+            received: received,
+            dropped: dropped,
+            reportingInterfaceCount: reportingInterfaces,
+            interfaceCount: interfaceCount
+        )
+    }
+
     var blockInventory: CaptureBlockInventory {
         sections.reduce(into: CaptureBlockInventory()) { total, section in
             total.nameResolutionBlockCount += section.blocks.nameResolutionBlockCount
@@ -479,4 +509,30 @@ nonisolated struct CaptureFilePropertiesAccumulator: Sendable {
     private var lastTimestamp: Date?
     private var previousTimestamp: Date?
     private var outOfOrderFrameCount = 0
+}
+
+// MARK: - CaptureReportedLoss
+
+/// Received/dropped totals from a file's Interface Statistics Blocks.
+nonisolated struct CaptureReportedLoss: Sendable, Equatable {
+    let received: UInt64
+    let dropped: UInt64
+    /// Interfaces whose ISB carried a received or dropped counter.
+    let reportingInterfaceCount: Int
+    let interfaceCount: Int
+
+    /// Share of frames the source handed over, `received / (received + dropped)`;
+    /// `nil` when neither counter is positive.
+    var fidelity: Double? {
+        let total = received &+ dropped
+        guard total > 0 else {
+            return nil
+        }
+        return Double(received) / Double(total)
+    }
+
+    /// Some interfaces recorded no statistics, so the totals understate the file.
+    var isPartial: Bool {
+        reportingInterfaceCount < interfaceCount
+    }
 }
