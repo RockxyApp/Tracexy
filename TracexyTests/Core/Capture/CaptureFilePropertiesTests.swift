@@ -314,7 +314,8 @@ struct CaptureFilePropertiesTests {
                 }
                 #expect(report.int("Packet size limit") == Int(facts.snapLength))
                 let offsets = ReplayCorpus.conversation().map(\.offsetSeconds)
-                #expect(properties.firstTimestamp == ReplayCorpus.epoch.addingTimeInterval(TimeInterval(offsets.min() ?? 0)))
+                #expect(properties.firstTimestamp == ReplayCorpus.epoch
+                    .addingTimeInterval(TimeInterval(offsets.min() ?? 0)))
             }
         }
     }

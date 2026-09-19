@@ -194,6 +194,31 @@ struct SessionCenterView: View {
         }
     }
 
+    /// The open saved capture's file changed underneath it. Reload re-reads it;
+    /// the sessions shown are from the bytes as they were when opened.
+    private var changedOnDiskNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "arrow.clockwise.circle")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("The capture file changed on disk")
+                    .font(Theme.Typography.bodyEmphasis)
+                Text("Sessions shown are from the file as it was when it was opened. Reload to read the current file.")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Reload") { coordinator.reloadActiveSavedCapture() }
+                .keyboardShortcut("r", modifiers: .command)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.06))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("capture-changed-on-disk")
+    }
+
     @ViewBuilder
     private func scopeRecovery(_ scope: SessionScopeSummary) -> some View {
         if scope.hasClearableFilters {
@@ -293,7 +318,9 @@ struct SessionCenterView: View {
             Image(systemName: "doc.questionmark")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 3) {
-                Text(capture.availability == .missing ? "“\(capture.name)” can’t be found" : "“\(capture.name)” changed on disk")
+                Text(capture
+                    .availability == .missing ? "“\(capture.name)” can’t be found" :
+                    "“\(capture.name)” changed on disk")
                     .font(Theme.Typography.bodyEmphasis)
                 Text(
                     capture.availability == .missing
@@ -317,31 +344,6 @@ struct SessionCenterView: View {
         .background(Color.orange.opacity(0.06))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture-source-unavailable")
-    }
-
-    /// The open saved capture's file changed underneath it. Reload re-reads it;
-    /// the sessions shown are from the bytes as they were when opened.
-    private var changedOnDiskNotice: some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
-            Image(systemName: "arrow.clockwise.circle")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("The capture file changed on disk")
-                    .font(Theme.Typography.bodyEmphasis)
-                Text("Sessions shown are from the file as it was when it was opened. Reload to read the current file.")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Button("Reload") { coordinator.reloadActiveSavedCapture() }
-                .keyboardShortcut("r", modifiers: .command)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingS)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.06))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("capture-changed-on-disk")
     }
 
     private func savedCaptureWarningNotice(_ warning: String) -> some View {

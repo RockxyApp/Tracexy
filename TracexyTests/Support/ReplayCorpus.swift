@@ -406,6 +406,11 @@ enum ReplayCorpus {
         try body(url)
     }
 
+    /// Microsecond ticks for a pcapng EPB at the default `if_tsresol` (10⁻⁶).
+    static func microTicks(_ frame: Frame) -> UInt64 {
+        UInt64(1_700_000_000 + frame.offsetSeconds) * 1_000_000
+    }
+
     // MARK: Private
 
     private static let v6Client: [UInt16] = [0x2001, 0x0DB8, 0, 0, 0, 0, 0, 0x0010]
@@ -729,11 +734,6 @@ enum ReplayCorpus {
                 payload: PacketBuilder.dnsResponse(name: name, answers: [answer])
             )
         )
-    }
-
-    /// Microsecond ticks for a pcapng EPB at the default `if_tsresol` (10⁻⁶).
-    static func microTicks(_ frame: Frame) -> UInt64 {
-        UInt64(1_700_000_000 + frame.offsetSeconds) * 1_000_000
     }
 
     private static func classicGlobalHeader(variant: ClassicVariant, linkType: UInt32) -> [UInt8] {

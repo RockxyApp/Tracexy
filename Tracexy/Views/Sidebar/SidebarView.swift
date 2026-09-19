@@ -424,85 +424,6 @@ struct SidebarView: View {
         }
     }
 
-    /// One Library row. A managed copy and an in-place reference share the row
-    /// shape; the reference adds a link badge (or a warning badge when its file
-    /// is missing or changed) and the Locate… / Copy into Library actions. Every
-    /// action a drop or double-click offers is also here, per the HIG's
-    /// drag-and-drop guidance.
-    private func savedCaptureRow(_ capture: SavedCapture) -> some View {
-        HStack(spacing: Theme.Metrics.spacingS) {
-            Label(capture.name, systemImage: "doc.text.magnifyingglass")
-                .foregroundStyle(capture.isReadable ? .secondary : .tertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 0)
-            if capture.isReferenced {
-                Image(systemName: capture.isReadable ? "link" : "exclamationmark.triangle")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(capture.isReadable ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
-                    .help(Self.availabilityHelp(capture))
-                    .accessibilityLabel(Self.availabilityHelp(capture))
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { coordinator.openSavedCapture(capture) }
-        // Same assistive contract as every other tappable sidebar row:
-        // a tap gesture alone is invisible to VoiceOver and UI automation.
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(capture.isReadable ? "Opens this capture" : "Shows how to locate this capture")
-        .accessibilityAction { coordinator.openSavedCapture(capture) }
-        .contextMenu {
-            Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
-                .disabled(!capture.isReadable)
-            Button("Reveal in Finder", systemImage: "folder") {
-                NSWorkspace.shared.activateFileViewerSelecting([capture.url])
-            }
-            .disabled(capture.availability == .missing)
-            Button("Copy Path", systemImage: "doc.on.doc") {
-                copyToPasteboard(capture.url.path)
-            }
-            if capture.isReferenced {
-                Divider()
-                Button("Locate…", systemImage: "magnifyingglass") {
-                    coordinator.locateReferencedCapture(capture)
-                }
-                Button("Copy into Library", systemImage: "tray.and.arrow.down") {
-                    coordinator.copyReferencedCaptureIntoLibrary(capture)
-                }
-                .disabled(!capture.isReadable)
-                Divider()
-                // Removing a reference never touches the referenced file and the
-                // sidecar goes to the Trash, so no confirmation is asked.
-                Button("Remove from Library", systemImage: "trash", role: .destructive) {
-                    removeReference(capture)
-                }
-            } else {
-                Divider()
-                Button("Move to Trash…", systemImage: "trash", role: .destructive) {
-                    capturePendingRemoval = capture
-                }
-            }
-        }
-    }
-
-    private static func availabilityHelp(_ capture: SavedCapture) -> String {
-        switch capture.availability {
-        case .managed: ""
-        case .available: "Opened in place from \(capture.url.path)"
-        case .missing: "The referenced file can’t be found at \(capture.url.path)"
-        case .changed: "The referenced file changed on disk"
-        }
-    }
-
-    private func removeReference(_ capture: SavedCapture) {
-        do {
-            try coordinator.removeReferencedCapture(capture)
-        } catch {
-            captureRemovalError = error.localizedDescription
-        }
-    }
-
     // MARK: Sources (Browse)
 
     /// Apps that originated traffic, each with its real icon, expandable to the
@@ -604,6 +525,68 @@ struct SidebarView: View {
                 restoreLabel: "Restore Hidden IP Addresses",
                 onRestore: coordinator.restoreHiddenSourceIPs
             )
+        }
+    }
+
+    /// One Library row. A managed copy and an in-place reference share the row
+    /// shape; the reference adds a link badge (or a warning badge when its file
+    /// is missing or changed) and the Locate… / Copy into Library actions. Every
+    /// action a drop or double-click offers is also here, per the HIG's
+    /// drag-and-drop guidance.
+    private func savedCaptureRow(_ capture: SavedCapture) -> some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            Label(capture.name, systemImage: "doc.text.magnifyingglass")
+                .foregroundStyle(capture.isReadable ? .secondary : .tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if capture.isReferenced {
+                Image(systemName: capture.isReadable ? "link" : "exclamationmark.triangle")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(capture.isReadable ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
+                    .help(Self.availabilityHelp(capture))
+                    .accessibilityLabel(Self.availabilityHelp(capture))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { coordinator.openSavedCapture(capture) }
+        // Same assistive contract as every other tappable sidebar row:
+        // a tap gesture alone is invisible to VoiceOver and UI automation.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(capture.isReadable ? "Opens this capture" : "Shows how to locate this capture")
+        .accessibilityAction { coordinator.openSavedCapture(capture) }
+        .contextMenu {
+            Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
+                .disabled(!capture.isReadable)
+            Button("Reveal in Finder", systemImage: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([capture.url])
+            }
+            .disabled(capture.availability == .missing)
+            Button("Copy Path", systemImage: "doc.on.doc") {
+                copyToPasteboard(capture.url.path)
+            }
+            if capture.isReferenced {
+                Divider()
+                Button("Locate…", systemImage: "magnifyingglass") {
+                    coordinator.locateReferencedCapture(capture)
+                }
+                Button("Copy into Library", systemImage: "tray.and.arrow.down") {
+                    coordinator.copyReferencedCaptureIntoLibrary(capture)
+                }
+                .disabled(!capture.isReadable)
+                Divider()
+                // Removing a reference never touches the referenced file and the
+                // sidecar goes to the Trash, so no confirmation is asked.
+                Button("Remove from Library", systemImage: "trash", role: .destructive) {
+                    removeReference(capture)
+                }
+            } else {
+                Divider()
+                Button("Move to Trash…", systemImage: "trash", role: .destructive) {
+                    capturePendingRemoval = capture
+                }
+            }
         }
     }
 
@@ -791,6 +774,23 @@ struct SidebarView: View {
         }
         .badge(badge(for: item, visibleCount: visibleCount, protocolCounts: protocolCounts))
         .tag(item)
+    }
+
+    private static func availabilityHelp(_ capture: SavedCapture) -> String {
+        switch capture.availability {
+        case .managed: ""
+        case .available: "Opened in place from \(capture.url.path)"
+        case .missing: "The referenced file can’t be found at \(capture.url.path)"
+        case .changed: "The referenced file changed on disk"
+        }
+    }
+
+    private func removeReference(_ capture: SavedCapture) {
+        do {
+            try coordinator.removeReferencedCapture(capture)
+        } catch {
+            captureRemovalError = error.localizedDescription
+        }
     }
 
     /// Case-insensitive substring match; always true when not searching so call

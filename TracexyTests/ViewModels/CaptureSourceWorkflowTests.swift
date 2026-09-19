@@ -28,7 +28,8 @@ struct CaptureSourceWorkflowTests {
         let directory = try #require(env.coordinator.capturesDirectory())
         let contents = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         #expect(contents == ["outside.tracexyref"])
-        #expect(env.coordinator.savedCaptureProperties?.totalFrames == env.coordinator.savedCaptureMetadata?.totalFrames)
+        #expect(env.coordinator.savedCaptureProperties?.totalFrames == env.coordinator.savedCaptureMetadata?
+            .totalFrames)
         #expect(env.coordinator.recentCaptureURLs.first?.standardizedFileURL == source.standardizedFileURL)
     }
 
@@ -105,8 +106,12 @@ struct CaptureSourceWorkflowTests {
         let sessionIDs = env.coordinator.sessions.map(\.id)
         env.coordinator.closeCapture()
 
-        let moved = source.deletingLastPathComponent().appendingPathComponent("elsewhere").appendingPathComponent("mover.pcap")
-        try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let moved = source.deletingLastPathComponent().appendingPathComponent("elsewhere")
+            .appendingPathComponent("mover.pcap")
+        try FileManager.default.createDirectory(
+            at: moved.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         try FileManager.default.moveItem(at: source, to: moved)
         env.coordinator.refreshSavedCaptures()
         let item = try #require(env.coordinator.savedCaptures.first)
@@ -126,7 +131,7 @@ struct CaptureSourceWorkflowTests {
             Issue.record("expected relocated")
             return
         }
-        try reference.relocated(to: moved, identity: identity).write(to: try #require(item.sidecarURL))
+        try reference.relocated(to: moved, identity: identity).write(to: #require(item.sidecarURL))
         env.coordinator.unavailableReferencedCapture = nil
         env.coordinator.refreshSavedCaptures()
         let relocated = try #require(env.coordinator.savedCaptures.first)

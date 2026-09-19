@@ -1,5 +1,4 @@
 import Foundation
-
 @testable import Tracexy
 
 // MARK: - CaptureContainerFixtures

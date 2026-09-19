@@ -372,9 +372,9 @@ final class MainContentCoordinator {
     var isLoadingSelectedSessionEvidence = false
     var selectedSessionEvidenceError: String?
 
-    // Saved-open/evidence task state is kept here so the separate activation
-    // extension can own the workflow without weakening the coordinator's actor
-    // boundary. Request IDs retire every late progress/result callback.
+    /// Saved-open/evidence task state is kept here so the separate activation
+    /// extension can own the workflow without weakening the coordinator's actor
+    /// boundary. Request IDs retire every late progress/result callback.
     /// A referenced Library item the user tried to open whose file is missing or
     /// changed. Drives the inline notice with Locate… / Reload; cleared by any
     /// successful open, Clear, or Project switch.
@@ -1049,35 +1049,6 @@ final class MainContentCoordinator {
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
         refreshActiveInvestigationQueries()
         refreshSelectedSessionEvidenceProjection()
-    }
-
-    /// Bottom evidence inspector. Hiding it by hand also cancels the automatic
-    /// reveal — a panel the user dismissed must not reappear on the next
-    /// selection.
-    func toggleInspectorBottom() {
-        let ws = activeWorkspace
-        let willHide = ws.inspectorLayout == .bottom
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.inspectorLayout = willHide ? .hidden : .bottom
-        }
-        layoutPreferences.rememberInspectorLayout(ws.inspectorLayout)
-        // Opening it by hand is the user asking for it back, so it cancels an
-        // earlier dismissal. Without this the two rules fight: panels start
-        // closed at launch, and a user who had once dismissed the inspector
-        // could never get it to come back on its own again — they would be
-        // re-opening it manually every single launch.
-        ws.allowsAutomaticInspectorReveal = !willHide
-        layoutPreferences.rememberAutomaticInspectorReveal(!willHide)
-    }
-
-    /// Right-hand interpretation column. Never auto-revealed: it earns its space
-    /// only once the user asks for it.
-    func toggleContextDock() {
-        let ws = activeWorkspace
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.isContextDockVisible.toggle()
-        }
-        layoutPreferences.rememberContextDockVisible(ws.isContextDockVisible)
     }
 
     /// Bring back the panels the user works with, once there is something for
