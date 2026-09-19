@@ -70,28 +70,87 @@ file, and the Inspector reopens exactly one representative frame by validated fi
 session is selected. Opening another file, clearing, or starting live capture retires stale progress,
 results, and selected-evidence reads.
 
-**File → Import Capture… (⌘O)** and the sidebar's Import actions open the same panel and copy the
-chosen file into the active Project's Library. Opening a `.pcap`, `.cap`, `.pcapng` or `.ntar` file
-from Finder (**Open With → Tracexy**, or dropping it on the Dock icon) and dropping a capture file
-anywhere on the main window take the same import path; Tracexy registers as an alternate viewer for
-those types and does not claim them as the default. One capture is imported per drop — a multi-file
-drop is refused with a message rather than importing only its first file — and a file opened
-before the app has finished loading Projects is imported once loading completes. Tracexy decides the
-format from the file's own header, so a capture stored as `evidence.bin` or with no extension is
-accepted. Gzip PCAP/PCAPNG and the
-capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are expanded locally
-into a managed capture. Other compressed or session formats are refused with a concrete recovery
-message. Recognizing a header or archive is not a guarantee that the whole capture parses, so the
-streaming open above still reports truncated or malformed input. Importing never overwrites: a
-capture whose name is already taken is kept under a unique name beside the existing one, and the
-original source on disk is never moved. Switching Projects while the panel is open cancels the import
-rather than filing the capture into the new Project.
+**File → Open… (⌘O)** opens a capture *where it is*. Tracexy records a small reference in the
+active Project's Library (a `.tracexyref` sidecar next to its managed copies) and reads the
+file in place, so a multi-gigabyte capture is never copied. The Open panel previews the chosen
+file before you commit — format, size, records, and start / elapsed — from a bounded scan, and
+says "timed out at N records" rather than pretending to know the total of a very large file.
+Its **Copy into Library** checkbox switches to the managed-copy path; the choice is remembered
+per Project. **File → Import into Library… (⌥⌘O)** and the sidebar's Import action always copy.
+Opening a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (**Open With → Tracexy**, or
+dropping it on the Dock icon) and dropping a capture file anywhere on the main window follow the
+Project's Open preference; Tracexy registers as an alternate viewer for those types and does not
+claim them as the default. One capture is opened per drop — a multi-file drop is refused with a
+message rather than opening only its first file — and a file opened before the app has finished
+loading Projects opens once loading completes. Tracexy decides the format from the file's own
+header, so a capture stored as `evidence.bin` or with no extension is accepted. Gzip PCAP/PCAPNG
+and the capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are always
+expanded into a managed capture, whichever way they were opened. Other compressed or session
+formats are refused with a concrete recovery message. Recognizing a header or archive is not a
+guarantee that the whole capture parses, so the streaming open above still reports truncated or
+malformed input. Importing never overwrites: a capture whose name is already taken is kept under
+a unique name beside the existing one, and the original source on disk is never moved. Switching
+Projects while a panel is open cancels the open rather than filing the capture into the new Project.
+
+A referenced capture shows a link badge in the Library. If its file is moved or replaced the
+badge turns into a warning, and opening it shows an inline notice with **Locate…** (choose the
+moved file; Tracexy accepts only a file with the same size and leading bytes) or **Reload**
+(re-read the file now at that path). **Remove from Library** on a reference trashes only the
+sidecar and never touches the file; **Copy into Library** turns a reference into a managed copy.
+**File → Open Recent** lists recently opened captures by name with **Clear Menu**;
+**File → Close Capture (⇧⌘W)** clears the workspace; **File → Reload (⌘R)** is enabled when
+the open capture changed on disk. Captures written in rotation by `dumpcap` or `tcpdump`
+(`name_00001_20260919120000.pcapng`, …) can be stepped through with **File → File Set →
+Next File / Previous File**, always in place.
 
 Copying runs off the UI thread with progress and **Cancel Import**. Source-changing actions
 stay held until copying or cancellation cleanup finishes; switching Projects waits and keeps
 the copy in its original Project. A complete copy published just before cancellation stays
 in the Library but does not open automatically. See [Capture migration](capture-migration.md)
 for Wireshark and other tools, conversion tradeoffs, supported artifacts, and recovery.
+
+### Capture Info (⌘I)
+
+**File → Get Info (⌘I)** opens a window with what the capture file says about itself: name,
+location, kind (managed copy or opened in place), format and variant, size, first and last frame
+time, elapsed span and time order; for PCAPNG, each section's hardware, OS, application and
+comments, and a sortable table of interfaces with name, description, link type, snapshot length,
+time resolution, capture filter, frame count and the received/dropped counters from Interface
+Statistics Blocks; a statistics group (frames, bytes, average frame size and rate, sessions);
+and an inventory of blocks Tracexy does not interpret — name resolution, decryption secrets
+(type and size only; the secrets are never read or used), custom and unknown blocks. **Compute
+SHA-256 and SHA-1** hashes the file on demand with progress and Cancel, and refuses if the file
+changed since it was opened. **Copy** puts every value on the clipboard as text. Strings written
+by the tool that created the file (comments, names, filters, application) appear only in this
+window; they never enter Sources, History, automation, MCP or the Assistant. For a PCAPNG with
+several interfaces, the Context dock shows **Captured on** for the selected session.
+
+### Frames
+
+The bottom inspector's **Frames** facet lists every frame of the selected session in capture
+order — number, time relative to the session's first frame, direction, length, TCP flags, a
+one-line summary and a comment marker — rescanned on demand from the stable source (the open
+file, or a copy of the stopped live spool). Selecting a row loads that exact frame into Layers,
+Payload and Hex through the same guarded path as finding citations. The list holds references
+only, never bytes, and is bounded at 10,000 frames; the footer says when it is a prefix of a
+larger session and when the source ends mid-record. **Rescan** re-reads the source; an active
+live capture offers no Frames facet until it is stopped.
+
+### Export Frames…
+
+**File → Export Frames…** (also in the toolbar Export menu, a session row's Export menu with the
+session preselected, and the Library row of the open capture) writes a new capture file from a
+scope: **Whole capture**, **Sessions in view** (filters, Focus Sets, Noise Control and removed
+rows applied), **Selected session**, or a **Time range** on the capture clock. The Save panel's
+Format pop-up offers PCAPNG (default) and classic PCAP; PCAP stays listed but disabled, with the
+reason, when the source mixes link types or holds untimed frames. **Preserve capture metadata**
+carries section hardware/OS/application and comments, interface names, descriptions, filters and
+each frame's own options (comments, flags, hashes) from a PCAPNG source; **Compress with gzip**
+writes a `.gz`. The export streams from the source with progress and **Cancel Export**, is
+published only after it completes and the source is verified unchanged, and reports anything it
+could not carry (for example frame comments from a big-endian section). Exporting raw packet
+formats while privacy protections are configured asks for the same acknowledgement as session
+export.
 
 Sessions, Overview and Flow name the active scope and show visible sessions against the
 capture total. **Reset Session Filters** clears the current workspace’s filters and sidebar

@@ -142,10 +142,10 @@ struct CaptureInfoView: View {
             }
         case let .done(digests):
             LabeledContent("SHA-256") {
-                Text(digests.sha256).font(.body.monospaced()).textSelection(.enabled)
+                Text(digests.sha256).font(Theme.Typography.mono).textSelection(.enabled)
             }
             LabeledContent("SHA-1") {
-                Text(digests.sha1).font(.body.monospaced()).textSelection(.enabled)
+                Text(digests.sha1).font(Theme.Typography.mono).textSelection(.enabled)
             }
         case let .failed(message):
             LabeledContent("Digests") {

@@ -8,7 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Open a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (Open With, Dock icon) or by dropping it on the main window; the file takes the same Library import path as ⌘O.
+- **File → Open… (⌘O)** opens a PCAP/PCAPNG where it is, recording a reference in the Project Library instead of copying; the Open panel previews format, size, records and start/elapsed before opening, and offers **Copy into Library**. **Import into Library… (⌥⌘O)** keeps the managed-copy path.
+- Referenced captures show their availability in the Library; a moved or replaced file offers **Locate…** and **Reload** inline instead of an error.
+- **File → Open Recent**, **Close Capture (⇧⌘W)**, **Reload (⌘R)** when the open file changed on disk, and **File Set → Next / Previous File** for `dumpcap`/`tcpdump` rotation sets.
+- **File → Get Info (⌘I)**: a capture information window with format and variant, time span and order, PCAPNG section and interface metadata (names, descriptions, filters, statistics counters), block inventory (name resolution, decryption secrets by type and size, custom, unknown), on-demand SHA-256/SHA-1 with cancel, and a Copy action.
+- A **Frames** facet in the bottom inspector lists the selected session's frames (number, relative time, direction, length, TCP flags, summary, comment marker) from a bounded on-demand rescan; a row loads that exact frame into Layers/Hex.
+- **File → Export Frames…** writes a new PCAPNG or classic PCAP from a scope (whole capture, sessions in view, selected session, time range), optionally preserving PCAPNG section, interface and per-frame metadata and compressing with gzip; PCAP is disabled with the reason when the source cannot be represented.
+- The Context dock shows **Captured on** (the file's interface names) for sessions of multi-interface PCAPNG captures.
+- The PCAPNG reader now reads section and interface options, Interface Statistics Blocks and per-frame comment presence within block bounds, and counts decryption-secrets, name-resolution, custom and unknown blocks; secrets are never read.
+- Open a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (Open With, Dock icon) or by dropping it on the main window; the file follows the Project's Open preference (in place by default).
 - Decode 802.1Q / 802.1ad VLAN-tagged Ethernet frames so trunk- and mirror-port captures form sessions.
 - Sort the Sessions table by any column from its header; the default remains stable capture order.
 

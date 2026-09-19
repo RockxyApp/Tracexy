@@ -301,6 +301,8 @@ struct NativeSplitLayoutTests {
             "Export Session",
             "Export as pcap",
             "Export as pcapng",
+            "",
+            "Export Frames…",
         ])
     }
 
