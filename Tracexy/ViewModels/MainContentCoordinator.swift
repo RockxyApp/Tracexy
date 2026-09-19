@@ -396,6 +396,13 @@ final class MainContentCoordinator {
     var sessionFramesTask: Task<Void, Never>?
     var sessionFramesRequestID = 0
     var loadingSessionFramesSessionID: UUID?
+    /// Export Frames…: one streaming export at a time, cancellable, holding the
+    /// capture source through the shared `isExportingSession` gate.
+    var frameExportProgress: PcapStreamProgress?
+    var frameExportName: String?
+    var frameExportTask: Task<Void, Never>?
+    var frameExportRequestID = 0
+    var isCancellingFrameExport = false
     /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
     var captureHashState: CaptureHashState = .idle
     var captureHashTask: Task<Void, Never>?

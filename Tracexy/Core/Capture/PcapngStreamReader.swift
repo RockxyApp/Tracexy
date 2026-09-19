@@ -42,6 +42,11 @@ nonisolated struct PcapngFrameReference: Sendable, Equatable {
     /// Whether the block carried at least one `opt_comment`. The text is not
     /// retained on the reference.
     let hasComment: Bool
+    /// Absolute byte range of the block's option list (empty when none), so an
+    /// exporter can copy the options of a same-byte-order source verbatim.
+    let optionsRange: Range<UInt64>
+    /// Whether the enclosing section is little-endian.
+    let littleEndian: Bool
 }
 
 // MARK: - PcapngFrameEvent
@@ -849,7 +854,9 @@ nonisolated final class PcapngStreamReader {
             sectionIndex: sectionIndex,
             interfaceID: interfaceID,
             linkType: interface.linkType,
-            hasComment: hasComment
+            hasComment: hasComment,
+            optionsRange: paddedEnd ..< blockEnd,
+            littleEndian: little
         )
         return .frame(PcapngFrameEvent(
             reference: reference,
@@ -910,7 +917,9 @@ nonisolated final class PcapngStreamReader {
             sectionIndex: sectionIndex,
             interfaceID: 0,
             linkType: interface.linkType,
-            hasComment: false
+            hasComment: false,
+            optionsRange: blockEndTotal ..< blockEndTotal,
+            littleEndian: little
         )
         return .frame(PcapngFrameEvent(
             reference: reference,

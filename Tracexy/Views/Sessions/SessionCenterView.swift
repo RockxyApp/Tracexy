@@ -94,6 +94,33 @@ struct SessionCenterView: View {
         .accessibilityIdentifier("capture-import-progress")
     }
 
+    private var frameExportNotice: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "square.and.arrow.up")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(coordinator.isCancellingFrameExport ? "Cancelling export…" : "Exporting frames…")
+                    .font(Theme.Typography.bodyEmphasis)
+                if let name = coordinator.frameExportName {
+                    Text(name).font(Theme.Typography.caption).lineLimit(1).truncationMode(.middle)
+                }
+                if let fraction = coordinator.frameExportFraction {
+                    ProgressView(value: fraction)
+                        .accessibilityValue(Text(fraction, format: .percent))
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+            Button("Cancel Export") { coordinator.cancelFrameExport() }
+                .disabled(coordinator.isCancellingFrameExport)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .background(Color.accentColor.opacity(0.06))
+        .accessibilityIdentifier("frame-export-progress")
+    }
+
     private var savedCaptureSourceNotice: some View {
         HStack(spacing: Theme.Metrics.spacingS) {
             Image(systemName: "doc")
@@ -266,6 +293,9 @@ struct SessionCenterView: View {
         VStack(spacing: 0) {
             if coordinator.isImportingCapture {
                 captureImportNotice
+                Divider()
+            } else if coordinator.isExportingFrames {
+                frameExportNotice
                 Divider()
             } else if coordinator.isOpeningSavedCapture {
                 savedCaptureOpeningNotice
@@ -669,10 +699,15 @@ struct SessionCenterView: View {
                     coordinator.exportSession(session, as: format)
                 }
             }
+            Divider()
+            Button("Export Frames…") {
+                coordinator.presentFrameExportPanel(preselectedSessions: [session.id])
+            }
+            .disabled(!coordinator.canExportFrames)
         } label: {
             Label("Export", systemImage: "square.and.arrow.up")
         }
-        .disabled(!coordinator.canExport(session))
+        .disabled(!coordinator.canExport(session) && !coordinator.canExportFrames)
 
         Divider()
 

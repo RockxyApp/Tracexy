@@ -566,6 +566,12 @@ struct SidebarView: View {
             Button("Copy Path", systemImage: "doc.on.doc") {
                 copyToPasteboard(capture.url.path)
             }
+            if coordinator.activeSavedCapture?.id == capture.id {
+                Button("Export Frames…", systemImage: "square.and.arrow.up") {
+                    coordinator.presentFrameExportPanel()
+                }
+                .disabled(!coordinator.canExportFrames)
+            }
             if capture.isReferenced {
                 Divider()
                 Button("Locate…", systemImage: "magnifyingglass") {

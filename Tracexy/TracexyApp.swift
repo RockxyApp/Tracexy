@@ -453,6 +453,16 @@ private struct TracexyCaptureFileCommands: Commands {
             .keyboardShortcut("i", modifiers: .command)
             .disabled(!coordinator.canShowCaptureInfo)
         }
+
+        // File ▸ Export Frames… sits with the other export items (HIG: prefer a
+        // format pop-up in the Save sheet; no custom shortcut for an occasional
+        // command).
+        CommandGroup(after: .importExport) {
+            Button("Export Frames…") {
+                coordinator.presentFrameExportPanel()
+            }
+            .disabled(!coordinator.canExportFrames)
+        }
     }
 
     // MARK: Private
