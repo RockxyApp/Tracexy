@@ -387,6 +387,15 @@ final class MainContentCoordinator {
     var activeSavedCaptureChangedOnDisk = false
     /// The in-flight format recognition for an external open (test seam).
     var externalCaptureOpenTask: Task<Void, Never>?
+    /// Frames facet: the bounded frame list of the selected session, rescanned on
+    /// demand from the stable source (saved file or stopped-live spool copy).
+    var sessionFramesResult: SessionFramesResult?
+    var isLoadingSessionFrames = false
+    var sessionFramesProgress: PcapStreamProgress?
+    var sessionFramesError: String?
+    var sessionFramesTask: Task<Void, Never>?
+    var sessionFramesRequestID = 0
+    var loadingSessionFramesSessionID: UUID?
     /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
     var captureHashState: CaptureHashState = .idle
     var captureHashTask: Task<Void, Never>?
@@ -1119,6 +1128,7 @@ final class MainContentCoordinator {
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
         resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1187,6 +1197,7 @@ final class MainContentCoordinator {
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
         resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a
