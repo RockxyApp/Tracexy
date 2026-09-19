@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A **Frames** facet in the bottom inspector lists the selected session's frames (number, relative time, direction, length, TCP flags, summary, comment marker) from a bounded on-demand rescan; a row loads that exact frame into Layers/Hex.
 - **File → Export Frames…** writes a new PCAPNG or classic PCAP from a scope (whole capture, sessions in view, selected session, time range), optionally preserving PCAPNG section, interface and per-frame metadata and compressing with gzip; PCAP is disabled with the reason when the source cannot be represented.
 - The Context dock shows **Captured on** (the file's interface names) for sessions of multi-interface PCAPNG captures.
+- A Quick Look preview extension (Finder Space-bar, Open panel preview) and a Spotlight importer for `.pcap`/`.pcapng`, both sandboxed and built on the same readers as the app; the format readers moved to a shared `CaptureFormat/` layer.
+- Tracexy now imports the canonical `com.tcpdump.pcap` / `org.tcpdump.pcapng` type identifiers instead of app-private ones, so it interoperates with Wireshark's declarations.
 - The PCAPNG reader now reads section and interface options, Interface Statistics Blocks and per-frame comment presence within block bounds, and counts decryption-secrets, name-resolution, custom and unknown blocks; secrets are never read.
 - Open a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (Open With, Dock icon) or by dropping it on the main window; the file follows the Project's Open preference (in place by default).
 - Decode 802.1Q / 802.1ad VLAN-tagged Ethernet frames so trunk- and mirror-port captures form sessions.

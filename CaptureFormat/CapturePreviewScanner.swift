@@ -70,37 +70,37 @@ nonisolated enum CapturePreviewScanner {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
             .uint64Value ?? 0
 
-        let format: CaptureContentFormat
+        let signature: CaptureHeaderSignature
         do {
-            format = try CaptureImporter.recognizedFormat(of: url)
-        } catch let error as CaptureImportError {
-            switch error {
-            case let .compressed(container):
-                return CapturePreview(
-                    status: .compressed(container), formatDescription: String(localized: "\(container) archive"),
-                    fileSize: size, records: 0, firstTimestamp: nil, lastTimestamp: nil
-                )
-            case .sourceIsDirectory:
-                return CapturePreview(
-                    status: .directory, formatDescription: String(localized: "Folder"), fileSize: size, records: 0,
-                    firstTimestamp: nil, lastTimestamp: nil
-                )
-            default:
-                return CapturePreview(
-                    status: .unknownFormat, formatDescription: String(localized: "Unknown format"),
-                    fileSize: size, records: 0, firstTimestamp: nil, lastTimestamp: nil
-                )
-            }
+            signature = try CaptureHeaderSignature.of(fileAt: url)
         } catch {
             return CapturePreview(
                 status: .unreadable, formatDescription: "", fileSize: size, records: 0,
                 firstTimestamp: nil, lastTimestamp: nil
             )
         }
-
-        let description = switch format {
-        case .pcap: String(localized: "PCAP (libpcap)")
-        case .pcapng: String(localized: "PCAPNG")
+        let description: String
+        switch signature {
+        case .pcap:
+            description = String(localized: "PCAP (libpcap)")
+        case .pcapng:
+            description = String(localized: "PCAPNG")
+        case .gzip:
+            return CapturePreview(
+                status: .compressed("gzip"), formatDescription: String(localized: "gzip archive"),
+                fileSize: size, records: 0, firstTimestamp: nil, lastTimestamp: nil
+            )
+        case .zip:
+            return CapturePreview(
+                status: .compressed("ZIP"), formatDescription: String(localized: "ZIP archive"),
+                fileSize: size, records: 0, firstTimestamp: nil, lastTimestamp: nil
+            )
+        case .unknown,
+             .tooShort:
+            return CapturePreview(
+                status: .unknownFormat, formatDescription: String(localized: "Unknown format"),
+                fileSize: size, records: 0, firstTimestamp: nil, lastTimestamp: nil
+            )
         }
 
         guard let reader = try? CaptureStreamReader(

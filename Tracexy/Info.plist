@@ -56,7 +56,7 @@
 			<key>UTTypeDescription</key>
 			<string>Packet Capture</string>
 			<key>UTTypeIdentifier</key>
-			<string>$(TRACEXY_SHARED_UTTYPE_PREFIX).pcap</string>
+			<string>com.tcpdump.pcap</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -78,7 +78,7 @@
 			<key>UTTypeDescription</key>
 			<string>PCAP Next Generation Capture</string>
 			<key>UTTypeIdentifier</key>
-			<string>$(TRACEXY_SHARED_UTTYPE_PREFIX).pcapng</string>
+			<string>org.tcpdump.pcapng</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -100,8 +100,8 @@
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>$(TRACEXY_SHARED_UTTYPE_PREFIX).pcap</string>
-				<string>$(TRACEXY_SHARED_UTTYPE_PREFIX).pcapng</string>
+				<string>com.tcpdump.pcap</string>
+				<string>org.tcpdump.pcapng</string>
 			</array>
 		</dict>
 	</array>

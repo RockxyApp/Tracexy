@@ -4,6 +4,9 @@
 # Paths to include during linting
 included:
   - Tracexy
+  - CaptureFormat
+  - TracexyQuickLook
+  - TracexySpotlight
 
 # Paths to exclude during linting
 excluded:

@@ -109,6 +109,16 @@ the copy in its original Project. A complete copy published just before cancella
 in the Library but does not open automatically. See [Capture migration](capture-migration.md)
 for Wireshark and other tools, conversion tradeoffs, supported artifacts, and recovery.
 
+### Finder previews and Spotlight
+
+Tracexy ships a Quick Look preview and a Spotlight importer for `.pcap` / `.pcapng` files. Press
+Space on a capture in Finder (or use the Open panel's preview column) to see its format, size,
+record count, start / elapsed, the writing application and comment, and the interfaces it declares
+— the same bounded scan the Open panel runs, never packet payload. Spotlight indexes the format,
+record count, capture dates, duration, interface names and writing application so a capture can be
+found by what it is; no address, host name or payload is indexed. Both run sandboxed inside the
+app bundle and share the app's readers.
+
 ### Capture Info (⌘I)
 
 **File → Get Info (⌘I)** opens a window with what the capture file says about itself: name,

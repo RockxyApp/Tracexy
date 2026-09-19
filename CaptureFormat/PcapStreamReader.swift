@@ -212,7 +212,7 @@ nonisolated final class PcapStreamReader {
         // MARK: Lifecycle
 
         init(
-            maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
+            maxCapturedLength: Int = CaptureFormatLimits.maxCapturedLength,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength

@@ -12,14 +12,24 @@ hostile capture file can never crash the app.
 
 ## The pipeline today
 
+**Capture format** (`CaptureFormat/`) is the UI-free, dependency-free layer that reads classic PCAP
+and PCAPNG streams (`PcapStreamReader`, `PcapngStreamReader`, `CaptureStreamReader`), folds the
+container's own facts (`CaptureFileProperties`: sections, interfaces and options, statistics blocks,
+comment presence, skipped-block counts) and produces the bounded Open-panel preview
+(`CapturePreviewScanner`). It compiles into the app and into the Quick Look and Spotlight
+extensions, so Finder previews and search index exactly what the app opens. `PacketBuffer` lives
+here too.
+
 **Capture** (`Tracexy/Core/Capture`) acquires frames and reads/writes capture files. Live capture
-runs through the privileged helper over libpcap; the app also reads classic PCAP and PCAPNG files,
-writes classic PCAP where required, and saves complete live captures as PCAPNG. Interface discovery
+runs through the privileged helper over libpcap; the app also opens classic PCAP and PCAPNG files in
+place or as managed Library copies, writes classic PCAP where required, exports scoped frames as
+PCAP/PCAPNG (optionally gzip), and saves complete live captures as PCAPNG. Interface discovery
 and capture statistics live here.
 
-**Protocol** (`Tracexy/Core/Protocol`) turns raw bytes into a `DecodedPacket`. `PacketBuffer` is a
-bounds-checked, zero-copy view over the frame: every read is offset-checked and **throws** on a short
-or malformed packet rather than trapping, and a partial decode keeps whatever layers parsed cleanly.
+**Protocol** (`Tracexy/Core/Protocol`) turns raw bytes into a `DecodedPacket`. `PacketBuffer`
+(in `CaptureFormat/`) is a bounds-checked, zero-copy view over the frame: every read is
+offset-checked and **throws** on a short or malformed packet rather than trapping, and a partial
+decode keeps whatever layers parsed cleanly.
 `PacketDecoder` is a single-pass, stateless, per-frame decoder covering L2–L4 plus naming-level
 DNS/TLS/HTTP-1/QUIC (see [protocol support](protocol-support.md)).
 
@@ -64,8 +74,9 @@ interrupted initial History reads, but preserves loaded pages/cursors and does n
 ## Repository map
 
 ```text
-Tracexy/Core/Capture/     packet acquisition and capture-file IO (PCAP/PCAPNG)
-Tracexy/Core/Protocol/    PacketBuffer, PacketDecoder, DecodedPacket/DecodedLayer
+CaptureFormat/            PCAP/PCAPNG stream readers, container properties, preview scan, PacketBuffer
+Tracexy/Core/Capture/     packet acquisition, Library/import/export, capture-file writers
+Tracexy/Core/Protocol/    PacketDecoder, DecodedPacket/DecodedLayer
 Tracexy/Core/Session/     FiveTuple grouping, SessionBuilder, Activity correlation
 Tracexy/Core/Services/    helper client, signing diagnostics, process resolution
 Tracexy/Models/           session and UI value/state types, AppPolicy
@@ -74,6 +85,8 @@ Tracexy/Views/            Overview, Sessions, Inspector, Flow, Settings, Sidebar
 Tracexy/Theme/            design tokens
 Shared/                   app/helper identity, XPC protocol, caller validation
 TracexyCaptureHelper/     privileged capture daemon (SMAppService + XPC)
+TracexyQuickLook/         Quick Look preview extension for .pcap/.pcapng (sandboxed)
+TracexySpotlight/         Spotlight importer extension for .pcap/.pcapng (sandboxed)
 TracexyTests/             unit and fuzz-style coverage
 ```
 
