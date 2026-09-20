@@ -14,7 +14,7 @@ struct SettingsView: View {
         isProjectReady: Bool = true,
         historyRetentionError: String? = nil,
         isHistoryDemoMode: Bool = false,
-        mcpScope: MCPGrantScope? = nil,
+        mcpScope: @escaping @MainActor () -> MCPGrantScope? = { nil },
         assistant: AssistantSessionModel? = nil,
         mcpAccess: MCPAccessModel? = nil,
         onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
@@ -107,7 +107,7 @@ struct SettingsView: View {
     private let isProjectReady: Bool
     private let historyRetentionError: String?
     private let isHistoryDemoMode: Bool
-    private let mcpScope: MCPGrantScope?
+    private let mcpScope: @MainActor () -> MCPGrantScope?
     private let assistant: AssistantSessionModel
     private let mcpAccess: MCPAccessModel
     private let onAutoClearChange: (AutoClear) -> Void

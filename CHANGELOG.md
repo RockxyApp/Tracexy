@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Keep Assistant review and disclosure in sync, reject stale approval, and label incomplete answers clearly.
+- Enable MCP access once the active Project finishes loading, even if Settings was opened first.
 - Avoid a bottom-inspector layout crash and unwanted extra windows after relaunch.
 - Correct false TCP retransmission findings from packet padding, fragments and keep-alive probes; retain reset evidence when it follows an orderly close.
 - Open classic PCAP files that declare an FCS hint, and calculate DNS response time even when the answer contains no records.

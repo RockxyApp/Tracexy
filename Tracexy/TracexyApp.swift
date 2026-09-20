@@ -130,7 +130,7 @@ struct TracexyApp: App {
                 isProjectReady: coordinator.hasHydratedProjects,
                 historyRetentionError: coordinator.historyRetentionError,
                 isHistoryDemoMode: coordinator.isHistoryDemoMode,
-                mcpScope: coordinator.mcpGrantScope,
+                mcpScope: { coordinator.mcpGrantScope },
                 assistant: coordinator.assistant,
                 mcpAccess: coordinator.mcpAccess,
                 onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }

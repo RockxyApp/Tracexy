@@ -13,11 +13,11 @@ struct MCPSettingsView: View {
     // MARK: Lifecycle
 
     init(
-        scope: MCPGrantScope? = nil,
+        scope: @escaping @MainActor () -> MCPGrantScope? = { nil },
         assistant: AssistantSessionModel,
         access: MCPAccessModel? = nil
     ) {
-        self.scope = scope
+        scopeProvider = scope
         self.assistant = assistant
         _access = State(initialValue: access ?? MCPAccessModel())
     }
@@ -45,8 +45,14 @@ struct MCPSettingsView: View {
     @State private var endpointDraft = ""
     @State private var hasLoadedGrantDefaults = false
 
-    private let scope: MCPGrantScope?
+    private let scopeProvider: @MainActor () -> MCPGrantScope?
     private let assistant: AssistantSessionModel
+
+    /// Resolve the live Project at render and grant time. Settings can open before
+    /// Project hydration finishes; retaining a nil snapshot would strand Grant.
+    private var scope: MCPGrantScope? {
+        scopeProvider()
+    }
 
     // MARK: MCP
 
