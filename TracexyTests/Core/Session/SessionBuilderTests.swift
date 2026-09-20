@@ -169,6 +169,31 @@ struct SessionBuilderTests {
         #expect((dns?.latencyMilliseconds ?? 0) > 0)
     }
 
+    @Test("An answerless DNS response (NXDOMAIN) still measures the exchange's latency")
+    func answerlessDNSResponseMeasuresLatency() throws {
+        let query = CapturedFrame(
+            bytes: PacketBuilder.dnsQueryFrame(name: "missing.example", src: "10.0.0.7", dst: "10.0.0.1"),
+            timestamp: Date(timeIntervalSince1970: 10),
+            originalLength: 80
+        )
+        // A response with QR set and zero answer records: the reply is the end of
+        // the exchange even though it resolves nothing.
+        let response = CapturedFrame(
+            bytes: PacketBuilder.dnsResponseFrame(
+                name: "missing.example",
+                answers: [],
+                src: "10.0.0.1",
+                dst: "10.0.0.7"
+            ),
+            timestamp: Date(timeIntervalSince1970: 10.25),
+            originalLength: 80
+        )
+        let session = try #require(SessionBuilder.build(from: [query, response], linkType: LinkType.ethernet).first)
+        #expect(session.protocolStack.contains(.dns))
+        #expect(session.dnsAnswers.isEmpty)
+        #expect(session.latencyMilliseconds == 250)
+    }
+
     @Test
     func quicSessionIsDecoded() {
         #expect(sessions().contains { $0.protocolStack.contains(.quic) })
@@ -242,6 +267,64 @@ struct SessionBuilderTests {
         #expect((after.duration ?? 0) > 0)
     }
 
+    // MARK: - Session orientation
+
+    @Test("A TCP session first captured from the service side is oriented toward the remote service")
+    func midStreamServerFirstSessionIsFlippedByServicePort() throws {
+        // Capture began after the handshake: the first frame is the server's data.
+        let frames = [
+            reverseTCPFrame(timestamp: 1),
+            tcpFrame(payload: [0x01, 0x02], sequence: 1, timestamp: 2),
+        ]
+        let session = try #require(SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first)
+        #expect(session.sourceEndpoint == "10.0.0.5:50000")
+        #expect(session.destinationEndpoint == "93.184.216.34:443")
+        #expect(session.host == "93.184.216.34")
+        // Byte direction follows the corrected orientation.
+        #expect(session.bytesDown == frames[0].originalLength)
+        #expect(session.bytesUp == frames[1].originalLength)
+        // The first-observed start time is unchanged by orientation.
+        #expect(session.startTime == Date(timeIntervalSince1970: 1))
+    }
+
+    @Test("A captured SYN names the opener even from a service-looking port")
+    func synSenderOutranksPortHeuristic() throws {
+        let syn = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "10.0.0.5", dst: "10.0.0.9",
+            payload: PacketBuilder.tcp(srcPort: 8_080, dstPort: 40_000, flags: 0x02, payload: [], sequence: 1)
+        )
+        let reply = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "10.0.0.9", dst: "10.0.0.5",
+            payload: PacketBuilder.tcp(srcPort: 40_000, dstPort: 8_080, flags: 0x12, payload: [], sequence: 9)
+        )
+        let frames = [
+            CapturedFrame(bytes: syn, timestamp: Date(timeIntervalSince1970: 1), originalLength: syn.count),
+            CapturedFrame(bytes: reply, timestamp: Date(timeIntervalSince1970: 2), originalLength: reply.count),
+        ]
+        let session = try #require(SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first)
+        #expect(session.sourceEndpoint == "10.0.0.5:8080")
+        #expect(session.destinationEndpoint == "10.0.0.9:40000")
+    }
+
+    @Test("Two ephemeral ports keep the first-observed direction")
+    func ephemeralPairKeepsFirstObservedDirection() throws {
+        let first = PacketBuilder.ethernetIPv4(
+            proto: 17, src: "10.0.0.9", dst: "10.0.0.5",
+            payload: PacketBuilder.udp(srcPort: 41_000, dstPort: 42_000, payload: [1])
+        )
+        let second = PacketBuilder.ethernetIPv4(
+            proto: 17, src: "10.0.0.5", dst: "10.0.0.9",
+            payload: PacketBuilder.udp(srcPort: 42_000, dstPort: 41_000, payload: [2])
+        )
+        let frames = [
+            CapturedFrame(bytes: first, timestamp: Date(timeIntervalSince1970: 1), originalLength: first.count),
+            CapturedFrame(bytes: second, timestamp: Date(timeIntervalSince1970: 2), originalLength: second.count),
+        ]
+        let session = try #require(SessionBuilder.build(from: frames, linkType: LinkType.ethernet).first)
+        #expect(session.sourceEndpoint == "10.0.0.9:41000")
+        #expect(session.destinationEndpoint == "10.0.0.5:42000")
+    }
+
     // MARK: - Missing capture time
 
     @Test("One untimed frame makes a session's start, duration and latency unknown while keeping its bytes")
@@ -301,7 +384,10 @@ struct SessionBuilderTests {
         let reverse = reverseTCPFrame(timestamp: 1)
         let unknown = untimedTCPFrame(payload: [2], sequence: 7_001)
         let known = try #require(SessionBuilder.build(from: [first, reverse], linkType: 1).first)
-        #expect(known.sourceEndpoint == "93.184.216.34:443")
+        // The earlier (server-side) frame defines the start instant, while the
+        // service-port orientation keeps the ephemeral side as the client.
+        #expect(known.startTime == Date(timeIntervalSince1970: 1))
+        #expect(known.sourceEndpoint == "10.0.0.5:50000")
         for frames in [[first, reverse, unknown], [first, unknown, reverse]] {
             let session = try #require(SessionBuilder.build(from: frames, linkType: 1).first)
             #expect(session.sourceEndpoint == "10.0.0.5:50000")

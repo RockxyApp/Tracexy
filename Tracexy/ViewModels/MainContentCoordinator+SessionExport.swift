@@ -72,16 +72,11 @@ extension MainContentCoordinator {
             var warning: String?
             var didWrite = false
             do {
-                let capture = try await self.completeCaptureForExport()
+                let capture = try await self.sessionFramesForExport(matching: session.id)
                 let artifact = try await Task.detached(priority: .userInitiated) {
-                    let sessionFrames = SessionExporter.frames(
-                        matching: session.id,
-                        in: capture.frames,
-                        defaultLinkType: capture.linkType
-                    )
-                    return try SessionExporter.artifact(
+                    try SessionExporter.artifact(
                         for: session,
-                        frames: sessionFrames,
+                        frames: capture.frames,
                         defaultLinkType: capture.linkType,
                         format: format,
                         privacy: exportPrivacy

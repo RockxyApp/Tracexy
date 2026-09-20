@@ -56,6 +56,20 @@ struct TCPSequenceTrackerTests {
         #expect(tracker.expectedSequence == 110)
     }
 
+    @Test("A one-byte probe one behind the expected sequence is a keep-alive, not a retransmission")
+    func keepAliveProbe() {
+        var tracker = TCPSequenceTracker()
+        _ = tracker.ingest(facts(seq: 100, payload: 10))
+        let probe = tracker.ingest(facts(seq: 109, payload: 1, flags: .ack))
+        #expect(probe.disposition == .keepAlive)
+        #expect(tracker.expectedSequence == 110)
+        #expect(tracker.pendingCount == 0)
+        // A genuine one-byte retransmission further behind stays a duplicate, and a
+        // FIN one behind consumes control space, so neither is a keep-alive.
+        #expect(tracker.ingest(facts(seq: 108, payload: 1)).disposition == .duplicate)
+        #expect(tracker.ingest(facts(seq: 109, payload: 0, flags: [.fin, .ack])).disposition == .duplicate)
+    }
+
     @Test("A partial overlap reports overlap and new bytes and advances")
     func partialOverlapSuffix() {
         var tracker = TCPSequenceTracker()

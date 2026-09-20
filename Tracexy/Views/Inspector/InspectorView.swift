@@ -360,7 +360,7 @@ struct InspectorView: View {
                     .lineLimit(1)
                 Spacer(minLength: Theme.Metrics.spacingL)
                 Text(
-                    "\(ByteCountFormatter.string(fromByteCount: Int64(session.totalBytes), countStyle: .binary)) total"
+                    "\(ByteUnits.string(Int64(session.totalBytes))) total"
                 )
                 .font(Theme.Typography.chromeSecondary)
                 .foregroundStyle(.secondary)
@@ -1289,6 +1289,8 @@ private struct DecodedLayerTree: View {
         // Tap still selects the byte range for the hex pane; the context menu is
         // an additive right-click affordance and leaves that behavior untouched.
         .onTapGesture { onSelect(layer.byteRange) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onSelect(layer.byteRange) }
         .contextMenu {
             Button("Copy Layer Summary", systemImage: "doc.on.doc") {
                 copy(DecodedClipboardText.layerSummary(layer))
@@ -1307,6 +1309,8 @@ private struct DecodedLayerTree: View {
         .background(rowBackground(field.byteRange), in: RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
         .onTapGesture { onSelect(field.byteRange) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onSelect(field.byteRange) }
         .contextMenu {
             Button("Copy Value", systemImage: "doc.on.doc") {
                 copy(DecodedClipboardText.value(field))

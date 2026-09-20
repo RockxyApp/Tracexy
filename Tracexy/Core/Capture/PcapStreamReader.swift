@@ -169,7 +169,8 @@ nonisolated final class PcapStreamReader {
         self.format = format
 
         let snapLength = format.littleEndian ? try header.u32le(16) : try header.u32(16)
-        let linkType = format.littleEndian ? try header.u32le(20) : try header.u32(20)
+        let rawLinkType = format.littleEndian ? try header.u32le(20) : try header.u32(20)
+        let linkType = MagicFormat.linkType(fromHeaderField: rawLinkType)
 
         metadata = PcapStreamMetadata(
             linkType: linkType,

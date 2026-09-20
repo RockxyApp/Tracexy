@@ -45,7 +45,10 @@ final class AssistantAndMCPUITests: XCTestCase {
 
         let grant = app.buttons["mcp.grant"]
         XCTAssertTrue(grant.waitForExistence(timeout: 5))
-        XCTAssertTrue(grant.isEnabled, "Granting requires a resolved Project")
+        XCTAssertTrue(
+            waitFor(timeout: 30) { grant.isEnabled },
+            "Granting requires a resolved Project; pane shows “\(text(of: app.staticTexts["mcp.projectName"]))”"
+        )
         grant.click()
 
         XCTAssertTrue(

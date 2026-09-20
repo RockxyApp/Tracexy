@@ -283,7 +283,7 @@ nonisolated enum SessionStatusBarModel {
     // MARK: Private
 
     private static func formatBytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
+        ByteUnits.string(Int64(bytes))
     }
 }
 

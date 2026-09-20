@@ -397,6 +397,11 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary).lineLimit(1)
                         .contentShape(Rectangle())
                         .onTapGesture { coordinator.openSavedCapture(capture) }
+                        // Same assistive contract as every other tappable sidebar row:
+                        // a tap gesture alone is invisible to VoiceOver and UI automation.
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Opens this saved capture")
+                        .accessibilityAction { coordinator.openSavedCapture(capture) }
                         .contextMenu {
                             Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
                             Button("Reveal in Finder", systemImage: "folder") {
@@ -640,11 +645,14 @@ struct SidebarView: View {
     // MARK: Browse mode
 
     private func browseList(_ workspace: WorkspaceState) -> some View {
-        List(selection: selectionBinding(workspace)) {
+        // One filter pass feeds every badge in this list.
+        let visibleCount = coordinator.visibleSessions.count
+        let protocolCounts = coordinator.visibleProtocolCounts
+        return List(selection: selectionBinding(workspace)) {
             if !filteredMonitorItems.isEmpty {
                 Section("Monitor") {
                     ForEach(filteredMonitorItems) { item in
-                        navRow(item, workspace: workspace)
+                        navRow(item, workspace: workspace, visibleCount: visibleCount, protocolCounts: protocolCounts)
                     }
                 }
             }
@@ -656,7 +664,12 @@ struct SidebarView: View {
                 Section {
                     DisclosureGroup(isExpanded: searchExpansion($protocolsExpanded)) {
                         ForEach(filteredProtocolItems) { item in
-                            navRow(item, workspace: workspace)
+                            navRow(
+                                item,
+                                workspace: workspace,
+                                visibleCount: visibleCount,
+                                protocolCounts: protocolCounts
+                            )
                         }
                     } label: {
                         Label(SidebarSection.protocols.title, systemImage: SidebarSection.protocols.systemImage)
@@ -687,7 +700,14 @@ struct SidebarView: View {
 
     // MARK: Rows / helpers
 
-    private func navRow(_ item: SidebarItem, workspace: WorkspaceState) -> some View {
+    private func navRow(
+        _ item: SidebarItem,
+        workspace: WorkspaceState,
+        visibleCount: Int,
+        protocolCounts: [ProtocolKind: Int]
+    )
+        -> some View
+    {
         // No forced foreground on selection: `List(.sidebar)` renders the accent
         // (or graphite, in an inactive window) highlight itself and keeps the
         // label legible against it. A hardcoded white icon broke the inactive
@@ -702,7 +722,7 @@ struct SidebarView: View {
                     .foregroundStyle(tint(item))
             }
         }
-        .badge(badge(for: item))
+        .badge(badge(for: item, visibleCount: visibleCount, protocolCounts: protocolCounts))
         .tag(item)
     }
 
@@ -797,12 +817,12 @@ struct SidebarView: View {
         return .secondary
     }
 
-    private func badge(for item: SidebarItem) -> Text? {
+    private func badge(for item: SidebarItem, visibleCount: Int, protocolCounts: [ProtocolKind: Int]) -> Text? {
         let count: Int = switch item {
-        case .sessions: coordinator.visibleSessions.count
+        case .sessions: visibleCount
         default:
             if let proto = item.protocolFilter {
-                coordinator.count(for: proto)
+                protocolCounts[proto] ?? 0
             } else {
                 0
             }
@@ -858,6 +878,9 @@ private struct FocusSetRow: View {
         .badge(set.activeRuleCount)
         .contentShape(Rectangle())
         .onTapGesture { coordinator.applyFocusSet(set) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Applies this focus set")
+        .accessibilityAction { coordinator.applyFocusSet(set) }
         .help("Click to apply this focus set")
         .contextMenu {
             Button("Apply", systemImage: "scope") { coordinator.applyFocusSet(set) }

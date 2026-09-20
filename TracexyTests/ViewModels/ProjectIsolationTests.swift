@@ -340,6 +340,33 @@ struct ProjectIsolationTests {
         #expect(!relaunched.projectStore.projects.contains { $0.id == owner })
     }
 
+    @Test("Restore-on-launch off starts from the default workspace instead of the persisted one")
+    func restoreWorkspaceSettingGatesLaunchHydration() async throws {
+        let environment = ProjectIsolationEnvironment(name: "restore", persistsCatalog: true)
+        defer { environment.tearDown() }
+
+        let first = environment.makeCoordinator()
+        await first.hydrateProjectsOnLaunch()
+        first.activeWorkspace.filterText = "persisted-search"
+        first.activeWorkspace.sidebarSelection = .history
+        #expect(first.flushProjectWorkspaceSnapshot())
+        await first.flushProjectStateForTermination()
+
+        // Default: the persisted workspace comes back.
+        let restored = environment.makeCoordinator()
+        await restored.hydrateProjectsOnLaunch()
+        #expect(restored.activeWorkspace.filterText == "persisted-search")
+        #expect(restored.activeWorkspace.sidebarSelection == .history)
+
+        // Opted out: this launch keeps a fresh default workspace.
+        let bootDefaults = try #require(UserDefaults(suiteName: environment.bootSuiteName))
+        bootDefaults.set(false, forKey: SettingsKeys.restoreWorkspace)
+        let fresh = environment.makeCoordinator()
+        await fresh.hydrateProjectsOnLaunch()
+        #expect(fresh.activeWorkspace.filterText.isEmpty)
+        #expect(fresh.activeWorkspace.sidebarSelection != .history)
+    }
+
     @Test("A Project whose settings store fails keeps the outgoing Project active")
     func settingsFailureStaysFailClosed() async throws {
         let environment = ProjectIsolationEnvironment(name: "failclosed")

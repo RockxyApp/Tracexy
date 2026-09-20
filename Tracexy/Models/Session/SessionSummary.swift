@@ -128,6 +128,33 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
         bytesUp + bytesDown
     }
 
+    // MARK: Column sort keys
+
+    /// Start instant for column sorting: unknown timing sorts after every known
+    /// instant in either direction rather than being spelled as an epoch.
+    nonisolated var sortableStartTime: TimeInterval {
+        startTime?.timeIntervalSince1970 ?? .infinity
+    }
+
+    /// Process name for column sorting; unattributed sessions sort after named ones.
+    nonisolated var sortableProcessName: String {
+        processName ?? "\u{10FFFF}"
+    }
+
+    /// The innermost protocol's label, the value the Protocol column shows.
+    nonisolated var primaryProtocolLabel: String {
+        primaryProtocol.label
+    }
+
+    /// Status severity for column sorting: OK, then Warning, then Error.
+    nonisolated var statusRank: Int {
+        switch status {
+        case .ok: 0
+        case .warning: 1
+        case .error: 2
+        }
+    }
+
     /// Whether this session carries an application-layer request/response
     /// exchange worth listing on its own — the condition for offering the
     /// Inspector's Requests facet.

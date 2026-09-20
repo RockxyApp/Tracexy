@@ -23,6 +23,33 @@ struct SessionExporterTests {
         #expect(rebuilt.map(\.id) == [session.id])
     }
 
+    @Test("Streaming a file for one session matches the in-memory filter for pcap and pcapng")
+    func streamingFrameMatchEqualsInMemory() throws {
+        let frames = SampleCapture.frames(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let sessions = SessionBuilder.build(from: frames, linkType: LinkType.ethernet)
+        let session = try #require(sessions.first { $0.host == "auth.example.com" })
+        let expected = SessionExporter.frames(matching: session.id, in: frames, defaultLinkType: LinkType.ethernet)
+        #expect(!expected.isEmpty)
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tracexy-export-stream-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let pcapURL = directory.appendingPathComponent("capture.pcap")
+        try PcapWriter.write(linkType: LinkType.ethernet, frames: frames, to: pcapURL)
+        let pcapngURL = directory.appendingPathComponent("capture.pcapng")
+        try PcapngWriter.write(defaultLinkType: LinkType.ethernet, frames: frames, to: pcapngURL)
+
+        for url in [pcapURL, pcapngURL] {
+            let streamed = try SessionExporter.frames(matching: session.id, streamingFrom: url)
+            #expect(streamed.linkType == LinkType.ethernet)
+            #expect(streamed.frames.map(\.bytes) == expected.map(\.bytes))
+            #expect(streamed.frames.map(\.originalLength) == expected.map(\.originalLength))
+            #expect(SessionBuilder.build(from: streamed.frames, linkType: LinkType.ethernet).map(\.id) == [session.id])
+        }
+    }
+
     @Test("Classic pcap artifact round-trips only the selected session")
     func pcapRoundTrip() throws {
         let fixture = try makeFixture()

@@ -12,7 +12,143 @@ struct TracexyApp: App {
     static let sessionInspectorWindowID = "session-inspector"
 
     var body: some Scene {
-        WindowGroup {
+        mainWindowScene
+
+        // Focus / Noise managers open as real Mac windows (not sheets), sharing the
+        // one app-level coordinator so edits flow straight back to the main window.
+        // The auxiliary editors are remounted on the Project identity, so a draft
+        // left open across a Project change cannot be saved into the new Project.
+        focusSetEditorScene
+        noiseControlScene
+
+        SessionInspectorWindowScene(
+            coordinator: coordinator,
+            colorScheme: colorScheme
+        )
+
+        settingsScene
+    }
+
+    // MARK: Private
+
+    /// Demo settings never share the production defaults domain. If Foundation
+    /// cannot create the dedicated suite, demo composition fails closed instead
+    /// of silently writing through `.standard`.
+    private static let isHistoryDemoMode = HistoryDemoLaunchMode.isEnabled()
+    private static let historyDemoDefaults: UserDefaults? = isHistoryDemoMode
+        ? HistoryDemoLaunchMode.freshSettingsDefaults()
+        : nil
+
+    private static var applicationDefaults: UserDefaults {
+        guard isHistoryDemoMode else {
+            return TracexyIdentity.applicationDefaults
+        }
+        guard let historyDemoDefaults else {
+            preconditionFailure("Synthetic History requires an isolated settings store.")
+        }
+        return historyDemoDefaults
+    }
+
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    /// The single shared coordinator, owned by the app so every scene (main
+    /// window + editor/manager windows) reads and mutates the same state.
+    ///
+    /// This is the composition root: the app's capacity limits are resolved
+    /// once, here, and handed down. No type below this line asks what build it
+    /// is running in.
+    @State private var coordinator = TracexyApp.composeCoordinator()
+    @StateObject private var updater = AppUpdater.shared
+
+    /// The user's General → Appearance preference, applied app-wide. `nil` follows
+    /// the system.
+    /// Appearance is an application preference, so it names the shared domain
+    /// explicitly and is unaffected by the per-Project settings suites.
+    @AppStorage(SettingsKeys.appearance, store: TracexyApp.applicationDefaults)
+    private var appearance = AppAppearance.system.rawValue
+
+    /// The Focus Set editor is a transient editing window: like the auxiliary
+    /// inspector it is excluded from state restoration so it cannot reopen empty
+    /// after a relaunch.
+    private var focusSetEditorScene: some Scene {
+        let base = Window("Edit Focus Set", id: Self.focusSetEditorWindowID) {
+            FocusSetEditorWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 600, height: 420)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Noise Control is a transient manager window on the same terms.
+    private var noiseControlScene: some Scene {
+        let base = Window("Noise Control", id: Self.noiseControlWindowID) {
+            NoiseControlWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 460, height: 560)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Settings is reopened on demand (⌘,). No window in this app is restored by
+    /// AppKit state restoration: with the main group excluded, a restored
+    /// auxiliary window would otherwise be the *only* window after a force-quit
+    /// relaunch, and SwiftUI would not open the main workspace beside it.
+    private var settingsScene: some Scene {
+        let base = Window("Settings", id: "settings") {
+            SettingsView(
+                updater: updater,
+                applicationDefaults: Self.applicationDefaults,
+                activeProjectName: coordinator.projectStore.activeProject.name,
+                isProjectReady: coordinator.hasHydratedProjects,
+                historyRetentionError: coordinator.historyRetentionError,
+                isHistoryDemoMode: coordinator.isHistoryDemoMode,
+                mcpScope: coordinator.mcpGrantScope,
+                assistant: coordinator.assistant,
+                mcpAccess: coordinator.mcpAccess,
+                onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }
+            )
+            // Capture, Privacy and default-view preferences belong to the active
+            // Project's own suite. Remounting on the Project identity is what stops
+            // an editor left open across a switch from applying one Project's draft
+            // to another; the panes that must stay app-wide (appearance, updater,
+            // helper, selected tab) name `.standard` explicitly.
+            .defaultAppStorage(coordinator.activeProjectDefaults)
+            .id(coordinator.projectStore.activeProjectID)
+            .disabled(coordinator.projectTransitionStatus.isPending)
+            .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 900, height: 640)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unified(showsTitle: true))
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// The one main workspace window. Its frame persists through the ordinary
+    /// window-frame autosave; AppKit *state* restoration is disabled because after
+    /// a force-quit or crash the restored window comes back beside the fresh one
+    /// SwiftUI opens for the group, leaving two identical main windows.
+    private var mainWindowScene: some Scene {
+        let base = WindowGroup {
             RootView(coordinator: coordinator)
                 .frame(minWidth: 1_000, minHeight: 640)
                 .preferredColorScheme(colorScheme)
@@ -24,17 +160,11 @@ struct TracexyApp: App {
                     AppThemeApplier.apply(AppAppearance(rawValue: newValue) ?? .system)
                 }
                 .task {
-                    appDelegate.coordinator = coordinator
+                    appDelegate.attach(coordinator, applicationDefaults: Self.applicationDefaults)
                     updater.startIfConfigured()
                     if AssistantDemoLaunchMode.prefersNarrowWindow() {
-                        // UI automation asks the app itself to use the smallest
-                        // supported content size. XCTest on macOS has no public
-                        // window-resize API, and coordinate drags make this
-                        // layout regression check dependent on desktop geometry.
                         await Task.yield()
-                        NSApplication.shared.keyWindow?.setContentSize(
-                            NSSize(width: 1_000, height: 640)
-                        )
+                        NSApplication.shared.keyWindow?.setContentSize(NSSize(width: 1_000, height: 640))
                     }
                 }
         }
@@ -44,6 +174,10 @@ struct TracexyApp: App {
         )
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
+        // A capture opened from Finder is handled by the app delegate as an
+        // import into the existing window; without this, SwiftUI also opens a
+        // second, empty main window for the same external event.
+        .handlesExternalEvents(matching: [])
         .commands {
             TracexySettingsCommands()
             TracexyProjectCommands(coordinator: coordinator)
@@ -113,100 +247,12 @@ struct TracexyApp: App {
             }
         }
 
-        // Focus / Noise managers open as real Mac windows (not sheets), sharing the
-        // one app-level coordinator so edits flow straight back to the main window.
-        // The auxiliary editors are remounted on the Project identity, so a draft
-        // left open across a Project change cannot be saved into the new Project.
-        Window("Edit Focus Set", id: Self.focusSetEditorWindowID) {
-            FocusSetEditorWindow(coordinator: coordinator)
-                .id(coordinator.projectStore.activeProjectID)
-                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
-                .preferredColorScheme(colorScheme)
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
         }
-        .defaultSize(width: 600, height: 420)
-        .windowResizability(.contentMinSize)
-        .windowToolbarStyle(.unifiedCompact)
-
-        Window("Noise Control", id: Self.noiseControlWindowID) {
-            NoiseControlWindow(coordinator: coordinator)
-                .id(coordinator.projectStore.activeProjectID)
-                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
-                .preferredColorScheme(colorScheme)
-        }
-        .defaultSize(width: 460, height: 560)
-        .windowResizability(.contentMinSize)
-        .windowToolbarStyle(.unifiedCompact)
-
-        SessionInspectorWindowScene(
-            coordinator: coordinator,
-            colorScheme: colorScheme
-        )
-
-        Window("Settings", id: "settings") {
-            SettingsView(
-                updater: updater,
-                applicationDefaults: Self.applicationDefaults,
-                activeProjectName: coordinator.projectStore.activeProject.name,
-                isProjectReady: coordinator.hasHydratedProjects,
-                historyRetentionError: coordinator.historyRetentionError,
-                isHistoryDemoMode: coordinator.isHistoryDemoMode,
-                mcpScope: coordinator.mcpGrantScope,
-                assistant: coordinator.assistant,
-                mcpAccess: coordinator.mcpAccess,
-                onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }
-            )
-            // Capture, Privacy and default-view preferences belong to the active
-            // Project's own suite. Remounting on the Project identity is what stops
-            // an editor left open across a switch from applying one Project's draft
-            // to another; the panes that must stay app-wide (appearance, updater,
-            // helper, selected tab) name `.standard` explicitly.
-            .defaultAppStorage(coordinator.activeProjectDefaults)
-            .id(coordinator.projectStore.activeProjectID)
-            .disabled(coordinator.projectTransitionStatus.isPending)
-            .preferredColorScheme(colorScheme)
-        }
-        .defaultSize(width: 900, height: 640)
-        .windowResizability(.contentMinSize)
-        .windowToolbarStyle(.unified(showsTitle: true))
     }
-
-    // MARK: Private
-
-    /// Demo settings never share the production defaults domain. If Foundation
-    /// cannot create the dedicated suite, demo composition fails closed instead
-    /// of silently writing through `.standard`.
-    private static let isHistoryDemoMode = HistoryDemoLaunchMode.isEnabled()
-    private static let historyDemoDefaults: UserDefaults? = isHistoryDemoMode
-        ? HistoryDemoLaunchMode.freshSettingsDefaults()
-        : nil
-
-    private static var applicationDefaults: UserDefaults {
-        guard isHistoryDemoMode else {
-            return TracexyIdentity.applicationDefaults
-        }
-        guard let historyDemoDefaults else {
-            preconditionFailure("Synthetic History requires an isolated settings store.")
-        }
-        return historyDemoDefaults
-    }
-
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    /// The single shared coordinator, owned by the app so every scene (main
-    /// window + editor/manager windows) reads and mutates the same state.
-    ///
-    /// This is the composition root: the app's capacity limits are resolved
-    /// once, here, and handed down. No type below this line asks what build it
-    /// is running in.
-    @State private var coordinator = TracexyApp.composeCoordinator()
-    @StateObject private var updater = AppUpdater.shared
-
-    /// The user's General → Appearance preference, applied app-wide. `nil` follows
-    /// the system.
-    /// Appearance is an application preference, so it names the shared domain
-    /// explicitly and is unaffected by the per-Project settings suites.
-    @AppStorage(SettingsKeys.appearance, store: TracexyApp.applicationDefaults)
-    private var appearance = AppAppearance.system.rawValue
 
     private var colorScheme: ColorScheme? {
         AppAppearance(rawValue: appearance)?.colorScheme

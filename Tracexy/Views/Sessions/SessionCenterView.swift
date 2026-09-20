@@ -62,6 +62,11 @@ struct SessionCenterView: View {
         let filterRules: [SessionFilterRule]
     }
 
+    /// Column sort chosen by clicking a header. Empty keeps the engine's stable
+    /// capture order (oldest→newest, rows updating in place), which stays the
+    /// default so a live list never reshuffles under the cursor unasked.
+    @State private var sortOrder: [KeyPathComparator<SessionSummary>] = []
+
     private var captureImportNotice: some View {
         HStack(spacing: Theme.Metrics.spacingM) {
             Image(systemName: "tray.and.arrow.down")
@@ -306,7 +311,8 @@ struct SessionCenterView: View {
     }
 
     private func sessionTable(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
-        Table(sessions, selection: Binding(
+        let ordered = sortOrder.isEmpty ? sessions : sessions.sorted(using: sortOrder)
+        return Table(ordered, selection: Binding(
             get: { workspace.selectedSessionID },
             // Guard the write-back: while a live rebuild replaces the rows,
             // NSTableView re-applies the selection *through this setter from
@@ -320,45 +326,45 @@ struct SessionCenterView: View {
                     workspace.selectedSessionID = newValue
                 }
             }
-        )) {
-            TableColumn("Time") { session in
+        ), sortOrder: $sortOrder) {
+            TableColumn("Time", value: \.sortableStartTime) { session in
                 timeCell(session.startTime)
             }
             .width(72)
-            TableColumn("Source") { session in
+            TableColumn("Source", value: \.sourceEndpoint) { session in
                 Text(session.sourceEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
-            TableColumn("Destination") { session in
+            TableColumn("Destination", value: \.destinationEndpoint) { session in
                 Text(session.destinationEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
-            TableColumn("Host") { session in
+            TableColumn("Host", value: \.host) { session in
                 Text(session.host).font(Theme.Typography.body).lineLimit(1)
             }
             .width(min: 120, ideal: 180)
-            TableColumn("Client") { session in
+            TableColumn("Client", value: \.sortableProcessName) { session in
                 clientCell(session)
             }
             .width(min: 90, ideal: 130)
-            TableColumn("Protocol") { session in
+            TableColumn("Protocol", value: \.primaryProtocolLabel) { session in
                 protocolPill(session.primaryProtocol)
             }
             .width(72)
-            TableColumn("Length") { session in
-                Text(ByteCountFormatter.string(fromByteCount: Int64(session.totalBytes), countStyle: .binary))
+            TableColumn("Length", value: \.totalBytes) { session in
+                Text(ByteUnits.string(Int64(session.totalBytes)))
                     .font(Theme.Typography.monoSmall)
                     .foregroundStyle(.secondary)
             }
             .width(72)
-            TableColumn("") { session in
+            TableColumn("", value: \.statusRank) { session in
                 Image(systemName: session.status.systemImage)
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(Theme.color(for: session.status))
                     .help(session.status.label)
             }
             .width(20)
-            TableColumn("Summary") { session in
+            TableColumn("Summary", value: \.infoSummary) { session in
                 Text(session.infoSummary)
                     .font(Theme.Typography.body)
                     .lineLimit(1)
@@ -432,7 +438,7 @@ struct SessionCenterView: View {
             }
             .width(72)
             TableColumn("Length") { (row: SessionRow) in
-                Text(ByteCountFormatter.string(fromByteCount: Int64(row.totalBytes), countStyle: .binary))
+                Text(ByteUnits.string(Int64(row.totalBytes)))
                     .font(Theme.Typography.monoSmall)
                     .foregroundStyle(.secondary)
             }
@@ -857,6 +863,6 @@ private struct LiveTrafficStrip: View {
 
     private var currentRate: String {
         let bytesPerSecond = coordinator.throughputSamples.last?.bytesPerSecond ?? 0
-        return "\(ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .binary))/s"
+        return "\(ByteUnits.string(Int64(bytesPerSecond)))/s"
     }
 }

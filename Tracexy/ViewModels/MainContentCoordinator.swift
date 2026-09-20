@@ -34,6 +34,7 @@ final class MainContentCoordinator {
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
         let bootDefaults = settingsDefaults ?? .standard
+        applicationDefaults = bootDefaults
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         let provider = projectDataProvider ?? DefaultProjectDataProvider()
@@ -252,6 +253,10 @@ final class MainContentCoordinator {
     var captureImportProgress: PcapStreamProgress?
     var captureImportName: String?
     var isCancellingCaptureImport = false
+    /// A capture handed in from outside the app's own picker (Finder "Open With",
+    /// a file dropped on the window) before Projects finished hydrating at launch.
+    /// Replayed exactly once when hydration completes; never persisted.
+    var pendingExternalCaptureURL: URL?
     @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
     @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
 
@@ -436,6 +441,10 @@ final class MainContentCoordinator {
     /// Injectable wall clock for History age policy. Production uses `Date()`;
     /// integration tests freeze it so cutoff behavior never depends on timing.
     let historyNow: @Sendable () -> Date
+
+    /// The app-wide settings store (General preferences that are not per Project).
+    /// Production uses `.standard`; the demo launch composes an isolated suite.
+    let applicationDefaults: UserDefaults
 
     /// The currently effective Auto-clear preference. The composition root sets
     /// it from persisted defaults at launch; Settings updates it synchronously
@@ -721,16 +730,6 @@ final class MainContentCoordinator {
     /// consumes this set instead of duplicating analysis rules over summaries.
     var findingSessionIDs: Set<UUID> {
         Set(findings.map(\.sessionID))
-    }
-
-    /// Unique processes with session counts, for the sidebar "All" group.
-    var processes: [(name: String, count: Int)] {
-        groupCounts { $0.processName ?? "—" }
-    }
-
-    /// Unique hosts with session counts.
-    var hosts: [(name: String, count: Int)] {
-        groupCounts(\.host)
     }
 
     /// Domains grouped by name, each carrying the set of server IPs it resolved
@@ -1662,6 +1661,12 @@ extension MainContentCoordinator {
                 // the last sample.
                 self.captureStatistics = statistics
                 self.ingest(frames, linkType: batchLinkType)
+                if let readFailure = batch.readFailure {
+                    // The frames above are the complete tail the source delivered
+                    // before it failed; settle the capture at that boundary.
+                    self.captureSourceDidFail(readFailure, captureToken: captureToken)
+                    return
+                }
                 if self.helperStopRequested {
                     self.performStopCapture()
                 }
@@ -1721,6 +1726,7 @@ extension MainContentCoordinator {
         }
         // Open + compile the filter synchronously so a bad snap length or BPF fails
         // before the capture is reported started, rather than after.
+        let token = startGeneration
         do {
             try live.start(
                 configuration: configuration,
@@ -1735,6 +1741,12 @@ extension MainContentCoordinator {
                         return
                     }
                     Task { @MainActor in coordinator.captureStatistics = sample }
+                },
+                onReadFailure: { [weak self] message in
+                    guard let coordinator = self else {
+                        return
+                    }
+                    Task { @MainActor in coordinator.captureSourceDidFail(message, captureToken: token) }
                 }
             )
         } catch {
@@ -1964,6 +1976,19 @@ extension MainContentCoordinator {
         }
     }
 
+    /// The capture source stopped on its own (libpcap reported a read error: the
+    /// interface went away or was reconfigured). Everything received so far is a
+    /// valid, complete-to-that-instant capture, so settle it exactly like an
+    /// explicit Stop — final fold, History entry, saved-file eligibility — and keep
+    /// the reason visible instead of leaving "Capturing" on with nothing arriving.
+    func captureSourceDidFail(_ message: String, captureToken: Int) {
+        guard isCapturing, startGeneration == captureToken else {
+            return
+        }
+        performStopCapture()
+        captureError = "Capture ended because the source stopped: \(message)"
+    }
+
     private func handleCaptureError(_ message: String) {
         pollTimer?.invalidate()
         pollTimer = nil
@@ -1980,13 +2005,5 @@ extension MainContentCoordinator {
         // attempt never reached a stopped-generation boundary, so the owed drain is
         // aborted by identity rather than matched against a token it never minted.
         abortOwedFinalCaptureDrain()
-    }
-
-    private func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
-        var totals: [String: Int] = [:]
-        for session in presentedSessions {
-            totals[key(session), default: 0] += 1
-        }
-        return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
     }
 }

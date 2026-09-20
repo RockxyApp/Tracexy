@@ -23,6 +23,16 @@ nonisolated struct TrafficRankingEntry: Identifiable, Equatable, Sendable {
 
 @MainActor
 extension MainContentCoordinator {
+    /// Unique processes with session counts, for the sidebar "All" group.
+    var processes: [(name: String, count: Int)] {
+        groupCounts { $0.processName ?? "—" }
+    }
+
+    /// Unique hosts with session counts.
+    var hosts: [(name: String, count: Int)] {
+        groupCounts(\.host)
+    }
+
     /// Capture sessions that remain available to presentation surfaces.
     /// `sessions` is the evidence-backed engine result; this reversible layer is
     /// the single privacy seam between that raw result and the UI.
@@ -146,7 +156,21 @@ extension MainContentCoordinator {
     /// several layers, so these counts legitimately overlap and do not sum to the
     /// session total. Every surface presenting them has to say so.
     func count(for proto: ProtocolKind) -> Int {
-        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
+        visibleProtocolCounts[proto] ?? 0
+    }
+
+    /// Every protocol's visible-session count from one pass over the visible set.
+    /// A surface that shows several counts at once (the sidebar lenses, the
+    /// Overview protocol mix) reads this once per render instead of re-filtering
+    /// the whole session list once per protocol on every live refresh.
+    var visibleProtocolCounts: [ProtocolKind: Int] {
+        var totals: [ProtocolKind: Int] = [:]
+        for session in visibleSessions {
+            for proto in Set(session.protocolStack) {
+                totals[proto, default: 0] += 1
+            }
+        }
+        return totals
     }
 
     nonisolated private struct RankingTotals {
@@ -319,5 +343,13 @@ extension MainContentCoordinator {
     func restoreRemovedSessions() {
         removedSessionIDs.removeAll()
         followLatestVisibleSession()
+    }
+
+    func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
+        var totals: [String: Int] = [:]
+        for session in presentedSessions {
+            totals[key(session), default: 0] += 1
+        }
+        return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
     }
 }
