@@ -8,6 +8,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     weak var coordinator: MainContentCoordinator?
 
+    /// Retire the preference keys that described an MCP listener, a port and an AI
+    /// provider none of which were ever implemented. Leaving stale values behind
+    /// would misrepresent what this build does, and nothing reads them.
+    func applicationDidFinishLaunching(_: Notification) {
+        SettingsKeys.removeRetiredKeys(from: TracexyIdentity.applicationDefaults)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let coordinator else {
             return .terminateNow

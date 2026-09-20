@@ -55,6 +55,57 @@ choice applies only to bounded summaries in the local History database. Tracexy 
 after accepting a terminal capture into History, and when the choice changes; it never deletes raw
 pcap/pcapng files, the live spool, exports, or the current workspace.
 
+### The MCP boundary
+
+MCP is free, and it is **off until you grant it**. Nothing is exposed by default.
+
+Tracexy bundles a read-only command-line tool at `Tracexy.app/Contents/MacOS/TracexyMCP`. It speaks
+JSON-RPC over stdin and stdout to a client you start. **It never opens a network port**, so nothing on
+your network or on this Mac can connect to it, and there is no listener to secure.
+
+What a client can ask for is deliberately small: the scope description, one page of stored captures,
+and one page of a capture's session summaries. There is no tool for packet bytes, capture files, file
+paths, raw frames, capture control, arbitrary SQL, or writes of any kind. Filtering is applied to the
+one examined page, and a process or host filter is refused unless you disclosed that field — so a
+filter can never be used to guess a value you kept private.
+
+Access is one grant you issue in **Settings → MCP & Assistant**. The grant names exactly one Project,
+that Project's History database, which field families are disclosed, and how many rows one request may
+read. It contains no token, credential, capture path, evidence locator or packet byte, is written
+owner-only and replaced atomically, and it expires. The tool re-reads and re-validates it on every
+call and refuses to answer when it is absent, malformed, expired, superseded, or names a different
+Project — so switching Projects or pressing **Revoke** stops the next call, not the next session. The
+History database is opened read-only, so an older database is refused rather than migrated.
+
+The same pane shows a bounded local activity trail: the time, the tool, the outcome, the Project, and
+the *names* of the filter fields a request used. It deliberately cannot record a filter value, a host,
+a process name, an endpoint, a path, or anything a client read back. Revoking deletes it.
+
+### The AI Assistant
+
+The Assistant is local-only in this build. It talks to a model endpoint on this Mac that you choose,
+and it sends no API key, bearer token, cookie or identifying header — there is nothing to leak,
+because there is no credential anywhere in the path. Only `127.0.0.1`, `::1` and `localhost` are
+accepted; `localhost` is canonicalized to `127.0.0.1`. A remote address, a URL carrying a user name
+or password, an unsupported scheme, and any redirect that leaves this Mac are refused before a
+request is made.
+
+What is sent is one bounded evidence brief for the **selected session only**. It cannot contain packet
+bytes, payload bodies, URLs, certificates, file paths, database paths, evidence locators,
+capture-source tokens or credentials — those fields do not exist in it. Process, display host and
+endpoint disclosure are separate opt-ins that start **off**. The display host can contain a name
+derived from DNS or TLS SNI when the Host option is on; the exact value is visible in Review Data.
+
+Before the first send, and again whenever the Project, selected session, evidence publication,
+disclosure, endpoint or model changes, Tracexy shows the **Review Data** sheet: the literal JSON that
+would be sent, the destination and model, the disclosure decision, and the coverage limits that bound
+any answer. Nothing is sent until you approve it there.
+
+Answers stream, and an answer that was stopped or that hit a limit is always labelled incomplete —
+partial text is never presented as a conclusion. Citations in an answer resolve to frames this capture
+actually holds; an id the model invents resolves to nothing rather than to a wrong frame.
+Conversations live in memory for the life of the app session and are not written to disk.
+
 ## The privileged helper and trust boundary
 
 Live capture runs in a separate, signed privileged binary (`TracexyCaptureHelper/`) that communicates

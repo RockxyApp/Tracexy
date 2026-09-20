@@ -185,8 +185,9 @@ These are deliberate statements of present capability, not hidden roadmap promis
 - No deep HTTP/2, HTTP/3, or WebSocket decoder.
 - History persists terminal capture/session summaries, not a raw-packet capture database.
 - Findings are selected evidence-linked local observations, not a comprehensive durable security engine.
-- A transport-neutral read-only History automation core exists, but there is no CLI target, MCP server, listener, provider, or AI data path.
-- Protected `.tracexysession` export enforces payload/metadata protections; raw pcap/pcapng stays byte-preserving. Automatic retention cleanup is not implemented.
+- A free, read-only MCP stdio executable exposes three bounded History tools for one explicitly granted Project; it opens no listener and exposes no capture control or raw frames.
+- The in-app AI Assistant sends a reviewed, bounded selected-session brief only to a validated local model endpoint. Remote/BYOK providers are not implemented in this Community checkout.
+- Protected `.tracexysession` export enforces payload/metadata protections; raw pcap/pcapng stays byte-preserving. History retention is boundary-triggered rather than a periodic background scheduler.
 
 ## Privacy and security
 

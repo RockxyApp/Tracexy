@@ -296,18 +296,6 @@ struct OverviewTalkerTable: View {
 
     @State private var selection: TrafficRankingEntry.ID?
 
-    private static func bytes(_ count: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .binary)
-    }
-
-    private static func percent(_ fraction: Double) -> String {
-        let clamped = min(max(fraction, 0), 1)
-        if clamped > 0, clamped < 0.01 {
-            return "<1%"
-        }
-        return clamped.formatted(.percent.precision(.fractionLength(0)))
-    }
-
     private var leadingBytes: Int {
         max(1, rows.map(\.totalBytes).max() ?? 1)
     }
@@ -337,6 +325,18 @@ struct OverviewTalkerTable: View {
         Text(text)
             .monospacedDigit()
             .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private static func bytes(_ count: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .binary)
+    }
+
+    private static func percent(_ fraction: Double) -> String {
+        let clamped = min(max(fraction, 0), 1)
+        if clamped > 0, clamped < 0.01 {
+            return "<1%"
+        }
+        return clamped.formatted(.percent.precision(.fractionLength(0)))
     }
 }
 

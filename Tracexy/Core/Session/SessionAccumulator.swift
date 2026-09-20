@@ -206,15 +206,6 @@ nonisolated struct SessionAccumulator {
     /// beside the tables. Reset with them at every capture boundary.
     private var trafficTimeline = TrafficTimelineAccumulator()
 
-    /// A frame's direction relative to the client of the session it just folded
-    /// into — the same client `SessionSummary.bytesUp` is measured against.
-    private func trafficDirection(of packet: DecodedPacket) -> TrafficDirection {
-        guard let key = packet.fiveTuple, let state = states[key] else {
-            return .unattributed
-        }
-        return packet.sourceEndpoint == state.client ? .sent : .received
-    }
-
     /// Apply the connection table's bounded first-record application metadata to a
     /// local packet copy. This is the exact enrichment the session-owned reassembler
     /// used to perform inline, moved to the single connection owner: the reassembled
@@ -235,6 +226,15 @@ nonisolated struct SessionAccumulator {
         packet.dnsAnswersOmittedCount = max(packet.dnsAnswersOmittedCount, metadata.dnsAnswersOmittedCount)
         packet.layers.removeAll { $0.proto == metadata.appProtocol }
         packet.layers.append(contentsOf: metadata.layers)
+    }
+
+    /// A frame's direction relative to the client of the session it just folded
+    /// into — the same client `SessionSummary.bytesUp` is measured against.
+    private func trafficDirection(of packet: DecodedPacket) -> TrafficDirection {
+        guard let key = packet.fiveTuple, let state = states[key] else {
+            return .unattributed
+        }
+        return packet.sourceEndpoint == state.client ? .sent : .received
     }
 
     // MARK: Private session fold
@@ -291,6 +291,12 @@ private extension SessionAccumulator {
 
         // MARK: Internal
 
+        /// The session's client endpoint as currently known: the earliest timed
+        /// packet's source, or the first-seen source once any frame is untimed.
+        var client: IPEndpoint? {
+            untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
+        }
+
         /// Fold a subsequent packet of the same five-tuple. `merge` also updates
         /// the representatives; the first packet is folded via `fold` directly
         /// from `init`, where the representatives are already seeded.
@@ -328,12 +334,6 @@ private extension SessionAccumulator {
             }
             fold(packet)
             return becameRepresentative
-        }
-
-        /// The session's client endpoint as currently known: the earliest timed
-        /// packet's source, or the first-seen source once any frame is untimed.
-        var client: IPEndpoint? {
-            untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
         }
 
         func summary(key: FiveTuple, resolved: [String: String]) -> SessionSummary {

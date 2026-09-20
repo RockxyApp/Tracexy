@@ -101,18 +101,7 @@ struct OverviewView: View {
     /// findings among them, the traffic timeline and its rendered columns, and
     /// the rollups the panels draw. Built once at the top of `body`.
     private struct Report {
-        let sessions: [SessionSummary]
-        let findings: [Finding]
-        let timeline: TrafficTimeline
-        let points: [TrafficTimelinePoint]
-        let scopedBytes: Int
-        let protocolShare: [(kind: ProtocolKind?, bytes: Int)]
-        let topHosts: [TrafficRankingEntry]
-        let topApps: [TrafficRankingEntry]
-        let sources: (apps: Int, domains: Int, addresses: Int)
-        let findingMarkers: [OverviewFindingMarker]
-        let hasTraffic: Bool
-        let presentedSessionCount: Int
+        // MARK: Lifecycle
 
         init(coordinator: MainContentCoordinator) {
             let sessions = coordinator.visibleSessions
@@ -132,6 +121,21 @@ struct OverviewView: View {
             presentedSessionCount = coordinator.presentedSessions.count
             hasTraffic = !timeline.isEmpty || presentedSessionCount > 0
         }
+
+        // MARK: Internal
+
+        let sessions: [SessionSummary]
+        let findings: [Finding]
+        let timeline: TrafficTimeline
+        let points: [TrafficTimelinePoint]
+        let scopedBytes: Int
+        let protocolShare: [(kind: ProtocolKind?, bytes: Int)]
+        let topHosts: [TrafficRankingEntry]
+        let topApps: [TrafficRankingEntry]
+        let sources: (apps: Int, domains: Int, addresses: Int)
+        let findingMarkers: [OverviewFindingMarker]
+        let hasTraffic: Bool
+        let presentedSessionCount: Int
 
         /// Width of one rendered column; chooses whether the axis needs seconds.
         var columnWidth: TimeInterval {
@@ -181,21 +185,6 @@ struct OverviewView: View {
         return "Live capture on \(linkTypeName)"
     }
 
-    private func statusTitle(hasTraffic: Bool) -> String {
-        if coordinator.isOpeningSavedCapture {
-            return "Loading"
-        }
-        if isSaved {
-            return "Saved"
-        }
-        return switch coordinator.captureDisplayState {
-        case .capturing: "Running"
-        case .starting: "Starting"
-        case .error: "Error"
-        case .stopped: hasTraffic ? "Stopped" : "Ready"
-        }
-    }
-
     private var statusTint: Color {
         if coordinator.isOpeningSavedCapture {
             return .secondary
@@ -230,18 +219,6 @@ struct OverviewView: View {
         }
     }
 
-    /// Exact for a saved file; the kernel-received count for a live capture when
-    /// available, otherwise the frames the fold accepted. Never a fabricated total.
-    private func frameCount(_ timeline: TrafficTimeline) -> Int {
-        if isSaved {
-            return coordinator.savedCaptureActivity?.totalFrames ?? timeline.totals.frames
-        }
-        if let received = coordinator.captureStatistics?.received {
-            return Int(received)
-        }
-        return timeline.totals.frames
-    }
-
     private var fidelityValue: String {
         if isSaved {
             return "Unknown"
@@ -262,22 +239,92 @@ struct OverviewView: View {
         return (stats.isLossy || coordinator.helperBufferDropCount > 0) ? .orange : .green
     }
 
-    /// Scoped findings placed at the instant of their first timed cited frame, in
-    /// time order, sampled evenly past the cap so the axis shows where findings
-    /// cluster across the whole capture. A finding whose evidence carries no
-    /// capture time cannot be placed and is counted only in the findings panel.
-    private static func findingMarkers(for findings: [Finding]) -> [OverviewFindingMarker] {
-        let placed = findings
-            .compactMap { finding -> OverviewFindingMarker? in
-                guard let date = finding.citedFrames.compactMap(\.timestamp).min() else {
-                    return nil
-                }
-                return OverviewFindingMarker(
-                    id: finding.id, date: date, severity: finding.severity, title: finding.title
-                )
+    private var savedHealthRows: [OverviewFactTable.Row] {
+        [
+            .init(label: "Format", value: savedFormat),
+            .init(label: "Size", value: byteString(coordinator.activeSavedCapture?.byteCount ?? 0)),
+            .init(label: "Frames", value: frameCount(coordinator.trafficTimeline).formatted()),
+            .init(label: "Dropped", value: "Not recorded in the file"),
+        ]
+    }
+
+    private var liveHealthRows: [OverviewFactTable.Row] {
+        let stats = coordinator.captureStatistics
+        let helperDrops = coordinator.helperBufferDropCount
+        var rows: [OverviewFactTable.Row] = [
+            .init(
+                label: "Dropped",
+                value: "Kernel \(stats.map { $0.totalDropped.formatted() } ?? "—"), helper \(helperDrops.formatted())",
+                tint: (stats?.isLossy == true || helperDrops > 0) ? .orange : .primary
+            ),
+            .init(
+                label: "In memory",
+                value: "\(coordinator.retainedFrameCount.formatted()) of \(coordinator.retainedFrameCapacity.formatted()) frames"
+            ),
+            .init(label: "Save format", value: "PCAPNG"),
+        ]
+        if coordinator.retainedFrameEvictionCount > 0 {
+            rows.append(.init(
+                label: "On disk only",
+                value: "\(coordinator.retainedFrameEvictionCount.formatted()) older frames"
+            ))
+        }
+        return rows
+    }
+
+    private var figureDivider: some View {
+        Divider().padding(.vertical, Theme.Metrics.spacingL)
+    }
+
+    // MARK: Capture health and storage
+
+    /// Where the capture lives and how complete it is. Drops are reported here so
+    /// a green figure never implies a complete capture and an absent one never
+    /// reads as clean.
+    private var healthCard: some View {
+        OverviewPanel(
+            isSaved ? "File" : "Capture health",
+            caption: isSaved ? "Saved on disk" : "Unsaved live capture"
+        ) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
+                Text(fidelityValue)
+                    .font(Theme.Typography.metric)
+                    .foregroundStyle(fidelityTint)
+                    .monospacedDigit()
+                Text("fidelity")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
             }
-            .sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
-        return Self.sampled(placed, limit: Self.maximumFindingMarkers)
+            .accessibilityElement(children: .combine)
+            OverviewFactTable(rows: isSaved ? savedHealthRows : liveHealthRows)
+        } accessory: {
+            if isSaved {
+                Button("Show in Library") { coordinator.activeWorkspace.navigatorMode = .library }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+            } else {
+                Button("Save Capture…") { coordinator.saveCurrentCapture() }
+                    .buttonStyle(.link)
+                    .font(Theme.Typography.captionMedium)
+                    .disabled(!coordinator.canSaveCapture)
+                    .help("Write the complete disk-backed capture to a .pcapng under Application Support")
+            }
+        }
+    }
+
+    // MARK: Empty state
+
+    private var emptyCard: some View {
+        card {
+            ContentUnavailableView {
+                Label(isSaved ? "No frames in this file" : "No traffic yet", systemImage: "waveform.path.ecg")
+            } description: {
+                Text(isSaved
+                    ? "This file holds no accepted frames."
+                    : "Start a capture or open a file. The report fills in as frames arrive.")
+            }
+            .frame(maxWidth: .infinity, minHeight: 220)
+        }
     }
 
     // MARK: Layout
@@ -478,10 +525,6 @@ struct OverviewView: View {
         }
     }
 
-    private var figureDivider: some View {
-        Divider().padding(.vertical, Theme.Metrics.spacingL)
-    }
-
     private func figure(_ label: String, value: String, tint: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             Text(label)
@@ -515,7 +558,11 @@ struct OverviewView: View {
             HStack(spacing: Theme.Metrics.spacingL) {
                 if timeline.totals.hasDirectionalBytes {
                     valueChip("Sent", value: byteString(timeline.totals.sentBytes), color: Theme.Traffic.sent)
-                    valueChip("Received", value: byteString(timeline.totals.receivedBytes), color: Theme.Traffic.received)
+                    valueChip(
+                        "Received",
+                        value: byteString(timeline.totals.receivedBytes),
+                        color: Theme.Traffic.received
+                    )
                 } else {
                     valueChip("Total", value: byteString(timeline.totals.bytes), color: .accentColor)
                 }
@@ -523,16 +570,8 @@ struct OverviewView: View {
         }
     }
 
-    private func activityCaption(_ timeline: TrafficTimeline) -> String {
-        if timeline.firstTimedFrame == nil {
-            return timeline.isEmpty ? "Waiting for traffic" : "No timed frames"
-        }
-        let width = timeline.bucketWidth
-        let slices = width < 60 ? "\(Int(width))-second" : "\(Int(width / 60))-minute"
-        return "Wire bytes in \(slices) slices across the whole capture"
-    }
-
-    @ViewBuilder private func activityChart(_ report: Report) -> some View {
+    @ViewBuilder
+    private func activityChart(_ report: Report) -> some View {
         let timeline = report.timeline
         if timeline.firstTimedFrame != nil {
             OverviewTrafficTimelineChart(
@@ -555,7 +594,8 @@ struct OverviewView: View {
         }
     }
 
-    @ViewBuilder private func activityFooter(_ report: Report) -> some View {
+    @ViewBuilder
+    private func activityFooter(_ report: Report) -> some View {
         let timeline = report.timeline
         let markers = report.findingMarkers
         let total = report.findings.count
@@ -582,13 +622,6 @@ struct OverviewView: View {
                 Spacer(minLength: 0)
             }
         }
-    }
-
-    private func findingAxisLabel(placed: Int, total: Int) -> String {
-        if placed < total {
-            return "\(placed.formatted()) of \(total.formatted()) findings on the axis"
-        }
-        return total == 1 ? "1 finding on the axis" : "\(total.formatted()) findings on the axis"
     }
 
     // MARK: Secondary charts
@@ -636,32 +669,6 @@ struct OverviewView: View {
         }
     }
 
-    /// Visible sessions bucketed by start instant onto the rendered traffic
-    /// columns, so the two charts share one axis and one slice width.
-    private static func sessionStartColumns(_ report: Report) -> [OverviewSessionStartChart.Column] {
-        let points = report.points
-        guard let first = points.first else {
-            return []
-        }
-        let width = report.columnWidth
-        var counts = [Int](repeating: 0, count: points.count)
-        for session in report.sessions {
-            guard let start = session.startTime else {
-                continue
-            }
-            let offset = start.timeIntervalSince(first.date)
-            let index = width > 0 ? Int((offset / width).rounded(.down)) : 0
-            guard index >= 0, index < counts.count else {
-                continue
-            }
-            counts[index] += 1
-        }
-        guard counts.contains(where: { $0 > 0 }) else {
-            return []
-        }
-        return points.indices.map { OverviewSessionStartChart.Column(date: points[$0].date, count: counts[$0]) }
-    }
-
     // MARK: Detail tables
 
     private func hostsTableCard(_ report: Report) -> some View {
@@ -707,7 +714,8 @@ struct OverviewView: View {
 
     /// The severity rollup and its single route into the Sessions workflow.
     /// Overview never duplicates the finding evidence list.
-    @ViewBuilder private func findingSummaryBar(_ all: [Finding]) -> some View {
+    @ViewBuilder
+    private func findingSummaryBar(_ all: [Finding]) -> some View {
         let sessionCount = Set(all.map(\.sessionID)).count
         if all.isEmpty {
             Label("None in scope", systemImage: "checkmark.seal")
@@ -773,84 +781,6 @@ struct OverviewView: View {
         .accessibilityLabel("\(label): \(count > 0 ? count.formatted() : missing)")
     }
 
-    // MARK: Capture health and storage
-
-    /// Where the capture lives and how complete it is. Drops are reported here so
-    /// a green figure never implies a complete capture and an absent one never
-    /// reads as clean.
-    private var healthCard: some View {
-        OverviewPanel(isSaved ? "File" : "Capture health", caption: isSaved ? "Saved on disk" : "Unsaved live capture") {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
-                Text(fidelityValue)
-                    .font(Theme.Typography.metric)
-                    .foregroundStyle(fidelityTint)
-                    .monospacedDigit()
-                Text("fidelity")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            OverviewFactTable(rows: isSaved ? savedHealthRows : liveHealthRows)
-        } accessory: {
-            if isSaved {
-                Button("Show in Library") { coordinator.activeWorkspace.navigatorMode = .library }
-                    .buttonStyle(.link)
-                    .font(Theme.Typography.captionMedium)
-            } else {
-                Button("Save Capture…") { coordinator.saveCurrentCapture() }
-                    .buttonStyle(.link)
-                    .font(Theme.Typography.captionMedium)
-                    .disabled(!coordinator.canSaveCapture)
-                    .help("Write the complete disk-backed capture to a .pcapng under Application Support")
-            }
-        }
-    }
-
-    private var savedHealthRows: [OverviewFactTable.Row] {
-        [
-            .init(label: "Format", value: savedFormat),
-            .init(label: "Size", value: byteString(coordinator.activeSavedCapture?.byteCount ?? 0)),
-            .init(label: "Frames", value: frameCount(coordinator.trafficTimeline).formatted()),
-            .init(label: "Dropped", value: "Not recorded in the file"),
-        ]
-    }
-
-    private var liveHealthRows: [OverviewFactTable.Row] {
-        let stats = coordinator.captureStatistics
-        let helperDrops = coordinator.helperBufferDropCount
-        var rows: [OverviewFactTable.Row] = [
-            .init(
-                label: "Dropped",
-                value: "Kernel \(stats.map { $0.totalDropped.formatted() } ?? "—"), helper \(helperDrops.formatted())",
-                tint: (stats?.isLossy == true || helperDrops > 0) ? .orange : .primary
-            ),
-            .init(
-                label: "In memory",
-                value: "\(coordinator.retainedFrameCount.formatted()) of \(coordinator.retainedFrameCapacity.formatted()) frames"
-            ),
-            .init(label: "Save format", value: "PCAPNG"),
-        ]
-        if coordinator.retainedFrameEvictionCount > 0 {
-            rows.append(.init(label: "On disk only", value: "\(coordinator.retainedFrameEvictionCount.formatted()) older frames"))
-        }
-        return rows
-    }
-
-    // MARK: Empty state
-
-    private var emptyCard: some View {
-        card {
-            ContentUnavailableView {
-                Label(isSaved ? "No frames in this file" : "No traffic yet", systemImage: "waveform.path.ecg")
-            } description: {
-                Text(isSaved
-                    ? "This file holds no accepted frames."
-                    : "Start a capture or open a file. The report fills in as frames arrive.")
-            }
-            .frame(maxWidth: .infinity, minHeight: 220)
-        }
-    }
-
     // MARK: Building blocks
 
     private func card(
@@ -890,6 +820,93 @@ struct OverviewView: View {
             .font(Theme.Typography.body)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+    }
+
+    /// Scoped findings placed at the instant of their first timed cited frame, in
+    /// time order, sampled evenly past the cap so the axis shows where findings
+    /// cluster across the whole capture. A finding whose evidence carries no
+    /// capture time cannot be placed and is counted only in the findings panel.
+    private static func findingMarkers(for findings: [Finding]) -> [OverviewFindingMarker] {
+        let placed = findings
+            .compactMap { finding -> OverviewFindingMarker? in
+                guard let date = finding.citedFrames.compactMap(\.timestamp).min() else {
+                    return nil
+                }
+                return OverviewFindingMarker(
+                    id: finding.id, date: date, severity: finding.severity, title: finding.title
+                )
+            }
+            .sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
+        return Self.sampled(placed, limit: Self.maximumFindingMarkers)
+    }
+
+    /// Visible sessions bucketed by start instant onto the rendered traffic
+    /// columns, so the two charts share one axis and one slice width.
+    private static func sessionStartColumns(_ report: Report) -> [OverviewSessionStartChart.Column] {
+        let points = report.points
+        guard let first = points.first else {
+            return []
+        }
+        let width = report.columnWidth
+        var counts = [Int](repeating: 0, count: points.count)
+        for session in report.sessions {
+            guard let start = session.startTime else {
+                continue
+            }
+            let offset = start.timeIntervalSince(first.date)
+            let index = width > 0 ? Int((offset / width).rounded(.down)) : 0
+            guard index >= 0, index < counts.count else {
+                continue
+            }
+            counts[index] += 1
+        }
+        guard counts.contains(where: { $0 > 0 }) else {
+            return []
+        }
+        return points.indices.map { OverviewSessionStartChart.Column(date: points[$0].date, count: counts[$0]) }
+    }
+
+    private func statusTitle(hasTraffic: Bool) -> String {
+        if coordinator.isOpeningSavedCapture {
+            return "Loading"
+        }
+        if isSaved {
+            return "Saved"
+        }
+        return switch coordinator.captureDisplayState {
+        case .capturing: "Running"
+        case .starting: "Starting"
+        case .error: "Error"
+        case .stopped: hasTraffic ? "Stopped" : "Ready"
+        }
+    }
+
+    /// Exact for a saved file; the kernel-received count for a live capture when
+    /// available, otherwise the frames the fold accepted. Never a fabricated total.
+    private func frameCount(_ timeline: TrafficTimeline) -> Int {
+        if isSaved {
+            return coordinator.savedCaptureActivity?.totalFrames ?? timeline.totals.frames
+        }
+        if let received = coordinator.captureStatistics?.received {
+            return Int(received)
+        }
+        return timeline.totals.frames
+    }
+
+    private func activityCaption(_ timeline: TrafficTimeline) -> String {
+        if timeline.firstTimedFrame == nil {
+            return timeline.isEmpty ? "Waiting for traffic" : "No timed frames"
+        }
+        let width = timeline.bucketWidth
+        let slices = width < 60 ? "\(Int(width))-second" : "\(Int(width / 60))-minute"
+        return "Wire bytes in \(slices) slices across the whole capture"
+    }
+
+    private func findingAxisLabel(placed: Int, total: Int) -> String {
+        if placed < total {
+            return "\(placed.formatted()) of \(total.formatted()) findings on the axis"
+        }
+        return total == 1 ? "1 finding on the axis" : "\(total.formatted()) findings on the axis"
     }
 
     private func durationValue(at now: Date, timeline: TrafficTimeline) -> String {

@@ -289,6 +289,19 @@ enum Theme {
         static let contentTintStrokeOpacity = 0.20
     }
 
+    // MARK: Traffic direction
+
+    /// Series colours for bytes by session direction, shared by the Overview
+    /// timeline, its legend and every stacked ranking bar so "sent" reads the
+    /// same everywhere. Two adjacent cool hues: they belong to one measure and
+    /// are read against each other, not against the protocol accents.
+    enum Traffic {
+        static let sent = Color.blue
+        static let received = Color.cyan
+        /// Bytes no session claimed (tupleless frames).
+        static let unattributed = Color.secondary.opacity(0.55)
+    }
+
     // MARK: Protocol accents
 
     static func color(for kind: ProtocolKind) -> Color {
@@ -311,19 +324,6 @@ enum Theme {
         case .websocket: .pink
         case .stun: .yellow
         }
-    }
-
-    // MARK: Traffic direction
-
-    /// Series colours for bytes by session direction, shared by the Overview
-    /// timeline, its legend and every stacked ranking bar so "sent" reads the
-    /// same everywhere. Two adjacent cool hues: they belong to one measure and
-    /// are read against each other, not against the protocol accents.
-    enum Traffic {
-        static let sent = Color.blue
-        static let received = Color.cyan
-        /// Bytes no session claimed (tupleless frames).
-        static let unattributed = Color.secondary.opacity(0.55)
     }
 
     // MARK: Session status

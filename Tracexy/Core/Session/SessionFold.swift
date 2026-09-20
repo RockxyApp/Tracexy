@@ -51,20 +51,7 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
 /// produced; `connections` and `datagramEvidence` are additive evidence. Nothing
 /// here is exposed in Views yet.
 nonisolated struct SessionFoldSnapshot: Sendable {
-    let sessions: [SessionSummary]
-    let connections: ConnectionTable.Snapshot
-    /// Bounded, cross-path-equal DNS/ICMP datagram evidence for the same ordered
-    /// frames. Additive alongside `connections`; keyed by tuple-derived session id.
-    let datagramEvidence: DatagramEvidenceTable.Snapshot
-    /// Bounded, cross-path-equal TLS record evidence for the same ordered frames.
-    /// Additive alongside `datagramEvidence`; keyed by tuple-derived session id. Direct
-    /// per-frame records are retained with exact provenance; multi-frame recovered
-    /// records are excluded-counted, never cited.
-    let tlsEvidence: TLSEvidenceTable.Snapshot
-    /// Bounded capture-wide bytes over time, split by session direction, for the
-    /// same accepted frames. Additive; callers that assemble a snapshot from parts
-    /// without a timeline get an empty one.
-    let trafficTimeline: TrafficTimeline
+    // MARK: Lifecycle
 
     init(
         sessions: [SessionSummary],
@@ -79,4 +66,21 @@ nonisolated struct SessionFoldSnapshot: Sendable {
         self.tlsEvidence = tlsEvidence
         self.trafficTimeline = trafficTimeline
     }
+
+    // MARK: Internal
+
+    let sessions: [SessionSummary]
+    let connections: ConnectionTable.Snapshot
+    /// Bounded, cross-path-equal DNS/ICMP datagram evidence for the same ordered
+    /// frames. Additive alongside `connections`; keyed by tuple-derived session id.
+    let datagramEvidence: DatagramEvidenceTable.Snapshot
+    /// Bounded, cross-path-equal TLS record evidence for the same ordered frames.
+    /// Additive alongside `datagramEvidence`; keyed by tuple-derived session id. Direct
+    /// per-frame records are retained with exact provenance; multi-frame recovered
+    /// records are excluded-counted, never cited.
+    let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded capture-wide bytes over time, split by session direction, for the
+    /// same accepted frames. Additive; callers that assemble a snapshot from parts
+    /// without a timeline get an empty one.
+    let trafficTimeline: TrafficTimeline
 }
