@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Defer bottom-inspector collapse and expansion until AppKit finishes the current layout pass, avoiding a window-constraint crash during SwiftUI updates.
 - Bound the transport payload by the IP-declared length so Ethernet padding and trailers are no longer counted as TCP sequence space, which produced false overlap and retransmission findings and leaked into Follow Stream.
 - Stop decoding a transport header out of non-first IP fragments and out of IPv4 headers shorter than 20 bytes; those frames no longer invent endpoints or sessions.
 - Record a TCP reset that arrives after an orderly close as a reset observation, so a session shown as an error also carries the matching finding and evidence.
