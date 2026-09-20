@@ -89,10 +89,8 @@ struct CaptureInfoView: View {
             if let url = snapshot.fileURL {
                 LabeledContent("Where") {
                     HStack(spacing: Theme.Metrics.spacingS) {
-                        Text(url.deletingLastPathComponent().path)
+                        Text("On this Mac")
                             .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
                         Button("Reveal in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         }

@@ -415,6 +415,22 @@ struct WorkspacePresentationContractTests {
         #expect(!persistence.contains("removeItem(at: capture.url)"))
     }
 
+    @Test("Capture locations stay private in default Library and recovery copy")
+    func captureLocationCopyIsNeutral() throws {
+        let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")
+        let center = try readProjectFile("Tracexy/Views/Sessions/SessionCenterView.swift")
+        let info = try readProjectFile("Tracexy/Views/CaptureInfo/CaptureInfoView.swift")
+
+        #expect(sidebar.contains("Opened in place on this Mac"))
+        #expect(!sidebar.contains("Opened in place from \\(capture.url.path)"))
+        #expect(!center.contains("\\(capture.url.path)"))
+        #expect(info.contains("Text(\"On this Mac\")"))
+        #expect(!info.contains("Text(url.deletingLastPathComponent().path)"))
+        // The path remains available only behind explicit user actions.
+        #expect(sidebar.contains("Button(\"Copy Path\", systemImage: \"doc.on.doc\")"))
+        #expect(info.contains("Button(\"Reveal in Finder\")"))
+    }
+
     @Test("Sources category rows expose full-width context actions")
     func sourceCategoryRowsHaveContextMenus() throws {
         let sidebar = try readProjectFile("Tracexy/Views/Sidebar/SidebarView.swift")

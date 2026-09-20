@@ -833,8 +833,8 @@ struct SidebarView: View {
     private static func availabilityHelp(_ capture: SavedCapture) -> String {
         switch capture.availability {
         case .managed: ""
-        case .available: "Opened in place from \(capture.url.path)"
-        case .missing: "The referenced file can’t be found at \(capture.url.path)"
+        case .available: "Opened in place on this Mac"
+        case .missing: "The referenced file on this Mac can’t be found"
         case .changed: "The referenced file changed on disk"
         }
     }

@@ -354,8 +354,8 @@ struct SessionCenterView: View {
                     .font(Theme.Typography.bodyEmphasis)
                 Text(
                     capture.availability == .missing
-                        ? "This Library item refers to a file that is no longer at \(capture.url.path). Locate it to open the capture."
-                        : "The file at \(capture.url.path) no longer matches the capture this item refers to. Locate the original, or reload to read the current file."
+                        ? "The original file for this Library item is no longer available on this Mac. Locate it to open the capture."
+                        : "The original file for this Library item changed on this Mac. Locate the original, or reload to read the current file."
                 )
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
