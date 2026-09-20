@@ -171,8 +171,8 @@ struct MCPSettingsView: View {
 
     private var clientConfiguration: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            SettingsRow(label: "Command") {
-                Text(access.bundledCommandPath)
+            SettingsRow(label: "Inside Tracexy.app") {
+                Text("Contents/MacOS/TracexyMCP")
                     .font(Theme.Typography.monoSmall)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -180,22 +180,19 @@ struct MCPSettingsView: View {
             }
             SettingsIndented {
                 VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                    Text(access.clientConfigurationSnippet)
-                        .font(Theme.Typography.monoMicro)
-                        .textSelection(.enabled)
-                        .padding(Theme.Metrics.spacingM)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            .quaternary,
-                            in: RoundedRectangle(
-                                cornerRadius: Theme.Metrics.contextTableCornerRadius,
-                                style: .continuous
-                            )
-                        )
+                    SettingsFootnote(
+                        """
+                        This is the location inside the Tracexy app on your Mac. Copying the client configuration \
+                        inserts the full path to this installation so your MCP client can launch it. That path may \
+                        include your Mac account name: keep the copied JSON in your local client settings and copy \
+                        it again if you move the app.
+                        """
+                    )
                     Button("Copy Client Configuration") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(access.clientConfigurationSnippet, forType: .string)
                     }
+                    .disabled(access.clientConfigurationSnippet.isEmpty)
                     .accessibilityIdentifier("mcp.copyConfig")
                 }
             }

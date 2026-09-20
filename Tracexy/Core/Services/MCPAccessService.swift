@@ -224,16 +224,31 @@ final class MCPAccessModel {
     /// A ready-to-paste client configuration fragment. It names the bundled
     /// command and nothing else — no port, host, token or database path.
     var clientConfigurationSnippet: String {
-        """
-        {
-          "mcpServers": {
-            "tracexy": {
-              "command": "\(bundledCommandPath)",
-              "args": []
-            }
-          }
+        Self.clientConfigurationSnippet(commandPath: bundledCommandPath)
+    }
+
+    /// Encode the local app path as JSON: installation folders can contain
+    /// quotes, backslashes or other characters that need escaping.
+    static func clientConfigurationSnippet(commandPath: String) -> String {
+        struct Server: Encodable {
+            let command: String
+            let args: [String]
         }
-        """
+        struct Configuration: Encodable {
+            let mcpServers: [String: Server]
+        }
+
+        let configuration = Configuration(mcpServers: [
+            "tracexy": Server(command: commandPath, args: []),
+        ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(configuration),
+              let text = String(data: data, encoding: .utf8) else
+        {
+            return ""
+        }
+        return text
     }
 
     func refresh() {

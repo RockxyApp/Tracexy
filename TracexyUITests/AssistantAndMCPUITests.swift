@@ -35,7 +35,9 @@ final class AssistantAndMCPUITests: XCTestCase {
         // The boundary is concrete: the Project, the command and the no-port claim
         // are all on screen before anything is granted.
         XCTAssertTrue(app.staticTexts["mcp.projectName"].exists)
-        XCTAssertTrue(app.staticTexts["mcp.commandPath"].exists)
+        let commandLocation = app.staticTexts["mcp.commandPath"]
+        XCTAssertTrue(commandLocation.exists)
+        XCTAssertEqual(text(of: commandLocation), "Contents/MacOS/TracexyMCP")
         XCTAssertTrue(
             app.staticTexts
                 .matching(NSPredicate(format: "value CONTAINS[c] %@", "never opens a network port"))

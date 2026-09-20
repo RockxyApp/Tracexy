@@ -6,6 +6,21 @@ import Testing
 
 @Suite("MCP grant: lifecycle, permissions, staleness, revision and Project scope")
 struct MCPGrantTests {
+    @Test("Client configuration escapes a Mac installation path and contains only the command")
+    @MainActor
+    func clientConfigurationUsesLocalCommand() throws {
+        let command = "/Users/example/Apps/Research \"Tools\"/Tracexy.app/Contents/MacOS/TracexyMCP"
+        let snippet = MCPAccessModel.clientConfigurationSnippet(commandPath: command)
+        let root = try #require(JSONSerialization.jsonObject(with: Data(snippet.utf8)) as? [String: Any])
+        let servers = try #require(root["mcpServers"] as? [String: Any])
+        let tracexy = try #require(servers["tracexy"] as? [String: Any])
+
+        #expect(Set(root.keys) == ["mcpServers"])
+        #expect(Set(tracexy.keys) == ["command", "args"])
+        #expect(tracexy["command"] as? String == command)
+        #expect(tracexy["args"] as? [String] == [])
+    }
+
     @Test("No grant is the default state, and it is refused rather than tolerated")
     func absentGrantFailsClosed() throws {
         let environment = MCPTestEnvironment()

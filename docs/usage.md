@@ -583,9 +583,11 @@ stdin and stdout and **never opens a network port**.
 
 Open **Settings → MCP & Assistant**. The pane names the current Project, the field families that will
 be disclosed, and the maximum rows one request may read, then **Grant Access** issues the grant. The
-pane also shows the bundled command path and a ready-to-paste client configuration; **Copy Client
-Configuration** puts it on the clipboard. Point your MCP client at that command — it needs no port,
-host or token.
+pane shows `Contents/MacOS/TracexyMCP`, the command's location **inside the Tracexy app on your Mac**.
+**Copy Client Configuration** creates ready-to-paste JSON for a client on that same Mac. Its `command`
+contains the full path to your installation, which may include your macOS account name. Keep that JSON
+in your local client settings rather than sharing it publicly. If you move the app, copy the
+configuration again. The client needs no port, host or token.
 
 A client sees exactly three read-only tools: `describe_scope`, `list_captures` and `list_sessions`.
 There is no tool for packet bytes, capture files, file paths, raw frames, capture control or writes,
