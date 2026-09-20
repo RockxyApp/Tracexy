@@ -165,6 +165,8 @@ struct OverviewView: View {
     /// still counts every finding in scope.
     private static let maximumFindingMarkers = 64
 
+    @Environment(\.openWindow) private var openWindow
+
     private var isSaved: Bool {
         coordinator.isViewingSavedCapture
     }
@@ -201,8 +203,28 @@ struct OverviewView: View {
     }
 
     private var savedFormat: String {
+        if let properties = coordinator.savedCaptureProperties {
+            return switch properties.container {
+            case .pcap: "PCAP"
+            case .pcapng: "PCAPNG"
+            }
+        }
         let ext = coordinator.activeSavedCapture?.url.pathExtension ?? "pcap"
         return ext.isEmpty ? "PCAP" : ext.uppercased()
+    }
+
+    private var savedInterfacesText: String? {
+        guard let properties = coordinator.savedCaptureProperties, properties.interfaceCount > 0 else {
+            return nil
+        }
+        let names = properties.allInterfaces.prefix(3).map(\.displayName)
+        let remainder = properties.interfaceCount - names.count
+        return remainder > 0 ? names.joined(separator: ", ") + " +\(remainder.formatted())" : names
+            .joined(separator: ", ")
+    }
+
+    private var savedLoss: CaptureReportedLoss? {
+        coordinator.savedCaptureProperties?.reportedLoss
     }
 
     private var linkTypeName: String {
@@ -221,7 +243,10 @@ struct OverviewView: View {
 
     private var fidelityValue: String {
         if isSaved {
-            return "Unknown"
+            guard let fidelity = savedLoss?.fidelity else {
+                return "Not recorded"
+            }
+            return Self.percent.string(from: fidelity as NSNumber) ?? "—"
         }
         guard let fidelity = coordinator.captureStatistics?.fidelity else {
             return "Unknown"
@@ -231,7 +256,10 @@ struct OverviewView: View {
 
     private var fidelityTint: Color {
         if isSaved {
-            return .orange
+            guard let loss = savedLoss, loss.fidelity != nil else {
+                return .orange
+            }
+            return (loss.dropped > 0 || loss.isPartial) ? .orange : .green
         }
         guard let stats = coordinator.captureStatistics, stats.fidelity != nil else {
             return .orange
@@ -240,12 +268,26 @@ struct OverviewView: View {
     }
 
     private var savedHealthRows: [OverviewFactTable.Row] {
-        [
+        var rows: [OverviewFactTable.Row] = [
             .init(label: "Format", value: savedFormat),
             .init(label: "Size", value: byteString(coordinator.activeSavedCapture?.byteCount ?? 0)),
             .init(label: "Frames", value: frameCount(coordinator.trafficTimeline).formatted()),
-            .init(label: "Dropped", value: "Not recorded in the file"),
         ]
+        if let savedInterfacesText {
+            rows.append(.init(label: "Interfaces", value: savedInterfacesText))
+        }
+        if let loss = savedLoss {
+            let suffix = loss.isPartial
+                ? " on \(loss.reportingInterfaceCount.formatted()) of \(loss.interfaceCount.formatted()) interfaces"
+                : ""
+            rows.append(.init(
+                label: "Dropped", value: loss.dropped.formatted() + suffix,
+                tint: loss.dropped > 0 ? .orange : .primary
+            ))
+        } else {
+            rows.append(.init(label: "Dropped", value: "Not recorded in the file"))
+        }
+        return rows
     }
 
     private var liveHealthRows: [OverviewFactTable.Row] {
@@ -299,9 +341,15 @@ struct OverviewView: View {
             OverviewFactTable(rows: isSaved ? savedHealthRows : liveHealthRows)
         } accessory: {
             if isSaved {
-                Button("Show in Library") { coordinator.activeWorkspace.navigatorMode = .library }
-                    .buttonStyle(.link)
-                    .font(Theme.Typography.captionMedium)
+                HStack(spacing: Theme.Metrics.spacingL) {
+                    Button("Get Info") { openWindow(id: TracexyApp.captureInfoWindowID) }
+                        .buttonStyle(.link)
+                        .font(Theme.Typography.captionMedium)
+                        .disabled(!coordinator.canShowCaptureInfo)
+                    Button("Show in Library") { coordinator.activeWorkspace.navigatorMode = .library }
+                        .buttonStyle(.link)
+                        .font(Theme.Typography.captionMedium)
+                }
             } else {
                 Button("Save Capture…") { coordinator.saveCurrentCapture() }
                     .buttonStyle(.link)
@@ -556,7 +604,7 @@ struct OverviewView: View {
             activityFooter(report)
         } accessory: {
             HStack(spacing: Theme.Metrics.spacingL) {
-                if timeline.totals.hasDirectionalBytes {
+                if timeline.hasStableDirectionalBytes {
                     valueChip("Sent", value: byteString(timeline.totals.sentBytes), color: Theme.Traffic.sent)
                     valueChip(
                         "Received",
@@ -599,7 +647,7 @@ struct OverviewView: View {
         let timeline = report.timeline
         let markers = report.findingMarkers
         let total = report.findings.count
-        if !markers.isEmpty || timeline.untimedFrameCount > 0 {
+        if !markers.isEmpty || timeline.untimedFrameCount > 0 || timeline.directionMayHaveChanged {
             HStack(spacing: Theme.Metrics.spacingL) {
                 if !markers.isEmpty {
                     HStack(spacing: Theme.Metrics.spacingS) {
@@ -618,6 +666,12 @@ struct OverviewView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .accessibilityIdentifier("saved-activity-untimed-notice")
+                }
+                if timeline.directionMayHaveChanged {
+                    Text("Client/server orientation changed during capture; this chart shows exact total bytes only.")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }

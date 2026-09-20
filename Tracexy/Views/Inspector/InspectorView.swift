@@ -463,6 +463,11 @@ struct InspectorView: View {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
         case .evidence: sessionEvidence(session)
+        case .frames: SessionFramesFacetView(
+                coordinator: coordinator,
+                session: session,
+                selectedOrdinal: selectedCitedFrame?.provenance.ordinal.rawValue
+            )
         case .stream: followStream(session)
         case .requests: requests(session)
         case .payload: payload(session)
@@ -945,7 +950,9 @@ struct InspectorView: View {
                 || selection.tlsCoverage.omittedObservationCount > 0
                 || selection.tlsCoverage.excludedReassembledRecordCount > 0
         } ?? false
-        var tabs = InspectorTab.visibleTabs(for: session, hasSessionEvidence: hasEvidence)
+        var tabs = InspectorTab.visibleTabs(
+            for: session, hasSessionEvidence: hasEvidence, hasFrameSource: coordinator.hasSessionFrameSource
+        )
         if citedFrameStateIsActive, !tabs.contains(.layers), let evidenceIndex = tabs.firstIndex(of: .evidence) {
             tabs.insert(.layers, at: tabs.index(after: evidenceIndex))
         }

@@ -182,6 +182,7 @@ extension MainContentCoordinator {
         runtime.activeSavedCapture = activeSavedCapture
         runtime.savedCaptureActivity = savedCaptureActivity
         runtime.savedCaptureMetadata = savedCaptureMetadata
+        runtime.savedCaptureProperties = savedCaptureProperties
         runtime.savedCaptureWarning = savedCaptureWarning
         runtime.savedCaptureEvidence = savedCaptureEvidence
         runtime.savedCaptureEvidenceURL = savedCaptureEvidenceURL
@@ -247,6 +248,7 @@ extension MainContentCoordinator {
         activeSavedCapture = runtime.activeSavedCapture
         savedCaptureActivity = runtime.savedCaptureActivity
         savedCaptureMetadata = runtime.savedCaptureMetadata
+        savedCaptureProperties = runtime.savedCaptureProperties
         savedCaptureWarning = runtime.savedCaptureWarning
         savedCaptureEvidence = runtime.savedCaptureEvidence
         savedCaptureEvidenceURL = runtime.savedCaptureEvidenceURL

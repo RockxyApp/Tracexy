@@ -84,6 +84,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         buckets: [Int64: TrafficTotals],
         bucketWidth: TimeInterval,
         totals: TrafficTotals,
+        directionMayHaveChanged: Bool,
         untimedFrameCount: Int,
         firstTimedFrame: Date?,
         lastTimedFrame: Date?
@@ -91,6 +92,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         self.buckets = buckets
         self.bucketWidth = bucketWidth
         self.totals = totals
+        self.directionMayHaveChanged = directionMayHaveChanged
         self.untimedFrameCount = untimedFrameCount
         self.firstTimedFrame = firstTimedFrame
         self.lastTimedFrame = lastTimedFrame
@@ -102,6 +104,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         buckets: [:],
         bucketWidth: 1,
         totals: TrafficTotals(),
+        directionMayHaveChanged: false,
         untimedFrameCount: 0,
         firstTimedFrame: nil,
         lastTimedFrame: nil
@@ -113,6 +116,9 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
 
     /// Exact totals over every accepted frame, timed or not.
     let totals: TrafficTotals
+    /// A later frame changed a session's client orientation after earlier
+    /// columns were folded. Show only the exact total series in this case.
+    let directionMayHaveChanged: Bool
     /// Accepted frames whose source carried no capture time. Counted in
     /// ``totals`` and excluded from every bucket and from the span.
     let untimedFrameCount: Int
@@ -125,6 +131,10 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
 
     var isEmpty: Bool {
         totals.isEmpty
+    }
+
+    var hasStableDirectionalBytes: Bool {
+        totals.hasDirectionalBytes && !directionMayHaveChanged
     }
 
     /// Whole-capture span of the timed frames, in seconds. Describes the timed
@@ -227,10 +237,15 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
         buckets[key, default: TrafficTotals()].add(bytes: originalLength, direction: direction)
     }
 
+    mutating func markDirectionUnstable() {
+        directionMayHaveChanged = true
+    }
+
     mutating func reset() {
         buckets.removeAll(keepingCapacity: false)
         width = 1
         totals = TrafficTotals()
+        directionMayHaveChanged = false
         untimedFrames = 0
         firstTimed = nil
         lastTimed = nil
@@ -241,6 +256,7 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
             buckets: buckets,
             bucketWidth: width,
             totals: totals,
+            directionMayHaveChanged: directionMayHaveChanged,
             untimedFrameCount: untimedFrames,
             firstTimedFrame: firstTimed,
             lastTimedFrame: lastTimed
@@ -253,6 +269,7 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
     private var buckets: [Int64: TrafficTotals] = [:]
     private var width: TimeInterval = 1
     private var totals = TrafficTotals()
+    private var directionMayHaveChanged = false
     private var untimedFrames = 0
     private var firstTimed: Date?
     private var lastTimed: Date?

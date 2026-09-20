@@ -117,7 +117,8 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     func startObservingState() {
         syncActionItems(
             isCapturing: coordinator.isCapturing,
-            canExportSession: coordinator.canExportSelectedSession
+            canExportSession: coordinator.canExportSelectedSession,
+            canExportFrames: coordinator.canExportFrames
         )
         observationTask?.cancel()
         observationTask = Task { [weak self, weak coordinator] in
@@ -134,9 +135,11 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
                         // missed until the next capture transition.
                         let isCapturing = coordinator.isCapturing
                         let canExportSession = coordinator.canExportSelectedSession
+                        let canExportFrames = coordinator.canExportFrames
                         self?.syncActionItems(
                             isCapturing: isCapturing,
-                            canExportSession: canExportSession
+                            canExportSession: canExportSession,
+                            canExportFrames: canExportFrames
                         )
                     } onChange: {
                         continuation.resume()
@@ -244,6 +247,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var observationTask: Task<Void, Never>?
     private weak var captureToggleItem: NSToolbarItem?
     private weak var sessionExportItem: NSMenuToolbarItem?
+    private weak var frameExportMenuItem: NSMenuItem?
 
     private func makeSidebarToggleItem() -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: Self.sidebarToggleIdentifier)
@@ -319,6 +323,9 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     private func sessionExportMenu() -> NSMenu {
         let menu = NSMenu(title: String(localized: "Export Session"))
+        // Enablement is driven by the observed coordinator state below, not by
+        // AppKit's responder-chain validation.
+        menu.autoenablesItems = false
         for format in SessionExportFormat.allCases {
             let menuItem = NSMenuItem(
                 title: format.title,
@@ -329,7 +336,22 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             menuItem.representedObject = format.rawValue
             menu.addItem(menuItem)
         }
+        menu.addItem(.separator())
+        let frames = NSMenuItem(
+            title: String(localized: "Export Frames…"),
+            action: #selector(exportFrames(_:)),
+            keyEquivalent: ""
+        )
+        frames.target = self
+        frameExportMenuItem = frames
+        menu.addItem(frames)
         return menu
+    }
+
+    @objc
+    private func exportFrames(_: Any?) {
+        coordinator
+            .presentFrameExportPanel(preselectedSessions: coordinator.activeWorkspace.selectedSessionID.map { [$0] })
     }
 
     /// The two inspector commands share one native Liquid Glass family.
@@ -403,7 +425,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
-    private func syncActionItems(isCapturing: Bool, canExportSession: Bool) {
+    private func syncActionItems(isCapturing: Bool, canExportSession: Bool, canExportFrames: Bool) {
         let label = isCapturing ? String(localized: "Stop") : String(localized: "Start")
         captureToggleItem?.label = label
         captureToggleItem?.paletteLabel = label
@@ -414,7 +436,13 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemSymbolName: isCapturing ? "stop.fill" : "play.fill",
             accessibilityDescription: label
         )
-        sessionExportItem?.isEnabled = canExportSession
+        // The toolbar menu is enabled when either route can run; each item keeps
+        // its own gate so a saved capture without a selection still offers Frames.
+        sessionExportItem?.isEnabled = canExportSession || canExportFrames
+        frameExportMenuItem?.isEnabled = canExportFrames
+        for item in sessionExportItem?.menu.items ?? [] where item !== frameExportMenuItem && !item.isSeparatorItem {
+            item.isEnabled = canExportSession
+        }
     }
 
     @objc

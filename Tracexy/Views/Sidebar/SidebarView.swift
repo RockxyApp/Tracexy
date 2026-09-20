@@ -49,6 +49,8 @@ struct SidebarView: View {
 
     // MARK: Private
 
+    private static let fileSetMenuLimit = 24
+
     @Environment(\.openWindow) private var openWindow
 
     /// Live sidebar-search text. Deliberately *local* to the sidebar: it scopes
@@ -393,32 +395,17 @@ struct SidebarView: View {
                     .font(Theme.Typography.caption).foregroundStyle(.tertiary)
             } else {
                 ForEach(filteredSavedCaptures) { capture in
-                    Label(capture.name, systemImage: "doc.text.magnifyingglass")
-                        .foregroundStyle(.secondary).lineLimit(1)
-                        .contentShape(Rectangle())
-                        .onTapGesture { coordinator.openSavedCapture(capture) }
-                        // Same assistive contract as every other tappable sidebar row:
-                        // a tap gesture alone is invisible to VoiceOver and UI automation.
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityHint("Opens this saved capture")
-                        .accessibilityAction { coordinator.openSavedCapture(capture) }
-                        .contextMenu {
-                            Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
-                            Button("Reveal in Finder", systemImage: "folder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([capture.url])
-                            }
-                            Button("Copy Path", systemImage: "doc.on.doc") {
-                                copyToPasteboard(capture.url.path)
-                            }
-                            Divider()
-                            Button("Move to Trash…", systemImage: "trash", role: .destructive) {
-                                capturePendingRemoval = capture
-                            }
-                        }
+                    savedCaptureRow(capture)
                 }
             }
+            Button { coordinator.presentCaptureOpenPanel() } label: {
+                Label("Open…", systemImage: "folder.badge.plus")
+                    .font(Theme.Typography.caption).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Open a capture where it is (⌘O). Use Import to keep a copy in the Library.")
             Button { coordinator.presentCaptureImportPanel() } label: {
-                Label("Import…", systemImage: "tray.and.arrow.down")
+                Label("Import into Library…", systemImage: "tray.and.arrow.down")
                     .font(Theme.Typography.caption).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -429,7 +416,10 @@ struct SidebarView: View {
                         coordinator.saveCurrentCapture()
                     }
                     .disabled(!coordinator.canSaveCapture)
-                    Button("Import…", systemImage: "tray.and.arrow.down") {
+                    Button("Open…", systemImage: "folder.badge.plus") {
+                        coordinator.presentCaptureOpenPanel()
+                    }
+                    Button("Import into Library…", systemImage: "tray.and.arrow.down") {
                         coordinator.presentCaptureImportPanel()
                     }
                 }
@@ -537,6 +527,120 @@ struct SidebarView: View {
                 restoreLabel: "Restore Hidden IP Addresses",
                 onRestore: coordinator.restoreHiddenSourceIPs
             )
+        }
+    }
+
+    /// One Library row. A managed copy and an in-place reference share the row
+    /// shape; the reference adds a link badge (or a warning badge when its file
+    /// is missing or changed) and the Locate… / Copy into Library actions. Every
+    /// action a drop or double-click offers is also here, per the HIG's
+    /// drag-and-drop guidance.
+    private func savedCaptureRow(_ capture: SavedCapture) -> some View {
+        HStack(spacing: Theme.Metrics.spacingS) {
+            Label(capture.name, systemImage: "doc.text.magnifyingglass")
+                .foregroundStyle(capture.isReadable ? .secondary : .tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if capture.isReferenced {
+                Image(systemName: capture.isReadable ? "link" : "exclamationmark.triangle")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(capture.isReadable ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
+                    .help(Self.availabilityHelp(capture))
+                    .accessibilityLabel(Self.availabilityHelp(capture))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { coordinator.openSavedCapture(capture) }
+        // Same assistive contract as every other tappable sidebar row:
+        // a tap gesture alone is invisible to VoiceOver and UI automation.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(capture.isReadable ? "Opens this capture" : "Shows how to locate this capture")
+        .accessibilityAction { coordinator.openSavedCapture(capture) }
+        .contextMenu {
+            Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
+                .disabled(!capture.isReadable)
+            Button("Reveal in Finder", systemImage: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([capture.url])
+            }
+            .disabled(capture.availability == .missing)
+            Button("Copy Path", systemImage: "doc.on.doc") {
+                copyToPasteboard(capture.url.path)
+            }
+            if coordinator.activeSavedCapture?.id == capture.id {
+                Button("Export Frames…", systemImage: "square.and.arrow.up") {
+                    coordinator.presentFrameExportPanel()
+                }
+                .disabled(!coordinator.canExportFrames)
+            }
+            if capture.isReadable, let fileSet = CaptureFileSet(member: capture.url) {
+                fileSetMenu(fileSet)
+            }
+            if capture.isReferenced {
+                Divider()
+                Button("Locate…", systemImage: "magnifyingglass") {
+                    coordinator.locateReferencedCapture(capture)
+                }
+                Button("Copy into Library", systemImage: "tray.and.arrow.down") {
+                    coordinator.copyReferencedCaptureIntoLibrary(capture)
+                }
+                .disabled(!capture.isReadable)
+                Divider()
+                // Removing a reference never touches the referenced file and the
+                // sidecar goes to the Trash, so no confirmation is asked.
+                Button("Remove from Library", systemImage: "trash", role: .destructive) {
+                    removeReference(capture)
+                }
+            } else {
+                Divider()
+                Button("Move to Trash…", systemImage: "trash", role: .destructive) {
+                    capturePendingRemoval = capture
+                }
+            }
+        }
+    }
+
+    /// The ring-buffer set a Library item belongs to, listed in sequence order
+    /// with the open member checked; every member opens in place. Read from disk
+    /// when the menu opens so a set still being written stays current.
+    private func fileSetMenu(_ fileSet: CaptureFileSet) -> some View {
+        let listed = fileSet.members.prefix(Self.fileSetMenuLimit)
+        return Menu("File Set", systemImage: "doc.on.doc") {
+            Button("Next File") {
+                if let next = fileSet.next {
+                    coordinator.openFileSetMember(next)
+                }
+            }
+            .disabled(fileSet.next == nil || !coordinator.canOpenCaptureSource)
+            Button("Previous File") {
+                if let previous = fileSet.previous {
+                    coordinator.openFileSetMember(previous)
+                }
+            }
+            .disabled(fileSet.previous == nil || !coordinator.canOpenCaptureSource)
+            Divider()
+            Picker(
+                "Files in “\(fileSet.prefix)”",
+                selection: Binding(
+                    get: { fileSet.currentIndex },
+                    set: { index in
+                        guard index != fileSet.currentIndex, fileSet.members.indices.contains(index) else {
+                            return
+                        }
+                        coordinator.openFileSetMember(fileSet.members[index])
+                    }
+                )
+            ) {
+                ForEach(Array(listed.enumerated()), id: \.offset) { index, member in
+                    Text(member.url.lastPathComponent).tag(index)
+                }
+            }
+            .pickerStyle(.inline)
+            .disabled(!coordinator.canOpenCaptureSource)
+            if fileSet.count > listed.count {
+                Text("\((fileSet.count - listed.count).formatted()) more files — use Next File")
+            }
         }
     }
 
@@ -724,6 +828,23 @@ struct SidebarView: View {
         }
         .badge(badge(for: item, visibleCount: visibleCount, protocolCounts: protocolCounts))
         .tag(item)
+    }
+
+    private static func availabilityHelp(_ capture: SavedCapture) -> String {
+        switch capture.availability {
+        case .managed: ""
+        case .available: "Opened in place from \(capture.url.path)"
+        case .missing: "The referenced file can’t be found at \(capture.url.path)"
+        case .changed: "The referenced file changed on disk"
+        }
+    }
+
+    private func removeReference(_ capture: SavedCapture) {
+        do {
+            try coordinator.removeReferencedCapture(capture)
+        } catch {
+            captureRemovalError = error.localizedDescription
+        }
     }
 
     /// Case-insensitive substring match; always true when not searching so call

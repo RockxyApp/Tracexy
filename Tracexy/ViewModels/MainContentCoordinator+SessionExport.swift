@@ -136,21 +136,28 @@ extension MainContentCoordinator {
             )
         }
 
+        return Self.resolvedExportPrivacyPolicy(
+            for: format,
+            configuredPrivacy: configuredPrivacy,
+            didConfirmRawExport: presentRawExportAcknowledgement(formatName: format.fileExtension.uppercased())
+        )
+    }
+
+    /// The per-action acknowledgement every raw (byte-preserving) export shows
+    /// while privacy protections are configured. Shared by session export and
+    /// Export Frames… so the wording and the choice never drift apart.
+    func presentRawExportAcknowledgement(formatName: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Export unprotected packet data?"
         alert.informativeText = """
-        \(format.fileExtension.uppercased()) files preserve the exact captured packet bytes. \
+        \(formatName) files preserve the exact captured packet bytes. \
         Redacting payloads, stripping credentials, and masking IP addresses cannot be applied to this raw format. \
         Export only if you intend to handle the file as sensitive data.
         """
         alert.addButton(withTitle: "Export Raw Capture")
         alert.addButton(withTitle: "Cancel")
-        return Self.resolvedExportPrivacyPolicy(
-            for: format,
-            configuredPrivacy: configuredPrivacy,
-            didConfirmRawExport: alert.runModal() == .alertFirstButtonReturn
-        )
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// Pure decision seam for the modal confirmation above. Keeping Optional

@@ -90,6 +90,8 @@ enum ProjectScopedSettingsKeys {
     static let inspectorLayout = key("workspace.inspectorLayout")
     static let contextDockVisible = key("workspace.contextDockVisible")
     static let allowsAutomaticInspectorReveal = key("workspace.allowsAutomaticInspectorReveal")
+    /// Whether Open… copies the chosen capture into the Library (default: open in place).
+    static let copiesOpenedCapturesIntoLibrary = key("library.copiesOpenedCaptures")
 
     // MARK: Private
 

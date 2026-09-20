@@ -127,6 +127,56 @@ struct NativeSplitLayoutTests {
         #expect(resolved?.width == NativeBottomInspectorSplitSizing.defaultWidth)
     }
 
+    @MainActor
+    @Test("Bottom inspector changes wait until the layout pass ends and use the latest request")
+    func bottomPresentationIsDeferred() async {
+        let controller = NativeBottomInspectorSplitViewController()
+        controller.configure(
+            primaryController: NSHostingController(rootView: Color.clear),
+            inspectorController: NSHostingController(rootView: Color.clear),
+            isInspectorPresented: true,
+            autosaveName: "BottomPresentationTests-\(UUID().uuidString)",
+            primaryMinimumHeight: 200,
+            inspectorMinimumHeight: 120
+        )
+        let window = NSWindow(contentViewController: controller)
+        window.setContentSize(NSSize(width: 800, height: 600))
+        controller.view.layoutSubtreeIfNeeded()
+        await nextMainTurn()
+        #expect(controller.isInspectorPresented)
+
+        controller.requestInspectorPresentation(false, animated: false)
+        controller.requestInspectorPresentation(true, animated: false)
+        controller.requestInspectorPresentation(false, animated: false)
+        #expect(controller.isInspectorPresented)
+        await nextMainTurn()
+        #expect(!controller.isInspectorPresented)
+    }
+
+    @MainActor
+    @Test("Bottom inspector retains a request until nonzero layout is available")
+    func bottomPresentationWaitsForLayout() async {
+        let controller = NativeBottomInspectorSplitViewController()
+        controller.configure(
+            primaryController: NSHostingController(rootView: Color.clear),
+            inspectorController: NSHostingController(rootView: Color.clear),
+            isInspectorPresented: true,
+            autosaveName: "BottomLayoutWaitTests-\(UUID().uuidString)",
+            primaryMinimumHeight: 200,
+            inspectorMinimumHeight: 120
+        )
+        controller.view.frame = .zero
+        controller.requestInspectorPresentation(false, animated: false)
+        await nextMainTurn()
+        #expect(controller.isInspectorPresented)
+
+        let window = NSWindow(contentViewController: controller)
+        window.setContentSize(NSSize(width: 800, height: 600))
+        controller.view.layoutSubtreeIfNeeded()
+        await nextMainTurn()
+        #expect(!controller.isInspectorPresented)
+    }
+
     // MARK: Autosave identity
 
     @MainActor
@@ -301,6 +351,8 @@ struct NativeSplitLayoutTests {
             "Export Session",
             "Export as pcap",
             "Export as pcapng",
+            "",
+            "Export Frames…",
         ])
     }
 
@@ -448,6 +500,15 @@ struct NativeSplitLayoutTests {
     }
 
     // MARK: Private
+
+    @MainActor
+    private func nextMainTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+    }
 
     @MainActor
     private func waitForToolbarState(_ condition: () -> Bool) async -> Bool {

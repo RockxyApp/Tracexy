@@ -215,6 +215,52 @@ struct TrafficTimelineTests {
         #expect(live?.trafficTimeline == timeline)
     }
 
+    @Test("A server-first capture puts service bytes in the received timeline series")
+    func serverFirstDirectionAgreesWithSession() throws {
+        let server = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "93.184.216.34", dst: "10.0.0.5",
+            payload: PacketBuilder.tcp(srcPort: 443, dstPort: 50_000, flags: 0x18, payload: [1, 2, 3, 4])
+        )
+        let client = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "10.0.0.5", dst: "93.184.216.34",
+            payload: PacketBuilder.tcp(srcPort: 50_000, dstPort: 443, flags: 0x18, payload: [5])
+        )
+        let frames = [
+            CapturedFrame(bytes: server, timestamp: at(1), originalLength: server.count),
+            CapturedFrame(bytes: client, timestamp: at(2), originalLength: client.count),
+        ]
+        let result = SessionBuilder.buildDetailed(from: frames, linkType: LinkType.ethernet)
+        let session = try #require(result.sessions.first)
+        #expect(session.bytesDown == server.count)
+        #expect(session.bytesUp == client.count)
+        #expect(result.trafficTimeline.totals.receivedBytes == session.bytesDown)
+        #expect(result.trafficTimeline.totals.sentBytes == session.bytesUp)
+        #expect(result.trafficTimeline.points().first?.totals.receivedBytes == server.count)
+    }
+
+    @Test("A later SYN that changes orientation keeps exact totals without a false directional chart")
+    func changedOrientationUsesTotalSeries() throws {
+        let data = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "10.0.0.5", dst: "10.0.0.9",
+            payload: PacketBuilder.tcp(srcPort: 8_080, dstPort: 40_000, flags: 0x18, payload: [1, 2])
+        )
+        let syn = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "10.0.0.5", dst: "10.0.0.9",
+            payload: PacketBuilder.tcp(srcPort: 8_080, dstPort: 40_000, flags: 0x02, payload: [], sequence: 7)
+        )
+        let frames = [
+            CapturedFrame(bytes: data, timestamp: at(1), originalLength: data.count),
+            CapturedFrame(bytes: syn, timestamp: at(2), originalLength: syn.count),
+        ]
+        let result = SessionBuilder.buildDetailed(from: frames, linkType: LinkType.ethernet)
+        let session = try #require(result.sessions.first)
+        #expect(session.bytesUp == data.count + syn.count)
+        #expect(result.trafficTimeline.totals.bytes == session.totalBytes)
+        #expect(result.trafficTimeline.directionMayHaveChanged)
+        #expect(!result.trafficTimeline.hasStableDirectionalBytes)
+        #expect(result.trafficTimeline.points().reduce(0) { $0 + $1.totals.bytes } == session.totalBytes)
+    }
+
     @Test("Resetting the accumulator empties the timeline with the tables")
     func accumulatorResetClearsTimeline() {
         var accumulator = SessionAccumulator()

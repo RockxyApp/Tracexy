@@ -13,7 +13,7 @@ import Darwin
 /// to reopen and seek. `size`/`modifiedAt` are the cheap change witnesses; the
 /// descriptor identity (device + inode, where the platform provides it) is the
 /// stable handle-level identity independent of path.
-nonisolated struct PcapFileIdentity: Sendable, Equatable {
+nonisolated struct PcapFileIdentity: Sendable, Hashable, Codable {
     /// File length in bytes at open time.
     let size: UInt64
     /// Last-modification instant at open time, when the platform reports one.
@@ -181,6 +181,24 @@ nonisolated final class PcapStreamReader {
             identity: Self.identity(of: handle)
         )
         offset = UInt64(Self.globalHeaderSize)
+        // Classic pcap is one implicit section with one implicit interface, so the
+        // properties fold has the same shape as pcapng for every consumer.
+        var accumulator = CaptureFilePropertiesAccumulator(container: .pcap(ClassicPcapFacts(
+            littleEndian: format.littleEndian,
+            nanosecondResolution: format.nanosecond,
+            snapLength: snapLength,
+            linkType: linkType,
+            rawLinkTypeWord: rawLinkType
+        )))
+        accumulator.beginSection(littleEndian: format.littleEndian, majorVersion: 2, minorVersion: 4)
+        accumulator.addInterface(CaptureInterface(
+            id: CaptureInterface.ID(sectionIndex: 0, interfaceID: 0),
+            linkType: linkType,
+            snapLength: snapLength,
+            ticksPerSecond: format.nanosecond ? 1_000_000_000 : 1_000_000,
+            timestampOffsetSeconds: 0
+        ))
+        properties = accumulator
     }
 
     deinit {
@@ -194,7 +212,7 @@ nonisolated final class PcapStreamReader {
         // MARK: Lifecycle
 
         init(
-            maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
+            maxCapturedLength: Int = CaptureFormatLimits.maxCapturedLength,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength
@@ -214,6 +232,12 @@ nonisolated final class PcapStreamReader {
 
     /// Immutable description of the opened stream.
     let metadata: PcapStreamMetadata
+
+    /// The bounded container inventory folded so far (global-header facts plus
+    /// frame totals and time ordering). Complete once ``next()`` returned a terminal.
+    var fileProperties: CaptureFileProperties {
+        properties.snapshot(fileSize: metadata.identity.size)
+    }
 
     /// Pull the next record.
     ///
@@ -248,6 +272,7 @@ nonisolated final class PcapStreamReader {
     private static let recordHeaderSize = 16
 
     private let handle: FileHandle
+    private var properties: CaptureFilePropertiesAccumulator
     private let format: MagicFormat
     private let configuration: Configuration
     /// Absolute offset of the next record header to read; also the file cursor,
@@ -354,12 +379,14 @@ nonisolated final class PcapStreamReader {
         let nextOffset = try Self.checkedAdd(payloadOffset, UInt64(inclLen))
         offset = nextOffset
 
+        let timestamp = format.timestamp(seconds: tsSeconds, fraction: tsFraction)
+        properties.noteFrame(interfaceID: 0, timestamp: timestamp, hasComment: false)
         let reference = PcapFrameReference(
             recordHeaderOffset: recordHeaderOffset,
             payloadOffset: payloadOffset,
             capturedLength: inclLen,
             originalLength: origLen,
-            timestamp: format.timestamp(seconds: tsSeconds, fraction: tsFraction)
+            timestamp: timestamp
         )
         return .frame(PcapFrameEvent(
             reference: reference,

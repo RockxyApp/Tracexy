@@ -10,6 +10,7 @@ struct TracexyApp: App {
     static let focusSetEditorWindowID = "focus-set-editor"
     static let noiseControlWindowID = "noise-control"
     static let sessionInspectorWindowID = "session-inspector"
+    static let captureInfoWindowID = "capture-info"
 
     var body: some Scene {
         mainWindowScene
@@ -25,6 +26,11 @@ struct TracexyApp: App {
             coordinator: coordinator,
             colorScheme: colorScheme
         )
+
+        // File ▸ Get Info (⌘I). A regular auxiliary window, not a panel: it keeps
+        // the facts of the capture it was opened for (HIG Panels), re-binds only
+        // when a different capture is adopted, and closes with the Project.
+        CaptureInfoWindowScene(coordinator: coordinator, colorScheme: colorScheme)
 
         settingsScene
     }
@@ -80,6 +86,9 @@ struct TracexyApp: App {
         .defaultSize(width: 600, height: 420)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -98,6 +107,9 @@ struct TracexyApp: App {
         .defaultSize(width: 460, height: 560)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -136,6 +148,7 @@ struct TracexyApp: App {
         .defaultSize(width: 900, height: 640)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified(showsTitle: true))
+        .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)
         } else {
@@ -182,16 +195,12 @@ struct TracexyApp: App {
             TracexySettingsCommands()
             TracexyProjectCommands(coordinator: coordinator)
 
-            // File ▸ Import Capture… (⌘O). It routes through the same coordinator
-            // panel action as the sidebar's Import buttons, so the menu, its
-            // shortcut and the sidebar cannot drift apart in what they accept or
-            // which Project they file a capture into.
-            CommandGroup(after: .newItem) {
-                Button("Import Capture…") {
-                    coordinator.presentCaptureImportPanel()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
+            // File menu, in the HIG's order: Open… ⌘O (in place), Open Recent ▸,
+            // Import into Library… ⌥⌘O (managed copy), Close Capture ⇧⌘W, Reload ⌘R,
+            // Get Info ⌘I. Every item is always listed and disabled when it does
+            // not apply, and each routes through the same coordinator action the
+            // sidebar and toolbar use, so the routes cannot drift apart.
+            TracexyCaptureFileCommands(coordinator: coordinator)
 
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
@@ -390,6 +399,140 @@ private struct SessionInspectorWindowScene: Scene {
         .defaultSize(width: 1_040, height: 680)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
+
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+}
+
+// MARK: - TracexyCaptureFileCommands
+
+private struct TracexyCaptureFileCommands: Commands {
+    // MARK: Internal
+
+    let coordinator: MainContentCoordinator
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open…") {
+                coordinator.presentCaptureOpenPanel()
+            }
+            .keyboardShortcut("o", modifiers: .command)
+
+            Menu("Open Recent") {
+                ForEach(coordinator.recentCaptureURLs, id: \.self) { url in
+                    Button {
+                        coordinator.openRecentCapture(url)
+                    } label: {
+                        // Names only — never paths — with the file's own icon, as
+                        // the HIG describes the standard Open Recent submenu.
+                        Label {
+                            Text(url.lastPathComponent)
+                        } icon: {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        }
+                    }
+                }
+                if !coordinator.recentCaptureURLs.isEmpty {
+                    Divider()
+                }
+                Button("Clear Menu") {
+                    coordinator.clearRecentCaptures()
+                }
+                .disabled(coordinator.recentCaptureURLs.isEmpty)
+            }
+
+            Button("Import into Library…") {
+                coordinator.presentCaptureImportPanel()
+            }
+            .keyboardShortcut("o", modifiers: [.command, .option])
+        }
+
+        // After the system Close items, in HIG order: Close Capture (⇧⌘W, the
+        // "Close File" slot), Reload, Get Info, File Set.
+        CommandGroup(after: .saveItem) {
+            Button("Close Capture") {
+                coordinator.closeCapture()
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(!coordinator.canCloseCapture)
+
+            Button("Reload") {
+                coordinator.reloadActiveSavedCapture()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!coordinator.canReloadActiveSavedCapture)
+
+            Divider()
+
+            Button("Get Info") {
+                openWindow(id: TracexyApp.captureInfoWindowID)
+            }
+            .keyboardShortcut("i", modifiers: .command)
+            .disabled(!coordinator.canShowCaptureInfo)
+
+            // Ring-buffer sets (dumpcap/tcpdump rotation): step through the
+            // members in place. Always listed; disabled when the open capture is
+            // not a member or has no neighbour.
+            Menu("File Set") {
+                Button("Next File") {
+                    coordinator.openNextInFileSet()
+                }
+                .disabled(!coordinator.canOpenNextInFileSet)
+                Button("Previous File") {
+                    coordinator.openPreviousInFileSet()
+                }
+                .disabled(!coordinator.canOpenPreviousInFileSet)
+                if let set = coordinator.activeCaptureFileSet {
+                    Divider()
+                    Text("File \(set.currentIndex + 1) of \(set.count) in “\(set.prefix)”")
+                }
+            }
+        }
+
+        // File ▸ Export Frames… sits with the other export items (HIG: prefer a
+        // format pop-up in the Save sheet; no custom shortcut for an occasional
+        // command).
+        CommandGroup(after: .importExport) {
+            Button("Export Frames…") {
+                coordinator.presentFrameExportPanel()
+            }
+            .disabled(!coordinator.canExportFrames)
+        }
+    }
+
+    // MARK: Private
+
+    @Environment(\.openWindow) private var openWindow
+}
+
+// MARK: - CaptureInfoWindowScene
+
+private struct CaptureInfoWindowScene: Scene {
+    let coordinator: MainContentCoordinator
+    let colorScheme: ColorScheme?
+
+    var body: some Scene {
+        let base = Window("Capture Info", id: TracexyApp.captureInfoWindowID) {
+            CaptureInfoView(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .id(coordinator.captureInfoIdentityToken)
+                .disabled(coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .commandsRemoved()
+        .defaultSize(width: 680, height: 620)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        // Auxiliary windows never answer an external open event (a Finder file
+        // open belongs to the workspace), so none of them appears on its own.
+        .handlesExternalEvents(matching: [])
 
         if #available(macOS 15.0, *) {
             return base.restorationBehavior(.disabled)

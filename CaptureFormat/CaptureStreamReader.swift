@@ -33,6 +33,16 @@ nonisolated struct CaptureFrameReference: Sendable, Equatable {
     /// single link type; for `.pcapng` it is the frame's own interface link type,
     /// so a mixed-interface capture keeps each frame's real DLT.
     let linkType: UInt32
+    /// Zero-based section index (`0` for classic `.pcap`).
+    let sectionIndex: Int
+    /// Declaration-order interface id within its section (`0` for classic `.pcap`).
+    let interfaceID: Int
+    /// Whether the source block carried a comment option (always `false` for
+    /// classic `.pcap`, which has no per-record options).
+    let hasComment: Bool
+    /// Absolute byte range of the source block's options, when the format has
+    /// them and the section is little-endian (copyable verbatim); `nil` otherwise.
+    let copyableOptionsRange: Range<UInt64>?
 }
 
 // MARK: - CaptureFrameEvent
@@ -131,7 +141,7 @@ nonisolated final class CaptureStreamReader {
         // MARK: Lifecycle
 
         init(
-            maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
+            maxCapturedLength: Int = CaptureFormatLimits.maxCapturedLength,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength
@@ -161,6 +171,15 @@ nonisolated final class CaptureStreamReader {
         }
     }
 
+    /// The bounded container inventory folded so far by the backing reader.
+    /// Complete once ``next()`` has returned a terminal.
+    var fileProperties: CaptureFileProperties {
+        switch backing {
+        case let .pcap(reader): reader.fileProperties
+        case let .pcapng(reader): reader.fileProperties
+        }
+    }
+
     /// Pull the next frame or the terminal, adapting the backing reader's outcome
     /// onto the uniform shape. After any terminal the same terminal is replayed.
     ///
@@ -177,7 +196,11 @@ nonisolated final class CaptureStreamReader {
                         capturedLength: event.reference.capturedLength,
                         originalLength: event.reference.originalLength,
                         timestamp: event.reference.timestamp,
-                        linkType: reader.metadata.linkType
+                        linkType: reader.metadata.linkType,
+                        sectionIndex: 0,
+                        interfaceID: 0,
+                        hasComment: false,
+                        copyableOptionsRange: nil
                     ),
                     bytes: event.bytes,
                     progress: event.progress
@@ -196,7 +219,12 @@ nonisolated final class CaptureStreamReader {
                         capturedLength: event.reference.capturedLength,
                         originalLength: event.reference.originalLength,
                         timestamp: event.reference.timestamp,
-                        linkType: event.reference.linkType
+                        linkType: event.reference.linkType,
+                        sectionIndex: event.reference.sectionIndex,
+                        interfaceID: event.reference.interfaceID,
+                        hasComment: event.reference.hasComment,
+                        copyableOptionsRange: event.reference.littleEndian && !event.reference.optionsRange.isEmpty
+                            ? event.reference.optionsRange : nil
                     ),
                     bytes: event.bytes,
                     progress: event.progress

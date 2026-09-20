@@ -108,7 +108,7 @@ struct NativeBottomInspectorSplitView<Primary: View, Inspector: View>: NSViewCon
         // through the split controller and crash under exclusive-access checks.
         updateVisibilityCallback(on: controller)
         if context.coordinator.shouldApplyPresentation(isInspectorPresented) {
-            controller.setInspectorPresented(isInspectorPresented, animated: true)
+            controller.requestInspectorPresentation(isInspectorPresented, animated: true)
         }
     }
 
@@ -193,7 +193,7 @@ final class NativeBottomInspectorSplitViewController: NSSplitViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        guard pendingInitialVisibility != nil else {
+        guard hasPendingPresentation else {
             return
         }
         guard NativeBottomInspectorSplitSizing.isLayoutReady(splitView.bounds) else {
@@ -201,12 +201,7 @@ final class NativeBottomInspectorSplitViewController: NSSplitViewController {
             // valid layout pass rather than collapsing/expanding into negative geometry.
             return
         }
-        guard let pendingInitialVisibility else {
-            return
-        }
-        self.pendingInitialVisibility = nil
-        setInspectorPresented(pendingInitialVisibility, animated: false)
-        isApplyingInitialState = false
+        scheduleInspectorPresentation()
     }
 
     func configure(
@@ -239,14 +234,57 @@ final class NativeBottomInspectorSplitViewController: NSSplitViewController {
         splitView.autosaveName = NSSplitView.AutosaveName(autosaveName)
         self.inspectorItem = inspectorItem
         requestedInspectorVisibility = isInspectorPresented
-        pendingInitialVisibility = isInspectorPresented
+        hasPendingPresentation = true
         observeCollapseState(of: inspectorItem)
         // Initial collapse state is deferred to the first valid layout pass. Applying it here,
         // while the controller has zero-sized bounds, risks negative startup geometry.
     }
 
-    func setInspectorPresented(_ isPresented: Bool, animated: Bool) {
+    /// SwiftUI can call updateNSViewController while AppKit is already laying out the
+    /// hosting view or a sheet. Changing split-item constraints in that same pass
+    /// recursively invalidates the window's constraints and can terminate the app.
+    /// Coalesce requests and apply the latest state on the next main run-loop turn.
+    func requestInspectorPresentation(_ isPresented: Bool, animated: Bool) {
         requestedInspectorVisibility = isPresented
+        pendingPresentationAnimated = animated
+        hasPendingPresentation = true
+        scheduleInspectorPresentation()
+    }
+
+    // MARK: Private
+
+    private weak var inspectorItem: NSSplitViewItem?
+    private var collapseObservation: NSKeyValueObservation?
+    private var requestedInspectorVisibility = false
+    private var hasPendingPresentation = false
+    private var pendingPresentationAnimated = false
+    private var isPresentationScheduled = false
+    private var isApplyingInitialState = true
+
+    private func scheduleInspectorPresentation() {
+        guard !isPresentationScheduled else {
+            return
+        }
+        isPresentationScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.isPresentationScheduled = false
+            guard NativeBottomInspectorSplitSizing.isLayoutReady(self.splitView.bounds) else {
+                return
+            }
+            let isInitial = self.isApplyingInitialState
+            self.hasPendingPresentation = false
+            self.applyInspectorPresentation(
+                self.requestedInspectorVisibility,
+                animated: !isInitial && self.pendingPresentationAnimated
+            )
+            self.isApplyingInitialState = false
+        }
+    }
+
+    private func applyInspectorPresentation(_ isPresented: Bool, animated: Bool) {
         guard let inspectorItem, inspectorItem.isCollapsed == isPresented else {
             return
         }
@@ -260,14 +298,6 @@ final class NativeBottomInspectorSplitViewController: NSSplitViewController {
             inspectorItem.isCollapsed = !isPresented
         }
     }
-
-    // MARK: Private
-
-    private weak var inspectorItem: NSSplitViewItem?
-    private var collapseObservation: NSKeyValueObservation?
-    private var requestedInspectorVisibility = false
-    private var pendingInitialVisibility: Bool?
-    private var isApplyingInitialState = true
 
     private func observeCollapseState(of item: NSSplitViewItem) {
         collapseObservation = item.observe(\.isCollapsed, options: [.new]) { [weak self] _, _ in
