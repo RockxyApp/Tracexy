@@ -34,6 +34,25 @@
 		CF61000000000000000000D1 /* CaptureFrameTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B1 /* CaptureFrameTransport.swift */; };
 		CF61000000000000000000D2 /* BoundedFrameBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B2 /* BoundedFrameBuffer.swift */; };
 		CF61000000000000000000D3 /* CaptureWorkerLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF61000000000000000000B3 /* CaptureWorkerLifecycle.swift */; };
+		CF63000000000000000000D1 /* MCPGrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A1 /* MCPGrant.swift */; };
+		CF63000000000000000000D2 /* MCPAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A2 /* MCPAudit.swift */; };
+		CF63000000000000000000D3 /* MCPProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A3 /* MCPProtocol.swift */; };
+		CF63000000000000000000D4 /* MCPTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A4 /* MCPTools.swift */; };
+		CF63000000000000000000D5 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A5 /* MCPServer.swift */; };
+		CF63000000000000000000D6 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A6 /* main.swift */; };
+		CF63000000000000000000D7 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B1 /* SessionStore.swift */; };
+		CF63000000000000000000D8 /* SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B2 /* SQLiteDatabase.swift */; };
+		CF63000000000000000000D9 /* HistoryRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B3 /* HistoryRecords.swift */; };
+		CF63000000000000000000DA /* AutomationValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B4 /* AutomationValues.swift */; };
+		CF63000000000000000000DB /* AutomationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B5 /* AutomationExport.swift */; };
+		CF63000000000000000000DC /* HistoryAutomationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000B6 /* HistoryAutomationService.swift */; };
+		CF63000000000000000000DD /* TracexyIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED814B5AD2E92A3F9419E29 /* TracexyIdentity.swift */; };
+		CF63000000000000000000E1 /* MCPGrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A1 /* MCPGrant.swift */; };
+		CF63000000000000000000E2 /* MCPAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A2 /* MCPAudit.swift */; };
+		CF63000000000000000000E3 /* MCPProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A3 /* MCPProtocol.swift */; };
+		CF63000000000000000000E4 /* MCPTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A4 /* MCPTools.swift */; };
+		CF63000000000000000000E5 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000A5 /* MCPServer.swift */; };
+		CF63000000000000000000F1 /* TracexyMCP in Embed MCP Tool */ = {isa = PBXBuildFile; fileRef = CF63000000000000000000C0 /* TracexyMCP */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		CF700000000000000000100F /* CaptureFileProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF7000000000000000001000 /* CaptureFileProperties.swift */; };
 		CF7000000000000000001010 /* CaptureFileProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF7000000000000000001000 /* CaptureFileProperties.swift */; };
 		CF7000000000000000001011 /* CaptureFileProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF7000000000000000001000 /* CaptureFileProperties.swift */; };
@@ -64,6 +83,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		CF6300000000000000000075 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DCD3357C2FC5555D003CEC6D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CF6300000000000000000070;
+			remoteInfo = TracexyMCP;
+		};
 		98597D8F210D6E1A5F058608 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = DCD3357C2FC5555D003CEC6D /* Project object */;
@@ -102,6 +128,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		CF6300000000000000000081 /* Embed MCP Tool */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				CF63000000000000000000F1 /* TracexyMCP in Embed MCP Tool */,
+			);
+			name = "Embed MCP Tool";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		4F859D2689E8E705CC81EF18 /* Embed Helper Tool */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -128,6 +165,20 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CF63000000000000000000A1 /* MCPGrant.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPGrant.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A2 /* MCPAudit.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPAudit.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A3 /* MCPProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPProtocol.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A4 /* MCPTools.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPTools.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A5 /* MCPServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A6 /* main.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		CF63000000000000000000A7 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CF63000000000000000000B1 /* SessionStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SessionStore.swift; path = Tracexy/Core/Storage/SessionStore.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000B2 /* SQLiteDatabase.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SQLiteDatabase.swift; path = Tracexy/Core/Storage/SQLiteDatabase.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000B3 /* HistoryRecords.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HistoryRecords.swift; path = Tracexy/Core/Storage/HistoryRecords.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000B4 /* AutomationValues.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationValues.swift; path = Tracexy/Core/Automation/AutomationValues.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000B5 /* AutomationExport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationExport.swift; path = Tracexy/Core/Automation/AutomationExport.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000B6 /* HistoryAutomationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HistoryAutomationService.swift; path = Tracexy/Core/Automation/HistoryAutomationService.swift; sourceTree = SOURCE_ROOT; };
+		CF63000000000000000000C0 /* TracexyMCP */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "compiled.mach-o.executable"; path = TracexyMCP; sourceTree = BUILT_PRODUCTS_DIR; };
 		09D5645F07983DBFA2DBDED4 /* TracexyBrand.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyBrand.swift; sourceTree = "<group>"; };
 		3277B7633663B75BC75ACD67 /* TracexyHelperProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TracexyHelperProtocol.swift; sourceTree = "<group>"; };
 		3CB93877886A41E82CA128D6 /* ConnectionValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionValidator.swift; sourceTree = "<group>"; };
@@ -253,6 +304,34 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		CF6300000000000000000090 /* TracexyMCP */ = {
+			isa = PBXGroup;
+			children = (
+				CF63000000000000000000A2 /* MCPAudit.swift */,
+				CF63000000000000000000A1 /* MCPGrant.swift */,
+				CF63000000000000000000A3 /* MCPProtocol.swift */,
+				CF63000000000000000000A5 /* MCPServer.swift */,
+				CF63000000000000000000A4 /* MCPTools.swift */,
+				CF63000000000000000000A6 /* main.swift */,
+				CF63000000000000000000A7 /* Info.plist */,
+				CF6300000000000000000091 /* Reused App Sources */,
+			);
+			path = TracexyMCP;
+			sourceTree = "<group>";
+		};
+		CF6300000000000000000091 /* Reused App Sources */ = {
+			isa = PBXGroup;
+			children = (
+				CF63000000000000000000B5 /* AutomationExport.swift */,
+				CF63000000000000000000B4 /* AutomationValues.swift */,
+				CF63000000000000000000B6 /* HistoryAutomationService.swift */,
+				CF63000000000000000000B3 /* HistoryRecords.swift */,
+				CF63000000000000000000B2 /* SQLiteDatabase.swift */,
+				CF63000000000000000000B1 /* SessionStore.swift */,
+			);
+			name = "Reused App Sources";
+			sourceTree = "<group>";
+		};
 		CF60000000000000000000C1 /* Configuration */ = {
 			isa = PBXGroup;
 			children = (
@@ -323,6 +402,7 @@
 				DCD335852FC5555D003CEC6D /* Products */,
 				7A55B8FEA77BBBB8063D08BC /* Frameworks */,
 				29354144A213E25B28908AF1 /* TracexyCaptureHelper */,
+				CF6300000000000000000090 /* TracexyMCP */,
 				20A9F1445B0F470950BFD2DB /* Shared */,
 				CF7000000000000000001028 /* CaptureFormat */,
 				CF7000000000000000001029 /* TracexyQuickLook */,
@@ -338,6 +418,7 @@
 				DCD335932FC5555F003CEC6D /* TracexyTests.xctest */,
 				DCD3359D2FC5555F003CEC6D /* TracexyUITests.xctest */,
 				62006F83A0AACCB9789CE845 /* TracexyCaptureHelper */,
+				CF63000000000000000000C0 /* TracexyMCP */,
 				CF700000000000000000100D /* TracexyQuickLook.appex */,
 				CF700000000000000000100E /* TracexySpotlight.appex */,
 			);
@@ -381,6 +462,21 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		CF6300000000000000000070 /* TracexyMCP */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF6300000000000000000073 /* Build configuration list for PBXNativeTarget "TracexyMCP" */;
+			buildPhases = (
+				CF6300000000000000000080 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TracexyMCP;
+			productName = TracexyMCP;
+			productReference = CF63000000000000000000C0 /* TracexyMCP */;
+			productType = "com.apple.product-type.tool";
+		};
 		DCD335832FC5555D003CEC6D /* Tracexy */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = DCD335A72FC5555F003CEC6D /* Build configuration list for PBXNativeTarget "Tracexy" */;
@@ -389,6 +485,7 @@
 				DCD335812FC5555D003CEC6D /* Frameworks */,
 				DCD335822FC5555D003CEC6D /* Resources */,
 				4F859D2689E8E705CC81EF18 /* Embed Helper Tool */,
+				CF6300000000000000000081 /* Embed MCP Tool */,
 				CF700000000000000000102B /* Embed Foundation Extensions */,
 				6743245C35AE4167CE846A3E /* Generate LaunchDaemon Plist */,
 			);
@@ -398,6 +495,7 @@
 				CF7000000000000000001034 /* PBXTargetDependency */,
 				CF700000000000000000103D /* PBXTargetDependency */,
 				3CC7676E195DE8823F188877 /* PBXTargetDependency */,
+				CF6300000000000000000074 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				DCD335862FC5555D003CEC6D /* Tracexy */,
@@ -546,6 +644,7 @@
 				DCD335922FC5555F003CEC6D /* TracexyTests */,
 				DCD3359C2FC5555F003CEC6D /* TracexyUITests */,
 				EFE1796E2CC38F94647452D8 /* TracexyCaptureHelper */,
+				CF6300000000000000000070 /* TracexyMCP */,
 				CF700000000000000000102C /* TracexyQuickLook */,
 				CF7000000000000000001035 /* TracexySpotlight */,
 			);
@@ -611,6 +710,26 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		CF6300000000000000000080 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CF63000000000000000000D1 /* MCPGrant.swift in Sources */,
+				CF63000000000000000000D2 /* MCPAudit.swift in Sources */,
+				CF63000000000000000000D3 /* MCPProtocol.swift in Sources */,
+				CF63000000000000000000D4 /* MCPTools.swift in Sources */,
+				CF63000000000000000000D5 /* MCPServer.swift in Sources */,
+				CF63000000000000000000D6 /* main.swift in Sources */,
+				CF63000000000000000000D7 /* SessionStore.swift in Sources */,
+				CF63000000000000000000D8 /* SQLiteDatabase.swift in Sources */,
+				CF63000000000000000000D9 /* HistoryRecords.swift in Sources */,
+				CF63000000000000000000DA /* AutomationValues.swift in Sources */,
+				CF63000000000000000000DB /* AutomationExport.swift in Sources */,
+				CF63000000000000000000DC /* HistoryAutomationService.swift in Sources */,
+				CF63000000000000000000DD /* TracexyIdentity.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0B63B95D53F6452925CE2ABF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -653,6 +772,11 @@
 				CF61000000000000000000C1 /* CaptureFrameTransport.swift in Sources */,
 				CF61000000000000000000C2 /* BoundedFrameBuffer.swift in Sources */,
 				CF61000000000000000000C3 /* CaptureWorkerLifecycle.swift in Sources */,
+				CF63000000000000000000E1 /* MCPGrant.swift in Sources */,
+				CF63000000000000000000E2 /* MCPAudit.swift in Sources */,
+				CF63000000000000000000E3 /* MCPProtocol.swift in Sources */,
+				CF63000000000000000000E4 /* MCPTools.swift in Sources */,
+				CF63000000000000000000E5 /* MCPServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -705,6 +829,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		CF6300000000000000000074 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = TracexyMCP;
+			target = CF6300000000000000000070 /* TracexyMCP */;
+			targetProxy = CF6300000000000000000075 /* PBXContainerItemProxy */;
+		};
 		3CC7676E195DE8823F188877 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = TracexyCaptureHelper;
@@ -734,6 +864,46 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		CF6300000000000000000071 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A7 /* LocalDev.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TracexyMCP/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_APP_BUNDLE_ID).mcp";
+				PRODUCT_NAME = TracexyMCP;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CF6300000000000000000072 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CF60000000000000000000A3 /* CommunityProduction.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = "$(TRACEXY_TEAM_ID)";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TracexyMCP/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TRACEXY_APP_BUNDLE_ID).mcp";
+				PRODUCT_NAME = TracexyMCP;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		71B0CA68AC062E8862C891D9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = CF60000000000000000000A7 /* LocalDev.xcconfig */;
@@ -1172,6 +1342,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		CF6300000000000000000073 /* Build configuration list for PBXNativeTarget "TracexyMCP" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF6300000000000000000072 /* Release */,
+				CF6300000000000000000071 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		9BECA5FE44B88FCC5C54ECCE /* Build configuration list for PBXNativeTarget "TracexyCaptureHelper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

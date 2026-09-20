@@ -299,6 +299,16 @@ extension MainContentCoordinator {
     func invalidateOutgoingProjectWork() {
         suspendProjectWorkspaceObservation()
 
+        // Retire the in-flight assistant run, its reviewed approval and its
+        // derived brief. The outgoing Project keeps its own transcript, the same
+        // way it keeps its investigation drafts.
+        assistant.invalidateForBoundary()
+
+        // An MCP process re-validates its app-written grant on every call. Remove
+        // that grant before swapping Project-owned storage so a client pinned to
+        // the outgoing Project fails closed on its very next request.
+        mcpAccess.invalidateForProjectBoundary()
+
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         // Cancel evaluation only. A Project boundary is not a capture boundary:
@@ -571,6 +581,7 @@ extension MainContentCoordinator {
             // database and Library folder stay exactly where they are. Unsaved
             // spool evidence is released with its deleted runtime.
             projectRuntimes.removeValue(forKey: deletedProjectID)
+            assistant.discardConversations(forProject: deletedProjectID)
         }
         if let runtime, runtime !== activeRuntime {
             if isFreshRuntime {

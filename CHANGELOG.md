@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Ask about the selected session with a local Assistant: connect a model running on this Mac, review the exact JSON before the first send, stream the answer, and click a citation to open its frame.
+- Share bounded, read-only capture history with an MCP client through a bundled command-line tool scoped to one Project you grant and revoke in Settings.
+- Overview plots accepted wire bytes on the capture clock and presents protocol, session, finding, host, and app summaries with routes into the investigation.
 - **File → Open… (⌘O)** opens a PCAP/PCAPNG where it is, recording a reference in the Project Library instead of copying; the Open panel previews format, size, records and start/elapsed before opening, and offers **Copy into Library**. **Import into Library… (⌥⌘O)** keeps the managed-copy path.
 - Referenced captures show their availability in the Library; a moved or replaced file offers **Locate…** and **Reload** inline instead of an error.
 - **File → Open Recent**, **Close Capture (⇧⌘W)**, **Reload (⌘R)** when the open file changed on disk, and **File Set → Next / Previous File** for `dumpcap`/`tcpdump` rotation sets.
@@ -25,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Keep Assistant disclosure toggles and reviewed JSON in sync, reject stale approval, mark output cutoffs as incomplete, and keep the synthetic walkthrough isolated from capture-helper setup.
 - Defer bottom-inspector collapse and expansion until AppKit finishes the current layout pass, avoiding a window-constraint crash during SwiftUI updates.
 - Bound the transport payload by the IP-declared length so Ethernet padding and trailers are no longer counted as TCP sequence space, which produced false overlap and retransmission findings and leaked into Follow Stream.
 - Stop decoding a transport header out of non-first IP fragments and out of IPv4 headers shorter than 20 bytes; those frames no longer invent endpoints or sessions.
@@ -43,6 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Replace placeholder MCP and Assistant settings with scoped grants, activity, and local-model controls.
+- Overview Protocols shows session-byte share by innermost protocol so its bars sum to the scope.
 - Orient a session captured mid-stream toward the service port when no SYN was captured, so the remote host rather than this Mac's ephemeral socket reads as the destination.
 
 ## [0.7.0] - 2026-09-08

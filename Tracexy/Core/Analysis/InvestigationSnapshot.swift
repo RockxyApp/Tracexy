@@ -48,14 +48,16 @@ nonisolated struct InvestigationSnapshot: Sendable {
         datagramEvidence: DatagramEvidenceTable.Snapshot,
         tlsEvidence: TLSEvidenceTable.Snapshot,
         connectionAnalysis: ConnectionAnalysisSnapshot,
-        datagramAnalysis: DatagramAnalysisSnapshot
+        datagramAnalysis: DatagramAnalysisSnapshot,
+        trafficTimeline: TrafficTimeline = .empty
     ) {
         self.init(
             fold: SessionFoldSnapshot(
                 sessions: sessions,
                 connections: connections,
                 datagramEvidence: datagramEvidence,
-                tlsEvidence: tlsEvidence
+                tlsEvidence: tlsEvidence,
+                trafficTimeline: trafficTimeline
             ),
             connectionAnalysis: connectionAnalysis,
             datagramAnalysis: datagramAnalysis
@@ -105,6 +107,12 @@ nonisolated struct InvestigationSnapshot: Sendable {
         fold.tlsEvidence
     }
 
+    /// The bounded capture-wide traffic timeline — a direct projection of the
+    /// wrapped fold, never a copy.
+    var trafficTimeline: TrafficTimeline {
+        fold.trafficTimeline
+    }
+
     /// Replace only the published session projection while preserving the exact
     /// evidence and analyses already derived off-main. The coordinator uses this once
     /// after process attribution, so process queries see the same summaries as the UI
@@ -116,7 +124,8 @@ nonisolated struct InvestigationSnapshot: Sendable {
             datagramEvidence: datagramEvidence,
             tlsEvidence: tlsEvidence,
             connectionAnalysis: connectionAnalysis,
-            datagramAnalysis: datagramAnalysis
+            datagramAnalysis: datagramAnalysis,
+            trafficTimeline: trafficTimeline
         )
     }
 

@@ -221,6 +221,19 @@ struct RootView: View {
 
         if coordinator.isHistoryDemoMode {
             await coordinator.prepareHistoryDemo()
+        }
+
+        // The Assistant walkthrough publishes one documentation-range snapshot so
+        // the dock can be driven without a real capture. It never starts capture
+        // and never reads a file.
+        if AssistantDemoLaunchMode.isEnabled() {
+            await coordinator.adoptAssistantDemoFixture()
+            // The walkthrough is fully synthetic and must never prompt for the
+            // privileged helper or honor a persisted auto-capture preference.
+            return
+        }
+
+        if coordinator.isHistoryDemoMode {
             return
         }
 

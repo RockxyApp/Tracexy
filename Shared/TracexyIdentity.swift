@@ -92,12 +92,40 @@ struct TracexyIdentity {
 
     static let current = TracexyIdentity(bundle: .main)
 
+    /// The longest test-run token used verbatim; a UUID string is 36 characters.
+    static let maxTestRunTokenLength = 64
+
+    /// The application-wide preferences domain. Production uses the ordinary
+    /// app domain; every automated launch with a test token gets a fresh,
+    /// token-scoped suite so Settings and the Assistant cannot alter a user's
+    /// endpoint, disclosure choices, appearance, or retired keys.
+    static let applicationDefaults: UserDefaults = {
+        guard isRunningTests else {
+            return .standard
+        }
+        let suiteName = "\(current.defaultsPrefix).tests.\(testRunToken)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("Automated runs require an isolated UserDefaults suite.")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }()
+
+    /// Whether this process must use throwaway per-run storage instead of the
+    /// user's real Application Support directory.
+    ///
+    /// `TRACEXY_TEST_RUN_TOKEN` counts on its own. A UI test drives the app as a
+    /// separate process that carries none of the XCTest markers below, and an
+    /// automated run must never write into real Projects, History or an MCP
+    /// grant. The token names a *per-run temporary directory* and nothing else —
+    /// it cannot select an arbitrary path, a database, or a Project.
     static var isRunningTests: Bool {
         let environment = ProcessInfo.processInfo.environment
         let arguments = ProcessInfo.processInfo.arguments
         return NSClassFromString("XCTestCase") != nil
             || NSClassFromString("XCTest.XCTestCase") != nil
             || NSClassFromString("Testing.Test") != nil
+            || !(environment["TRACEXY_TEST_RUN_TOKEN"] ?? "").isEmpty
             || !(environment["XCTestConfigurationFilePath"] ?? "").isEmpty
             || environment.keys.contains { $0.hasPrefix("XCTest") }
             || arguments.contains { $0.contains(".xctest") || $0.contains("XCTest") }
@@ -132,6 +160,29 @@ struct TracexyIdentity {
 
     var harUTTypeIdentifier: String {
         "\(sharedUTTypePrefix).har"
+    }
+
+    /// Reduce a `TRACEXY_TEST_RUN_TOKEN` to one path-safe component.
+    ///
+    /// The token only ever names a per-run directory under the temporary
+    /// directory and a per-run defaults suite. A token made of ASCII letters,
+    /// digits, `-` and `_` within ``maxTestRunTokenLength`` is used as written,
+    /// so ordinary tokens stay readable and deterministic. Anything else — a
+    /// separator, `..`, whitespace, a control character, an over-long value — is
+    /// replaced by a stable hash of the raw value, so it still selects one
+    /// deterministic per-run location and can never traverse or inject a path.
+    static func sanitizedTestRunToken(_ raw: String) -> String {
+        let isSafe = raw.utf8.allSatisfy { byte in
+            (0x30 ... 0x39).contains(byte) // 0-9
+                || (0x41 ... 0x5A).contains(byte) // A-Z
+                || (0x61 ... 0x7A).contains(byte) // a-z
+                || byte == 0x2D // -
+                || byte == 0x5F // _
+        }
+        if isSafe, !raw.isEmpty, raw.utf8.count <= maxTestRunTokenLength {
+            return raw
+        }
+        return "h-\(stableHash(raw))"
     }
 
     func defaultsKey(_ suffix: String) -> String {
@@ -203,7 +254,7 @@ struct TracexyIdentity {
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !explicit.isEmpty
         {
-            return explicit
+            return sanitizedTestRunToken(explicit)
         }
 
         if let configurationPath = environment["XCTestConfigurationFilePath"]?

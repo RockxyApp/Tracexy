@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func attach(_ coordinator: MainContentCoordinator, applicationDefaults: UserDefaults = .standard) {
         self.coordinator = coordinator
         self.applicationDefaults = applicationDefaults
+        SettingsKeys.removeRetiredKeys(from: applicationDefaults)
         coordinator.refreshRecentCaptures()
         let urls = pendingOpenURLs
         pendingOpenURLs = []

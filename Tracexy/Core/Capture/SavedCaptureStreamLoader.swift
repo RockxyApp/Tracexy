@@ -184,6 +184,9 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     /// The passive datagram analysis assessed exactly once from `datagramEvidence`.
     /// Additive evidence alongside `sessions`; not yet surfaced in Views.
     let datagramAnalysis: DatagramAnalysisSnapshot
+    /// Bounded capture-wide bytes over time by session direction, folded from the
+    /// same accepted frames.
+    let trafficTimeline: TrafficTimeline
     /// One evidence pointer per session, keyed by session id.
     let evidence: [UUID: CaptureEvidenceReference]
     /// Bounded FIFO of the most recent raw frames, for the inspection window. Its
@@ -357,6 +360,7 @@ nonisolated final class SavedCaptureStreamLoader {
             tlsEvidence: fold.tlsEvidence,
             connectionAnalysis: investigation.connectionAnalysis,
             datagramAnalysis: investigation.datagramAnalysis,
+            trafficTimeline: fold.trafficTimeline,
             evidence: evidence,
             retainedTail: tail,
             activity: activity.activity(),

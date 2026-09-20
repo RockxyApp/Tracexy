@@ -37,6 +37,21 @@ extension MainContentCoordinator {
         }
     }
 
+    /// Overview Top Apps: narrow to one attributed process without touching
+    /// anything else. Like the host route, a click under a *different* process
+    /// scope is stale and does nothing rather than widening past the ranking.
+    func showSessionsForAggregateProcess(_ process: String) {
+        let workspace = activeWorkspace
+        guard workspace.processFilter == nil || workspace.processFilter == process else {
+            return
+        }
+        recordSessionScopeDrillIn(in: workspace) {
+            carryProtocolLensIntoAggregate(in: workspace)
+            workspace.sidebarSelection = .sessions
+            workspace.processFilter = process
+        }
+    }
+
     /// Overview Protocol Mix: add one protocol to the conjunctive aggregate
     /// intersection.
     ///

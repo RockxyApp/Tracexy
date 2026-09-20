@@ -468,7 +468,8 @@ extension MainContentCoordinator {
             datagramEvidence: result.datagramEvidence,
             tlsEvidence: result.tlsEvidence,
             connectionAnalysis: result.connectionAnalysis,
-            datagramAnalysis: result.datagramAnalysis
+            datagramAnalysis: result.datagramAnalysis,
+            trafficTimeline: result.trafficTimeline
         ))
         throughputSamples = []
         pendingChartBytes = 0

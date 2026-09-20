@@ -135,6 +135,7 @@ struct InspectorView: View {
             case let .loaded(evidence):
                 Text("Cited frame \(evidence.provenance.ordinal.rawValue.formatted())")
                     .font(Theme.Typography.captionMedium)
+                    .accessibilityIdentifier("evidence.citedFrameLoaded")
                 Text("· \(evidence.bytes.count.formatted()) captured bytes")
                     .foregroundStyle(.secondary)
             case let .failed(message):

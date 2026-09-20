@@ -55,6 +55,60 @@ struct OverviewScopeTests {
         #expect(coordinator.count(for: absentSomewhere) == 0)
     }
 
+    @Test("Protocol share partitions the scoped bytes and rankings agree with top hosts")
+    func byteShareAndRankingsFollowTheScope() async throws {
+        let env = try await makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        let scopedBytes = coordinator.visibleSessions.reduce(0) { $0 + $1.totalBytes }
+        let share = coordinator.protocolByteShare()
+        // A true partition: one row per innermost protocol, summing to the scope.
+        #expect(share.reduce(0) { $0 + $1.bytes } == scopedBytes)
+        #expect(Set(share.compactMap(\.kind)).count == share.filter { $0.kind != nil }.count)
+        let leading = share.filter { $0.kind != nil }.map(\.bytes)
+        #expect(leading == leading.sorted(by: >))
+
+        // Host rankings carry the same order and totals as the existing rollup,
+        // plus the split each row's bar draws.
+        let ranked = coordinator.topHostTraffic(limit: 5)
+        let hosts = coordinator.topHosts(limit: 5)
+        #expect(ranked.map(\.name) == hosts.map(\.host))
+        #expect(ranked.map(\.totalBytes) == hosts.map(\.bytes))
+
+        // Narrowing the scope narrows every rollup together.
+        let target = try #require(Set(coordinator.sessions.map(\.host)).min())
+        coordinator.activeWorkspace.hostFilter = target
+        let narrowed = coordinator.visibleSessions.reduce(0) { $0 + $1.totalBytes }
+        #expect(coordinator.protocolByteShare().reduce(0) { $0 + $1.bytes } == narrowed)
+        #expect(coordinator.topHostTraffic().map(\.name) == [target])
+        // Attribution-free sessions never masquerade as an app.
+        #expect(coordinator.topProcesses().allSatisfy { !$0.name.isEmpty && $0.name != "—" })
+    }
+
+    @Test("Opening a saved file adopts a capture-wide traffic timeline that filters do not slice")
+    func savedCaptureExposesTrafficTimeline() async throws {
+        let env = try await makeLoadedCoordinator()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+
+        let timeline = coordinator.trafficTimeline
+        let activity = try #require(coordinator.savedCaptureActivity)
+        #expect(timeline.totals.frames == activity.totalFrames)
+        #expect(timeline.totals.bytes == activity.totalBytes)
+        #expect(timeline.untimedFrameCount == activity.untimedFrameCount)
+        #expect(!timeline.points().isEmpty)
+        #expect(timeline.totals.sentBytes == coordinator.sessions.reduce(0) { $0 + $1.bytesUp })
+        #expect(timeline.totals.receivedBytes == coordinator.sessions.reduce(0) { $0 + $1.bytesDown })
+
+        // The timeline describes accepted frames, so a session filter leaves it whole.
+        coordinator.activeWorkspace.hostFilter = try #require(coordinator.sessions.first?.host)
+        #expect(coordinator.trafficTimeline == timeline)
+
+        coordinator.clearSessions()
+        #expect(coordinator.trafficTimeline == .empty)
+    }
+
     @Test("A saved capture reports unknown fidelity, never a clean one")
     func savedCaptureHasNoFidelity() async throws {
         let env = try await makeLoadedCoordinator()

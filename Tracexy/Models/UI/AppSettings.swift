@@ -31,11 +31,38 @@ enum SettingsKeys {
     static let autoClear = key("settings.autoClear")
     static let shareAnalytics = key("settings.shareAnalytics")
 
-    static let mcpEnabled = key("settings.mcpEnabled")
-    static let mcpPort = key("settings.mcpPort")
-    static let mcpExposeSessions = key("settings.mcpExposeSessions")
-    static let aiInsights = key("settings.aiInsights")
-    static let aiProvider = key("settings.aiProvider")
+    /// The validated loopback base address of the local model endpoint, and the
+    /// model chosen from what that endpoint advertised. Application-scoped: a
+    /// local daemon belongs to this Mac, not to one Project.
+    static let assistantEndpoint = key("settings.assistantEndpoint")
+    static let assistantModel = key("settings.assistantModel")
+
+    /// The AI Assistant's disclosure opt-ins, one per sensitive field family, all
+    /// off by default — the same minimum-disclosure posture the History
+    /// automation boundary starts from.
+    static let assistantDisclosureProcess = key("settings.assistantDisclosureProcess")
+    static let assistantDisclosureHost = key("settings.assistantDisclosureHost")
+    static let assistantDisclosureEndpoints = key("settings.assistantDisclosureEndpoints")
+
+    /// Preference keys written by builds before the MCP boundary and the local
+    /// Assistant existed. Nothing reads them; they described a listener, a port
+    /// and a provider that were never implemented, so leaving them behind would
+    /// misrepresent what this build does. They are removed once, at launch.
+    static let retiredKeys = [
+        key("settings.mcpEnabled"),
+        key("settings.mcpPort"),
+        key("settings.mcpExposeSessions"),
+        key("settings.aiInsights"),
+        key("settings.aiProvider"),
+    ]
+
+    /// Remove every retired key from one defaults domain. Idempotent, and safe to
+    /// run on a domain that never had them.
+    static func removeRetiredKeys(from defaults: UserDefaults) {
+        for key in retiredKeys where defaults.object(forKey: key) != nil {
+            defaults.removeObject(forKey: key)
+        }
+    }
 
     // MARK: Private
 
@@ -95,7 +122,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .capture: String(localized: "Capture")
         case .helper: String(localized: "Helper")
         case .privacy: String(localized: "Privacy")
-        case .mcp: String(localized: "MCP & AI")
+        case .mcp: String(localized: "MCP & Assistant")
         case .updates: String(localized: "Updates")
         }
     }

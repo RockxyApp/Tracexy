@@ -296,19 +296,35 @@ sessions, traffic, duration, activity, storage, top talkers, protocol mix, obser
 compact findings severity summary are kept in one native dashboard. Overview never duplicates the
 finding evidence list; its analysis summary links to the existing filtered Sessions workflow.
 
-For a live capture, the activity chart shows measured throughput and the storage card distinguishes
-kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
-Window trimming does not remove accumulated sessions or frames from the disk-backed live spool, and is
-never reported as capture-source loss.
-For an opened file, Overview shows file provenance and activity derived from its real frame timestamps:
-the container the reader recognised (PCAP or PCAPNG, not the extension), size, frames, and the
-interfaces a PCAPNG declares. Fidelity and drop counters come only from the Interface Statistics
-Blocks the capturing tool wrote (`isb_ifrecv`, `isb_ifdrop`, `isb_osdrop`); when a file carries
-none they read **Not recorded**, because a savefile cannot reconstruct what was missed when it was
-recorded, and when only some interfaces recorded them the row says so. **Get Info** opens the full
-capture information window from the storage card. Frames outside the local inspection window
-remain in the source file and in the decoded session/activity totals; window eviction is not
-reported as capture loss.
+Overview is a capture report. The headline row shows frames, sessions, traffic, duration, and
+fidelity. **Traffic over time** plots every accepted frame's wire bytes on the real capture clock for
+live and opened captures alike, split into bytes **sent by clients** and **received from servers**
+when the session direction remains stable. If later evidence changes client/server orientation,
+the chart shows exact total bytes only and explains why. Slices start at one second and widen only
+when a long capture would otherwise exceed the bounded bucket count; the caption states the current slice
+width. Hovering a column reads its exact figures. Findings in the current scope are pinned along the
+top of the plot at the instant of their first cited frame; a bounded number are placed and the footer
+says when it is a subset. Frames that carry no capture time count in the totals and are named in a
+notice, never drawn. The chart is capture-wide — session filters narrow the panels below it, not the
+frames.
+
+Beneath it, three compact charts summarize the scope: **Protocols** partitions session bytes by each
+session's innermost protocol (bars sum to the scope; click a bar to narrow to that protocol),
+**Sessions started** counts new conversations per slice on the same clock, and **Findings** shows the
+severity split with a route to review those sessions. **Top hosts** and **Top apps** are native tables
+of sessions, sent, received, and total bytes with an in-row share bar (client-sent and
+server-received against the leading row); double-click a row (or use its context menu) to narrow
+the session list to exactly that host or app. Sessions with no attributed process are never listed as an
+app. **Sources** counts observed apps, domains, and addresses and opens the Flow Map.
+
+**Capture health** shows live kernel/interface loss, helper-buffer drops, and the bounded in-memory
+inspection window. Window trimming does not remove accumulated sessions or frames from the disk-backed
+live spool and is never reported as capture-source loss. For an opened file, Overview shows the
+container the reader recognised, its declared interfaces, and loss counters only when Interface
+Statistics Blocks record them. Missing counters read **Not recorded**; counters from only some
+interfaces are labelled partial. These figures cannot reconstruct traffic missed before the file was
+written. **Get Info** opens the capture information window. Frames outside the inspection window
+remain in the source file and decoded session/activity totals.
 
 ## Sessions
 
@@ -520,10 +536,66 @@ connection/TLS sections summarize scope and link to the chronological Evidence f
 duplicating the full event list. Technical values are selectable and monospaced; related-action rows
 remain clickable, and evidence-backed finding citations can open their exact local frame.
 
-The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
-an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant
-backend: history, new-conversation, prompt, and send controls remain unavailable, and the Read-only control
-explains that no capture data or model request leaves the Mac.
+The adjacent **AI Assistant** tab is a working conversation over a model running on this Mac. See
+[AI Assistant](#ai-assistant) below.
+
+## AI Assistant
+
+The Assistant answers questions about **the selected session only**, using a model running on this
+Mac. It is local-only in this build: there is no account, no API key and no remote provider.
+
+**Connect a local model.** Install a local model runner — an [Ollama](https://ollama.com) daemon on
+its default `http://127.0.0.1:11434` needs no configuration — and open the AI Assistant tab. Tracexy
+checks the endpoint once and shows what it found. To point at a different local runner, use
+**Settings → MCP & Assistant → Local endpoint**. Only `127.0.0.1`, `::1` and `localhost` are accepted;
+a remote address, a URL with a user name or password, or a redirect off this Mac is refused before
+anything is sent. An endpoint that answers only the OpenAI-compatible API is labelled *local
+OpenAI-compatible*, because Tracexy will not claim to know which server it is.
+
+**Ask about a session.** Select a session, then type a question or pick one of the suggested openers.
+Use the model picker beside the composer to choose among the models the endpoint advertises.
+
+**Review what is sent.** On the first send — and again whenever the Project, selected session,
+evidence publication, disclosure, endpoint or model changes — Tracexy shows the **Review Data** sheet before anything
+leaves the app. It shows the literal JSON, the destination and model, the disclosure decision and the
+coverage limits. **Included fields** are separate opt-ins for the process name, the display host, and
+the source/destination endpoints; all three start off. The display host can contain a name derived
+from DNS or TLS SNI. Packet bytes, payload bodies, URLs, file paths and credentials are never included.
+
+**Read the answer honestly.** Answers stream as they arrive. **Stop** ends one, and whatever text had
+arrived is kept and marked incomplete — Tracexy never presents a partial answer as a conclusion, and
+the same label appears when a length or time limit is reached. **Retry** re-sends the last prompt, and
+**New conversation** starts over. Changing Project, workspace, session, endpoint or model cancels an
+answer in flight rather than letting it land under something it does not describe.
+
+**Follow the evidence.** Citations such as `frame-1024` appear as buttons under an answer; clicking one
+opens that exact frame in the evidence inspector, the same route a Findings row uses. A citation the
+model invents is not clickable — it resolves to nothing rather than to the wrong frame.
+
+Conversations are kept per Project workspace, in memory, for the life of the app session. Prompts and
+answers are not written to disk.
+
+## MCP for external clients
+
+Tracexy bundles a free, read-only MCP command-line tool so an MCP client — an editor, an agent, a
+notebook — can read bounded summaries from **one Project you authorize**. It speaks JSON-RPC over
+stdin and stdout and **never opens a network port**.
+
+Open **Settings → MCP & Assistant**. The pane names the current Project, the field families that will
+be disclosed, and the maximum rows one request may read, then **Grant Access** issues the grant. The
+pane also shows the bundled command path and a ready-to-paste client configuration; **Copy Client
+Configuration** puts it on the clipboard. Point your MCP client at that command — it needs no port,
+host or token.
+
+A client sees exactly three read-only tools: `describe_scope`, `list_captures` and `list_sessions`.
+There is no tool for packet bytes, capture files, file paths, raw frames, capture control or writes,
+and a process or host filter is refused unless you disclosed that field.
+
+**Recent activity** lists what clients called: the time, the tool, the outcome, the Project, and the
+*names* of the filter fields used — never the values, and never anything read back.
+
+Switching Projects or pressing **Revoke** invalidates the grant, so the next call from any connected
+client fails closed. Re-issuing a grant also supersedes the old one; reconnect the client afterwards.
 
 ## Software updates
 
@@ -556,11 +628,12 @@ Selecting an IP in the sidebar matches the exact address in typed endpoints or D
 
 ### Open sessions from Overview and Flow
 
-Overview's host and protocol rows narrow the sessions already represented by the
-summary. Existing search, category chips, advanced rules, Investigation query and
-Noise Control remain active. Protocol counts overlap because one session can
-contain several protocol layers. Review Findings intersects the current scope
-with typed finding membership, including when Errors is already selected.
+Overview's host, app and protocol rows narrow the sessions already represented by
+the summary. Existing search, category chips, advanced rules, Investigation query
+and Noise Control remain active. A host or app row under a different host or app
+scope is stale and does nothing rather than widening the list. Review Findings
+intersects the current scope with typed finding membership, including when Errors
+is already selected.
 
 Flow groups typed destination addresses; equivalent IPv6 spellings share one row.
 Show Sessions opens only sessions whose destination matches that row, while the

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - TracexyApp
@@ -46,7 +47,7 @@ struct TracexyApp: App {
 
     private static var applicationDefaults: UserDefaults {
         guard isHistoryDemoMode else {
-            return .standard
+            return TracexyIdentity.applicationDefaults
         }
         guard let historyDemoDefaults else {
             preconditionFailure("Synthetic History requires an isolated settings store.")
@@ -129,6 +130,9 @@ struct TracexyApp: App {
                 isProjectReady: coordinator.hasHydratedProjects,
                 historyRetentionError: coordinator.historyRetentionError,
                 isHistoryDemoMode: coordinator.isHistoryDemoMode,
+                mcpScope: coordinator.mcpGrantScope,
+                assistant: coordinator.assistant,
+                mcpAccess: coordinator.mcpAccess,
                 onAutoClearChange: { coordinator.configureHistoryAutoClear($0) }
             )
             // Capture, Privacy and default-view preferences belong to the active
@@ -171,9 +175,16 @@ struct TracexyApp: App {
                 .task {
                     appDelegate.attach(coordinator, applicationDefaults: Self.applicationDefaults)
                     updater.startIfConfigured()
+                    if AssistantDemoLaunchMode.prefersNarrowWindow() {
+                        await Task.yield()
+                        NSApplication.shared.keyWindow?.setContentSize(NSSize(width: 1_000, height: 640))
+                    }
                 }
         }
-        .defaultSize(width: 1_320, height: 840)
+        .defaultSize(
+            width: AssistantDemoLaunchMode.prefersNarrowWindow() ? 1_000 : 1_320,
+            height: AssistantDemoLaunchMode.prefersNarrowWindow() ? 640 : 840
+        )
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         // A capture opened from Finder is handled by the app delegate as an
@@ -302,7 +313,8 @@ struct TracexyApp: App {
             projectRepository: JSONProjectCatalogRepository(
                 directoryURL: TracexyIdentity.current.appSupportPath("Projects", fileManager: .default)
             ),
-            projectDataProvider: DefaultProjectDataProvider()
+            projectDataProvider: DefaultProjectDataProvider(),
+            settingsDefaults: applicationDefaults
         )
     }
 }
