@@ -72,7 +72,7 @@ struct MCPAuditTests {
 
     @Test("Adversarial filter names never reach the trail", arguments: [
         ["hostSubstring=evil.example.com"],
-        ["/Users/someone/Library/History.sqlite"],
+        ["/example/Library/History.sqlite"],
         ["hostsubstring", "HostSubstring"],
         [String(repeating: "h", count: 65_536)],
         ["status\n{\"injected\":true}"],

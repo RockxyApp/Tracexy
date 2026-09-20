@@ -331,7 +331,7 @@ struct MCPServerTests {
         let server = environment.makeServer()
         _ = try await response(server, "initialize", id: 1)
 
-        let hostile = "read_file /Users/someone/secrets " + String(repeating: "x", count: 2_000)
+        let hostile = "read_file /example/secrets " + String(repeating: "x", count: 2_000)
         let refused = try await response(server, "tools/call", id: 2, params: ["name": hostile, "arguments": [:]])
         #expect(errorCode(refused) == MCPErrorCode.invalidParams.rawValue)
         let record = try #require(environment.issuer.recentAudit().last)

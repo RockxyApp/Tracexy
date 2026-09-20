@@ -200,5 +200,5 @@ These are design intent — do not write code, or read these docs, as if they ex
 - any **remote or BYOK assistant provider**. The Community checkout implements local, credential-free
   models only; a future Pro packaging decision may add remote providers, and until it does there is no
   credential, Keychain item, entitlement or purchase path anywhere in Core, Shared, the helper, the
-  formats, storage or the transports. Rockxy currently leaves BYOK ungated; Tracexy's future
-  BYOK-as-Pro policy is a newer product decision and is *not* implemented here.
+  formats, storage or the transports. Any future remote-provider policy requires a separate
+  product decision and is *not* implemented here.
