@@ -12,6 +12,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     // conversations of different protocols.
     case timeline
     case evidence
+    case frames
     case stream
     case layers
     case requests
@@ -28,6 +29,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .timeline: "Timeline"
         case .evidence: "Evidence"
+        case .frames: "Frames"
         case .stream: "Stream"
         case .layers: "Layers"
         case .requests: "Requests"
@@ -40,6 +42,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .timeline: "chart.bar.xaxis"
         case .evidence: "point.3.connected.trianglepath.dotted"
+        case .frames: "list.number"
         case .stream: "arrow.left.arrow.right.square"
         case .layers: "square.stack.3d.up"
         case .requests: "arrow.left.arrow.right"
@@ -57,13 +60,19 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     /// decode cannot keep.
     static func visibleTabs(
         for session: SessionSummary,
-        hasSessionEvidence: Bool = false
+        hasSessionEvidence: Bool = false,
+        hasFrameSource: Bool = false
     )
         -> [InspectorTab]
     {
         var tabs: [InspectorTab] = [.timeline]
         if hasSessionEvidence {
             tabs.append(.evidence)
+        }
+        // Frames needs a stable source to rescan; it never appears for an active
+        // live capture, whose spool is still growing.
+        if hasFrameSource {
+            tabs.append(.frames)
         }
         if session.protocolStack.contains(.tcp) {
             tabs.append(.stream)

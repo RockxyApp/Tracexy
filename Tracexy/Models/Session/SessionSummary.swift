@@ -33,6 +33,8 @@ nonisolated enum SessionStatus: String, CaseIterable, Hashable {
 
 /// One network conversation as shown in the timeline / session list.
 nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
+    static let maxCaptureInterfaces = 4
+
     let id: UUID
     /// When the session's earliest contributing frame was captured, or `nil` when
     /// at least one contributing frame carried no capture time at all. Unknown is
@@ -89,6 +91,12 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// the condition that makes ``startTime``/``duration``/``latencyMilliseconds``
     /// unknown, while every byte total and decoded fact is still retained.
     var untimedFrameCount: Int = 0
+    /// Distinct capture interfaces (pcapng IDB indexes) that contributed frames,
+    /// ascending, bounded to ``maxCaptureInterfaces``. Empty when the source does
+    /// not state interfaces (batch and live folds).
+    var captureInterfaceIDs: [Int] = []
+    /// More distinct interfaces contributed than ``maxCaptureInterfaces`` retains.
+    var captureInterfaceOverflow: Bool = false
 
     /// Whether this session's own timing could not be established because at least
     /// one contributing frame carried no capture time.
@@ -126,6 +134,33 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
 
     nonisolated var totalBytes: Int {
         bytesUp + bytesDown
+    }
+
+    // MARK: Column sort keys
+
+    /// Start instant for column sorting: unknown timing sorts after every known
+    /// instant in either direction rather than being spelled as an epoch.
+    nonisolated var sortableStartTime: TimeInterval {
+        startTime?.timeIntervalSince1970 ?? .infinity
+    }
+
+    /// Process name for column sorting; unattributed sessions sort after named ones.
+    nonisolated var sortableProcessName: String {
+        processName ?? "\u{10FFFF}"
+    }
+
+    /// The innermost protocol's label, the value the Protocol column shows.
+    nonisolated var primaryProtocolLabel: String {
+        primaryProtocol.label
+    }
+
+    /// Status severity for column sorting: OK, then Warning, then Error.
+    nonisolated var statusRank: Int {
+        switch status {
+        case .ok: 0
+        case .warning: 1
+        case .error: 2
+        }
     }
 
     /// Whether this session carries an application-layer request/response

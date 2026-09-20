@@ -30,8 +30,10 @@ struct TypedEndpointProjectionTests {
 
     @Test
     func reverseFirstPacketProjectsTheOtherEndAsClient() throws {
+        // Two ephemeral ports: no service-port orientation applies, so the earliest
+        // packet alone decides the direction.
         let a = IPEndpoint(ip: "192.0.2.10", port: 50_000)
-        let b = IPEndpoint(ip: "198.51.100.20", port: 443)
+        let b = IPEndpoint(ip: "198.51.100.20", port: 51_000)
         // Same canonical five-tuple as the forward case, but the earliest packet flows
         // b→a, so the client projection must be b — not the canonical tuple's `a`.
         var accumulator = SessionAccumulator()
@@ -49,9 +51,10 @@ struct TypedEndpointProjectionTests {
 
     @Test
     func earlierTimestampArrivingLaterBecomesTheClient() throws {
+        // Ephemeral ports on both ends keep the service-port orientation out of it.
         let first = IPEndpoint(ip: "192.0.2.10", port: 50_000)
-        let server = IPEndpoint(ip: "198.51.100.20", port: 443)
-        let earlier = IPEndpoint(ip: "198.51.100.20", port: 443)
+        let server = IPEndpoint(ip: "198.51.100.20", port: 51_000)
+        let earlier = IPEndpoint(ip: "198.51.100.20", port: 51_000)
         var accumulator = SessionAccumulator()
         // Fold the later timestamp first, then a strictly-earlier one from the server
         // side: the earliest packet (server→client at t=1) now sets the direction.
@@ -76,6 +79,25 @@ struct TypedEndpointProjectionTests {
         let summary = try #require(accumulator.summaries().first)
         #expect(summary.sourceEndpointValue == client)
         #expect(summary.destinationEndpointValue == server)
+    }
+
+    // MARK: Service-port orientation
+
+    @Test
+    func serviceSideFirstPacketIsOrientedTowardTheService() throws {
+        let client = IPEndpoint(ip: "192.0.2.10", port: 50_000)
+        let server = IPEndpoint(ip: "198.51.100.20", port: 443)
+        // Captured mid-stream: the earliest packet flows from the service port. The
+        // client projection is still the ephemeral side, so the remote service —
+        // not this end's ephemeral socket — is the session's destination.
+        var accumulator = SessionAccumulator()
+        accumulator.add(packet(source: server, destination: client, at: 1))
+        accumulator.add(packet(source: client, destination: server, at: 2))
+
+        let summary = try #require(accumulator.summaries().first)
+        #expect(summary.sourceEndpointValue == client)
+        #expect(summary.destinationEndpointValue == server)
+        #expect(summary.startTime == Date(timeIntervalSince1970: 1))
     }
 
     // MARK: Missing endpoints project nil, not a fabricated string

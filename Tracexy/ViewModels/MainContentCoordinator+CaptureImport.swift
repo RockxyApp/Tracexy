@@ -58,6 +58,49 @@ extension MainContentCoordinator {
         importCapture(from: source, originProjectID: origin)
     }
 
+    /// Captures arriving from outside the app's own picker — Finder "Open With",
+    /// the Dock icon, or a drop onto the main window. They take the same Library
+    /// import path as the panel, so recognition, refusal, progress, cancellation
+    /// and auto-open cannot drift from ⌘O. One capture per request: the import
+    /// pipeline holds one source at a time, so a multi-file drop is refused as a
+    /// whole rather than silently importing only its first file.
+    ///
+    /// A request that lands before Projects have hydrated at launch (the app was
+    /// started by opening a file) is held and replayed once hydration finishes.
+    func importExternalCaptures(_ urls: [URL]) {
+        let files = urls.filter(\.isFileURL)
+        guard let source = files.first else {
+            return
+        }
+        guard files.count == 1 else {
+            captureError = "Import one capture at a time. \(files.count) files were dropped; none was imported."
+            return
+        }
+        guard hasHydratedProjects else {
+            pendingExternalCaptureURL = source
+            return
+        }
+        guard !isImportingCapture else {
+            captureError = "Tracexy is still importing “\(captureImportName ?? "a capture")”. "
+                + "Wait for it to finish, then open “\(source.lastPathComponent)”."
+            return
+        }
+        // Finder, Dock and drops open in place (or copy, per the Project's Open
+        // preference); a multi-gigabyte drop must never silently start a copy.
+        openExternalCapture(source)
+    }
+
+    /// Replays a capture opened from outside before hydration finished. Called
+    /// exactly at the launch-hydration boundary; a request made after that goes
+    /// straight through `importExternalCaptures`.
+    func replayPendingExternalCapture() {
+        guard let source = pendingExternalCaptureURL else {
+            return
+        }
+        pendingExternalCaptureURL = nil
+        importExternalCaptures([source])
+    }
+
     func importCapture(from source: URL, originProjectID: UUID? = nil) {
         if let originProjectID, originProjectID != activeRuntime.projectID {
             captureError = "Tracexy switched Projects while the import panel was open. Import again in the intended Project."
@@ -122,10 +165,11 @@ extension MainContentCoordinator {
             // copy, but never auto-open it after cancellation or a Project change.
             guard !cancelled, !self.projectTransitionStatus.isPending,
                   let destination,
-                  let capture = self.savedCaptures.first(where: { $0.url == destination }) else
+                  let capture = self.savedCaptures.first(where: { $0.url.isSameFileSystemPath(as: destination) }) else
             {
                 return
             }
+            self.noteRecentCapture(source)
             self.openSavedCapture(capture)
         }
     }

@@ -444,7 +444,7 @@ struct HistoryView: View {
     }
 
     private func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .binary)
+        ByteUnits.string(value)
     }
 
     private func loadedCount(_ count: Int, hasMore: Bool) -> String {

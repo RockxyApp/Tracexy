@@ -28,7 +28,11 @@ the control off yields that follow behavior. **Jump to Latest** is a one-time ju
 Follow Live setting. Both actions honor the current filters. The in-memory inspection window is bounded,
 while accepted live frames are also written to a local disk-backed spool for complete save/export. If
 the helper is not yet approved, Tracexy tells you to approve it in System Settings → Login Items and
-press Start again.
+press Start again. If the capture source stops on its own — the interface goes away or is
+reconfigured — Tracexy settles the capture exactly as an explicit Stop would (final fold, History
+entry, save eligibility) and shows the reason instead of leaving "Capturing" on with nothing arriving.
+Quitting while a capture runs asks for confirmation unless you turn that off in
+**Settings → General**.
 
 The centered capture status in the toolbar opens **Capture Readiness**. It reports the selected
 interface, helper or direct-capture path, BPF filter, packet snapshot and promiscuous settings, bounded
@@ -66,22 +70,98 @@ file, and the Inspector reopens exactly one representative frame by validated fi
 session is selected. Opening another file, clearing, or starting live capture retires stale progress,
 results, and selected-evidence reads.
 
-**File → Import Capture… (⌘O)** and the sidebar's Import actions open the same panel and copy the
-chosen file into the active Project's Library. Tracexy decides the format from the file's own header,
-so a capture stored as `evidence.bin` or with no extension is accepted. Gzip PCAP/PCAPNG and the
-capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are expanded locally
-into a managed capture. Other compressed or session formats are refused with a concrete recovery
-message. Recognizing a header or archive is not a guarantee that the whole capture parses, so the
-streaming open above still reports truncated or malformed input. Importing never overwrites: a
-capture whose name is already taken is kept under a unique name beside the existing one, and the
-original source on disk is never moved. Switching Projects while the panel is open cancels the import
-rather than filing the capture into the new Project.
+**File → Open… (⌘O)** opens a capture *where it is*. Tracexy records a small reference in the
+active Project's Library (a `.tracexyref` sidecar next to its managed copies) and reads the
+file in place, so a multi-gigabyte capture is never copied. The Open panel previews the chosen
+file before you commit — format, size, records, and start / elapsed — from a bounded scan, and
+says "timed out at N records" rather than pretending to know the total of a very large file.
+Its **Copy into Library** checkbox switches to the managed-copy path; the choice is remembered
+per Project. **File → Import into Library… (⌥⌘O)** and the sidebar's Import action always copy.
+Opening a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (**Open With → Tracexy**, or
+dropping it on the Dock icon) and dropping a capture file anywhere on the main window follow the
+Project's Open preference; Tracexy registers as an alternate viewer for those types and does not
+claim them as the default. One capture is opened per drop — a multi-file drop is refused with a
+message rather than opening only its first file — and a file opened before the app has finished
+loading Projects opens once loading completes. Tracexy decides the format from the file's own
+header, so a capture stored as `evidence.bin` or with no extension is accepted. Gzip PCAP/PCAPNG
+and the capture payload in the observed TCP Viewer schema-1 `.tcpviewsession` archive are always
+expanded into a managed capture, whichever way they were opened. Other compressed or session
+formats are refused with a concrete recovery message. Recognizing a header or archive is not a
+guarantee that the whole capture parses, so the streaming open above still reports truncated or
+malformed input. Importing never overwrites: a capture whose name is already taken is kept under
+a unique name beside the existing one, and the original source on disk is never moved. Switching
+Projects while a panel is open cancels the open rather than filing the capture into the new Project.
+
+A referenced capture shows a link badge in the Library. If its file is moved or replaced the
+badge turns into a warning, and opening it shows an inline notice with **Locate…** (choose the
+moved file; Tracexy accepts only a file with the same size and leading bytes) or **Reload**
+(re-read the file now at that path). **Remove from Library** on a reference trashes only the
+sidecar and never touches the file; **Copy into Library** turns a reference into a managed copy.
+**File → Open Recent** lists recently opened captures by name with **Clear Menu**;
+**File → Close Capture (⇧⌘W)** clears the workspace; **File → Reload (⌘R)** is enabled when
+the open capture changed on disk. Captures written in rotation by `dumpcap` or `tcpdump`
+(`name_00001_20260919120000.pcapng`, …) can be stepped through with **File → File Set →
+Next File / Previous File**, always in place; a member's Library row also carries a **File Set**
+menu that lists the set with the open file checked, so any member opens from there.
 
 Copying runs off the UI thread with progress and **Cancel Import**. Source-changing actions
 stay held until copying or cancellation cleanup finishes; switching Projects waits and keeps
 the copy in its original Project. A complete copy published just before cancellation stays
 in the Library but does not open automatically. See [Capture migration](capture-migration.md)
 for Wireshark and other tools, conversion tradeoffs, supported artifacts, and recovery.
+
+### Finder previews and Spotlight
+
+Tracexy ships a Quick Look preview and a Spotlight importer for `.pcap` / `.pcapng` files. Press
+Space on a capture in Finder (or use the Open panel's preview column) to see its format, size,
+record count, start / elapsed, the writing application and comment, and the interfaces it declares
+— the same bounded scan the Open panel runs, never packet payload. Spotlight indexes the format,
+record count, capture dates, duration, interface names and writing application so a capture can be
+found by what it is; no address, host name or payload is indexed. Both run sandboxed inside the
+app bundle and share the app's readers.
+
+### Capture Info (⌘I)
+
+**File → Get Info (⌘I)** opens a window with what the capture file says about itself: name,
+location, kind (managed copy or opened in place), format and variant, size, first and last frame
+time, elapsed span and time order; for PCAPNG, each section's hardware, OS, application and
+comments, and a sortable table of interfaces with name, description, link type, snapshot length,
+time resolution, capture filter, frame count and the received/dropped counters from Interface
+Statistics Blocks; a statistics group (frames, bytes, average frame size and rate, sessions);
+and an inventory of blocks Tracexy does not interpret — name resolution, decryption secrets
+(type and size only; the secrets are never read or used), custom and unknown blocks. **Compute
+SHA-256 and SHA-1** hashes the file on demand with progress and Cancel, and refuses if the file
+changed since it was opened. **Copy** puts every value on the clipboard as text. Strings written
+by the tool that created the file (comments, names, filters, application) appear only in this
+window; they never enter Sources, History, automation, MCP or the Assistant. For a PCAPNG with
+several interfaces, the Context dock shows **Captured on** for the selected session.
+
+### Frames
+
+The bottom inspector's **Frames** facet lists every frame of the selected session in capture
+order — number, time relative to the session's first frame, direction, length, TCP flags, the
+capture interface when a PCAPNG declares more than one, a one-line summary and a comment marker —
+rescanned on demand from the stable source (the open file, or a copy of the stopped live spool). Selecting a row loads that exact frame into Layers,
+Payload and Hex through the same guarded path as finding citations. The list holds references
+only, never bytes, and is bounded at 10,000 frames; the footer says when it is a prefix of a
+larger session and when the source ends mid-record. **Rescan** re-reads the source; an active
+live capture offers no Frames facet until it is stopped.
+
+### Export Frames…
+
+**File → Export Frames…** (also in the toolbar Export menu, a session row's Export menu with the
+session preselected, and the Library row of the open capture) writes a new capture file from a
+scope: **Whole capture**, **Sessions in view** (filters, Focus Sets, Noise Control and removed
+rows applied), **Selected session**, or a **Time range** on the capture clock. The Save panel's
+Format pop-up offers PCAPNG (default) and classic PCAP; PCAP stays listed but disabled, with the
+reason, when the source mixes link types or holds untimed frames. **Preserve capture metadata**
+carries section hardware/OS/application and comments, interface names, descriptions, filters and
+each frame's own options (comments, flags, hashes) from a PCAPNG source; **Compress with gzip**
+writes a `.gz`. The export streams from the source with progress and **Cancel Export**, is
+published only after it completes and the source is verified unchanged, and reports anything it
+could not carry (for example frame comments from a big-endian section). Exporting raw packet
+formats while privacy protections are configured asks for the same acknowledgement as session
+export.
 
 Sessions, Overview and Flow name the active scope and show visible sessions against the
 capture total. **Reset Session Filters** clears the current workspace’s filters and sidebar
@@ -216,29 +296,61 @@ sessions, traffic, duration, activity, storage, top talkers, protocol mix, obser
 compact findings severity summary are kept in one native dashboard. Overview never duplicates the
 finding evidence list; its analysis summary links to the existing filtered Sessions workflow.
 
-For a live capture, the activity chart shows measured throughput and the storage card distinguishes
-kernel/interface loss, helper-buffer drops, and trimming of the bounded in-memory inspection window.
-Window trimming does not remove accumulated sessions or frames from the disk-backed live spool, and is
-never reported as capture-source loss.
-For an opened file, Overview shows file provenance and activity derived from its real frame timestamps;
-capture fidelity and original drop counters remain **Unknown** because a savefile cannot reconstruct
-what was missed when it was recorded. Frames outside the local inspection window remain in the source
-file and in the decoded session/activity totals; window eviction is not reported as capture loss.
+Overview is a capture report. The headline row shows frames, sessions, traffic, duration, and
+fidelity. **Traffic over time** plots every accepted frame's wire bytes on the real capture clock for
+live and opened captures alike, split into bytes **sent by clients** and **received from servers**
+when the session direction remains stable. If later evidence changes client/server orientation,
+the chart shows exact total bytes only and explains why. Slices start at one second and widen only
+when a long capture would otherwise exceed the bounded bucket count; the caption states the current slice
+width. Hovering a column reads its exact figures. Findings in the current scope are pinned along the
+top of the plot at the instant of their first cited frame; a bounded number are placed and the footer
+says when it is a subset. Frames that carry no capture time count in the totals and are named in a
+notice, never drawn. The chart is capture-wide — session filters narrow the panels below it, not the
+frames.
+
+Beneath it, three compact charts summarize the scope: **Protocols** partitions session bytes by each
+session's innermost protocol (bars sum to the scope; click a bar to narrow to that protocol),
+**Sessions started** counts new conversations per slice on the same clock, and **Findings** shows the
+severity split with a route to review those sessions. **Top hosts** and **Top apps** are native tables
+of sessions, sent, received, and total bytes with an in-row share bar (client-sent and
+server-received against the leading row); double-click a row (or use its context menu) to narrow
+the session list to exactly that host or app. Sessions with no attributed process are never listed as an
+app. **Sources** counts observed apps, domains, and addresses and opens the Flow Map.
+
+**Capture health** shows live kernel/interface loss, helper-buffer drops, and the bounded in-memory
+inspection window. Window trimming does not remove accumulated sessions or frames from the disk-backed
+live spool and is never reported as capture-source loss. For an opened file, Overview shows the
+container the reader recognised, its declared interfaces, and loss counters only when Interface
+Statistics Blocks record them. Missing counters read **Not recorded**; counters from only some
+interfaces are labelled partial. These figures cannot reconstruct traffic missed before the file was
+written. **Get Info** opens the capture information window. Frames outside the inspection window
+remain in the source file and decoded session/activity totals.
 
 ## Sessions
 
 Frames are grouped by their canonical **five-tuple** (protocol + the two endpoints, direction-
-normalized) so both directions of a conversation land in one session. Each session summary carries:
+normalized) so both directions of a conversation land in one session. The session's **client** is
+the endpoint that sent the captured SYN. When no SYN was captured — the capture began mid-stream —
+a session first seen from a service port (an IANA system port, or a common registered service port
+such as 3306 or 8443) toward an ephemeral port is oriented toward the service, so the remote host
+rather than this Mac's ephemeral socket reads as the destination. Two ephemeral or two service ports
+keep the first-observed direction. Each session summary carries:
 
 - endpoints and a resolved **host** (from TLS SNI or a DNS name where available, otherwise the peer IP);
 - the **protocol stack** (outer→inner, e.g. TCP · TLS);
 - **byte counts** up and down, packet timing, and duration;
-- a **status** (OK / Warning / Error) that drives its color and icon;
+- a **status** (OK / Warning / Error) that drives its color and icon — a TCP reset observed at any
+  point, including after an orderly close, marks the session as an error and is recorded as a reset
+  observation in its evidence;
 - a concise **info line** derived from the real decode — a DNS query and its answer, a TLS host, or the
   innermost layer's summary — never placeholder text.
 
 Connectionless traffic (ARP, ICMP/ICMPv6) is keyed on the IP pair (port 0) so it still surfaces as a
 session rather than disappearing.
+
+Click a column header to sort the flat table by that column; click again to reverse it. The default
+order stays the stable capture order (oldest→newest, rows updating in place); a sort you choose is
+kept while you keep working in that window.
 
 The first rounded control shelf keeps a stable icon cluster beside search: **Follow Live**, **Jump to
 Latest**, a divider, **Clear Capture Data**, and **More Session Actions**. The order does not change at
@@ -424,10 +536,66 @@ connection/TLS sections summarize scope and link to the chronological Evidence f
 duplicating the full event list. Technical values are selectable and monospaced; related-action rows
 remain clickable, and evidence-backed finding citations can open their exact local frame.
 
-The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
-an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant
-backend: history, new-conversation, prompt, and send controls remain unavailable, and the Read-only control
-explains that no capture data or model request leaves the Mac.
+The adjacent **AI Assistant** tab is a working conversation over a model running on this Mac. See
+[AI Assistant](#ai-assistant) below.
+
+## AI Assistant
+
+The Assistant answers questions about **the selected session only**, using a model running on this
+Mac. It is local-only in this build: there is no account, no API key and no remote provider.
+
+**Connect a local model.** Install a local model runner — an [Ollama](https://ollama.com) daemon on
+its default `http://127.0.0.1:11434` needs no configuration — and open the AI Assistant tab. Tracexy
+checks the endpoint once and shows what it found. To point at a different local runner, use
+**Settings → MCP & Assistant → Local endpoint**. Only `127.0.0.1`, `::1` and `localhost` are accepted;
+a remote address, a URL with a user name or password, or a redirect off this Mac is refused before
+anything is sent. An endpoint that answers only the OpenAI-compatible API is labelled *local
+OpenAI-compatible*, because Tracexy will not claim to know which server it is.
+
+**Ask about a session.** Select a session, then type a question or pick one of the suggested openers.
+Use the model picker beside the composer to choose among the models the endpoint advertises.
+
+**Review what is sent.** On the first send — and again whenever the Project, selected session,
+evidence publication, disclosure, endpoint or model changes — Tracexy shows the **Review Data** sheet before anything
+leaves the app. It shows the literal JSON, the destination and model, the disclosure decision and the
+coverage limits. **Included fields** are separate opt-ins for the process name, the display host, and
+the source/destination endpoints; all three start off. The display host can contain a name derived
+from DNS or TLS SNI. Packet bytes, payload bodies, URLs, file paths and credentials are never included.
+
+**Read the answer honestly.** Answers stream as they arrive. **Stop** ends one, and whatever text had
+arrived is kept and marked incomplete — Tracexy never presents a partial answer as a conclusion, and
+the same label appears when a length or time limit is reached. **Retry** re-sends the last prompt, and
+**New conversation** starts over. Changing Project, workspace, session, endpoint or model cancels an
+answer in flight rather than letting it land under something it does not describe.
+
+**Follow the evidence.** Citations such as `frame-1024` appear as buttons under an answer; clicking one
+opens that exact frame in the evidence inspector, the same route a Findings row uses. A citation the
+model invents is not clickable — it resolves to nothing rather than to the wrong frame.
+
+Conversations are kept per Project workspace, in memory, for the life of the app session. Prompts and
+answers are not written to disk.
+
+## MCP for external clients
+
+Tracexy bundles a free, read-only MCP command-line tool so an MCP client — an editor, an agent, a
+notebook — can read bounded summaries from **one Project you authorize**. It speaks JSON-RPC over
+stdin and stdout and **never opens a network port**.
+
+Open **Settings → MCP & Assistant**. The pane names the current Project, the field families that will
+be disclosed, and the maximum rows one request may read, then **Grant Access** issues the grant. The
+pane also shows the bundled command path and a ready-to-paste client configuration; **Copy Client
+Configuration** puts it on the clipboard. Point your MCP client at that command — it needs no port,
+host or token.
+
+A client sees exactly three read-only tools: `describe_scope`, `list_captures` and `list_sessions`.
+There is no tool for packet bytes, capture files, file paths, raw frames, capture control or writes,
+and a process or host filter is refused unless you disclosed that field.
+
+**Recent activity** lists what clients called: the time, the tool, the outcome, the Project, and the
+*names* of the filter fields used — never the values, and never anything read back.
+
+Switching Projects or pressing **Revoke** invalidates the grant, so the next call from any connected
+client fails closed. Re-issuing a grant also supersedes the old one; reconnect the client afterwards.
 
 ## Software updates
 
@@ -460,11 +628,12 @@ Selecting an IP in the sidebar matches the exact address in typed endpoints or D
 
 ### Open sessions from Overview and Flow
 
-Overview's host and protocol rows narrow the sessions already represented by the
-summary. Existing search, category chips, advanced rules, Investigation query and
-Noise Control remain active. Protocol counts overlap because one session can
-contain several protocol layers. Review Findings intersects the current scope
-with typed finding membership, including when Errors is already selected.
+Overview's host, app and protocol rows narrow the sessions already represented by
+the summary. Existing search, category chips, advanced rules, Investigation query
+and Noise Control remain active. A host or app row under a different host or app
+scope is stale and does nothing rather than widening the list. Review Findings
+intersects the current scope with typed finding membership, including when Errors
+is already selected.
 
 Flow groups typed destination addresses; equivalent IPv6 spellings share one row.
 Show Sessions opens only sessions whose destination matches that row, while the

@@ -68,7 +68,7 @@ nonisolated struct SessionAccumulator {
     ///   it are unchanged.
     @discardableResult
     mutating func add(_ packet: DecodedPacket) -> UUID? {
-        foldSession(packet, hasReassembledApplication: false, ordinal: nil)
+        foldSession(packet, hasReassembledApplication: false, ordinal: nil, interfaceID: nil)
     }
 
     /// The common production fold shared by batch, live and saved paths. Assigns
@@ -122,9 +122,35 @@ nonisolated struct SessionAccumulator {
         // excludes-counts any multi-frame recovered records the handoff carries; the
         // recovered facts are never propagated onto `enriched`/the representative.
         tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
-        return foldSession(
-            enriched, hasReassembledApplication: hasReassembledApplication, ordinal: provenance.ordinal
+        let priorClient: IPEndpoint? = enriched.fiveTuple.flatMap { key in
+            states[key]?.orientedEndpoints(proto: key.proto).client
+        }
+        let selection = foldSession(
+            enriched,
+            hasReassembledApplication: hasReassembledApplication,
+            ordinal: provenance.ordinal,
+            interfaceID: context.interfaceID
         )
+        if let key = enriched.fiveTuple,
+           let priorClient,
+           let currentClient = states[key]?.orientedEndpoints(proto: key.proto).client,
+           priorClient != currentClient
+        {
+            // Earlier columns were folded under a different client direction.
+            // Their total bytes remain exact, but a directional split would
+            // present provisional assignments as final session facts.
+            trafficTimeline.markDirectionUnstable()
+        }
+        // Every accepted frame reaches the capture-wide traffic timeline once, after
+        // the session fold so its direction is judged against the client the
+        // session knows at this point. A tupleless frame still carries wire bytes
+        // and is counted as unattributed rather than dropped.
+        trafficTimeline.add(
+            timestamp: packet.timestamp,
+            originalLength: packet.originalLength,
+            direction: trafficDirection(of: enriched)
+        )
+        return selection
     }
 
     /// Emit summaries in first-seen five-tuple order. Pure; decodes nothing and
@@ -148,7 +174,8 @@ nonisolated struct SessionAccumulator {
             sessions: summaries(),
             connections: connections.snapshot(),
             datagramEvidence: datagrams.snapshot(),
-            tlsEvidence: tlsEvidence.snapshot()
+            tlsEvidence: tlsEvidence.snapshot(),
+            trafficTimeline: trafficTimeline.timeline()
         )
     }
 
@@ -163,6 +190,7 @@ nonisolated struct SessionAccumulator {
         connections = ConnectionTable(configuration: connectionConfiguration)
         datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
         tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+        trafficTimeline.reset()
         nextOrdinal = 1
     }
 
@@ -190,6 +218,9 @@ nonisolated struct SessionAccumulator {
     /// The one-based capture ordinal handed to the next common-path frame, in
     /// accepted-frame order. Independent of batch chunking and of timestamp order.
     private var nextOrdinal: UInt64 = 1
+    /// Bounded capture-wide bytes-over-time, folded once per common-path frame
+    /// beside the tables. Reset with them at every capture boundary.
+    private var trafficTimeline = TrafficTimelineAccumulator()
 
     /// Apply the connection table's bounded first-record application metadata to a
     /// local packet copy. This is the exact enrichment the session-owned reassembler
@@ -213,6 +244,15 @@ nonisolated struct SessionAccumulator {
         packet.layers.append(contentsOf: metadata.layers)
     }
 
+    /// A frame's direction relative to the client of the session it just folded
+    /// into — the same client `SessionSummary.bytesUp` is measured against.
+    private func trafficDirection(of packet: DecodedPacket) -> TrafficDirection {
+        guard let key = packet.fiveTuple, let state = states[key] else {
+            return .unattributed
+        }
+        return packet.sourceEndpoint == state.orientedEndpoints(proto: key.proto).client ? .sent : .received
+    }
+
     // MARK: Private session fold
 
     /// Fold DNS learning plus one packet's per-session state, updating the richest
@@ -223,7 +263,8 @@ nonisolated struct SessionAccumulator {
     private mutating func foldSession(
         _ packet: DecodedPacket,
         hasReassembledApplication: Bool,
-        ordinal: FrameOrdinal?
+        ordinal: FrameOrdinal?,
+        interfaceID: Int?
     )
         -> UUID?
     {
@@ -234,10 +275,13 @@ nonisolated struct SessionAccumulator {
         let becameRepresentative: Bool
         if var state = states[key] {
             becameRepresentative = state.merge(packet, hasReassembledApplication: hasReassembledApplication)
+            state.noteInterface(interfaceID)
             states[key] = state
         } else {
             order.append(key)
-            states[key] = State(first: packet, ordinal: ordinal)
+            var state = State(first: packet, ordinal: ordinal)
+            state.noteInterface(interfaceID)
+            states[key] = state
             becameRepresentative = true
         }
         return becameRepresentative ? SessionBuilder.sessionID(for: key) : nil
@@ -266,6 +310,17 @@ private extension SessionAccumulator {
         }
 
         // MARK: Internal
+
+        /// Apply the same current orientation to the traffic timeline and the
+        /// published summary. A server-first capture must not put its first
+        /// bytes in the client-sent series while the session calls them received.
+        func orientedEndpoints(proto: ProtocolKind) -> (client: IPEndpoint?, server: IPEndpoint?) {
+            let observedClient = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
+            let observedServer = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
+            return Self.orient(
+                client: observedClient, server: observedServer, synSource: synSource, proto: proto
+            )
+        }
 
         /// Fold a subsequent packet of the same five-tuple. `merge` also updates
         /// the representatives; the first packet is folded via `fold` directly
@@ -307,8 +362,7 @@ private extension SessionAccumulator {
         }
 
         func summary(key: FiveTuple, resolved: [String: String]) -> SessionSummary {
-            let client = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
-            let server = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
+            let (client, server) = orientedEndpoints(proto: key.proto)
 
             let httpHost = rich.layers.first { $0.proto == .http }?
                 .fields.first { $0.name == "Host" }?.value
@@ -361,8 +415,27 @@ private extension SessionAccumulator {
                 dnsAnswers: dnsAnswers,
                 dnsAnswersOmittedCount: dnsAnswersOmittedCount,
                 firstCaptureOrdinal: firstOrdinal?.rawValue,
-                untimedFrameCount: untimedFrameCount
+                untimedFrameCount: untimedFrameCount,
+                captureInterfaceIDs: interfaceIDs.sorted(),
+                captureInterfaceOverflow: interfaceOverflow
             )
+        }
+
+        /// Record which capture interface a contributing frame came from. Bounded
+        /// to ``SessionSummary/maxCaptureInterfaces`` distinct ids; further ids set
+        /// the overflow flag rather than growing the set.
+        mutating func noteInterface(_ interfaceID: Int?) {
+            guard let interfaceID else {
+                return
+            }
+            if interfaceIDs.contains(interfaceID) {
+                return
+            }
+            if interfaceIDs.count < SessionSummary.maxCaptureInterfaces {
+                interfaceIDs.insert(interfaceID)
+            } else {
+                interfaceOverflow = true
+            }
         }
 
         // MARK: Private
@@ -370,6 +443,16 @@ private extension SessionAccumulator {
         /// Largest number of unique DNS answers a session publishes, in first-seen
         /// order. Beyond this, further unique answers are counted, not stored.
         private static let dnsAnswerPublicationCap = 64
+
+        /// IANA system ports plus the registered service ports a client on this
+        /// Mac commonly dials. A session whose *first captured* frame came from one
+        /// of these while the other end used an ephemeral port was almost certainly
+        /// captured mid-stream from the server side; the same likely-server-port
+        /// rule Zeek uses to orient a connection (concept only).
+        private static let likelyServerPorts: Set<UInt16> = [
+            1_080, 1_194, 1_433, 1_521, 3_128, 3_306, 3_389, 5_060, 5_061, 5_222, 5_223, 5_228,
+            5_432, 5_900, 6_379, 8_000, 8_080, 8_443, 8_883, 27_017,
+        ]
 
         /// Earliest packet by timestamp (first-seen tie-break), used for fully
         /// timed session direction/start. Mixed sessions use the first endpoint
@@ -389,6 +472,11 @@ private extension SessionAccumulator {
         /// Contributing frames that carried no capture time. One is enough to make
         /// the session's start, duration and latency unknown.
         private var untimedFrameCount = 0
+        private var interfaceIDs: Set<Int> = []
+        private var interfaceOverflow = false
+        /// The endpoint that sent the first pure SYN, when one was captured: the
+        /// strongest evidence of which side opened the connection.
+        private var synSource: IPEndpoint?
 
         /// Cumulative `originalLength` per source endpoint. Within a canonical
         /// five-tuple this holds at most the two directions; "up" vs "down" is
@@ -444,6 +532,35 @@ private extension SessionAccumulator {
             packet.tcpFacts?.flags.contains(.rst) ?? false
         }
 
+        private static func isLikelyServerPort(_ port: UInt16) -> Bool {
+            port != 0 && (port < 1_024 || likelyServerPorts.contains(port))
+        }
+
+        /// Decide which observed endpoint is the client. A captured SYN names the
+        /// opener outright. Without one, a connection first seen from a service
+        /// port toward an ephemeral port is flipped so the remote service — not
+        /// this Mac's ephemeral socket — reads as the host. Anything else keeps
+        /// the first-observed direction: nothing is inferred from two ephemeral
+        /// or two service ports, and port-0 sessions (ARP, ICMP) never flip.
+        private static func orient(
+            client: IPEndpoint?, server: IPEndpoint?, synSource: IPEndpoint?, proto: ProtocolKind
+        )
+            -> (client: IPEndpoint?, server: IPEndpoint?)
+        {
+            guard let client, let server else {
+                return (client, server)
+            }
+            if let synSource {
+                return synSource == server ? (server, client) : (client, server)
+            }
+            guard proto == .tcp || proto == .udp,
+                  isLikelyServerPort(client.port), !isLikelyServerPort(server.port) else
+            {
+                return (client, server)
+            }
+            return (server, client)
+        }
+
         private func applicationRichness(_ packet: DecodedPacket) -> Int {
             func layerScore(_ layer: DecodedLayer) -> Int {
                 layer.fields.count + layer.children.reduce(0) { $0 + 1 + layerScore($1) }
@@ -489,17 +606,26 @@ private extension SessionAccumulator {
             }
             dnsAnswersOmittedCount += packet.dnsAnswersOmittedCount
 
-            // Only a timed DNS frame can contribute a handshake instant.
+            // Only a timed DNS frame can contribute a handshake instant. The
+            // header's QR bit decides query versus response; an answerless reply
+            // (NXDOMAIN, NODATA, a refused query) is still the response that ends
+            // the exchange, so it must not be mistaken for a second query.
             if packet.appProtocol == .dns, let instant = packet.timestamp {
-                if packet.dnsAnswers.isEmpty {
-                    dnsQueryTime = earlier(dnsQueryTime, instant)
-                } else {
+                let isResponse = packet.dnsFacts?.isResponse ?? !packet.dnsAnswers.isEmpty
+                if isResponse {
                     dnsResponseTime = earlier(dnsResponseTime, instant)
+                } else {
+                    dnsQueryTime = earlier(dnsQueryTime, instant)
                 }
             }
 
             if !anyTCPRST, Self.hasTCPRST(packet) {
                 anyTCPRST = true
+            }
+            if synSource == nil, let facts = packet.tcpFacts,
+               facts.flags.contains(.syn), !facts.flags.contains(.ack)
+            {
+                synSource = packet.sourceEndpoint
             }
         }
 

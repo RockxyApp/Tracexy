@@ -135,6 +135,7 @@ struct InspectorView: View {
             case let .loaded(evidence):
                 Text("Cited frame \(evidence.provenance.ordinal.rawValue.formatted())")
                     .font(Theme.Typography.captionMedium)
+                    .accessibilityIdentifier("evidence.citedFrameLoaded")
                 Text("· \(evidence.bytes.count.formatted()) captured bytes")
                     .foregroundStyle(.secondary)
             case let .failed(message):
@@ -359,7 +360,7 @@ struct InspectorView: View {
                     .lineLimit(1)
                 Spacer(minLength: Theme.Metrics.spacingL)
                 Text(
-                    "\(ByteCountFormatter.string(fromByteCount: Int64(session.totalBytes), countStyle: .binary)) total"
+                    "\(ByteUnits.string(Int64(session.totalBytes))) total"
                 )
                 .font(Theme.Typography.chromeSecondary)
                 .foregroundStyle(.secondary)
@@ -462,6 +463,11 @@ struct InspectorView: View {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
         case .evidence: sessionEvidence(session)
+        case .frames: SessionFramesFacetView(
+                coordinator: coordinator,
+                session: session,
+                selectedOrdinal: selectedCitedFrame?.provenance.ordinal.rawValue
+            )
         case .stream: followStream(session)
         case .requests: requests(session)
         case .payload: payload(session)
@@ -944,7 +950,9 @@ struct InspectorView: View {
                 || selection.tlsCoverage.omittedObservationCount > 0
                 || selection.tlsCoverage.excludedReassembledRecordCount > 0
         } ?? false
-        var tabs = InspectorTab.visibleTabs(for: session, hasSessionEvidence: hasEvidence)
+        var tabs = InspectorTab.visibleTabs(
+            for: session, hasSessionEvidence: hasEvidence, hasFrameSource: coordinator.hasSessionFrameSource
+        )
         if citedFrameStateIsActive, !tabs.contains(.layers), let evidenceIndex = tabs.firstIndex(of: .evidence) {
             tabs.insert(.layers, at: tabs.index(after: evidenceIndex))
         }
@@ -1288,6 +1296,8 @@ private struct DecodedLayerTree: View {
         // Tap still selects the byte range for the hex pane; the context menu is
         // an additive right-click affordance and leaves that behavior untouched.
         .onTapGesture { onSelect(layer.byteRange) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onSelect(layer.byteRange) }
         .contextMenu {
             Button("Copy Layer Summary", systemImage: "doc.on.doc") {
                 copy(DecodedClipboardText.layerSummary(layer))
@@ -1306,6 +1316,8 @@ private struct DecodedLayerTree: View {
         .background(rowBackground(field.byteRange), in: RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
         .onTapGesture { onSelect(field.byteRange) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onSelect(field.byteRange) }
         .contextMenu {
             Button("Copy Value", systemImage: "doc.on.doc") {
                 copy(DecodedClipboardText.value(field))

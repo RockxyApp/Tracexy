@@ -236,6 +236,14 @@ actor LiveCaptureSpool {
         return try CaptureFileReader.read(contentsOf: url)
     }
 
+    /// The opaque token locators of the current spool source carry. A scan over a
+    /// byte-identical copy of the spool may mint locators with this token, because
+    /// the copy's payload offsets equal the spool's; ``readCurrentSource`` still
+    /// validates every read against the live file.
+    func currentSourceToken() -> UUID? {
+        sourceToken
+    }
+
     func copy(to destination: URL) throws {
         guard frameCount > 0, let url else {
             throw Failure.empty

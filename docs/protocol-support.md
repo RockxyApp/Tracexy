@@ -8,12 +8,12 @@ below reflects what the decoder actually produces today.
 
 | Protocol | Support |
 |---|---|
-| Ethernet II | Source/destination MAC, EtherType, dispatch to IPv4 / IPv6 / ARP |
+| Ethernet II | Source/destination MAC, EtherType, dispatch to IPv4 / IPv6 / ARP; **802.1Q / 802.1ad VLAN tags** (up to two, QinQ) are walked to the encapsulated type and shown with priority and VLAN ID |
 | Linux cooked SLL / SLL2 | Fixed header fields and exact byte ranges; bounded sender-address prefix; SLL2 capture-machine interface index; IPv4 / IPv6 / ARP handoff for supported payloads |
 | Loopback / null (BSD) | 4-byte address-family header → IPv4 or IPv6 |
 | Tunnel / raw IP (utun, VPN) | Auto-detects bare IPv4/IPv6 or a 4-byte address-family prefix |
 | ARP | Operation (request/reply), sender/target MAC and IPv4; surfaced as a session |
-| IPv4 | Version, header length, total length, TTL, protocol, addresses, **and option TLVs** |
+| IPv4 | Version, header length, total length, fragment flags/offset, TTL, protocol, addresses, **and option TLVs** |
 | IPv6 | Version, traffic class, flow label, next header, hop limit, addresses, **and the extension-header chain** (Hop-by-Hop, Routing, Fragment, AH, Destination Options, Mobility) |
 | ICMP / ICMPv6 | Type + code with named types (echo, unreachable, neighbor/router discovery); surfaced as a session |
 
@@ -23,6 +23,15 @@ are not decoded through the IP handoff. Interface indexes belong to the machine 
 the file, and are not mapped to interfaces on this Mac. Bare raw-IP link type 101 dispatches
 by the actual IPv4 or IPv6 version.
 
+The transport payload is bounded by the IP-declared length, so link-layer trailers (the zero
+padding of sub-60-byte Ethernet frames, an FCS) are never read as TCP or UDP payload. A declared
+length of zero (segmentation offload) or one beyond the captured bytes (snapshot truncation)
+keeps the captured bytes. A **non-first IP fragment** (IPv4 fragment offset, or an IPv6 Fragment
+header with a non-zero offset) stops at the IP layer: it carries no transport header, so no
+endpoints or session are invented from its payload. Fragments are not reassembled. The classic
+pcap link-type word is masked to its low 16 bits, so a libpcap FCS-length hint does not hide the
+link type.
+
 ## Transport layer (L4)
 
 | Protocol | Support |
@@ -30,7 +39,9 @@ by the actual IPv4 or IPv6 version.
 | TCP | Ports, sequence number, data offset, flags (SYN/ACK/PSH/FIN/RST), **and option TLVs** (MSS, Window Scale, SACK, SACK-permitted, Timestamps) |
 | UDP | Source and destination ports |
 
-The TCP acknowledgement number, window, and checksum fields are not surfaced.
+The TCP acknowledgement number, window, and checksum fields are not surfaced. A one-byte probe
+sent exactly one sequence number behind the expected sequence is classified as a keep-alive, not a
+retransmission, and produces no finding.
 
 ## Application layer
 

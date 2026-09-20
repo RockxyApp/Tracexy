@@ -12,14 +12,25 @@ hostile capture file can never crash the app.
 
 ## The pipeline today
 
+**Capture format** (`CaptureFormat/`) is the UI-free, dependency-free layer that reads classic PCAP
+and PCAPNG streams (`PcapStreamReader`, `PcapngStreamReader`, `CaptureStreamReader`), folds the
+container's own facts (`CaptureFileProperties`: sections, interfaces and options, statistics blocks,
+comment presence, skipped-block counts) and produces the bounded Open-panel preview
+(`CapturePreviewScanner`). It compiles into the app and into the Quick Look and Spotlight
+extensions, so Finder previews and search index exactly what the app opens. `PacketBuffer` lives
+here too. The extension targets never depend on the app module; `TracexyTests` compiles their
+sources beside the app under the `TRACEXY_TEST_HOST` condition to cover them.
+
 **Capture** (`Tracexy/Core/Capture`) acquires frames and reads/writes capture files. Live capture
-runs through the privileged helper over libpcap; the app also reads classic PCAP and PCAPNG files,
-writes classic PCAP where required, and saves complete live captures as PCAPNG. Interface discovery
+runs through the privileged helper over libpcap; the app also opens classic PCAP and PCAPNG files in
+place or as managed Library copies, writes classic PCAP where required, exports scoped frames as
+PCAP/PCAPNG (optionally gzip), and saves complete live captures as PCAPNG. Interface discovery
 and capture statistics live here.
 
-**Protocol** (`Tracexy/Core/Protocol`) turns raw bytes into a `DecodedPacket`. `PacketBuffer` is a
-bounds-checked, zero-copy view over the frame: every read is offset-checked and **throws** on a short
-or malformed packet rather than trapping, and a partial decode keeps whatever layers parsed cleanly.
+**Protocol** (`Tracexy/Core/Protocol`) turns raw bytes into a `DecodedPacket`. `PacketBuffer`
+(in `CaptureFormat/`) is a bounds-checked, zero-copy view over the frame: every read is
+offset-checked and **throws** on a short or malformed packet rather than trapping, and a partial
+decode keeps whatever layers parsed cleanly.
 `PacketDecoder` is a single-pass, stateless, per-frame decoder covering L2–L4 plus naming-level
 DNS/TLS/HTTP-1/QUIC (see [protocol support](protocol-support.md)).
 
@@ -64,16 +75,21 @@ interrupted initial History reads, but preserves loaded pages/cursors and does n
 ## Repository map
 
 ```text
-Tracexy/Core/Capture/     packet acquisition and capture-file IO (PCAP/PCAPNG)
-Tracexy/Core/Protocol/    PacketBuffer, PacketDecoder, DecodedPacket/DecodedLayer
+CaptureFormat/            PCAP/PCAPNG stream readers, container properties, preview scan, PacketBuffer
+Tracexy/Core/Capture/     packet acquisition, Library/import/export, capture-file writers
+Tracexy/Core/Protocol/    PacketDecoder, DecodedPacket/DecodedLayer
 Tracexy/Core/Session/     FiveTuple grouping, SessionBuilder, Activity correlation
-Tracexy/Core/Services/    helper client, signing diagnostics, process resolution
+Tracexy/Core/Services/    helper client, signing diagnostics, process resolution, MCP grant issuing
+Tracexy/Core/Assistant/   bounded AI Assistant evidence brief, local-endpoint rules, local adapter
 Tracexy/Models/           session and UI value/state types, AppPolicy
 Tracexy/ViewModels/       MainContentCoordinator
 Tracexy/Views/            Overview, Sessions, Inspector, Flow, Settings, Sidebar
 Tracexy/Theme/            design tokens
 Shared/                   app/helper identity, XPC protocol, caller validation
 TracexyCaptureHelper/     privileged capture daemon (SMAppService + XPC)
+TracexyMCP/               bundled read-only MCP stdio executable (shared with the app)
+TracexyQuickLook/         Quick Look preview extension for .pcap/.pcapng (sandboxed)
+TracexySpotlight/         Spotlight importer extension for .pcap/.pcapng (sandboxed)
 TracexyTests/             unit and fuzz-style coverage
 ```
 
@@ -123,6 +139,68 @@ never folded into one another:
   separately and is never presented as captured-packet loss: sessions remain accounted for while the
   complete accepted raw stream is written off-main to a disk-backed pcapng spool for save/export.
 
+## The MCP boundary and the AI Assistant
+
+These are two deliberately independent surfaces. They share Tracexy's typed evidence and disclosure
+principles — bounded pages, explicit coverage, minimum disclosure — and nothing else: not a process,
+not a listener, not a provider, and not a tier. **MCP is entirely free.**
+
+### The bundled MCP executable
+
+`TracexyMCP` is a command-line tool embedded at `Tracexy.app/Contents/MacOS/TracexyMCP` and built from
+the same sources the app uses for History reads (`SessionStore`, `HistoryAutomationService`,
+`AutomationValues`, `AutomationExport`) plus the MCP-only wire, tool and grant files. It speaks
+newline-delimited JSON-RPC 2.0 over stdin/stdout to a client the user starts. **It never opens a
+network port**, writes diagnostics only to stderr, and keeps stdout protocol-only.
+
+It implements `initialize`, `ping`, `tools/list` and `tools/call`, and advertises exactly one
+capability (`tools`) and exactly three read-only tools:
+
+| Tool | What it returns |
+| --- | --- |
+| `describe_scope` | The authorized Project, disclosed field families, row ceiling, grant revision/issuance, and the read-only/no-port guarantees |
+| `list_captures` | One newest-first page of stored captures, plus an opaque resume cursor |
+| `list_sessions` | One ordinal-ascending page of a capture's session summaries, filtered on that single examined page |
+
+There are no resources, no prompts, no writes, no capture controls, no raw-frame access, no endpoint
+predicate, no CSV or file output, no arbitrary SQL and no path argument. Pagination, filtering,
+disclosure gating, cursors and cancellation are exactly the existing N5A automation semantics.
+
+Authorization is a single app-written grant at an identity-derived Application Support location. The
+grant names one Project, one History database, one disclosure policy, a maximum page size, a schema
+and revision, and an issuance instant. The executable accepts **no** path override from arguments,
+environment or requests; it re-reads and re-validates the grant on every call and fails closed for an
+absent, malformed, stale, superseded or wrong-Project grant. The database is opened read-only, so an
+older schema is a controlled failure rather than an in-place migration.
+
+### The AI Assistant
+
+The Assistant derives an `AssistantEvidenceBrief` off the main actor from the current immutable
+`InvestigationSnapshot`, the selected session, its typed findings, its coverage counters and its exact
+`SessionFrameProvenance` citations. The brief is bounded by construction (connections, findings,
+citations and serialized bytes all have named limits) and carries no packet bytes, payload bodies,
+URLs, file paths, evidence locators, source tokens, database paths, capture-file identity or
+credentials. Process, display-host and endpoint disclosure follows the same explicit
+`AutomationDisclosure` families the History automation boundary uses, and defaults to off. The
+display host may contain a DNS- or TLS-SNI-derived name when explicitly enabled; dedicated DNS/SNI
+evidence fields are not transported.
+
+Citation ids are frame-scoped and deterministic for a stable snapshot (`frame-<ordinal>`). The model
+receives ids and bounded facts; resolving one back to a local frame is the app's job, through the
+existing evidence-navigation coordinator.
+
+`AssistantProviding` is provider-neutral, and the Community checkout ships exactly one conformance: a
+credential-free HTTP adapter that only talks to a loopback endpoint. It accepts `http`/`https` whose
+host is `127.0.0.1`, `::1` or `localhost`, and refuses non-loopback hosts, embedded credentials,
+arbitrary schemes and redirects that leave this Mac. It defaults to Ollama-compatible discovery and
+chat at `http://127.0.0.1:11434`; an endpoint that only answers the OpenAI-compatible path is labelled
+*local OpenAI-compatible* rather than claimed as a known provider.
+
+Every streamed adoption is guarded by request id, Project, workspace, selection, evidence-publication
+revision, endpoint and model. On any mismatch the run is cancelled and no conclusion is appended;
+retained partial text is always visibly marked incomplete. Conversations are bounded and live in
+memory per Project workspace — prompts and answers are not persisted in this wave.
+
 ## Planned / not yet implemented
 
 These are design intent — do not write code, or read these docs, as if they exist:
@@ -133,4 +211,8 @@ These are design intent — do not write code, or read these docs, as if they ex
   first-record metadata probes, and explicit on-demand Follow Stream reader already in source;
 - deeper **analysis / security** policy beyond the selected evidence-linked TCP and datagram findings;
 - raw capture/evidence persistence beyond the implemented terminal-summary SQLite History store;
-- an **MCP / AI** integration.
+- any **remote or BYOK assistant provider**. The Community checkout implements local, credential-free
+  models only; a future Pro packaging decision may add remote providers, and until it does there is no
+  credential, Keychain item, entitlement or purchase path anywhere in Core, Shared, the helper, the
+  formats, storage or the transports. Any future remote-provider policy requires a separate
+  product decision and is *not* implemented here.

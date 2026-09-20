@@ -32,7 +32,7 @@ struct ThroughputChart: View {
                     AxisGridLine().foregroundStyle(.quaternary)
                     AxisValueLabel {
                         if let bytes = value.as(Double.self) {
-                            Text(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary))
+                            Text(ByteUnits.string(Int64(bytes)))
                                 .font(Theme.Typography.micro)
                         }
                     }
@@ -74,7 +74,7 @@ struct RealtimeChart: View {
 
     private var currentRate: String {
         let bps = samples.last?.bytesPerSecond ?? 0
-        return "\(ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .binary))/s"
+        return "\(ByteUnits.string(Int64(bps)))/s"
     }
 
     @ViewBuilder private var chart: some View {

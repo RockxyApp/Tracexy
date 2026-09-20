@@ -250,6 +250,7 @@ extension MainContentCoordinator {
             configureHistoryAutoClear(runtime.historyAutoClear)
             resumeProjectWorkspaceObservation()
             isProjectRecoveryPresented = false
+            replayPendingExternalCapture()
         } catch {
             projectStore.discardPreparedTransition(prepared)
             resumeProjectWorkspaceObservation()
@@ -319,6 +320,12 @@ extension MainContentCoordinator {
     /// Apply a Project's durable workspace configuration onto a freshly built
     /// runtime. Called once per bucket; a Project that is already open keeps its
     /// real workspace instances instead.
+    /// Whether launch reopens the persisted workspace. On by default; only an
+    /// explicit false in the app-wide settings turns it off.
+    nonisolated static func restoresWorkspaceOnLaunch(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: SettingsKeys.restoreWorkspace) as? Bool ?? true
+    }
+
     func hydratePersistedWorkspaces(of project: Project, into runtime: ProjectRuntimeState) {
         runtime.workspaces.applyProjectWorkspaces(
             project.workspaces,
@@ -374,7 +381,12 @@ extension MainContentCoordinator {
             isProjectRecoveryPresented = true
             return
         }
-        hydratePersistedWorkspaces(of: projectStore.activeProject, into: activeRuntime)
+        // General → "Restore last workspace on launch": off keeps the fresh default
+        // workspace for this launch instead of reopening the persisted tabs, filters
+        // and selection. Project switches within a session always restore.
+        if Self.restoresWorkspaceOnLaunch(defaults: applicationDefaults) {
+            hydratePersistedWorkspaces(of: projectStore.activeProject, into: activeRuntime)
+        }
         // Raw/evidence work is selection-scoped; the freshly hydrated workspaces
         // carry no capture selection yet.
         cancelFollowStream(clearResult: true)
@@ -383,6 +395,7 @@ extension MainContentCoordinator {
         projectTransitionStatus = .idle
         configureHistoryAutoClear(activeRuntime.historyAutoClear)
         resumeProjectWorkspaceObservation()
+        replayPendingExternalCapture()
     }
 
     private func armProjectWorkspaceObservation() {

@@ -83,7 +83,7 @@ nonisolated struct CapturedFrame: Sendable {
     /// Maximum on-wire length the app will accept from a helper frame. Well above
     /// any real frame (jumbo/LRO segments stay under ~64 KiB), so a larger value
     /// is corrupt metadata to be rejected rather than trusted into overflow.
-    static let maxReasonableLength = 1_000_000
+    static let maxReasonableLength = CaptureFormatLimits.maxCapturedLength
 
     let bytes: [UInt8]
     /// When the frame was captured, or `nil` when the source carried no capture
@@ -131,7 +131,8 @@ nonisolated enum PcapReader {
             throw PacketError.malformed(String(format: "pcap: unknown magic 0x%08X", rawMagic))
         }
 
-        let linkType = format.littleEndian ? try buffer.u32le(20) : try buffer.u32(20)
+        let rawLinkType = format.littleEndian ? try buffer.u32le(20) : try buffer.u32(20)
+        let linkType = MagicFormat.linkType(fromHeaderField: rawLinkType)
 
         var frames: [CapturedFrame] = []
         var offset = globalHeaderSize
@@ -193,42 +194,4 @@ nonisolated enum PcapReader {
 
     private static let globalHeaderSize = 24
     private static let recordHeaderSize = 16
-}
-
-// MARK: - MagicFormat
-
-/// The byte order and timestamp resolution implied by a global header's magic.
-nonisolated struct MagicFormat {
-    // MARK: Lifecycle
-
-    init?(rawMagic: UInt32) {
-        switch rawMagic {
-        case 0xA1B2C3D4: // big-endian, microsecond
-            littleEndian = false
-            nanosecond = false
-        case 0xD4C3B2A1: // little-endian, microsecond
-            littleEndian = true
-            nanosecond = false
-        case 0xA1B23C4D: // big-endian, nanosecond
-            littleEndian = false
-            nanosecond = true
-        case 0x4D3CB2A1: // little-endian, nanosecond
-            littleEndian = true
-            nanosecond = true
-        default:
-            return nil
-        }
-    }
-
-    // MARK: Internal
-
-    let littleEndian: Bool
-    let nanosecond: Bool
-
-    /// Convert a record's seconds + fractional field into a `Date`.
-    func timestamp(seconds: UInt32, fraction: UInt32) -> Date {
-        let denominator = nanosecond ? 1_000_000_000.0 : 1_000_000.0
-        let interval = Double(seconds) + Double(fraction) / denominator
-        return Date(timeIntervalSince1970: interval)
-    }
 }

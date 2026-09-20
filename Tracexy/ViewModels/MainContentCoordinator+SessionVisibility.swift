@@ -1,9 +1,38 @@
 import Foundation
 
+// MARK: - TrafficRankingEntry
+
+/// One row of an Overview ranking: a named party and its bytes by session
+/// direction. `sentBytes` is the client-side total (``SessionSummary/bytesUp``).
+nonisolated struct TrafficRankingEntry: Identifiable, Equatable, Sendable {
+    let name: String
+    let sessionCount: Int
+    let sentBytes: Int
+    let receivedBytes: Int
+
+    var id: String {
+        name
+    }
+
+    var totalBytes: Int {
+        sentBytes + receivedBytes
+    }
+}
+
 // MARK: - Session visibility
 
 @MainActor
 extension MainContentCoordinator {
+    /// Unique processes with session counts, for the sidebar "All" group.
+    var processes: [(name: String, count: Int)] {
+        groupCounts { $0.processName ?? "—" }
+    }
+
+    /// Unique hosts with session counts.
+    var hosts: [(name: String, count: Int)] {
+        groupCounts(\.host)
+    }
+
     /// Capture sessions that remain available to presentation surfaces.
     /// `sessions` is the evidence-backed engine result; this reversible layer is
     /// the single privacy seam between that raw result and the UI.
@@ -20,7 +49,10 @@ extension MainContentCoordinator {
 
     /// Distinct facts within the same visible scope as the surrounding rollups.
     var visibleSourceSummary: (apps: Int, domains: Int, addresses: Int) {
-        let scoped = visibleSessions
+        Self.sourceSummary(of: visibleSessions)
+    }
+
+    nonisolated static func sourceSummary(of scoped: [SessionSummary]) -> (apps: Int, domains: Int, addresses: Int) {
         let apps = Set(scoped.compactMap(\.processName).filter { !$0.isEmpty && $0 != "—" })
         let domains = Set(scoped.map(\.host).filter(Self.isDomainName))
         var addresses = Set<IPAddressValue>()
@@ -50,13 +82,126 @@ extension MainContentCoordinator {
             .map { (host: $0.key, bytes: $0.value) }
     }
 
+    /// Capture-wide bytes over time for the current capture — a projection of the
+    /// adopted investigation snapshot, so it always describes the same accepted
+    /// frames as the published sessions and evidence. Session filters do not
+    /// narrow it; surfaces that show it beside scoped rollups must say so.
+    var trafficTimeline: TrafficTimeline {
+        investigationSnapshot.trafficTimeline
+    }
+
+    /// Byte share of the visible sessions by their innermost protocol — a true
+    /// partition, unlike ``count(for:)``: each session's bytes land in exactly one
+    /// row, so the rows sum to the scoped total. Sorted by bytes, then label, so
+    /// the chart never reshuffles between renders. Rows past `limit` fold into a
+    /// trailing `nil` "other" row rather than disappearing.
+    func protocolByteShare(limit: Int = 5) -> [(kind: ProtocolKind?, bytes: Int)] {
+        Self.protocolByteShare(of: visibleSessions, limit: limit)
+    }
+
+    nonisolated static func protocolByteShare(
+        of sessions: [SessionSummary],
+        limit: Int = 5
+    )
+        -> [(kind: ProtocolKind?, bytes: Int)]
+    {
+        var totals: [ProtocolKind: Int] = [:]
+        for session in sessions {
+            totals[session.primaryProtocol, default: 0] += session.totalBytes
+        }
+        let ranked = totals
+            .filter { $0.value > 0 }
+            .sorted { ($0.value, $1.key.label) > ($1.value, $0.key.label) }
+        let leading = ranked.prefix(max(0, limit)).map { (kind: Optional($0.key), bytes: $0.value) }
+        let rest = ranked.dropFirst(max(0, limit)).reduce(0) { $0 + $1.value }
+        return rest > 0 ? leading + [(kind: nil, bytes: rest)] : leading
+    }
+
+    /// Top attributed local processes by total bytes, with the client/server
+    /// split each row's bar draws. Sessions without attribution are excluded — a
+    /// missing process is not an app named "—". Ties break on the name so the
+    /// ranking is stable across renders.
+    func topProcesses(limit: Int = 10) -> [TrafficRankingEntry] {
+        Self.topProcesses(of: visibleSessions, limit: limit)
+    }
+
+    nonisolated static func topProcesses(of sessions: [SessionSummary], limit: Int = 10) -> [TrafficRankingEntry] {
+        var totals: [String: RankingTotals] = [:]
+        for session in sessions {
+            guard let name = session.processName, !name.isEmpty, name != "—" else {
+                continue
+            }
+            totals[name, default: RankingTotals()].add(session)
+        }
+        return Self.rank(totals, limit: limit)
+    }
+
+    /// Top hosts by total bytes with the same client/server split, over the same
+    /// visible scope as ``topHosts(limit:)``.
+    func topHostTraffic(limit: Int = 10) -> [TrafficRankingEntry] {
+        Self.topHostTraffic(of: visibleSessions, limit: limit)
+    }
+
+    nonisolated static func topHostTraffic(of sessions: [SessionSummary], limit: Int = 10) -> [TrafficRankingEntry] {
+        var totals: [String: RankingTotals] = [:]
+        for session in sessions {
+            totals[session.host, default: RankingTotals()].add(session)
+        }
+        return Self.rank(totals, limit: limit)
+    }
+
     /// Sessions in view whose decoded stack contains `proto`.
     ///
     /// This counts **sessions, not packets or bytes**, and one session carries
     /// several layers, so these counts legitimately overlap and do not sum to the
     /// session total. Every surface presenting them has to say so.
     func count(for proto: ProtocolKind) -> Int {
-        visibleSessions.filter { $0.protocolStack.contains(proto) }.count
+        visibleProtocolCounts[proto] ?? 0
+    }
+
+    /// Every protocol's visible-session count from one pass over the visible set.
+    /// A surface that shows several counts at once (the sidebar lenses, the
+    /// Overview protocol mix) reads this once per render instead of re-filtering
+    /// the whole session list once per protocol on every live refresh.
+    var visibleProtocolCounts: [ProtocolKind: Int] {
+        var totals: [ProtocolKind: Int] = [:]
+        for session in visibleSessions {
+            for proto in Set(session.protocolStack) {
+                totals[proto, default: 0] += 1
+            }
+        }
+        return totals
+    }
+
+    nonisolated private struct RankingTotals {
+        var sessions = 0
+        var up = 0
+        var down = 0
+
+        mutating func add(_ session: SessionSummary) {
+            sessions += 1
+            up += session.bytesUp
+            down += session.bytesDown
+        }
+    }
+
+    nonisolated private static func rank(
+        _ totals: [String: RankingTotals],
+        limit: Int
+    )
+        -> [TrafficRankingEntry]
+    {
+        totals
+            .map {
+                TrafficRankingEntry(
+                    name: $0.key, sessionCount: $0.value.sessions,
+                    sentBytes: $0.value.up, receivedBytes: $0.value.down
+                )
+            }
+            .filter { $0.totalBytes > 0 }
+            .sorted { ($0.totalBytes, $1.name) > ($1.totalBytes, $0.name) }
+            .prefix(max(0, limit))
+            .map { $0 }
     }
 
     /// Whether a session matches a single quick-filter chip. Finding membership
@@ -80,7 +225,11 @@ extension MainContentCoordinator {
         let aggregateProtocols = workspace.aggregateProtocolFilters
         let advancedRules = workspace.activeFilterRules
         let preparedRules = SessionFilterRuleEvaluator.prepared(advancedRules)
-        let findingIDs = findingSessionIDs
+        // Projecting findings hashes every analysis tuple, so only pay for it
+        // when a filter actually reads membership: the Security chip or an
+        // aggregate Findings drill-in. Every other scope leaves it empty.
+        let needsFindingMembership = workspace.aggregateRequiresFindings || categories.contains(.security)
+        let findingIDs = needsFindingMembership ? findingSessionIDs : []
         let investigationIDs = workspace.acceptedInvestigationDraft == nil
             ? nil
             : workspace.investigationMatchedSessionIDs
@@ -194,5 +343,13 @@ extension MainContentCoordinator {
     func restoreRemovedSessions() {
         removedSessionIDs.removeAll()
         followLatestVisibleSession()
+    }
+
+    func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
+        var totals: [String: Int] = [:]
+        for session in presentedSessions {
+            totals[key(session), default: 0] += 1
+        }
+        return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
     }
 }

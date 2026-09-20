@@ -182,6 +182,7 @@ extension MainContentCoordinator {
         runtime.activeSavedCapture = activeSavedCapture
         runtime.savedCaptureActivity = savedCaptureActivity
         runtime.savedCaptureMetadata = savedCaptureMetadata
+        runtime.savedCaptureProperties = savedCaptureProperties
         runtime.savedCaptureWarning = savedCaptureWarning
         runtime.savedCaptureEvidence = savedCaptureEvidence
         runtime.savedCaptureEvidenceURL = savedCaptureEvidenceURL
@@ -247,6 +248,7 @@ extension MainContentCoordinator {
         activeSavedCapture = runtime.activeSavedCapture
         savedCaptureActivity = runtime.savedCaptureActivity
         savedCaptureMetadata = runtime.savedCaptureMetadata
+        savedCaptureProperties = runtime.savedCaptureProperties
         savedCaptureWarning = runtime.savedCaptureWarning
         savedCaptureEvidence = runtime.savedCaptureEvidence
         savedCaptureEvidenceURL = runtime.savedCaptureEvidenceURL
@@ -296,6 +298,16 @@ extension MainContentCoordinator {
     /// cancelled here — the transition awaits them first.
     func invalidateOutgoingProjectWork() {
         suspendProjectWorkspaceObservation()
+
+        // Retire the in-flight assistant run, its reviewed approval and its
+        // derived brief. The outgoing Project keeps its own transcript, the same
+        // way it keeps its investigation drafts.
+        assistant.invalidateForBoundary()
+
+        // An MCP process re-validates its app-written grant on every call. Remove
+        // that grant before swapping Project-owned storage so a client pinned to
+        // the outgoing Project fails closed on its very next request.
+        mcpAccess.invalidateForProjectBoundary()
 
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
@@ -569,6 +581,7 @@ extension MainContentCoordinator {
             // database and Library folder stay exactly where they are. Unsaved
             // spool evidence is released with its deleted runtime.
             projectRuntimes.removeValue(forKey: deletedProjectID)
+            assistant.discardConversations(forProject: deletedProjectID)
         }
         if let runtime, runtime !== activeRuntime {
             if isFreshRuntime {

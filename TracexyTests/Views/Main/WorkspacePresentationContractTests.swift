@@ -15,8 +15,12 @@ struct WorkspacePresentationContractTests {
         #expect(root.contains(".id(activeProjectID)"))
         #expect(root.contains("isSidebarPresented: sidebarVisibility"))
         #expect(root.contains("coordinator.startGeneration == launchGeneration"))
+        #expect(root.contains("await coordinator.adoptAssistantDemoFixture()"))
+        #expect(root.contains("walkthrough is fully synthetic"))
         #expect(app.contains(".defaultAppStorage(coordinator.activeProjectDefaults)"))
-        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 5)
+        // Focus Set editor, Noise Control, Settings, Session Inspector and Capture
+        // Info scenes all remount on the Project identity.
+        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 6)
         #expect(root.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("unsaved in-memory sessions and evidence"))
@@ -365,16 +369,34 @@ struct WorkspacePresentationContractTests {
         #expect(!footer.contains("Investigation"))
     }
 
-    @Test("Planned MCP and AI settings never imply a service is active")
-    func plannedMCPSettingsAreTruthful() throws {
+    @Test("MCP and Assistant settings state the real boundary and claim nothing more")
+    func mcpSettingsStateTheBoundary() throws {
         let source = try readProjectFile("Tracexy/Views/Settings/MCPSettingsView.swift")
 
-        #expect(source.contains("No server is running"))
-        #expect(source.contains("Tracexy does not open a port or expose capture data"))
-        #expect(source.contains("No provider receives sessions or evidence"))
-        #expect(!source.contains("@AppStorage"))
+        // The boundary is concrete: off by default, one Project, disclosed fields,
+        // a row ceiling, grant/revoke, the audit trail, and the bundled command.
+        #expect(source.contains("Off — no client can read anything"))
+        #expect(source.contains("Tracexy never opens a network port"))
+        #expect(source.contains("mcp.projectName"))
+        #expect(source.contains("mcp.disclosure.host"))
+        #expect(source.contains("mcp.maxRows"))
+        #expect(source.contains("Grant Access"))
+        #expect(source.contains("mcp.revoke"))
+        #expect(source.contains("mcp.auditList"))
+        #expect(source.contains("mcp.commandPath"))
+        // The Assistant half names the loopback rule and the never-included families.
+        #expect(source.contains("Only 127.0.0.1, ::1 and localhost are accepted"))
+        #expect(source.contains("assistant.endpointField"))
+
+        // No port, no listener, no provider, and none of the retired keys.
+        #expect(!source.contains("No server is running"))
         #expect(!source.contains("Enable in-app MCP server"))
         #expect(!source.contains("Expose sessions to AI clients"))
+        #expect(!source.contains("mcpPort"))
+        #expect(!source.contains("mcpEnabled"))
+        #expect(!source.contains("aiProvider"))
+        #expect(!source.contains("apiKey"))
+        #expect(!source.contains("Keychain"))
     }
 
     @Test("Saved captures expose native context actions and recoverable removal")
@@ -430,21 +452,38 @@ struct WorkspacePresentationContractTests {
         #expect(!sidebar.contains(".onChange(of: coordinator.visibleSessions.count"))
     }
 
-    @Test("AI Assistant uses a truthful conversation shell")
-    func assistantUsesConversationShell() throws {
+    @Test("The AI Assistant dock is a working conversation over a local model")
+    func assistantDockIsWorking() throws {
         let source = try readProjectFile("Tracexy/Views/Inspector/AIAssistantDockView.swift")
+        let sheet = try readProjectFile("Tracexy/Views/Inspector/AssistantReviewDataSheet.swift")
 
         #expect(source.contains("conversationHeader"))
         #expect(source.contains("attachedContextHeader"))
-        #expect(source.contains("conversationTranscript"))
         #expect(source.contains("promptComposer"))
         #expect(source.contains("New Conversation"))
-        #expect(source.contains("Select a session to add context"))
-        #expect(source.contains("Ask Tracexy AI Assistant…"))
-        #expect(source.contains("Label(\"Not connected\", systemImage: \"cpu\")"))
-        #expect(source.contains("Label(\"Read-only\", systemImage: \"lock.shield\")"))
+        #expect(source.contains("Select a session to attach context"))
+        // Every control the wave promises is present and identified.
+        #expect(source.contains("assistant.modelPicker"))
+        #expect(source.contains("assistant.send"))
+        #expect(source.contains("assistant.stop"))
+        #expect(source.contains("assistant.retry"))
+        #expect(source.contains("assistant.reviewData"))
+        #expect(source.contains("assistant.citation"))
+        #expect(source.contains("assistant.incompleteBadge"))
+        #expect(source.contains("AssistantReviewDataSheet"))
+
+        // The Review Data sheet shows the literal payload, the destination and the
+        // coverage limits before anything is sent.
+        #expect(sheet.contains("assistant.reviewPayload"))
+        #expect(sheet.contains("assistant.reviewSend"))
+        #expect(sheet.contains("Coverage limits"))
+        #expect(sheet.contains("Never included, at any setting"))
+
+        // Nothing invented, nothing simulated, and no inert placeholder controls.
         #expect(!source.contains("sampleMessages"))
         #expect(!source.contains("streamingText"))
+        #expect(!source.contains(".disabled(true)"))
+        #expect(!source.contains("Assistant not connected"))
     }
 
     // MARK: Private

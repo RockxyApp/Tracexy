@@ -79,6 +79,11 @@ nonisolated struct TCPSequenceTracker: Equatable, Sendable {
         /// The segment occupied zero sequence space; the expected sequence was
         /// neither anchored nor changed.
         case noSequenceSpace
+        /// A keep-alive probe: one byte of already-acknowledged sequence space
+        /// exactly one behind the expected sequence (RFC 1122 §4.2.3.6, the same
+        /// shape Wireshark classifies as `TCP Keep-Alive`). It carries no new data
+        /// and is not a retransmission; ordering state was left unchanged.
+        case keepAlive
     }
 
     // MARK: Output
@@ -135,6 +140,12 @@ nonisolated struct TCPSequenceTracker: Equatable, Sendable {
         if distance < 0 {
             let overlapBytes = UInt32(-Int64(distance))
             guard overlapBytes < sequenceLength else {
+                // A single garbage byte one behind the expected sequence, with no
+                // control bits, is the canonical keep-alive probe, not a
+                // retransmission of data the peer already acknowledged.
+                if distance == -1, sequenceLength == 1, facts.payloadLength == 1 {
+                    return output(.keepAlive)
+                }
                 return output(.duplicate)
             }
             let newBytes = sequenceLength - overlapBytes

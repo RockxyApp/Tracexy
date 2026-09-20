@@ -575,8 +575,23 @@ final class HelperClient {
             options: .privileged
         )
         new.remoteObjectInterface = TracexyHelperInterface.make()
-        new.invalidationHandler = { [weak self] in Task { @MainActor in self?.connection = nil } }
-        new.interruptionHandler = { [weak self] in Task { @MainActor in self?.connection = nil } }
+        // Only the connection that fired the handler may clear the slot: after a
+        // reset, the old connection's (asynchronous) invalidation must not discard
+        // the fresh connection that already replaced it.
+        new.invalidationHandler = { [weak self, weak new] in
+            Task { @MainActor in
+                if let self, let new, self.connection === new {
+                    self.connection = nil
+                }
+            }
+        }
+        new.interruptionHandler = { [weak self, weak new] in
+            Task { @MainActor in
+                if let self, let new, self.connection === new {
+                    self.connection = nil
+                }
+            }
+        }
         new.resume()
         connection = new
         return new

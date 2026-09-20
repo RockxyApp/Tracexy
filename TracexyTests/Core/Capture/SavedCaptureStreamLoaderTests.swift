@@ -43,7 +43,14 @@ struct SavedCaptureStreamLoaderTests {
                 batch[index].representativeBytes = []
             }
 
-            #expect(result.sessions == batch)
+            // The file states an interface for every frame; a batch build has no
+            // source to read one from. Everything else must be identical.
+            var saved = result.sessions
+            for index in saved.indices {
+                #expect(saved[index].captureInterfaceIDs == [0])
+                saved[index].captureInterfaceIDs = []
+            }
+            #expect(saved == batch)
             #expect(!result.sessions.isEmpty)
             #expect(!result.sessions.contains { !$0.representativeBytes.isEmpty })
             // Decoded layers/metadata are preserved even with raw bytes cleared.

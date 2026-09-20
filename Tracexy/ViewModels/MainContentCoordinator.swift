@@ -27,14 +27,20 @@ final class MainContentCoordinator {
         isHistoryDemoMode: Bool = false,
         historyNow: @escaping @Sendable () -> Date = { Date() },
         liveCaptureSpool: LiveCaptureSpool? = nil,
-        settingsDefaults: UserDefaults? = nil
+        settingsDefaults: UserDefaults? = nil,
+        assistant: AssistantSessionModel? = nil,
+        mcpAccess: MCPAccessModel? = nil
     ) {
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
+        let bootDefaults = settingsDefaults ?? .standard
+        applicationDefaults = bootDefaults
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         let provider = projectDataProvider ?? DefaultProjectDataProvider()
         self.projectDataProvider = provider
+        self.assistant = assistant ?? AssistantSessionModel(defaults: bootDefaults)
+        self.mcpAccess = mcpAccess ?? MCPAccessModel()
         injectedSessionStore = sessionStore
         injectedLiveCaptureSpool = liveCaptureSpool
         projectStore = ProjectStore(
@@ -51,7 +57,6 @@ final class MainContentCoordinator {
         // Project identity, and capture intake is refused until
         // `hydrateProjectsOnLaunch` binds it to the real active Project. That is
         // what keeps a frame from ever being written for a provisional identity.
-        let bootDefaults = settingsDefaults ?? .standard
         let bootPreferences = layoutPreferences ?? WorkspaceLayoutPreferences(defaults: bootDefaults)
         let bootLocation = provider.location(
             forProject: ProjectCatalog.retiredLegacyDataOwnerID,
@@ -248,6 +253,10 @@ final class MainContentCoordinator {
     var captureImportProgress: PcapStreamProgress?
     var captureImportName: String?
     var isCancellingCaptureImport = false
+    /// A capture handed in from outside the app's own picker (Finder "Open With",
+    /// a file dropped on the window) before Projects finished hydrating at launch.
+    /// Replayed exactly once when hydration completes; never persisted.
+    var pendingExternalCaptureURL: URL?
     @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
     @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
 
@@ -344,6 +353,14 @@ final class MainContentCoordinator {
     /// comments, options or annotations.
     var savedCaptureMetadata: CaptureMetadataSummary?
 
+    /// What the open saved capture's container says about itself (format
+    /// variant, sections, interfaces and options, statistics blocks, comments and
+    /// skipped-block counts). Folded in the same single pass as
+    /// ``savedCaptureMetadata``; `nil` for live and idle captures. Shown only in the
+    /// Get Info window and the interface context; file-authored strings never enter
+    /// Sources, History, automation or the Assistant brief through this value.
+    var savedCaptureProperties: CaptureFileProperties?
+
     /// Saved-file opening is an off-main, final-only transaction. The previous
     /// workspace remains intact while this is true; only monotonic byte progress
     /// crosses back to the UI before the immutable result is adopted.
@@ -359,9 +376,42 @@ final class MainContentCoordinator {
     var isLoadingSelectedSessionEvidence = false
     var selectedSessionEvidenceError: String?
 
-    // Saved-open/evidence task state is kept here so the separate activation
-    // extension can own the workflow without weakening the coordinator's actor
-    // boundary. Request IDs retire every late progress/result callback.
+    /// Saved-open/evidence task state is kept here so the separate activation
+    /// extension can own the workflow without weakening the coordinator's actor
+    /// boundary. Request IDs retire every late progress/result callback.
+    /// A referenced Library item the user tried to open whose file is missing or
+    /// changed. Drives the inline notice with Locate… / Reload; cleared by any
+    /// successful open, Clear, or Project switch.
+    var unavailableReferencedCapture: SavedCapture?
+    /// Mirror of `NSDocumentController`'s recent list so the File ▸ Open Recent
+    /// submenu rebuilds when it changes. Names only reach the menu; paths stay here.
+    var recentCaptureURLs: [URL] = []
+    /// True when the open saved capture's file no longer matches the identity it
+    /// was read with (replaced, truncated or grown on disk). Enables Reload.
+    var activeSavedCaptureChangedOnDisk = false
+    /// The in-flight format recognition for an external open (test seam).
+    var externalCaptureOpenTask: Task<Void, Never>?
+    /// Frames facet: the bounded frame list of the selected session, rescanned on
+    /// demand from the stable source (saved file or stopped-live spool copy).
+    var sessionFramesResult: SessionFramesResult?
+    var isLoadingSessionFrames = false
+    var sessionFramesProgress: PcapStreamProgress?
+    var sessionFramesError: String?
+    var sessionFramesTask: Task<Void, Never>?
+    var sessionFramesRequestID = 0
+    var loadingSessionFramesSessionID: UUID?
+    /// Export Frames…: one streaming export at a time, cancellable, holding the
+    /// capture source through the shared `isExportingSession` gate.
+    var frameExportProgress: PcapStreamProgress?
+    var frameExportName: String?
+    var frameExportTask: Task<Void, Never>?
+    var frameExportRequestID = 0
+    var isCancellingFrameExport = false
+    /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
+    var captureHashState: CaptureHashState = .idle
+    var captureHashTask: Task<Void, Never>?
+    var captureHashRequestID = 0
+
     var savedCaptureOpenRequestID = 0
     var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
     var savedCaptureBoundaryTask: Task<Void, Never>?
@@ -381,6 +431,17 @@ final class MainContentCoordinator {
     // evidence can never outlive the selection or source it described.
     var evidenceProjection = EvidenceProjectionPipeline()
     var citedFrame = CitedFramePipeline()
+
+    /// The AI Assistant's bounded, in-memory state: the local-endpoint status, the
+    /// derived brief for the current selection, and one conversation per Project
+    /// workspace. It is owned here so a Project boundary can retire an in-flight
+    /// run, and so a deleted Project's transcript goes away with it. Nothing it
+    /// holds is persisted.
+    let assistant: AssistantSessionModel
+
+    /// The single app-wide MCP grant controller. Settings and Project lifecycle
+    /// share this instance so a switch can revoke the exact grant the pane issued.
+    let mcpAccess: MCPAccessModel
 
     /// Explicit, selection-scoped Follow Stream state. Raw application bytes enter
     /// coordinator memory only after the user requests this operation and are
@@ -421,6 +482,10 @@ final class MainContentCoordinator {
     /// Injectable wall clock for History age policy. Production uses `Date()`;
     /// integration tests freeze it so cutoff behavior never depends on timing.
     let historyNow: @Sendable () -> Date
+
+    /// The app-wide settings store (General preferences that are not per Project).
+    /// Production uses `.standard`; the demo launch composes an isolated suite.
+    let applicationDefaults: UserDefaults
 
     /// The currently effective Auto-clear preference. The composition root sets
     /// it from persisted defaults at launch; Settings updates it synchronously
@@ -572,6 +637,14 @@ final class MainContentCoordinator {
     /// attributed copies shown by the UI; every evidence projection remains verbatim.
     private(set) var investigationSnapshot = InvestigationSnapshot.empty
 
+    /// The Assistant evidence publication identity: advanced by every
+    /// ``adoptInvestigation(_:)`` and read into ``assistantContext``. It is an
+    /// in-memory, wrapping counter — never persisted, never restored from a
+    /// Project bucket — and it is separate from ``startGeneration`` because a
+    /// live republication inside one capture generation must still retire a
+    /// brief or a streamed answer derived from the previous snapshot.
+    private(set) var assistantEvidenceRevision = 0
+
     /// At most one off-main query evaluation per workspace. Superseding Apply/live
     /// refresh and capture boundaries cancel the prior task before issuing a new request.
     var investigationQueryTasks: [UUID: InvestigationQueryTask] = [:]
@@ -698,16 +771,6 @@ final class MainContentCoordinator {
     /// consumes this set instead of duplicating analysis rules over summaries.
     var findingSessionIDs: Set<UUID> {
         Set(findings.map(\.sessionID))
-    }
-
-    /// Unique processes with session counts, for the sidebar "All" group.
-    var processes: [(name: String, count: Int)] {
-        groupCounts { $0.processName ?? "—" }
-    }
-
-    /// Unique hosts with session counts.
-    var hosts: [(name: String, count: Int)] {
-        groupCounts(\.host)
     }
 
     /// Domains grouped by name, each carrying the set of server IPs it resolved
@@ -961,35 +1024,6 @@ final class MainContentCoordinator {
 
     // MARK: Correlation
 
-    /// The action the given session belongs to, or `nil` when nothing could
-    /// attribute it.
-    ///
-    /// Correlation is computed over a time-bounded slice around the session
-    /// rather than the whole capture. Grouping every session on demand would be
-    /// O(capture) on the main actor and violate the bounded UI publication path;
-    /// a causal window of tens of seconds cannot reach further than this slice
-    /// anyway, so the narrower input costs no accuracy.
-    func activity(containing session: SessionSummary) -> Activity? {
-        // Correlation is time-dependent, so a session with no known start has no
-        // slice to correlate within and no action to belong to.
-        guard let anchor = session.startTime else {
-            return nil
-        }
-        let window = ActivityBuilder.dnsCausalWindow
-        let slice = presentedSessions.filter {
-            guard let start = $0.startTime else {
-                return false
-            }
-            return abs(start.timeIntervalSince(anchor)) <= window
-        }
-        guard slice.count > 1 else {
-            return nil
-        }
-        return ActivityBuilder.build(from: slice)
-            .activities
-            .first { $0.sessions.contains { $0.id == session.id } }
-    }
-
     func select(_ session: SessionSummary) {
         cancelFollowStream(clearResult: true)
         activeWorkspace.selectedSessionID = session.id
@@ -1014,40 +1048,12 @@ final class MainContentCoordinator {
     /// assessor itself.
     func adoptInvestigation(_ snapshot: InvestigationSnapshot) {
         investigationSnapshot = snapshot
+        assistantEvidenceRevision &+= 1
         connectionSnapshot = snapshot.connections
         connectionAnalysisSnapshot = snapshot.connectionAnalysis
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
         refreshActiveInvestigationQueries()
         refreshSelectedSessionEvidenceProjection()
-    }
-
-    /// Bottom evidence inspector. Hiding it by hand also cancels the automatic
-    /// reveal — a panel the user dismissed must not reappear on the next
-    /// selection.
-    func toggleInspectorBottom() {
-        let ws = activeWorkspace
-        let willHide = ws.inspectorLayout == .bottom
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.inspectorLayout = willHide ? .hidden : .bottom
-        }
-        layoutPreferences.rememberInspectorLayout(ws.inspectorLayout)
-        // Opening it by hand is the user asking for it back, so it cancels an
-        // earlier dismissal. Without this the two rules fight: panels start
-        // closed at launch, and a user who had once dismissed the inspector
-        // could never get it to come back on its own again — they would be
-        // re-opening it manually every single launch.
-        ws.allowsAutomaticInspectorReveal = !willHide
-        layoutPreferences.rememberAutomaticInspectorReveal(!willHide)
-    }
-
-    /// Right-hand interpretation column. Never auto-revealed: it earns its space
-    /// only once the user asks for it.
-    func toggleContextDock() {
-        let ws = activeWorkspace
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.isContextDockVisible.toggle()
-        }
-        layoutPreferences.rememberContextDockVisible(ws.isContextDockVisible)
     }
 
     /// Bring back the panels the user works with, once there is something for
@@ -1110,6 +1116,11 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
+        resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1174,6 +1185,11 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
+        resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a
@@ -1638,6 +1654,12 @@ extension MainContentCoordinator {
                 // the last sample.
                 self.captureStatistics = statistics
                 self.ingest(frames, linkType: batchLinkType)
+                if let readFailure = batch.readFailure {
+                    // The frames above are the complete tail the source delivered
+                    // before it failed; settle the capture at that boundary.
+                    self.captureSourceDidFail(readFailure, captureToken: captureToken)
+                    return
+                }
                 if self.helperStopRequested {
                     self.performStopCapture()
                 }
@@ -1697,6 +1719,7 @@ extension MainContentCoordinator {
         }
         // Open + compile the filter synchronously so a bad snap length or BPF fails
         // before the capture is reported started, rather than after.
+        let token = startGeneration
         do {
             try live.start(
                 configuration: configuration,
@@ -1711,6 +1734,12 @@ extension MainContentCoordinator {
                         return
                     }
                     Task { @MainActor in coordinator.captureStatistics = sample }
+                },
+                onReadFailure: { [weak self] message in
+                    guard let coordinator = self else {
+                        return
+                    }
+                    Task { @MainActor in coordinator.captureSourceDidFail(message, captureToken: token) }
                 }
             )
         } catch {
@@ -1940,6 +1969,19 @@ extension MainContentCoordinator {
         }
     }
 
+    /// The capture source stopped on its own (libpcap reported a read error: the
+    /// interface went away or was reconfigured). Everything received so far is a
+    /// valid, complete-to-that-instant capture, so settle it exactly like an
+    /// explicit Stop — final fold, History entry, saved-file eligibility — and keep
+    /// the reason visible instead of leaving "Capturing" on with nothing arriving.
+    func captureSourceDidFail(_ message: String, captureToken: Int) {
+        guard isCapturing, startGeneration == captureToken else {
+            return
+        }
+        performStopCapture()
+        captureError = "Capture ended because the source stopped: \(message)"
+    }
+
     private func handleCaptureError(_ message: String) {
         pollTimer?.invalidate()
         pollTimer = nil
@@ -1956,13 +1998,5 @@ extension MainContentCoordinator {
         // attempt never reached a stopped-generation boundary, so the owed drain is
         // aborted by identity rather than matched against a token it never minted.
         abortOwedFinalCaptureDrain()
-    }
-
-    private func groupCounts(_ key: (SessionSummary) -> String) -> [(name: String, count: Int)] {
-        var totals: [String: Int] = [:]
-        for session in presentedSessions {
-            totals[key(session), default: 0] += 1
-        }
-        return totals.sorted { $0.value > $1.value }.map { (name: $0.key, count: $0.value) }
     }
 }

@@ -71,7 +71,7 @@ struct ContextDockView: View {
             sessionCount: 1,
             primaryProtocol: session.primaryProtocol.label,
             formattedBytes: session.totalBytes > 0
-                ? Int64(session.totalBytes).formatted(.byteCount(style: .memory))
+                ? ByteUnits.string(Int64(session.totalBytes))
                 : nil
         )
     }
@@ -186,6 +186,10 @@ struct ContextDockView: View {
                                     ContextTableField(label: $0.name, value: $0.value)
                                 }
                             )
+                        }
+
+                        if let captureFields = captureSourceFields(session), !captureFields.isEmpty {
+                            ContextInspectorFieldTable(title: "Capture Source", fields: captureFields)
                         }
 
                         if baselineHistory(for: session).count >= 3 {
@@ -683,6 +687,37 @@ struct ContextDockView: View {
 
     /// The fields of the outermost decoded layer — the one the session actually
     /// terminated in, which is what "this layer" means to the user.
+    /// Which capture interface(s) this session's frames were recorded on, named
+    /// from the file's own interface descriptions. Only for saved captures whose
+    /// container states interfaces; a live capture or a classic pcap with one
+    /// implicit interface adds nothing here.
+    private func captureSourceFields(_ session: SessionSummary) -> [ContextTableField]? {
+        guard coordinator.isViewingSavedCapture,
+              let properties = coordinator.savedCaptureProperties,
+              case .pcapng = properties.container,
+              !session.captureInterfaceIDs.isEmpty else
+        {
+            return nil
+        }
+        let interfaces = properties.allInterfaces
+        var names = session.captureInterfaceIDs.map { id -> String in
+            if let interface = interfaces.first(where: { $0.id.interfaceID == id }) {
+                var name = interface.displayName
+                if let description = interface.interfaceDescription?.text, !description.isEmpty,
+                   description != interface.displayName
+                {
+                    name += " (\(description))"
+                }
+                return name
+            }
+            return "Interface \(id)"
+        }
+        if session.captureInterfaceOverflow {
+            names.append("…")
+        }
+        return [ContextTableField(label: "Captured on", value: names.joined(separator: ", "), monospaced: false)]
+    }
+
     private func topLayerFields(_ session: SessionSummary) -> [DecodedField] {
         var deepest: DecodedLayer?
         var stack = session.decodedLayers

@@ -211,6 +211,13 @@ nonisolated struct ConnectionTable {
                 event(state.id, .lateSegmentAfterClose, provenance, direction: direction, facts: facts),
                 to: tuple
             )
+            // A reset that arrives after the observed close (a lingering socket
+            // being torn down) is still an observed reset: the session already
+            // reads as reset, so the evidence must carry the same fact. The close
+            // reason stays what was observed first.
+            if facts.flags.contains(.rst) {
+                appendEvent(event(state.id, .rst, provenance, direction: direction, facts: facts), to: tuple)
+            }
             if let sequenceEvent {
                 appendEvent(sequenceEvent, to: tuple)
             }
@@ -361,7 +368,8 @@ nonisolated struct ConnectionTable {
             (.pendingOverflow, [.sequenceGapObserved, .sequenceStateTruncated])
         case .serialAmbiguous:
             (.serialAmbiguous, .serialDistanceAmbiguous)
-        case .noSequenceSpace:
+        case .noSequenceSpace,
+             .keepAlive:
             nil
         }
     }
@@ -395,6 +403,10 @@ nonisolated struct ConnectionTable {
             event(id, .lateSegmentAfterClose, provenance, direction: direction, facts: facts),
             at: index
         )
+        // Same rule as the active terminal path: a late reset is an observed reset.
+        if facts.flags.contains(.rst) {
+            appendPublishedEvent(event(id, .rst, provenance, direction: direction, facts: facts), at: index)
+        }
         return true
     }
 

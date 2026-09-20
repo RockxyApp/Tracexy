@@ -486,6 +486,8 @@ struct FlowMapView: View {
         .opacity(focusedRegion == nil || isFocused ? 1 : 0.45)
         .contentShape(Circle())
         .onTapGesture { toggleFocus(route.region) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggleFocus(route.region) }
         .accessibilityLabel("\(route.region.title) registry region")
         .accessibilityHint("Registry region administering these addresses, not a server location. "
             + "\(route.sessions) sessions.")
@@ -622,7 +624,7 @@ struct FlowMapView: View {
     }
 
     private static func bytes(_ count: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .binary)
+        ByteUnits.string(Int64(count))
     }
 
     /// Samples the geodesic between two points into a fixed number of coordinates,

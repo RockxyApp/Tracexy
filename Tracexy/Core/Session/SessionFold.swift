@@ -18,12 +18,14 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
         capturedLength: Int,
         linkType: UInt32,
         locator: SessionEvidenceLocator? = nil,
-        loss: CaptureLossKnowledge = .unknown
+        loss: CaptureLossKnowledge = .unknown,
+        interfaceID: Int? = nil
     ) {
         self.capturedLength = capturedLength
         self.linkType = linkType
         self.locator = locator
         self.loss = loss
+        self.interfaceID = interfaceID
     }
 
     // MARK: Internal
@@ -37,6 +39,9 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
     /// Live-spool and saved-file folds mint locators when their source is available;
     /// batch callers and evidence-source failures legitimately leave this `nil`.
     let locator: SessionEvidenceLocator?
+    /// The capture interface (pcapng IDB index within its section) this frame was
+    /// recorded on, when the source states one. Batch and live folds leave it `nil`.
+    let interfaceID: Int?
     /// What we know about capture completeness for this frame.
     let loss: CaptureLossKnowledge
 }
@@ -51,6 +56,24 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
 /// produced; `connections` and `datagramEvidence` are additive evidence. Nothing
 /// here is exposed in Views yet.
 nonisolated struct SessionFoldSnapshot: Sendable {
+    // MARK: Lifecycle
+
+    init(
+        sessions: [SessionSummary],
+        connections: ConnectionTable.Snapshot,
+        datagramEvidence: DatagramEvidenceTable.Snapshot,
+        tlsEvidence: TLSEvidenceTable.Snapshot,
+        trafficTimeline: TrafficTimeline = .empty
+    ) {
+        self.sessions = sessions
+        self.connections = connections
+        self.datagramEvidence = datagramEvidence
+        self.tlsEvidence = tlsEvidence
+        self.trafficTimeline = trafficTimeline
+    }
+
+    // MARK: Internal
+
     let sessions: [SessionSummary]
     let connections: ConnectionTable.Snapshot
     /// Bounded, cross-path-equal DNS/ICMP datagram evidence for the same ordered
@@ -61,4 +84,8 @@ nonisolated struct SessionFoldSnapshot: Sendable {
     /// per-frame records are retained with exact provenance; multi-frame recovered
     /// records are excluded-counted, never cited.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded capture-wide bytes over time, split by session direction, for the
+    /// same accepted frames. Additive; callers that assemble a snapshot from parts
+    /// without a timeline get an empty one.
+    let trafficTimeline: TrafficTimeline
 }
