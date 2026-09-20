@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Overview plots every accepted frame's wire bytes on the real capture clock, split into bytes sent by clients and received from servers, for live and opened captures alike, with exact hover readouts and scoped findings pinned at the instant of their first cited frame.
+- Overview is now a capture report: compact Protocols, Sessions started, and Findings charts, plus native Top hosts and Top apps tables whose rows narrow the session list.
 - Ask about the selected session with a local AI Assistant: connect a model running on this Mac, review the exact JSON before the first send, stream the answer, and click a citation to open the frame it refers to.
 - Share bounded, read-only capture history with an MCP client through a bundled command-line tool that never opens a network port, scoped to one Project you grant and revoke in Settings.
 
@@ -21,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Overview Protocols shows the share of session bytes by innermost protocol so bars sum to the scope, replacing overlapping per-layer session counts.
 - Replace the placeholder MCP and AI Insights settings with the real MCP grant, activity trail, and local-model controls, and retire the unused preference keys behind them.
 
 ## [0.7.0] - 2026-09-08
