@@ -144,6 +144,9 @@ struct TracexyApp: App {
             .id(coordinator.projectStore.activeProjectID)
             .disabled(coordinator.projectTransitionStatus.isPending)
             .preferredColorScheme(colorScheme)
+            // Settings can open before the workspace's launch task runs. Share
+            // the same idempotent hydration so grant scope cannot stay pending.
+            .task { await coordinator.hydrateProjectsOnLaunch() }
         }
         .defaultSize(width: 900, height: 640)
         .windowResizability(.contentMinSize)
