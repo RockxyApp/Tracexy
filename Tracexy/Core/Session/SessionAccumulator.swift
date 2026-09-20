@@ -122,9 +122,19 @@ nonisolated struct SessionAccumulator {
         // excludes-counts any multi-frame recovered records the handoff carries; the
         // recovered facts are never propagated onto `enriched`/the representative.
         tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
-        return foldSession(
+        let selection = foldSession(
             enriched, hasReassembledApplication: hasReassembledApplication, ordinal: provenance.ordinal
         )
+        // Every accepted frame reaches the capture-wide traffic timeline once, after
+        // the session fold so its direction is judged against the client the
+        // session knows at this point. A tupleless frame still carries wire bytes
+        // and is counted as unattributed rather than dropped.
+        trafficTimeline.add(
+            timestamp: packet.timestamp,
+            originalLength: packet.originalLength,
+            direction: trafficDirection(of: enriched)
+        )
+        return selection
     }
 
     /// Emit summaries in first-seen five-tuple order. Pure; decodes nothing and
@@ -148,7 +158,8 @@ nonisolated struct SessionAccumulator {
             sessions: summaries(),
             connections: connections.snapshot(),
             datagramEvidence: datagrams.snapshot(),
-            tlsEvidence: tlsEvidence.snapshot()
+            tlsEvidence: tlsEvidence.snapshot(),
+            trafficTimeline: trafficTimeline.timeline()
         )
     }
 
@@ -163,6 +174,7 @@ nonisolated struct SessionAccumulator {
         connections = ConnectionTable(configuration: connectionConfiguration)
         datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
         tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+        trafficTimeline.reset()
         nextOrdinal = 1
     }
 
@@ -190,6 +202,9 @@ nonisolated struct SessionAccumulator {
     /// The one-based capture ordinal handed to the next common-path frame, in
     /// accepted-frame order. Independent of batch chunking and of timestamp order.
     private var nextOrdinal: UInt64 = 1
+    /// Bounded capture-wide bytes-over-time, folded once per common-path frame
+    /// beside the tables. Reset with them at every capture boundary.
+    private var trafficTimeline = TrafficTimelineAccumulator()
 
     /// Apply the connection table's bounded first-record application metadata to a
     /// local packet copy. This is the exact enrichment the session-owned reassembler
@@ -211,6 +226,15 @@ nonisolated struct SessionAccumulator {
         packet.dnsAnswersOmittedCount = max(packet.dnsAnswersOmittedCount, metadata.dnsAnswersOmittedCount)
         packet.layers.removeAll { $0.proto == metadata.appProtocol }
         packet.layers.append(contentsOf: metadata.layers)
+    }
+
+    /// A frame's direction relative to the client of the session it just folded
+    /// into — the same client `SessionSummary.bytesUp` is measured against.
+    private func trafficDirection(of packet: DecodedPacket) -> TrafficDirection {
+        guard let key = packet.fiveTuple, let state = states[key] else {
+            return .unattributed
+        }
+        return packet.sourceEndpoint == state.client ? .sent : .received
     }
 
     // MARK: Private session fold
@@ -266,6 +290,12 @@ private extension SessionAccumulator {
         }
 
         // MARK: Internal
+
+        /// The session's client endpoint as currently known: the earliest timed
+        /// packet's source, or the first-seen source once any frame is untimed.
+        var client: IPEndpoint? {
+            untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
+        }
 
         /// Fold a subsequent packet of the same five-tuple. `merge` also updates
         /// the representatives; the first packet is folded via `fold` directly

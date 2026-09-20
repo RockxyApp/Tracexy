@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>$(TRACEXY_APP_BUNDLE_ID).mcp</string>
+    <key>CFBundleName</key>
+    <string>TracexyMCP</string>
+    <key>CFBundleExecutable</key>
+    <string>TracexyMCP</string>
+    <key>CFBundleVersion</key>
+    <string>$(TRACEXY_APP_BUILD)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(TRACEXY_APP_VERSION)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>TracexyFamilyNamespace</key>
+    <string>$(TRACEXY_FAMILY_NAMESPACE)</string>
+    <key>TracexyAppSupportDirectoryName</key>
+    <string>$(TRACEXY_APP_SUPPORT_DIRECTORY_NAME)</string>
+    <key>TracexyDefaultsPrefix</key>
+    <string>$(TRACEXY_DEFAULTS_PREFIX)</string>
+    <key>TracexyNotificationPrefix</key>
+    <string>$(TRACEXY_NOTIFICATION_PREFIX)</string>
+    <key>TracexySharedSupportDirectoryName</key>
+    <string>$(TRACEXY_SHARED_SUPPORT_DIRECTORY_NAME)</string>
+    <key>TracexyLogSubsystem</key>
+    <string>$(TRACEXY_LOG_SUBSYSTEM)</string>
+</dict>
+</plist>

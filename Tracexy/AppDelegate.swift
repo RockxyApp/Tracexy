@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// a running app with no window. One deferred check reopens the workspace
     /// through the same path a Dock click uses.
     func applicationDidFinishLaunching(_ notification: Notification) {
+        SettingsKeys.removeRetiredKeys(from: TracexyIdentity.applicationDefaults)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             Self.ensureWorkspaceWindow()
         }

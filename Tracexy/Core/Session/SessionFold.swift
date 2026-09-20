@@ -51,6 +51,24 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
 /// produced; `connections` and `datagramEvidence` are additive evidence. Nothing
 /// here is exposed in Views yet.
 nonisolated struct SessionFoldSnapshot: Sendable {
+    // MARK: Lifecycle
+
+    init(
+        sessions: [SessionSummary],
+        connections: ConnectionTable.Snapshot,
+        datagramEvidence: DatagramEvidenceTable.Snapshot,
+        tlsEvidence: TLSEvidenceTable.Snapshot,
+        trafficTimeline: TrafficTimeline = .empty
+    ) {
+        self.sessions = sessions
+        self.connections = connections
+        self.datagramEvidence = datagramEvidence
+        self.tlsEvidence = tlsEvidence
+        self.trafficTimeline = trafficTimeline
+    }
+
+    // MARK: Internal
+
     let sessions: [SessionSummary]
     let connections: ConnectionTable.Snapshot
     /// Bounded, cross-path-equal DNS/ICMP datagram evidence for the same ordered
@@ -61,4 +79,8 @@ nonisolated struct SessionFoldSnapshot: Sendable {
     /// per-frame records are retained with exact provenance; multi-frame recovered
     /// records are excluded-counted, never cited.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded capture-wide bytes over time, split by session direction, for the
+    /// same accepted frames. Additive; callers that assemble a snapshot from parts
+    /// without a timeline get an empty one.
+    let trafficTimeline: TrafficTimeline
 }
