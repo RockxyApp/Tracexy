@@ -86,7 +86,9 @@ final class AssistantAndMCPUITests: XCTestCase {
 
     @MainActor
     func testAssistantSurfaceWithFixtureSelection() {
-        let app = launch(assistantDemo: true, mcpSettings: true)
+        // Keep the synthetic workspace inside the smaller CI display so the
+        // right-dock Review Data control remains reachable through the UI.
+        let app = launch(assistantDemo: true, narrowWindow: true, mcpSettings: true)
 
         let contextChip = app.descendants(matching: .any)["assistant.contextChip"]
         XCTAssertTrue(contextChip.waitForExistence(timeout: 20), "The Assistant dock must show its attached context")
