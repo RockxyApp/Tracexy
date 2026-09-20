@@ -27,14 +27,19 @@ final class MainContentCoordinator {
         isHistoryDemoMode: Bool = false,
         historyNow: @escaping @Sendable () -> Date = { Date() },
         liveCaptureSpool: LiveCaptureSpool? = nil,
-        settingsDefaults: UserDefaults? = nil
+        settingsDefaults: UserDefaults? = nil,
+        assistant: AssistantSessionModel? = nil,
+        mcpAccess: MCPAccessModel? = nil
     ) {
         self.isHistoryDemoMode = isHistoryDemoMode
         self.historyNow = historyNow
+        let bootDefaults = settingsDefaults ?? .standard
         let resolvedPolicy = policy ?? DefaultAppPolicy()
         self.policy = resolvedPolicy
         let provider = projectDataProvider ?? DefaultProjectDataProvider()
         self.projectDataProvider = provider
+        self.assistant = assistant ?? AssistantSessionModel(defaults: bootDefaults)
+        self.mcpAccess = mcpAccess ?? MCPAccessModel()
         injectedSessionStore = sessionStore
         injectedLiveCaptureSpool = liveCaptureSpool
         projectStore = ProjectStore(
@@ -51,7 +56,6 @@ final class MainContentCoordinator {
         // Project identity, and capture intake is refused until
         // `hydrateProjectsOnLaunch` binds it to the real active Project. That is
         // what keeps a frame from ever being written for a provisional identity.
-        let bootDefaults = settingsDefaults ?? .standard
         let bootPreferences = layoutPreferences ?? WorkspaceLayoutPreferences(defaults: bootDefaults)
         let bootLocation = provider.location(
             forProject: ProjectCatalog.retiredLegacyDataOwnerID,
@@ -382,6 +386,17 @@ final class MainContentCoordinator {
     var evidenceProjection = EvidenceProjectionPipeline()
     var citedFrame = CitedFramePipeline()
 
+    /// The AI Assistant's bounded, in-memory state: the local-endpoint status, the
+    /// derived brief for the current selection, and one conversation per Project
+    /// workspace. It is owned here so a Project boundary can retire an in-flight
+    /// run, and so a deleted Project's transcript goes away with it. Nothing it
+    /// holds is persisted.
+    let assistant: AssistantSessionModel
+
+    /// The single app-wide MCP grant controller. Settings and Project lifecycle
+    /// share this instance so a switch can revoke the exact grant the pane issued.
+    let mcpAccess: MCPAccessModel
+
     /// Explicit, selection-scoped Follow Stream state. Raw application bytes enter
     /// coordinator memory only after the user requests this operation and are
     /// retired at every selection/capture/source boundary.
@@ -571,6 +586,14 @@ final class MainContentCoordinator {
     /// and analyses. Live publication replaces its sessions only with the process-
     /// attributed copies shown by the UI; every evidence projection remains verbatim.
     private(set) var investigationSnapshot = InvestigationSnapshot.empty
+
+    /// The Assistant evidence publication identity: advanced by every
+    /// ``adoptInvestigation(_:)`` and read into ``assistantContext``. It is an
+    /// in-memory, wrapping counter — never persisted, never restored from a
+    /// Project bucket — and it is separate from ``startGeneration`` because a
+    /// live republication inside one capture generation must still retire a
+    /// brief or a streamed answer derived from the previous snapshot.
+    private(set) var assistantEvidenceRevision = 0
 
     /// At most one off-main query evaluation per workspace. Superseding Apply/live
     /// refresh and capture boundaries cancel the prior task before issuing a new request.
@@ -1014,6 +1037,7 @@ final class MainContentCoordinator {
     /// assessor itself.
     func adoptInvestigation(_ snapshot: InvestigationSnapshot) {
         investigationSnapshot = snapshot
+        assistantEvidenceRevision &+= 1
         connectionSnapshot = snapshot.connections
         connectionAnalysisSnapshot = snapshot.connectionAnalysis
         datagramAnalysisSnapshot = snapshot.datagramAnalysis

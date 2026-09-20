@@ -8,9 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Ask about the selected session with a local AI Assistant: connect a model running on this Mac, review the exact JSON before the first send, stream the answer, and click a citation to open the frame it refers to.
+- Share bounded, read-only capture history with an MCP client through a bundled command-line tool that never opens a network port, scoped to one Project you grant and revoke in Settings.
+
 ### Fixed
 
+- Keep Assistant disclosure toggles and the exact reviewed JSON in sync, and fail closed when evidence
+  changes underneath an approval.
+- Mark provider length cutoffs as incomplete, keep MCP activity names allowlisted, reject undeclared
+  MCP arguments, and prevent the synthetic Assistant walkthrough from invoking capture-helper setup.
+- Keep Assistant transcript chrome from covering answers or incomplete-state labels.
+
 ### Changed
+
+- Replace the placeholder MCP and AI Insights settings with the real MCP grant, activity trail, and local-model controls, and retire the unused preference keys behind them.
 
 ## [0.7.0] - 2026-09-08
 

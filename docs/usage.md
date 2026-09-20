@@ -424,10 +424,66 @@ connection/TLS sections summarize scope and link to the chronological Evidence f
 duplicating the full event list. Technical values are selectable and monospaced; related-action rows
 remain clickable, and evidence-backed finding citations can open their exact local frame.
 
-The adjacent **AI Assistant** tab uses a conversation-style layout with a compact attached-session row,
-an empty transcript, and a composer pinned to the bottom. The current build does not include an assistant
-backend: history, new-conversation, prompt, and send controls remain unavailable, and the Read-only control
-explains that no capture data or model request leaves the Mac.
+The adjacent **AI Assistant** tab is a working conversation over a model running on this Mac. See
+[AI Assistant](#ai-assistant) below.
+
+## AI Assistant
+
+The Assistant answers questions about **the selected session only**, using a model running on this
+Mac. It is local-only in this build: there is no account, no API key and no remote provider.
+
+**Connect a local model.** Install a local model runner — an [Ollama](https://ollama.com) daemon on
+its default `http://127.0.0.1:11434` needs no configuration — and open the AI Assistant tab. Tracexy
+checks the endpoint once and shows what it found. To point at a different local runner, use
+**Settings → MCP & Assistant → Local endpoint**. Only `127.0.0.1`, `::1` and `localhost` are accepted;
+a remote address, a URL with a user name or password, or a redirect off this Mac is refused before
+anything is sent. An endpoint that answers only the OpenAI-compatible API is labelled *local
+OpenAI-compatible*, because Tracexy will not claim to know which server it is.
+
+**Ask about a session.** Select a session, then type a question or pick one of the suggested openers.
+Use the model picker beside the composer to choose among the models the endpoint advertises.
+
+**Review what is sent.** On the first send — and again whenever the Project, selected session,
+evidence publication, disclosure, endpoint or model changes — Tracexy shows the **Review Data** sheet before anything
+leaves the app. It shows the literal JSON, the destination and model, the disclosure decision and the
+coverage limits. **Included fields** are separate opt-ins for the process name, the display host, and
+the source/destination endpoints; all three start off. The display host can contain a name derived
+from DNS or TLS SNI. Packet bytes, payload bodies, URLs, file paths and credentials are never included.
+
+**Read the answer honestly.** Answers stream as they arrive. **Stop** ends one, and whatever text had
+arrived is kept and marked incomplete — Tracexy never presents a partial answer as a conclusion, and
+the same label appears when a length or time limit is reached. **Retry** re-sends the last prompt, and
+**New conversation** starts over. Changing Project, workspace, session, endpoint or model cancels an
+answer in flight rather than letting it land under something it does not describe.
+
+**Follow the evidence.** Citations such as `frame-1024` appear as buttons under an answer; clicking one
+opens that exact frame in the evidence inspector, the same route a Findings row uses. A citation the
+model invents is not clickable — it resolves to nothing rather than to the wrong frame.
+
+Conversations are kept per Project workspace, in memory, for the life of the app session. Prompts and
+answers are not written to disk.
+
+## MCP for external clients
+
+Tracexy bundles a free, read-only MCP command-line tool so an MCP client — an editor, an agent, a
+notebook — can read bounded summaries from **one Project you authorize**. It speaks JSON-RPC over
+stdin and stdout and **never opens a network port**.
+
+Open **Settings → MCP & Assistant**. The pane names the current Project, the field families that will
+be disclosed, and the maximum rows one request may read, then **Grant Access** issues the grant. The
+pane also shows the bundled command path and a ready-to-paste client configuration; **Copy Client
+Configuration** puts it on the clipboard. Point your MCP client at that command — it needs no port,
+host or token.
+
+A client sees exactly three read-only tools: `describe_scope`, `list_captures` and `list_sessions`.
+There is no tool for packet bytes, capture files, file paths, raw frames, capture control or writes,
+and a process or host filter is refused unless you disclosed that field.
+
+**Recent activity** lists what clients called: the time, the tool, the outcome, the Project, and the
+*names* of the filter fields used — never the values, and never anything read back.
+
+Switching Projects or pressing **Revoke** invalidates the grant, so the next call from any connected
+client fails closed. Re-issuing a grant also supersedes the old one; reconnect the client afterwards.
 
 ## Software updates
 
