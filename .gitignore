@@ -20,6 +20,8 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 timeline.xctimeline
+*.profraw
+*.profdata
 
 # Swift Package Manager
 .build/

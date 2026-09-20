@@ -33,6 +33,8 @@ nonisolated enum SessionStatus: String, CaseIterable, Hashable {
 
 /// One network conversation as shown in the timeline / session list.
 nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
+    static let maxCaptureInterfaces = 4
+
     let id: UUID
     /// When the session's earliest contributing frame was captured, or `nil` when
     /// at least one contributing frame carried no capture time at all. Unknown is
@@ -89,6 +91,12 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// the condition that makes ``startTime``/``duration``/``latencyMilliseconds``
     /// unknown, while every byte total and decoded fact is still retained.
     var untimedFrameCount: Int = 0
+    /// Distinct capture interfaces (pcapng IDB indexes) that contributed frames,
+    /// ascending, bounded to ``maxCaptureInterfaces``. Empty when the source does
+    /// not state interfaces (batch and live folds).
+    var captureInterfaceIDs: [Int] = []
+    /// More distinct interfaces contributed than ``maxCaptureInterfaces`` retains.
+    var captureInterfaceOverflow: Bool = false
 
     /// Whether this session's own timing could not be established because at least
     /// one contributing frame carried no capture time.

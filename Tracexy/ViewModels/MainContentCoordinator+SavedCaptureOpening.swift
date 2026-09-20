@@ -133,6 +133,24 @@ extension MainContentCoordinator {
             captureError = held
             return
         }
+        // A reference whose file moved or changed is a distinct, recoverable state
+        // (Locate… / Reload), never an open attempt against stale bytes.
+        // Re-check a reference at open time rather than trusting the last Library
+        // refresh: the file may have moved since the list was built.
+        if let reference = capture.reference {
+            let availability = reference.currentAvailability()
+            guard availability.isReadable else {
+                refreshSavedCaptures()
+                unavailableReferencedCapture = savedCaptures.first { $0.id == capture.id } ?? capture
+                return
+            }
+            if availability != capture.availability {
+                // The file came back (or was restored) since the list was built:
+                // the badge follows what is true now.
+                refreshSavedCaptures()
+            }
+        }
+        unavailableReferencedCapture = nil
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         savedCaptureOpenRequestID &+= 1
@@ -169,18 +187,35 @@ extension MainContentCoordinator {
             savedCaptures = []
             return
         }
-        savedCaptures = urls
-            .filter { CaptureImporter.libraryPathExtensions.contains($0.pathExtension.lowercased()) }
-            .map { url in
+        var items: [SavedCapture] = []
+        for url in urls {
+            let ext = url.pathExtension.lowercased()
+            if CaptureImporter.libraryPathExtensions.contains(ext) {
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-                return SavedCapture(
+                items.append(SavedCapture(
                     url: url,
                     name: url.deletingPathExtension().lastPathComponent,
                     date: values?.contentModificationDate ?? .distantPast,
                     byteCount: values?.fileSize ?? 0
-                )
+                ))
+            } else if ext == CaptureReference.pathExtension,
+                      let reference = try? CaptureReference.read(from: url)
+            {
+                // A damaged sidecar is skipped rather than shown as a phantom
+                // capture; the file stays for the user to inspect or trash.
+                items.append(SavedCapture(
+                    url: reference.url,
+                    name: reference.displayName,
+                    date: reference.addedAt,
+                    byteCount: Int(clamping: reference.identity.size),
+                    reference: reference,
+                    sidecarURL: url,
+                    availability: reference.currentAvailability()
+                ))
             }
-            .sorted { $0.date > $1.date }
+        }
+        savedCaptures = items.sorted { $0.date > $1.date }
+        noteActiveSavedCaptureAvailability()
     }
 
     /// Test/diagnostic seam for the exact task handles; no timing sleeps needed.
@@ -442,6 +477,10 @@ extension MainContentCoordinator {
         activeSavedCapture = request.capture
         savedCaptureActivity = result.activity
         savedCaptureMetadata = result.metadata
+        savedCaptureProperties = result.properties
+        // The adopted result was read from the file as it is now.
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
         savedCaptureEvidence = result.evidence
         savedCaptureEvidenceURL = request.capture.url
         stoppedCaptureReadyGeneration = nil

@@ -62,7 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// a running app with no window. One deferred check reopens the workspace
     /// through the same path a Dock click uses.
     func applicationDidFinishLaunching(_ notification: Notification) {
-        SettingsKeys.removeRetiredKeys(from: TracexyIdentity.applicationDefaults)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             Self.ensureWorkspaceWindow()
         }
@@ -83,9 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Attach the app-level coordinator and forward any file-open request that
     /// arrived before it existed. `applicationDefaults` is the app-wide settings
     /// store (the demo launch composes an isolated one), read only at quit.
+    /// The user may have replaced or moved the open capture while another app was
+    /// frontmost; re-check on activation so Reload / Locate appear promptly.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        coordinator?.noteActiveSavedCaptureAvailability()
+        coordinator?.refreshRecentCaptures()
+    }
+
     func attach(_ coordinator: MainContentCoordinator, applicationDefaults: UserDefaults = .standard) {
         self.coordinator = coordinator
         self.applicationDefaults = applicationDefaults
+        SettingsKeys.removeRetiredKeys(from: applicationDefaults)
+        coordinator.refreshRecentCaptures()
         let urls = pendingOpenURLs
         pendingOpenURLs = []
         if !urls.isEmpty {

@@ -30,7 +30,7 @@ struct OverviewTrafficTimelineChart: View {
     var findingMarkers: [OverviewFindingMarker] = []
 
     var body: some View {
-        let directional = timeline.totals.hasDirectionalBytes
+        let directional = timeline.hasStableDirectionalBytes
         let peak = Double(points.map(\.totals.bytes).max() ?? 0)
         Chart {
             ForEach(points) { point in

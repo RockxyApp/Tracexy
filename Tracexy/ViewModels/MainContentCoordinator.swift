@@ -353,6 +353,14 @@ final class MainContentCoordinator {
     /// comments, options or annotations.
     var savedCaptureMetadata: CaptureMetadataSummary?
 
+    /// What the open saved capture's container says about itself (format
+    /// variant, sections, interfaces and options, statistics blocks, comments and
+    /// skipped-block counts). Folded in the same single pass as
+    /// ``savedCaptureMetadata``; `nil` for live and idle captures. Shown only in the
+    /// Get Info window and the interface context; file-authored strings never enter
+    /// Sources, History, automation or the Assistant brief through this value.
+    var savedCaptureProperties: CaptureFileProperties?
+
     /// Saved-file opening is an off-main, final-only transaction. The previous
     /// workspace remains intact while this is true; only monotonic byte progress
     /// crosses back to the UI before the immutable result is adopted.
@@ -368,9 +376,42 @@ final class MainContentCoordinator {
     var isLoadingSelectedSessionEvidence = false
     var selectedSessionEvidenceError: String?
 
-    // Saved-open/evidence task state is kept here so the separate activation
-    // extension can own the workflow without weakening the coordinator's actor
-    // boundary. Request IDs retire every late progress/result callback.
+    /// Saved-open/evidence task state is kept here so the separate activation
+    /// extension can own the workflow without weakening the coordinator's actor
+    /// boundary. Request IDs retire every late progress/result callback.
+    /// A referenced Library item the user tried to open whose file is missing or
+    /// changed. Drives the inline notice with Locate… / Reload; cleared by any
+    /// successful open, Clear, or Project switch.
+    var unavailableReferencedCapture: SavedCapture?
+    /// Mirror of `NSDocumentController`'s recent list so the File ▸ Open Recent
+    /// submenu rebuilds when it changes. Names only reach the menu; paths stay here.
+    var recentCaptureURLs: [URL] = []
+    /// True when the open saved capture's file no longer matches the identity it
+    /// was read with (replaced, truncated or grown on disk). Enables Reload.
+    var activeSavedCaptureChangedOnDisk = false
+    /// The in-flight format recognition for an external open (test seam).
+    var externalCaptureOpenTask: Task<Void, Never>?
+    /// Frames facet: the bounded frame list of the selected session, rescanned on
+    /// demand from the stable source (saved file or stopped-live spool copy).
+    var sessionFramesResult: SessionFramesResult?
+    var isLoadingSessionFrames = false
+    var sessionFramesProgress: PcapStreamProgress?
+    var sessionFramesError: String?
+    var sessionFramesTask: Task<Void, Never>?
+    var sessionFramesRequestID = 0
+    var loadingSessionFramesSessionID: UUID?
+    /// Export Frames…: one streaming export at a time, cancellable, holding the
+    /// capture source through the shared `isExportingSession` gate.
+    var frameExportProgress: PcapStreamProgress?
+    var frameExportName: String?
+    var frameExportTask: Task<Void, Never>?
+    var frameExportRequestID = 0
+    var isCancellingFrameExport = false
+    /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
+    var captureHashState: CaptureHashState = .idle
+    var captureHashTask: Task<Void, Never>?
+    var captureHashRequestID = 0
+
     var savedCaptureOpenRequestID = 0
     var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
     var savedCaptureBoundaryTask: Task<Void, Never>?
@@ -983,35 +1024,6 @@ final class MainContentCoordinator {
 
     // MARK: Correlation
 
-    /// The action the given session belongs to, or `nil` when nothing could
-    /// attribute it.
-    ///
-    /// Correlation is computed over a time-bounded slice around the session
-    /// rather than the whole capture. Grouping every session on demand would be
-    /// O(capture) on the main actor and violate the bounded UI publication path;
-    /// a causal window of tens of seconds cannot reach further than this slice
-    /// anyway, so the narrower input costs no accuracy.
-    func activity(containing session: SessionSummary) -> Activity? {
-        // Correlation is time-dependent, so a session with no known start has no
-        // slice to correlate within and no action to belong to.
-        guard let anchor = session.startTime else {
-            return nil
-        }
-        let window = ActivityBuilder.dnsCausalWindow
-        let slice = presentedSessions.filter {
-            guard let start = $0.startTime else {
-                return false
-            }
-            return abs(start.timeIntervalSince(anchor)) <= window
-        }
-        guard slice.count > 1 else {
-            return nil
-        }
-        return ActivityBuilder.build(from: slice)
-            .activities
-            .first { $0.sessions.contains { $0.id == session.id } }
-    }
-
     func select(_ session: SessionSummary) {
         cancelFollowStream(clearResult: true)
         activeWorkspace.selectedSessionID = session.id
@@ -1042,35 +1054,6 @@ final class MainContentCoordinator {
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
         refreshActiveInvestigationQueries()
         refreshSelectedSessionEvidenceProjection()
-    }
-
-    /// Bottom evidence inspector. Hiding it by hand also cancels the automatic
-    /// reveal — a panel the user dismissed must not reappear on the next
-    /// selection.
-    func toggleInspectorBottom() {
-        let ws = activeWorkspace
-        let willHide = ws.inspectorLayout == .bottom
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.inspectorLayout = willHide ? .hidden : .bottom
-        }
-        layoutPreferences.rememberInspectorLayout(ws.inspectorLayout)
-        // Opening it by hand is the user asking for it back, so it cancels an
-        // earlier dismissal. Without this the two rules fight: panels start
-        // closed at launch, and a user who had once dismissed the inspector
-        // could never get it to come back on its own again — they would be
-        // re-opening it manually every single launch.
-        ws.allowsAutomaticInspectorReveal = !willHide
-        layoutPreferences.rememberAutomaticInspectorReveal(!willHide)
-    }
-
-    /// Right-hand interpretation column. Never auto-revealed: it earns its space
-    /// only once the user asks for it.
-    func toggleContextDock() {
-        let ws = activeWorkspace
-        withAnimation(.smooth(duration: 0.18)) {
-            ws.isContextDockVisible.toggle()
-        }
-        layoutPreferences.rememberContextDockVisible(ws.isContextDockVisible)
     }
 
     /// Bring back the panels the user works with, once there is something for
@@ -1133,6 +1116,11 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
+        resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // Clearing discards the pre-clear lifetime but does not stop an active
@@ -1197,6 +1185,11 @@ final class MainContentCoordinator {
         activeSavedCapture = nil
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
+        savedCaptureProperties = nil
+        activeSavedCaptureChangedOnDisk = false
+        unavailableReferencedCapture = nil
+        resetCaptureHash()
+        cancelSessionFrames(clearResult: true)
         savedCaptureWarning = nil
         stoppedCaptureReadyGeneration = nil
         // New capture boundary: retire any stale live/frozen History identity so a

@@ -85,7 +85,9 @@ extension MainContentCoordinator {
                 + "Wait for it to finish, then open “\(source.lastPathComponent)”."
             return
         }
-        importCapture(from: source)
+        // Finder, Dock and drops open in place (or copy, per the Project's Open
+        // preference); a multi-gigabyte drop must never silently start a copy.
+        openExternalCapture(source)
     }
 
     /// Replays a capture opened from outside before hydration finished. Called
@@ -163,10 +165,11 @@ extension MainContentCoordinator {
             // copy, but never auto-open it after cancellation or a Project change.
             guard !cancelled, !self.projectTransitionStatus.isPending,
                   let destination,
-                  let capture = self.savedCaptures.first(where: { $0.url == destination }) else
+                  let capture = self.savedCaptures.first(where: { $0.url.isSameFileSystemPath(as: destination) }) else
             {
                 return
             }
+            self.noteRecentCapture(source)
             self.openSavedCapture(capture)
         }
     }

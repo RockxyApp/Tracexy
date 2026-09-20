@@ -1,11 +1,12 @@
 # Bring an existing capture into Tracexy
 
-Choose the destination Project, then use **File → Import Capture… (⌘O)** or the
-sidebar's Import action. Tracexy accepts **PCAP** and **PCAPNG** by content,
-including captures with a different filename extension. It also expands gzip
-captures and the capture payload from the observed TCP Viewer schema-1
-`.tcpviewsession` format. Import leaves the original source unchanged and adds a
-managed capture to the Project's Library. Direct PCAP/PCAPNG imports copy the
+Choose the destination Project, then use **File → Open… (⌘O)** to open a capture where it
+is (a reference is added to the Project's Library; nothing is copied), or **File → Import
+into Library… (⌥⌘O)** / the sidebar's Import action to keep a managed copy. Tracexy accepts
+**PCAP** and **PCAPNG** by content, including captures with a different filename extension.
+It also expands gzip captures and the capture payload from the observed TCP Viewer schema-1
+`.tcpviewsession` format; those are always expanded into a managed capture. Import leaves
+the original source unchanged and adds a managed capture to the Project's Library. Direct PCAP/PCAPNG imports copy the
 source bytes. For gzip and TCP Viewer archives, the managed item is the validated,
 extracted capture; the outer archive and TCP Viewer sidecars stay only at their
 original location. If a name is already taken, both managed captures are kept
@@ -44,10 +45,13 @@ For a direct PCAP/PCAPNG import, the Library copy retains the source capture byt
 including container metadata Tracexy does not interpret. For gzip and TCP Viewer
 archives, the Library contains only the validated, extracted PCAP/PCAPNG payload;
 outer container metadata and TCP Viewer sidecars are not copied into the Project
-Library. In either case, preserving capture bytes does **not** mean all Wireshark
-annotations, interface metadata, name-resolution records or embedded secrets
-appear in the Tracexy UI. Tracexy builds its own session and evidence projections
-from supported records. Its capture-loss and retained-frame coverage messages are
+Library. In either case, preserving capture bytes does **not** mean Wireshark applies
+annotations or name-resolution records the way Wireshark would. **File → Get Info (⌘I)**
+shows what the container states — section hardware/OS/application, comments, interface
+names, descriptions, filters and statistics, and the presence of name-resolution,
+decryption-secrets, custom and unknown blocks — without interpreting name-resolution
+records into Sources or using embedded secrets. Tracexy builds its own session and
+evidence projections from supported records. Its capture-loss and retained-frame coverage messages are
 separate from whether a copy succeeded.
 
 A classic PCAP has one link type and cannot carry all PCAPNG metadata. Converting

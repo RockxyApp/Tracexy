@@ -18,7 +18,9 @@ struct WorkspacePresentationContractTests {
         #expect(root.contains("await coordinator.adoptAssistantDemoFixture()"))
         #expect(root.contains("walkthrough is fully synthetic"))
         #expect(app.contains(".defaultAppStorage(coordinator.activeProjectDefaults)"))
-        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 5)
+        // Focus Set editor, Noise Control, Settings, Session Inspector and Capture
+        // Info scenes all remount on the Project identity.
+        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 6)
         #expect(root.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("unsaved in-memory sessions and evidence"))
