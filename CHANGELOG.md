@@ -8,48 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Ask about the selected session with a local Assistant: connect a model running on this Mac, review the exact JSON before the first send, stream the answer, and click a citation to open its frame.
-- Share bounded, read-only capture history with an MCP client through a bundled command-line tool scoped to one Project you grant and revoke in Settings.
-- Overview plots accepted wire bytes on the capture clock and presents protocol, session, finding, host, and app summaries with routes into the investigation.
-- **File → Open… (⌘O)** opens a PCAP/PCAPNG where it is, recording a reference in the Project Library instead of copying; the Open panel previews format, size, records and start/elapsed before opening, and offers **Copy into Library**. **Import into Library… (⌥⌘O)** keeps the managed-copy path.
-- Referenced captures show their availability in the Library; a moved or replaced file offers **Locate…** and **Reload** inline instead of an error.
-- **File → Open Recent**, **Close Capture (⇧⌘W)**, **Reload (⌘R)** when the open file changed on disk, and **File Set → Next / Previous File** for `dumpcap`/`tcpdump` rotation sets.
-- **File → Get Info (⌘I)**: a capture information window with format and variant, time span and order, PCAPNG section and interface metadata (names, descriptions, filters, statistics counters), block inventory (name resolution, decryption secrets by type and size, custom, unknown), on-demand SHA-256/SHA-1 with cancel, and a Copy action.
-- A **Frames** facet in the bottom inspector lists the selected session's frames (number, relative time, direction, length, TCP flags, summary, comment marker) from a bounded on-demand rescan; a row loads that exact frame into Layers/Hex.
-- **File → Export Frames…** writes a new PCAPNG or classic PCAP from a scope (whole capture, sessions in view, selected session, time range), optionally preserving PCAPNG section, interface and per-frame metadata and compressing with gzip; PCAP is disabled with the reason when the source cannot be represented.
-- The Context dock shows **Captured on** (the file's interface names) for sessions of multi-interface PCAPNG captures; the Frames facet adds an **Interface** column for such captures, and the Library row of a rotation-set member offers a **File Set** menu listing the set.
-- Overview reads an opened file's format, interfaces, fidelity and drop counters from the file itself: the recognised container rather than the extension, the declared interface names, and loss from the Interface Statistics Blocks the capturing tool wrote (**Not recorded** when a file carries none), with a **Get Info** action in the storage card.
-- A Quick Look preview extension (Finder Space-bar, Open panel preview) and a Spotlight importer for `.pcap`/`.pcapng`, both sandboxed and built on the same readers as the app; the format readers moved to a shared `CaptureFormat/` layer.
-- Tracexy now imports the canonical `com.tcpdump.pcap` / `org.tcpdump.pcapng` type identifiers instead of app-private ones, so it interoperates with Wireshark's declarations.
-- The PCAPNG reader now reads section and interface options, Interface Statistics Blocks and per-frame comment presence within block bounds, and counts decryption-secrets, name-resolution, custom and unknown blocks; secrets are never read.
-- Open a `.pcap`, `.cap`, `.pcapng` or `.ntar` file from Finder (Open With, Dock icon) or by dropping it on the main window; the file follows the Project's Open preference (in place by default).
-- Decode 802.1Q / 802.1ad VLAN-tagged Ethernet frames so trunk- and mirror-port captures form sessions.
-- Sort the Sessions table by any column from its header; the default remains stable capture order.
+- Ask about a selected session with the local Assistant, review the exact data before sending, and open cited frames in the evidence inspector.
+- Grant an MCP client bounded, read-only capture history for one Project, and revoke access in Settings.
+- Explore capture activity, protocols, sessions, findings, hosts and apps from the Overview.
+- Open captures in place from File, Finder or drag and drop; preview them before opening, keep recent files, and locate or reload moved and changed references. Import into Library remains available when a managed copy is wanted.
+- Inspect capture format, time span, interfaces and recorded metadata in **File → Get Info**; browse the exact frames of a session in the bottom inspector.
+- Export whole captures or selected frames, sessions and time ranges as PCAPNG or compatible PCAP, with optional gzip compression.
+- Preview PCAP and PCAPNG files in Quick Look and find them with Spotlight.
+- Browse rotated capture file sets, decode VLAN-tagged traffic, and sort the Sessions table by column.
 
 ### Fixed
 
-- Keep Assistant disclosure toggles and reviewed JSON in sync, reject stale approval, mark output cutoffs as incomplete, and keep the synthetic walkthrough isolated from capture-helper setup.
-- Defer bottom-inspector collapse and expansion until AppKit finishes the current layout pass, avoiding a window-constraint crash during SwiftUI updates.
-- Bound the transport payload by the IP-declared length so Ethernet padding and trailers are no longer counted as TCP sequence space, which produced false overlap and retransmission findings and leaked into Follow Stream.
-- Stop decoding a transport header out of non-first IP fragments and out of IPv4 headers shorter than 20 bytes; those frames no longer invent endpoints or sessions.
-- Record a TCP reset that arrives after an orderly close as a reset observation, so a session shown as an error also carries the matching finding and evidence.
-- Classify a TCP keep-alive probe as a keep-alive rather than a retransmission.
-- Measure DNS latency for answerless responses (NXDOMAIN, NODATA) by the header's response bit.
-- Read the classic pcap link type from the low 16 bits of its header word, so files written with an FCS-length hint open with their sessions.
-- Open one main window, not two, when relaunching after a force-quit or crash.
-- Expose saved-capture rows, Focus Set rows, Flow Map regions and inspector layer/field rows to VoiceOver and UI automation as activatable controls.
-- Stop a live capture and say why when the capture source stops delivering (the interface went away or was reconfigured), instead of showing it as still capturing; the helper carries the reason with its final frames.
-- Stream a session export from the capture file instead of loading the whole capture into memory.
-- Ask before quitting while a live capture is running, as the General setting promised.
-- Apply the General → Units setting to every byte figure, and honor "Restore last workspace on launch" when it is turned off.
-- Keep the Focus Set editor, Noise Control and Settings windows from reopening on their own after a relaunch, and always open the workspace window after a force-quit relaunch.
-- Keep a replaced helper XPC connection from being discarded by the previous connection's late invalidation.
+- Keep Assistant review and disclosure in sync, reject stale approval, and label incomplete answers clearly.
+- Avoid a bottom-inspector layout crash and unwanted extra windows after relaunch.
+- Correct false TCP retransmission findings from packet padding, fragments and keep-alive probes; retain reset evidence when it follows an orderly close.
+- Open classic PCAP files that declare an FCS hint, and calculate DNS response time even when the answer contains no records.
+- Stop live capture with a clear reason when its source disappears, and ask before quitting during capture.
+- Improve VoiceOver navigation, honor byte-unit and workspace-restoration settings, and stream large exports without loading the entire capture into memory.
 
 ### Changed
 
-- Replace placeholder MCP and Assistant settings with scoped grants, activity, and local-model controls.
+- Replace placeholder MCP and Assistant settings with scoped access and local connection controls.
 - Overview Protocols shows session-byte share by innermost protocol so its bars sum to the scope.
-- Orient a session captured mid-stream toward the service port when no SYN was captured, so the remote host rather than this Mac's ephemeral socket reads as the destination.
+- Orient sessions captured mid-stream toward the service port when no connection start was captured.
 
 ## [0.7.0] - 2026-09-08
 

@@ -257,7 +257,7 @@ final class AssistantAndMCPUITests: XCTestCase {
         for _ in 0 ..< 3 {
             composer.click()
             app.typeKey("a", modifierFlags: .command)
-            app.typeText("In one sentence, what was observed? Cite one citation id.")
+            app.typeText("Reply with exactly this text and nothing else: The observed TLS session is [frame-11].")
             if waitFor(timeout: 3, condition: { send.isEnabled }) {
                 typed = true
                 break
@@ -279,30 +279,27 @@ final class AssistantAndMCPUITests: XCTestCase {
         XCTAssertTrue(waitFor(timeout: 15) { !sheet.exists }, "Approving must dismiss the sheet and send")
 
         // A real answer streams in.
-        XCTAssertTrue(
-            waitFor(timeout: 180) {
-                app.buttons["assistant.citation"].firstMatch.exists || !app.buttons["assistant.stop"].exists
-            },
-            "The model must finish or produce a citation"
-        )
+        XCTAssertTrue(waitFor(timeout: 180) { !app.buttons["assistant.stop"].exists }, "The model must finish")
         attachScreenshot(app, named: "Assistant streamed answer")
 
-        // A citation, when the model produced one, navigates to the exact frame.
+        // The prompt requests an exact fixture citation so this walkthrough always
+        // exercises local frame navigation instead of silently skipping it.
         let citation = app.buttons["assistant.citation"].firstMatch
-        if citation.exists {
-            citation.click()
-            let loadedFrame = app.descendants(matching: .any)["evidence.citedFrameLoaded"]
-            XCTAssertTrue(
-                loadedFrame.waitForExistence(timeout: 20),
-                "A citation must decode and show the exact local frame"
-            )
-            XCTAssertTrue(text(of: loadedFrame).contains("Cited frame 11"))
-            XCTAssertFalse(
-                app.staticTexts["The requested capture evidence is no longer available."].exists,
-                "The walkthrough must not advertise a citation whose bytes are absent"
-            )
-            attachScreenshot(app, named: "Assistant citation navigation")
-        }
+        XCTAssertTrue(citation.waitForExistence(timeout: 15), "The model must provide a fixture citation")
+        let citedOrdinal = citation.label.split(separator: "-").last.map(String.init) ?? ""
+        XCTAssertTrue(["10", "11", "12"].contains(citedOrdinal), "Citation must belong to the fixture")
+        citation.click()
+        let loadedFrame = app.descendants(matching: .any)["evidence.citedFrameLoaded"]
+        XCTAssertTrue(
+            loadedFrame.waitForExistence(timeout: 20),
+            "A citation must decode and show the exact local frame"
+        )
+        XCTAssertTrue(text(of: loadedFrame).contains("Cited frame \(citedOrdinal)"))
+        XCTAssertFalse(
+            app.staticTexts["The requested capture evidence is no longer available."].exists,
+            "The walkthrough must not advertise a citation whose bytes are absent"
+        )
+        attachScreenshot(app, named: "Assistant citation navigation")
 
         // Retry re-sends under the same scope without a second review.
         let retry = app.buttons["assistant.retry"]
