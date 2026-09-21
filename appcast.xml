@@ -6,6 +6,45 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.8.0</title>
+            <pubDate>Mon, 21 Sep 2026 08:33:22 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.8.0 (build 13)
+
+## Added
+
+- Ask about a selected session with the local Assistant, review the exact data before sending, and open cited frames in the evidence inspector.
+- Grant an MCP client bounded, read-only capture history for one Project, and revoke access in Settings.
+- Explore capture activity, protocols, sessions, findings, hosts and apps from the Overview.
+- Open captures in place from File, Finder or drag and drop; preview them before opening, keep recent files, and locate or reload moved and changed references. Import into Library remains available when a managed copy is wanted.
+- Inspect capture format, time span, interfaces and recorded metadata in **File → Get Info**; browse the exact frames of a session in the bottom inspector.
+- Export whole captures or selected frames, sessions and time ranges as PCAPNG or compatible PCAP, with optional gzip compression.
+- Preview PCAP and PCAPNG files in Quick Look and find them with Spotlight.
+- Browse rotated capture file sets, decode VLAN-tagged traffic, and sort the Sessions table by column.
+
+## Changed
+
+- Replace placeholder MCP and Assistant settings with scoped access and local connection controls.
+- Overview Protocols shows session-byte share by innermost protocol so its bars sum to the scope.
+- Orient sessions captured mid-stream toward the service port when no connection start was captured.
+
+## Fixed
+
+- Keep Assistant review and disclosure in sync, reject stale approval, and label incomplete answers clearly.
+- Enable MCP access once the active Project finishes loading, even if Settings was opened first.
+- Keep local capture paths out of default Library, recovery and Get Info text; Reveal and Copy Path remain explicit actions.
+- Avoid a bottom-inspector layout crash and unwanted extra windows after relaunch.
+- Correct false TCP retransmission findings from packet padding, fragments and keep-alive probes; retain reset evidence when it follows an orderly close.
+- Open classic PCAP files that declare an FCS hint, and calculate DNS response time even when the answer contains no records.
+- Stop live capture with a clear reason when its source disappears, and ask before quitting during capture.
+- Improve VoiceOver navigation, honor byte-unit and workspace-restoration settings, and stream large exports without loading the entire capture into memory.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.8.0/Tracexy-0.8.0-13.dmg" length="11231970" type="application/octet-stream" sparkle:edSignature="XtElUosFimu+GrnfB7TJfqnrzs/mnmtK04oeiFSQRxSjVi4p46Y+iWUpedeu0HzPXEObZTnTvi76uU34EVHtCw=="/>
+        </item>
+        <item>
             <title>0.7.0</title>
             <pubDate>Tue, 08 Sep 2026 18:22:58 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.7.0</sparkle:fullReleaseNotesLink>
@@ -52,29 +91,6 @@
 - Remove duplicated workspace chrome and correct session-control and footer alignment.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.6.0/Tracexy-0.6.0-11.dmg" length="8070542" type="application/octet-stream" sparkle:edSignature="7/+7V7aLiOqJscoxLmj6aSBmBd8QR8EPGM5vqqtJMD3//xSUh+0uveud3UHHLPcb3C8tymatEaRZ7mwEQN7UAQ=="/>
-        </item>
-        <item>
-            <title>0.5.0</title>
-            <pubDate>Mon, 24 Aug 2026 22:35:54 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.5.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>10</sparkle:version>
-            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.5.0 (build 10)
-
-## Added
-
-- Add local History for completed live and saved captures, with bounded session summaries stored without packet payloads.
-- Add typed Investigation queries, evidence-linked findings, and bounded Follow Stream for stopped or saved TCP captures.
-- Add Capture Readiness details for the active interface, capture settings, buffering, and observed frame loss.
-
-## Changed
-
-- Stream large saved captures off the main UI path and keep complete live-capture session summaries through disk-backed spooling.
-- Refresh the native workspace and Settings with adaptive macOS materials, accessible opaque data surfaces, and responsive window chrome.
-- Expand Protocols, Apps, and Domains when the first decoded session arrives while respecting later manual collapse.
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.5.0/Tracexy-0.5.0-10.dmg" length="7730076" type="application/octet-stream" sparkle:edSignature="L95RguL0MwbkoTbO8+Sj1vuCg/IQqh2nlhnOBtB1Flsr5cBKnzx8B6b6GAwUtIXTKfshxMxhE3ue8g2l+QtCBg=="/>
         </item>
     </channel>
 </rss>
