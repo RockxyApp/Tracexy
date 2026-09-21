@@ -7,11 +7,11 @@
 // Do NOT duplicate these values in Swift constants. All runtime code reads
 // from Bundle.main.infoDictionary.
 
-TRACEXY_APP_VERSION = 0.7.0
-TRACEXY_APP_BUILD = 12
+TRACEXY_APP_VERSION = 0.8.0
+TRACEXY_APP_BUILD = 13
 
-TRACEXY_HELPER_VERSION = 2.0.1
-TRACEXY_HELPER_BUILD = 6
+TRACEXY_HELPER_VERSION = 2.1.0
+TRACEXY_HELPER_BUILD = 7
 // Protocol v4: typed NSSecureCoding CaptureConfiguration start surface
 // (interface, snap length, promiscuous mode, optional BPF) replaces protocol
 // v3's bare interface request. Older helpers are classified incompatible and

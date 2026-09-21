@@ -32,19 +32,35 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.7.0** — 2026-09-08
+**v0.8.0** — 2026-09-21
 
 ### Added
 
-- Organize investigations into isolated Projects, each with its own workspaces, saved captures, History, and capture and privacy settings.
-- Import PCAP and PCAPNG captures into a chosen Project, including gzip-compressed files, TCP Viewer session archives, and Linux cooked captures.
-- Query whole sessions with bounded Session Expressions, return from host, client, IP, or Findings drill-downs with filters intact, and import named BPF capture filters.
-- Export and import configuration-only `.tracexyproject` files without packets, payloads, capture paths, findings, or History.
+- Ask about a selected session with the local Assistant, review the exact data before sending, and open cited frames in the evidence inspector.
+- Grant an MCP client bounded, read-only capture history for one Project, and revoke access in Settings.
+- Explore capture activity, protocols, sessions, findings, hosts and apps from the Overview.
+- Open captures in place from File, Finder or drag and drop; preview them before opening, keep recent files, and locate or reload moved and changed references. Import into Library remains available when a managed copy is wanted.
+- Inspect capture format, time span, interfaces and recorded metadata in **File → Get Info**; browse the exact frames of a session in the bottom inspector.
+- Export whole captures or selected frames, sessions and time ranges as PCAPNG or compatible PCAP, with optional gzip compression.
+- Preview PCAP and PCAPNG files in Quick Look and find them with Spotlight.
+- Browse rotated capture file sets, decode VLAN-tagged traffic, and sort the Sessions table by column.
+
+### Fixed
+
+- Keep Assistant review and disclosure in sync, reject stale approval, and label incomplete answers clearly.
+- Enable MCP access once the active Project finishes loading, even if Settings was opened first.
+- Keep local capture paths out of default Library, recovery and Get Info text; Reveal and Copy Path remain explicit actions.
+- Avoid a bottom-inspector layout crash and unwanted extra windows after relaunch.
+- Correct false TCP retransmission findings from packet padding, fragments and keep-alive probes; retain reset evidence when it follows an orderly close.
+- Open classic PCAP files that declare an FCS hint, and calculate DNS response time even when the answer contains no records.
+- Stop live capture with a clear reason when its source disappears, and ask before quitting during capture.
+- Improve VoiceOver navigation, honor byte-unit and workspace-restoration settings, and stream large exports without loading the entire capture into memory.
 
 ### Changed
 
-- Keep Project transitions safe by waiting for accepted capture and save work, preserving the current investigation when a transition cannot complete.
-- Reorganize the native toolbar so Project selection, capture source, and Start/Stop controls remain distinct and easier to follow.
+- Replace placeholder MCP and Assistant settings with scoped access and local connection controls.
+- Overview Protocols shows session-byte share by innermost protocol so its bars sum to the scope.
+- Orient sessions captured mid-stream toward the service port when no connection start was captured.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->

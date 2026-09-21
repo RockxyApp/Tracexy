@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+### Fixed
+
+### Changed
+
+## [0.8.0] - 2026-09-21
+
+### Added
+
 - Ask about a selected session with the local Assistant, review the exact data before sending, and open cited frames in the evidence inspector.
 - Grant an MCP client bounded, read-only capture history for one Project, and revoke access in Settings.
 - Explore capture activity, protocols, sessions, findings, hosts and apps from the Overview.
