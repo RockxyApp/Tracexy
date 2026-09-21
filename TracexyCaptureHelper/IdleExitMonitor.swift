@@ -32,7 +32,7 @@ enum IdleExitMonitor {
         lock.lock()
         let idle = Date().timeIntervalSince(lastActivity)
         lock.unlock()
-        guard idle > idleTimeout, !CaptureService.shared.isCapturing else {
+        guard idle > idleTimeout, CaptureService.shared.prepareForIdleExit() else {
             return
         }
         exit(0)

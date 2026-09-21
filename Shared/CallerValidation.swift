@@ -8,10 +8,32 @@ import Security
 ///    chain comparison as a fallback when the signing team cannot be read.
 /// 2. Bundle identity requirement (allowlist check)
 ///
-/// Both layers evaluate the same supplied `SecCode`, so authorization derives from one
-/// audit-token-anchored identity rather than a PID that could be recycled between checks.
+/// The helper side is compared against a launch-time signing snapshot. Looking up
+/// `SecCodeCopySelf` after an in-place app update can describe the new bytes on disk
+/// instead of the still-running daemon and incorrectly reject the updated app.
 enum CallerValidation {
     // MARK: Internal
+
+    struct CodeSigningProfile: Equatable {
+        let identifier: String?
+        let teamIdentifier: String?
+        let certificateDERs: [Data]
+        let executablePath: String?
+
+        var isAdHoc: Bool {
+            teamIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+                && certificateDERs.isEmpty
+        }
+    }
+
+    static var launchSigningProfile: CodeSigningProfile? {
+        capturedLaunchSigningProfile
+    }
+
+    @discardableResult
+    static func captureLaunchSigningProfile() -> Bool {
+        capturedLaunchSigningProfile != nil
+    }
 
     /// Compares two DER-encoded certificate chains byte-by-byte.
     /// Returns `true` if both chains have the same length and every certificate matches.
@@ -71,13 +93,16 @@ enum CallerValidation {
     /// Layer 2: Constructs `SecRequirement` for each allowed identifier and validates the
     ///          caller's `SecCode` against them (bundle identity check).
     ///
-    /// Fails closed: if the current process's own `SecCode` cannot be read, no caller is trusted.
+    /// Fails closed: if the launch-time signing snapshot or the caller profile
+    /// cannot be read, no caller is trusted.
     static func validateCallerCode(_ callerCode: SecCode, allowedIdentifiers: [String]) -> Bool {
-        guard let selfCode = secCodeForSelf() else {
+        guard let helperProfile = launchSigningProfile,
+              let callerProfile = signingProfile(from: callerCode) else
+        {
             return false
         }
 
-        guard signingAuthoritiesMatch(selfCode, callerCode) else {
+        guard signingAuthoritiesMatch(helper: helperProfile, caller: callerProfile) else {
             return false
         }
 
@@ -174,19 +199,32 @@ enum CallerValidation {
         return certificatesFromCode(code)
     }
 
+    static func signingAuthoritiesMatch(
+        helper: CodeSigningProfile?,
+        caller: CodeSigningProfile?
+    )
+        -> Bool
+    {
+        guard let helper, let caller else {
+            return false
+        }
+        if teamIdentifiersMatch(helper.teamIdentifier, caller.teamIdentifier) {
+            return true
+        }
+        if !helper.certificateDERs.isEmpty, !caller.certificateDERs.isEmpty {
+            return certificateDataChainsMatch(helper.certificateDERs, caller.certificateDERs)
+        }
+        return localXcodeAdHocPair(helper: helper, caller: caller)
+    }
+
     // MARK: Private
 
-    private struct CodeSigningProfile {
-        let identifier: String?
-        let teamIdentifier: String?
-        let certificateDERs: [Data]
-        let executablePath: String?
-
-        var isAdHoc: Bool {
-            teamIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-                && certificateDERs.isEmpty
+    private static let capturedLaunchSigningProfile: CodeSigningProfile? = {
+        guard let selfCode = secCodeForSelf() else {
+            return nil
         }
-    }
+        return signingProfile(from: selfCode)
+    }()
 
     private static func certificatesFromCode(_ code: SecCode) -> [SecCertificate]? {
         guard let dict = signingInformation(from: code),
@@ -250,26 +288,6 @@ enum CallerValidation {
             return false
         }
         return true
-    }
-
-    private static func signingAuthoritiesMatch(_ lhs: SecCode, _ rhs: SecCode) -> Bool {
-        guard let lhsProfile = signingProfile(from: lhs),
-              let rhsProfile = signingProfile(from: rhs) else
-        {
-            return false
-        }
-
-        if teamIdentifiersMatch(lhsProfile.teamIdentifier, rhsProfile.teamIdentifier) {
-            return true
-        }
-
-        if !lhsProfile.certificateDERs.isEmpty,
-           !rhsProfile.certificateDERs.isEmpty
-        {
-            return certificateDataChainsMatch(lhsProfile.certificateDERs, rhsProfile.certificateDERs)
-        }
-
-        return localXcodeAdHocPair(helper: lhsProfile, caller: rhsProfile)
     }
 
     private static func localXcodeAdHocPair(

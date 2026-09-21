@@ -66,14 +66,14 @@ struct HelperCompatibilityTests {
     @Test("Same protocol and at-or-above the bundled build is compatible")
     func compatible() {
         let atBuild = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "1.0.0", buildNumber: 10, protocolVersion: 3),
-            expectedProtocolVersion: 3,
-            bundledBuild: 10
+            HelperInfo(binaryVersion: "2.2.0", buildNumber: 8, protocolVersion: 5),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
         let aboveBuild = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "1.0.1", buildNumber: 11, protocolVersion: 3),
-            expectedProtocolVersion: 3,
-            bundledBuild: 10
+            HelperInfo(binaryVersion: "2.2.1", buildNumber: 9, protocolVersion: 5),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
         #expect(atBuild == .installedCompatible)
         #expect(aboveBuild == .installedCompatible)
@@ -82,9 +82,9 @@ struct HelperCompatibilityTests {
     @Test("Same protocol but an older build is outdated")
     func outdated() {
         let result = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "0.9.0", buildNumber: 9, protocolVersion: 3),
-            expectedProtocolVersion: 3,
-            bundledBuild: 10
+            HelperInfo(binaryVersion: "2.1.0", buildNumber: 7, protocolVersion: 5),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
         #expect(result == .installedOutdated)
     }
@@ -92,39 +92,120 @@ struct HelperCompatibilityTests {
     @Test("A different protocol is incompatible regardless of build")
     func incompatible() {
         let older = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "1.0.0", buildNumber: 100, protocolVersion: 2),
-            expectedProtocolVersion: 3,
-            bundledBuild: 10
+            HelperInfo(binaryVersion: "9.0.0", buildNumber: 100, protocolVersion: 6),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
         #expect(older == .installedIncompatible)
     }
 
-    @Test("A pre-v3 helper is incompatible against the current v3 protocol; v3 is fine")
-    func protocolV3AgainstOlder() {
-        // The typed-CaptureConfiguration start surface bumped the protocol to 3. A
-        // previously installed v2 helper — even a newer build — must be classified
-        // incompatible so Start stays gated (no downgraded start request) and the
-        // old helper must be reinstalled, while a matching v3 helper at the shipped
-        // build is compatible.
-        let legacyV2 = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "0.1.2", buildNumber: 99, protocolVersion: 2),
-            expectedProtocolVersion: 3,
-            bundledBuild: 4
+    @Test("Protocol v4 stays capture-compatible but is outdated against v5")
+    func protocolV4AgainstV5() {
+        // Protocol v5 adds maintenance selectors without changing v4's typed
+        // capture commands, so v4 can still capture while awaiting one explicit
+        // migration.
+        let legacyV4 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "2.1.0", buildNumber: 99, protocolVersion: 4),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
-        let currentV3 = HelperClient.classifyCompatibility(
-            HelperInfo(binaryVersion: "0.1.3", buildNumber: 4, protocolVersion: 3),
-            expectedProtocolVersion: 3,
-            bundledBuild: 4
+        let currentV5 = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "2.2.0", buildNumber: 8, protocolVersion: 5),
+            expectedProtocolVersion: 5,
+            bundledBuild: 8
         )
 
-        #expect(legacyV2 == .installedIncompatible)
-        #expect(currentV3 == .installedCompatible)
-        // An incompatible helper maps Start to a clear, gated message, not ready.
-        #expect(
-            HelperClient.captureAvailability(for: legacyV2, unreachableDetail: nil)
-                == .unavailable("the installed helper uses an incompatible protocol. Update it in Settings → Helper.")
-        )
+        #expect(legacyV4 == .installedOutdated)
+        #expect(currentV5 == .installedCompatible)
+        #expect(HelperClient.captureAvailability(for: legacyV4, unreachableDetail: nil) == .ready)
     }
+}
+
+// MARK: - HelperUpdatePlanTests
+
+@Suite("Helper executable update planning")
+struct HelperUpdatePlanTests {
+    // MARK: Internal
+
+    @Test("Exact v5 metadata and executable identity are up to date")
+    func upToDate() {
+        let info = HelperInfo(binaryVersion: "2.2.0", buildNumber: 8, protocolVersion: 5)
+        let identity = HelperExecutableIdentity(
+            executableDigest: digest,
+            launchIdentity: UUID().uuidString,
+            processIdentifier: 42,
+            executablePath: "/Applications/Tracexy.app/helper",
+            buildNumber: 8,
+            protocolVersion: 5
+        )
+        #expect(HelperClient.updatePlan(
+            status: .installedCompatible,
+            installedInfo: info,
+            installedIdentity: identity,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: digest
+        ) == .upToDate)
+    }
+
+    @Test("Matching version numbers cannot hide different executable bytes")
+    func digestDriftRefreshes() {
+        let info = HelperInfo(binaryVersion: "2.2.0", buildNumber: 8, protocolVersion: 5)
+        let identity = HelperExecutableIdentity(
+            executableDigest: String(repeating: "b", count: 64),
+            launchIdentity: UUID().uuidString,
+            processIdentifier: 42,
+            executablePath: "/Applications/Tracexy.app/helper",
+            buildNumber: 8,
+            protocolVersion: 5
+        )
+        #expect(HelperClient.updatePlan(
+            status: .installedCompatible,
+            installedInfo: info,
+            installedIdentity: identity,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: digest
+        ) == .approvalPreservingRefresh)
+    }
+
+    @Test("Only known v4 uses the explicit legacy migration")
+    func legacyProtocols() {
+        let v4 = HelperClient.updatePlan(
+            status: .installedOutdated,
+            installedInfo: HelperInfo(binaryVersion: "2.1.0", buildNumber: 7, protocolVersion: 4),
+            installedIdentity: nil,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: digest
+        )
+        let v3 = HelperClient.updatePlan(
+            status: .installedIncompatible,
+            installedInfo: HelperInfo(binaryVersion: "1.9.0", buildNumber: 6, protocolVersion: 3),
+            installedIdentity: nil,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: digest
+        )
+        #expect(v4 == .legacyManualMigration)
+        #expect(v3 == .blocked(.incompatibleProtocol))
+    }
+
+    @Test("A newer installed helper is never downgraded")
+    func noDowngrade() {
+        #expect(HelperClient.updatePlan(
+            status: .installedIncompatible,
+            installedInfo: HelperInfo(binaryVersion: "2.3.0", buildNumber: 9, protocolVersion: 5),
+            installedIdentity: nil,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: digest
+        ) == .blocked(.downgradeRefused))
+    }
+
+    // MARK: Private
+
+    private let digest = String(repeating: "a", count: 64)
 }
 
 // MARK: - CaptureAvailabilityTests
@@ -135,6 +216,50 @@ struct CaptureAvailabilityTests {
     func ready() {
         #expect(HelperClient.captureAvailability(for: .installedCompatible, unreachableDetail: nil) == .ready)
         #expect(HelperClient.captureAvailability(for: .installedOutdated, unreachableDetail: nil) == .ready)
+    }
+
+    @Test("v5 capture requires exact executable convergence")
+    func v5RequiresExecutableConvergence() {
+        let info = HelperInfo(binaryVersion: "2.2.0", buildNumber: 8, protocolVersion: 5)
+        let driftedIdentity = HelperExecutableIdentity(
+            executableDigest: String(repeating: "b", count: 64),
+            launchIdentity: UUID().uuidString,
+            processIdentifier: 42,
+            executablePath: "/Applications/Tracexy.app/helper",
+            buildNumber: 8,
+            protocolVersion: 5
+        )
+
+        let availability = HelperClient.captureAvailability(
+            for: .installedCompatible,
+            installedInfo: info,
+            installedIdentity: driftedIdentity,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: String(repeating: "a", count: 64),
+            unreachableDetail: nil
+        )
+
+        guard case let .unavailable(detail) = availability else {
+            Issue.record("expected v5 drift to block capture")
+            return
+        }
+        #expect(detail.localizedCaseInsensitiveContains("verification"))
+    }
+
+    @Test("Known v4 remains capture-ready while awaiting explicit migration")
+    func v4MigrationCanStillCapture() {
+        let availability = HelperClient.captureAvailability(
+            for: .installedOutdated,
+            installedInfo: HelperInfo(binaryVersion: "2.1.0", buildNumber: 7, protocolVersion: 4),
+            installedIdentity: nil,
+            expectedProtocolVersion: 5,
+            bundledBuildNumber: 8,
+            candidateDigest: String(repeating: "a", count: 64),
+            unreachableDetail: nil
+        )
+
+        #expect(availability == .ready)
     }
 
     @Test("Approval maps through, not to ready")

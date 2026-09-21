@@ -251,7 +251,10 @@ struct RootView: View {
             }
             return
         }
-        await coordinator.helper.checkStatus()
+        // Reconcile an already approved modern helper with the executable in this
+        // app bundle before auto-start. This may restart the daemon in place but
+        // never unregisters it or consumes a fresh Background Items approval.
+        await coordinator.helper.reconcileHelperOnLaunch()
         // A delayed helper reply must never apply the launch Project's consent
         // to a destination selected while the reply was in flight.
         guard coordinator.projectStore.activeProjectID == launchProjectID,

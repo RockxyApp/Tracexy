@@ -40,13 +40,19 @@ memory window, interface drops, helper drops, and frames outside the in-memory w
 stopped values are labelled explicitly instead of being presented as zero. The popover also links
 directly to Capture and Helper settings for recovery.
 
-**Settings → Helper** shows the registration, reachability, bundled version, and installed version.
-From there you can install, update, uninstall, or recheck the helper. If a registered helper stops
-answering, Tracexy times out the request, reports it as unreachable, and ends an affected live capture
-instead of leaving the UI stuck. When the helper is unreachable, the first-line fix is **Repair
-Registration** — a non-destructive step that re-submits the registration from the current app bundle
-(no admin password) and then re-probes, which clears the launchd/Background-Items drift that can follow
-an in-place update. **Force Reset & Reinstall** is the next, confirmed recovery action for stale
+**Settings → Helper** shows registration, reachability, bundled metadata, installed metadata, and
+the result of verifying the exact running helper executable. From there you can install, update,
+uninstall, or recheck the helper. A normal protocol-v5 app update preserves the existing Login Items
+approval: Tracexy requests an idle helper restart and verifies that a new launch is running the exact
+signed bytes embedded in the app. The one-time protocol-v4 migration remains an explicit **Update**
+because that older contract cannot request a safe maintenance restart.
+
+If a registered helper stops answering, Tracexy times out the request, reports it as unreachable,
+and ends an affected live capture instead of leaving the UI stuck. If an automatic executable refresh
+was already requested, **Retry Safe Recovery** reconnects and verifies it without unregistering. For
+other unreachable registration drift, **Repair Registration** explicitly unregisters and re-registers
+this app's service (no admin password), which can require Login Items approval again. **Force Reset &
+Reinstall** is the next, confirmed recovery action for stale
 launchd/helper state: it asks for an administrator password, removes only Tracexy's own privileged
 helper and launch daemon, and — only after that succeeds — unregisters and reinstalls the bundled
 helper before re-probing it, so the result always reflects the real final status. If the administrator
