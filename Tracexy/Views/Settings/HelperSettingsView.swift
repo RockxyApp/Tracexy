@@ -18,7 +18,11 @@ struct HelperSettingsView: View {
                     helperNote(signingIssueText(issue))
                 }
 
-                if helper.status == .unreachable, let detail = helper.probeFailureDetail {
+                if let detail = helper.probeFailureDetail,
+                   helper.status == .unreachable
+                   || helper.status == .installedOutdated
+                   || helper.status == .installedIncompatible
+                {
                     SettingsDivider()
                     helperNote(detail)
                 }
@@ -164,27 +168,31 @@ struct HelperSettingsView: View {
             Button("Install Helper") { Task { await helper.install() } }
         case .requiresApproval:
             Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
-        case .installedOutdated,
-             .installedIncompatible:
+        case .installedOutdated:
             Button("Update Helper") { Task { await helper.update() } }
-        case .unreachable:
-            // First-line, non-destructive repair for a registered-but-unreachable
-            // helper (BTM/launchd drift after an in-place update): re-submit the
-            // registration from this bundle and re-probe, before the privileged
-            // hard reset in the Recovery section below.
-            if HelperClient.offersRegistrationRepair(for: helper.status) {
-                Button("Repair Registration") { Task { await helper.repairRegistration() } }
+        case .installedIncompatible:
+            if let info = helper.installedInfo, info.protocolVersion > helper.expectedProtocolVersion {
+                Label("Automatic downgrade blocked", systemImage: "shield.slash").foregroundStyle(.secondary)
             } else {
-                Button("Retry") { Task { await helper.checkStatus() } }
+                Label("Use recovery", systemImage: "wrench.and.screwdriver").foregroundStyle(.secondary)
+            }
+        case .unreachable:
+            if helper.automaticRefreshRecoveryPending {
+                Button("Retry Safe Recovery") { Task { await helper.retryAutomaticHelperRefresh() } }
+            } else {
+                // Explicit fallback for a registered-but-unreachable helper. This
+                // unregisters the service and may require approval again, so the
+                // safe launch recovery is always offered first when available.
+                if HelperClient.offersRegistrationRepair(for: helper.status) {
+                    Button("Repair Registration") { Task { await helper.repairRegistration() } }
+                } else {
+                    Button("Retry") { Task { await helper.checkStatus() } }
+                }
             }
         case .signingMismatch:
-            if case .appSignatureInvalid = helper.signingIssue {
-                Label("Clean build & rebuild the app", systemImage: "hammer").foregroundStyle(.secondary)
-            } else {
-                Button("Reinstall Helper") { Task { await helper.update() } }
-            }
+            Label("Clean build & rebuild the app", systemImage: "hammer").foregroundStyle(.secondary)
         case .failed:
-            Button("Reinstall Helper") { Task { await helper.update() } }
+            Label("Use recovery if this persists", systemImage: "wrench.and.screwdriver").foregroundStyle(.secondary)
         }
     }
 

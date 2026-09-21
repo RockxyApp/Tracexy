@@ -87,6 +87,10 @@ final class HelperClient {
     private(set) var signingIssue: SigningIssue?
     /// Version/build/protocol reported by the installed helper, when reachable.
     private(set) var installedInfo: HelperInfo?
+    /// Identity of the exact live helper executable, available for protocol v5+.
+    private(set) var installedIdentity: HelperExecutableIdentity?
+    /// True while an approved registration still needs its executable reconciled.
+    private(set) var automaticRefreshRecoveryPending = false
     private(set) var isBusy = false
     /// The user-facing reason the last XPC probe failed, set when `status` is
     /// `.unreachable` so the UI can explain *why* a registered helper didn't
@@ -119,19 +123,13 @@ final class HelperClient {
     var actionLabel: String? {
         switch status {
         case .installedCompatible: nil
-        case .installedOutdated,
-             .installedIncompatible: "Update"
+        case .installedOutdated: "Update"
+        case .installedIncompatible: nil
         case .notInstalled: "Install"
         case .requiresApproval: "Open Settings"
         case .unreachable: "Repair"
-        case .signingMismatch:
-            // An invalid app signature can't be fixed by reinstalling the helper.
-            if case .appSignatureInvalid = signingIssue {
-                nil
-            } else {
-                "Reinstall"
-            }
-        case .failed: "Reinstall"
+        case .signingMismatch,
+             .failed: nil
         }
     }
 
@@ -146,7 +144,8 @@ final class HelperClient {
         switch status {
         case .installedCompatible,
              .installedOutdated:
-            // Outdated shares the current protocol, so it still captures.
+            // Outdated is either the known capture-compatible v4 contract or a
+            // lower build of the current contract.
             .ready
         case .requiresApproval:
             .requiresApproval
@@ -154,7 +153,7 @@ final class HelperClient {
             .unavailable("the installed helper uses an incompatible protocol. Update it in Settings → Helper.")
         case .signingMismatch:
             .unavailable(
-                "the installed helper’s code signature doesn’t match this app. Reinstall it in Settings → Helper."
+                "the helper bundled in this app doesn’t match the app signature. Clean the build and rebuild the app."
             )
         case .unreachable:
             .unavailable(unreachableDetail
@@ -163,6 +162,58 @@ final class HelperClient {
             .unavailable("the capture helper isn’t installed. Install it in Settings → Helper.")
         case let .failed(reason):
             .unavailable(reason)
+        }
+    }
+
+    /// Start readiness using the current executable evidence, not just the coarse
+    /// status enum. `.installedOutdated` is safe for a known v4 helper during its
+    /// one-time migration, but a v5 helper whose digest/launch identity has not
+    /// converged must not be used for capture.
+    nonisolated static func captureAvailability(
+        for status: Status,
+        installedInfo: HelperInfo?,
+        installedIdentity: HelperExecutableIdentity?,
+        expectedProtocolVersion: Int,
+        bundledBuildNumber: Int,
+        candidateDigest: String?,
+        unreachableDetail: String?
+    )
+        -> CaptureAvailability
+    {
+        switch status {
+        case .installedCompatible,
+             .installedOutdated:
+            guard let installedInfo else {
+                return .unavailable(
+                    "the helper did not report its installed protocol. Recheck it in Settings → Helper."
+                )
+            }
+            if HelperCompatibilityPolicy.requiresLegacyDestructiveMigration(
+                protocolVersion: installedInfo.protocolVersion
+            ) {
+                return .ready
+            }
+            switch updatePlan(
+                status: status,
+                installedInfo: installedInfo,
+                installedIdentity: installedIdentity,
+                expectedProtocolVersion: expectedProtocolVersion,
+                bundledBuildNumber: bundledBuildNumber,
+                candidateDigest: candidateDigest
+            ) {
+            case .upToDate:
+                return .ready
+            case .approvalPreservingRefresh:
+                return .unavailable(
+                    "the helper executable update has not finished verification. Update or retry recovery in Settings → Helper."
+                )
+            case .legacyManualMigration:
+                return .unavailable("the installed helper needs an explicit one-time migration in Settings → Helper.")
+            case let .blocked(reason):
+                return .unavailable(captureBlockMessage(for: reason, unreachableDetail: unreachableDetail))
+            }
+        default:
+            return captureAvailability(for: status, unreachableDetail: unreachableDetail)
         }
     }
 
@@ -187,10 +238,102 @@ final class HelperClient {
     )
         -> Status
     {
-        if info.protocolVersion != expectedProtocolVersion {
-            return .installedIncompatible
+        switch HelperCompatibilityPolicy.classify(
+            installedProtocolVersion: info.protocolVersion,
+            installedBuildNumber: info.buildNumber,
+            expectedProtocolVersion: expectedProtocolVersion,
+            bundledBuildNumber: bundledBuild
+        ) {
+        case .compatible: .installedCompatible
+        case .outdated: .installedOutdated
+        case .incompatible: .installedIncompatible
         }
-        return info.buildNumber >= bundledBuild ? .installedCompatible : .installedOutdated
+    }
+
+    /// Pure update decision. Capture compatibility and executable convergence are
+    /// deliberately separate: an older known protocol may keep capturing while it
+    /// still needs a one-time explicit migration.
+    nonisolated static func updatePlan(
+        status: Status,
+        installedInfo: HelperInfo?,
+        installedIdentity: HelperExecutableIdentity?,
+        expectedProtocolVersion: Int,
+        bundledBuildNumber: Int,
+        candidateDigest: String?
+    )
+        -> HelperUpdatePlan
+    {
+        switch status {
+        case .notInstalled: return .blocked(.notInstalled)
+        case .requiresApproval: return .blocked(.requiresApproval)
+        case .unreachable: return .blocked(.unreachable)
+        case .signingMismatch: return .blocked(.signingMismatch)
+        case .failed: return .blocked(.unreachable)
+        case .installedIncompatible:
+            break
+        case .installedCompatible,
+             .installedOutdated:
+            break
+        }
+
+        guard let installedInfo else {
+            return .blocked(.unreachable)
+        }
+        guard let candidateDigest, HelperExecutableDigest.isWellFormedDigest(candidateDigest) else {
+            return .blocked(.embeddedPackageInvalid)
+        }
+        if installedInfo.protocolVersion > expectedProtocolVersion
+            || (installedInfo.protocolVersion == expectedProtocolVersion
+                && installedInfo.buildNumber > bundledBuildNumber)
+        {
+            return .blocked(.downgradeRefused)
+        }
+
+        let metadataMatches = installedInfo.protocolVersion == expectedProtocolVersion
+            && installedInfo.buildNumber == bundledBuildNumber
+
+        if HelperCompatibilityPolicy.supportsExecutableIdentity(
+            protocolVersion: installedInfo.protocolVersion
+        ) {
+            let identityMatches = installedIdentity?.isWellFormed == true
+                && installedIdentity?.protocolVersion == installedInfo.protocolVersion
+                && installedIdentity?.buildNumber == installedInfo.buildNumber
+                && installedIdentity?.executableDigest == candidateDigest
+            return metadataMatches && identityMatches ? .upToDate : .approvalPreservingRefresh
+        }
+
+        if HelperCompatibilityPolicy.supportsExecutableRefresh(
+            protocolVersion: installedInfo.protocolVersion
+        ) {
+            return metadataMatches ? .upToDate : .approvalPreservingRefresh
+        }
+        return HelperCompatibilityPolicy.requiresLegacyDestructiveMigration(
+            protocolVersion: installedInfo.protocolVersion
+        ) ? .legacyManualMigration : .blocked(.incompatibleProtocol)
+    }
+
+    nonisolated static func captureBlockMessage(
+        for reason: HelperUpdateBlockReason,
+        unreachableDetail: String?
+    )
+        -> String
+    {
+        switch reason {
+        case .notInstalled:
+            "the capture helper isn’t installed. Install it in Settings → Helper."
+        case .requiresApproval:
+            "the helper is waiting for approval in System Settings → Login Items."
+        case .unreachable:
+            unreachableDetail ?? "the helper is registered but isn’t responding. Recover it in Settings → Helper."
+        case .signingMismatch:
+            "the helper bundled in this app doesn’t match the app signature. Clean the build and rebuild the app."
+        case .incompatibleProtocol:
+            "the installed helper uses an incompatible protocol. Use Helper recovery before starting capture."
+        case .embeddedPackageInvalid:
+            "the bundled helper package could not be verified. Clean the build and rebuild the app."
+        case .downgradeRefused:
+            "the installed helper is newer than this app, so Tracexy refused to downgrade it."
+        }
     }
 
     nonisolated static func postCleanupRegistrationAction(
@@ -275,7 +418,8 @@ final class HelperClient {
             // Enabled (or freshly registered): never trust that alone. Probe
             // signing + XPC compatibility before handing the Start path a proxy.
             await self.performCheckStatus()
-            return Self.captureAvailability(for: self.status, unreachableDetail: self.probeFailureDetail)
+            await self.performExecutableReconciliation(allowsLegacyMigration: false)
+            return await self.captureAvailabilityFromCurrentEvidence()
         }
     }
 
@@ -322,6 +466,8 @@ final class HelperClient {
                 try await SMAppService.daemon(plistName: Self.plistName).unregister()
                 self.status = .notInstalled
                 self.installedInfo = nil
+                self.installedIdentity = nil
+                self.automaticRefreshRecoveryPending = false
                 self.probeFailureDetail = nil
                 Self.logger.info("helper uninstalled")
             } catch {
@@ -331,39 +477,48 @@ final class HelperClient {
         }
     }
 
-    /// Update the helper: remove the old daemon, then register the new one.
-    ///
-    /// A replacement is **never** registered over a helper we failed to remove — a
-    /// failed unregister aborts and surfaces the failure. Removal is only required
-    /// when the daemon is actually present; a `.notRegistered`/`.notFound` start
-    /// state proceeds straight to registration (this doubles as the reinstall
-    /// path for a `.failed`/signing-mismatch helper). Re-registration may require
-    /// Login Items approval again.
+    /// Reconcile the installed helper with this app bundle. Protocol v5 refreshes
+    /// the executable without unregistering the approved service. Protocol v4 has
+    /// one explicit legacy migration because it predates that maintenance selector.
     func update() async {
         guard !isBusy else {
             return
         }
         await runBusy {
-            if let proxy = try? self.proxy() {
-                proxy.stopCapture { _ in }
-            }
-            self.disconnect()
+            await self.performCheckStatus()
+            await self.performExecutableReconciliation(allowsLegacyMigration: true)
+        }
+    }
 
-            let existing = SMAppService.daemon(plistName: Self.plistName)
-            if existing.status == .enabled || existing.status == .requiresApproval {
-                do {
-                    try await existing.unregister()
-                } catch {
-                    self.status = .failed("Couldn’t remove the existing helper: \(error.localizedDescription)")
-                    Self.logger.error(
-                        "helper update aborted — unregister failed: \(error.localizedDescription, privacy: .public)"
-                    )
-                    return
-                }
-                try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
-            }
+    /// Launch-time reconciliation never unregisters or re-registers. A v5 helper
+    /// may exit and be relaunched in place; a v4 helper stays usable-but-outdated
+    /// until the user explicitly chooses Update.
+    func reconcileHelperOnLaunch() async {
+        guard !isBusy else {
+            return
+        }
+        await runBusy {
+            await self.performCheckStatus()
+            await self.performExecutableReconciliation(allowsLegacyMigration: false)
+        }
+    }
 
-            await self.performInstall()
+    /// Retry the same non-destructive launch reconciliation over a fresh XPC
+    /// connection. This never unregisters the approved service.
+    func retryAutomaticHelperRefresh() async {
+        guard !isBusy else {
+            return
+        }
+        await runBusy {
+            self.resetConnection()
+            await self.performCheckStatus()
+            await self.performExecutableReconciliation(allowsLegacyMigration: false)
+            if self.status == .unreachable {
+                // One safe fresh-connection retry has completed. Reveal the
+                // explicit registration repair instead of trapping the UI in an
+                // endless retry-only state.
+                self.automaticRefreshRecoveryPending = false
+            }
         }
     }
 
@@ -398,6 +553,7 @@ final class HelperClient {
     func recordRuntimeConnectionFailure(_ detail: String) {
         resetConnection()
         installedInfo = nil
+        installedIdentity = nil
         probeFailureDetail = detail
         status = .unreachable
     }
@@ -617,6 +773,216 @@ final class HelperClient {
         connection = nil
     }
 
+    private func captureAvailabilityFromCurrentEvidence() async -> CaptureAvailability {
+        switch status {
+        case .installedCompatible,
+             .installedOutdated:
+            guard let info = installedInfo else {
+                return .unavailable(
+                    "the helper did not report its installed protocol. Recheck it in Settings → Helper."
+                )
+            }
+            if HelperCompatibilityPolicy.requiresLegacyDestructiveMigration(
+                protocolVersion: info.protocolVersion
+            ) {
+                return .ready
+            }
+            let digest: String?
+            do {
+                digest = try await embeddedHelperCandidate().executableDigest
+            } catch {
+                return .unavailable("the bundled helper package could not be verified: \(error.localizedDescription)")
+            }
+            return Self.captureAvailability(
+                for: status,
+                installedInfo: installedInfo,
+                installedIdentity: installedIdentity,
+                expectedProtocolVersion: expectedProtocolVersion,
+                bundledBuildNumber: bundledHelperBuild,
+                candidateDigest: digest,
+                unreachableDetail: probeFailureDetail
+            )
+        default:
+            return Self.captureAvailability(for: status, unreachableDetail: probeFailureDetail)
+        }
+    }
+
+    private func performExecutableReconciliation(allowsLegacyMigration: Bool) async {
+        guard status == .installedCompatible
+            || status == .installedOutdated
+            || status == .installedIncompatible else
+        {
+            if status != .unreachable {
+                automaticRefreshRecoveryPending = false
+            }
+            return
+        }
+
+        let candidate: HelperRefreshCandidate
+        do {
+            candidate = try await embeddedHelperCandidate()
+        } catch {
+            automaticRefreshRecoveryPending = false
+            probeFailureDetail = error.localizedDescription
+            status = .failed("The bundled helper could not be verified: \(error.localizedDescription)")
+            return
+        }
+
+        switch Self.updatePlan(
+            status: status,
+            installedInfo: installedInfo,
+            installedIdentity: installedIdentity,
+            expectedProtocolVersion: expectedProtocolVersion,
+            bundledBuildNumber: bundledHelperBuild,
+            candidateDigest: candidate.executableDigest
+        ) {
+        case .upToDate:
+            automaticRefreshRecoveryPending = false
+
+        case .approvalPreservingRefresh:
+            await performApprovalPreservingRefresh(candidate: candidate)
+
+        case .legacyManualMigration:
+            automaticRefreshRecoveryPending = false
+            guard allowsLegacyMigration else {
+                return
+            }
+            await performLegacyProtocolMigration()
+
+        case let .blocked(reason):
+            automaticRefreshRecoveryPending = reason == .unreachable
+            if reason == .downgradeRefused {
+                probeFailureDetail = "The installed helper is newer than this app; automatic downgrade was refused."
+            }
+            Self.logger.info("helper reconciliation blocked: \(String(describing: reason), privacy: .public)")
+        }
+    }
+
+    private func embeddedHelperCandidate() async throws -> HelperRefreshCandidate {
+        if case let .incomplete(reason) = BundledHelperPackage.validateBundled(
+            identity: TracexyIdentity.current
+        ) {
+            throw HelperRefreshError.invalidPackage(reason)
+        }
+        switch SigningDiagnostics.diagnose() {
+        case .healthy,
+             .certificateChainUnavailable:
+            break
+        case let .appSignatureInvalid(detail):
+            throw HelperRefreshError.invalidPackage(detail)
+        case let .signingIdentityMismatch(appSigner, helperSigner):
+            throw HelperRefreshError.invalidPackage(
+                "The app signer \(appSigner) does not match the helper signer \(helperSigner)."
+            )
+        case .helperBinaryNotFound:
+            throw HelperRefreshError.invalidPackage("The bundled helper executable is missing.")
+        case let .diagnosticError(detail):
+            throw HelperRefreshError.invalidPackage(detail)
+        }
+
+        let helperURL = Bundle.main.bundleURL.appendingPathComponent(
+            Self.bundledHelperBinaryRelativePath,
+            isDirectory: false
+        )
+        let path = HelperExecutableDigest.canonicalPath(helperURL.path)
+        let digest = try await Task.detached(priority: .userInitiated) {
+            try HelperExecutableDigest.sha256Hex(atPath: path)
+        }.value
+        guard expectedProtocolVersion > 0, bundledHelperBuild > 0 else {
+            throw HelperRefreshError.invalidPackage("The bundled helper metadata is missing or invalid.")
+        }
+        return HelperRefreshCandidate(
+            executableDigest: digest,
+            expectedProtocolVersion: expectedProtocolVersion,
+            bundledBuildNumber: bundledHelperBuild
+        )
+    }
+
+    private func performApprovalPreservingRefresh(candidate: HelperRefreshCandidate) async {
+        automaticRefreshRecoveryPending = true
+        let previousLaunchIdentity = installedIdentity?.launchIdentity
+        do {
+            try await requestExecutableRefresh(timeoutNanoseconds: Self.probeTimeoutNanoseconds)
+        } catch HelperRefreshError.captureActive {
+            automaticRefreshRecoveryPending = false
+            probeFailureDetail = HelperRefreshError.captureActive.localizedDescription
+            status = .installedOutdated
+            Self.logger.warning("helper executable refresh deferred because capture is active")
+            return
+        } catch {
+            probeFailureDetail = error.localizedDescription
+            status = .installedOutdated
+            Self.logger.warning(
+                "helper executable refresh was not accepted: \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+
+        let delays: [UInt64] = [
+            250_000_000,
+            500_000_000,
+            1_000_000_000,
+            2_000_000_000,
+            3_000_000_000,
+            3_000_000_000,
+        ]
+        for delay in delays {
+            try? await Task.sleep(nanoseconds: delay)
+            resetConnection()
+            await performCheckStatus()
+            guard status == .installedCompatible,
+                  let info = installedInfo,
+                  let identity = installedIdentity,
+                  identity.isWellFormed,
+                  info.protocolVersion == candidate.expectedProtocolVersion,
+                  info.buildNumber == candidate.bundledBuildNumber,
+                  identity.protocolVersion == info.protocolVersion,
+                  identity.buildNumber == info.buildNumber,
+                  identity.executableDigest == candidate.executableDigest else
+            {
+                continue
+            }
+            if let previousLaunchIdentity, identity.launchIdentity == previousLaunchIdentity {
+                continue
+            }
+            automaticRefreshRecoveryPending = false
+            probeFailureDetail = nil
+            Self.logger.info(
+                "helper executable refresh verified: build=\(info.buildNumber) proto=\(info.protocolVersion)"
+            )
+            return
+        }
+
+        status = .installedOutdated
+        probeFailureDetail = "The helper restart was requested, but the bundled executable could not be verified."
+        Self.logger.warning("helper executable refresh did not converge; registration was preserved")
+    }
+
+    private func performLegacyProtocolMigration() async {
+        Self.logger.info("performing explicit one-time migration from a pre-v5 helper")
+        willBeginDestructiveReset?()
+        if let proxy = try? proxy() {
+            proxy.stopCapture { _ in }
+        }
+        disconnect()
+
+        let service = SMAppService.daemon(plistName: Self.plistName)
+        guard service.status == .enabled || service.status == .requiresApproval else {
+            status = .failed("The legacy helper is no longer registered.")
+            return
+        }
+        do {
+            try await service.unregister()
+        } catch {
+            status = .failed("Couldn’t remove the legacy helper: \(error.localizedDescription)")
+            return
+        }
+        try? await Task.sleep(nanoseconds: Self.btmSettleNanoseconds)
+        installedInfo = nil
+        installedIdentity = nil
+        await performInstall()
+    }
+
     private func performRegistrationRepair() async {
         Self.logger.info("registration repair: re-submitting helper from the current bundle")
         // Stop any capture and drop the (wedged) XPC connection before touching
@@ -636,6 +1002,7 @@ final class HelperClient {
                 let detail = "Couldn’t reset the existing helper registration: \(error.localizedDescription)"
                 status = .failed(detail)
                 installedInfo = nil
+                installedIdentity = nil
                 probeFailureDetail = detail
                 Self.logger.error("registration repair aborted — unregister failed: \(detail, privacy: .public)")
                 return
@@ -693,11 +1060,13 @@ final class HelperClient {
             case let .appSignatureInvalid(detail):
                 signingIssue = .appSignatureInvalid(detail: detail)
                 installedInfo = nil
+                installedIdentity = nil
                 status = .signingMismatch
                 return
             case let .signingIdentityMismatch(appSigner, helperSigner):
                 signingIssue = .identityMismatch(appSigner: appSigner, helperSigner: helperSigner)
                 installedInfo = nil
+                installedIdentity = nil
                 status = .signingMismatch
                 return
             case .healthy,
@@ -711,26 +1080,59 @@ final class HelperClient {
                 installedInfo = info
                 probeFailureDetail = nil
                 status = evaluateCompatibility(info)
+                if HelperCompatibilityPolicy.supportsExecutableIdentity(
+                    protocolVersion: info.protocolVersion
+                ) {
+                    do {
+                        let identity = try await fetchExecutableIdentity(
+                            timeoutNanoseconds: Self.probeTimeoutNanoseconds
+                        )
+                        guard identity.isWellFormed,
+                              identity.protocolVersion == info.protocolVersion,
+                              identity.buildNumber == info.buildNumber else
+                        {
+                            installedIdentity = nil
+                            probeFailureDetail = "The running helper returned inconsistent executable identity metadata."
+                            status = .installedOutdated
+                            return
+                        }
+                        installedIdentity = identity
+                    } catch {
+                        installedIdentity = nil
+                        probeFailureDetail = "The running helper executable could not be verified: \(error.localizedDescription)"
+                        status = .installedOutdated
+                        Self.logger.warning(
+                            "helper identity probe failed: \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                } else {
+                    installedIdentity = nil
+                }
                 Self.logger.info(
                     "helper enabled: build=\(info.buildNumber) proto=\(info.protocolVersion) → \(String(describing: self.status))"
                 )
             case let .failure(error):
                 installedInfo = nil
+                installedIdentity = nil
                 probeFailureDetail = error.detail
                 status = .unreachable
                 Self.logger.warning("helper enabled but unreachable: \(error.detail, privacy: .public)")
             }
         case .requiresApproval:
             status = .requiresApproval
+            installedInfo = nil
+            installedIdentity = nil
             probeFailureDetail = nil
         case .notRegistered,
              .notFound:
             status = .notInstalled
             installedInfo = nil
+            installedIdentity = nil
             probeFailureDetail = nil
         @unknown default:
             status = .notInstalled
             installedInfo = nil
+            installedIdentity = nil
             probeFailureDetail = nil
         }
     }
@@ -785,6 +1187,66 @@ final class HelperClient {
                     binaryVersion: version, buildNumber: build, protocolVersion: proto
                 ))
             }
+        }
+    }
+
+    private func fetchExecutableIdentity(timeoutNanoseconds: UInt64) async throws -> HelperExecutableIdentity {
+        let connection = openConnectionIfNeeded()
+        let deadline = DeadlineBox()
+        defer { deadline.cancel() }
+        return try await withCheckedThrowingContinuation { continuation in
+            let once = ExecutableIdentityResumeOnce(continuation)
+            deadline.task = Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                once.resume(throwing: HelperProbeError.timedOut)
+            }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                once.resume(throwing: HelperProbeError.unreachable(error.localizedDescription))
+            }) as? TracexyHelperProtocol else {
+                once.resume(throwing: HelperProbeError.unreachable("The helper is unreachable."))
+                return
+            }
+            proxy.getExecutableIdentity { digest, launchIdentity, processIdentifier, path, build, proto in
+                once.resume(returning: HelperExecutableIdentity(
+                    executableDigest: digest,
+                    launchIdentity: launchIdentity,
+                    processIdentifier: processIdentifier,
+                    executablePath: path,
+                    buildNumber: build,
+                    protocolVersion: proto
+                ))
+            }
+        }
+    }
+
+    private func requestExecutableRefresh(timeoutNanoseconds: UInt64) async throws {
+        guard let info = installedInfo,
+              HelperCompatibilityPolicy.supportsExecutableRefresh(
+                  protocolVersion: info.protocolVersion
+              ) else
+        {
+            throw HelperRefreshError.unsupported
+        }
+
+        let connection = openConnectionIfNeeded()
+        let deadline = DeadlineBox()
+        defer { deadline.cancel() }
+        let accepted: Bool = try await withCheckedThrowingContinuation { continuation in
+            let once = BoolResumeOnce(continuation)
+            deadline.task = Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                once.resume(throwing: HelperProbeError.timedOut)
+            }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                once.resume(throwing: HelperProbeError.unreachable(error.localizedDescription))
+            }) as? TracexyHelperProtocol else {
+                once.resume(throwing: HelperProbeError.unreachable("The helper is unreachable."))
+                return
+            }
+            proxy.prepareForExecutableRefresh { once.resume(returning: $0) }
+        }
+        guard accepted else {
+            throw HelperRefreshError.captureActive
         }
     }
 
@@ -898,6 +1360,89 @@ private final class ResumeOnce: @unchecked Sendable {
 
     private let continuation: CheckedContinuation<HelperInfo, Error>
     private let gate = OneShotGuard()
+}
+
+// MARK: - ExecutableIdentityResumeOnce
+
+private final class ExecutableIdentityResumeOnce: @unchecked Sendable {
+    // MARK: Lifecycle
+
+    init(_ continuation: CheckedContinuation<HelperExecutableIdentity, Error>) {
+        self.continuation = continuation
+    }
+
+    // MARK: Internal
+
+    func resume(returning value: HelperExecutableIdentity) {
+        guard gate.claim() else {
+            return
+        }
+        continuation.resume(returning: value)
+    }
+
+    func resume(throwing error: Error) {
+        guard gate.claim() else {
+            return
+        }
+        continuation.resume(throwing: error)
+    }
+
+    // MARK: Private
+
+    private let continuation: CheckedContinuation<HelperExecutableIdentity, Error>
+    private let gate = OneShotGuard()
+}
+
+// MARK: - BoolResumeOnce
+
+private final class BoolResumeOnce: @unchecked Sendable {
+    // MARK: Lifecycle
+
+    init(_ continuation: CheckedContinuation<Bool, Error>) {
+        self.continuation = continuation
+    }
+
+    // MARK: Internal
+
+    func resume(returning value: Bool) {
+        guard gate.claim() else {
+            return
+        }
+        continuation.resume(returning: value)
+    }
+
+    func resume(throwing error: Error) {
+        guard gate.claim() else {
+            return
+        }
+        continuation.resume(throwing: error)
+    }
+
+    // MARK: Private
+
+    private let continuation: CheckedContinuation<Bool, Error>
+    private let gate = OneShotGuard()
+}
+
+// MARK: - HelperRefreshError
+
+private enum HelperRefreshError: LocalizedError {
+    case unsupported
+    case captureActive
+    case invalidPackage(String)
+
+    // MARK: Internal
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported:
+            "The installed helper cannot refresh its executable in place."
+        case .captureActive:
+            "Stop the active capture before updating the helper."
+        case let .invalidPackage(reason):
+            reason
+        }
+    }
 }
 
 // MARK: - BundledHelperPackage
