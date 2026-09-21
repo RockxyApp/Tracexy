@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import MachO
 
 // MARK: - HelperInfo
 
@@ -8,6 +10,175 @@ nonisolated struct HelperInfo: Equatable {
     let binaryVersion: String
     let buildNumber: Int
     let protocolVersion: Int
+}
+
+// MARK: - HelperCompatibilityDecision
+
+/// Capability and compatibility decisions are protocol-first. A build number
+/// identifies a revision of one protocol; it never proves that an XPC selector
+/// exists.
+nonisolated enum HelperCompatibilityDecision: Equatable {
+    case compatible
+    case outdated
+    case incompatible
+}
+
+// MARK: - HelperCompatibilityPolicy
+
+nonisolated enum HelperCompatibilityPolicy {
+    // MARK: Internal
+
+    /// Protocol v5 added the maintenance selectors without changing the v4
+    /// capture commands, so a v4 helper can still capture while awaiting update.
+    static let executableRefreshProtocolVersion = 5
+    static let executableIdentityProtocolVersion = 5
+
+    static func classify(
+        installedProtocolVersion: Int,
+        installedBuildNumber: Int,
+        expectedProtocolVersion: Int,
+        bundledBuildNumber: Int
+    )
+        -> HelperCompatibilityDecision
+    {
+        guard knownProtocolVersions.contains(installedProtocolVersion),
+              knownProtocolVersions.contains(expectedProtocolVersion),
+              installedBuildNumber > 0,
+              bundledBuildNumber > 0,
+              installedProtocolVersion <= expectedProtocolVersion else
+        {
+            return .incompatible
+        }
+        if installedProtocolVersion < expectedProtocolVersion {
+            return backwardCompatibleProtocolVersions.contains(installedProtocolVersion)
+                ? .outdated
+                : .incompatible
+        }
+        return installedBuildNumber >= bundledBuildNumber ? .compatible : .outdated
+    }
+
+    static func supportsExecutableRefresh(protocolVersion: Int) -> Bool {
+        protocolVersion == executableRefreshProtocolVersion
+    }
+
+    static func supportsExecutableIdentity(protocolVersion: Int) -> Bool {
+        protocolVersion == executableIdentityProtocolVersion
+    }
+
+    static func requiresLegacyDestructiveMigration(protocolVersion: Int) -> Bool {
+        legacyMigrationProtocolVersions.contains(protocolVersion)
+    }
+
+    // MARK: Private
+
+    private static let knownProtocolVersions: Set<Int> = [4, 5]
+    private static let backwardCompatibleProtocolVersions: Set<Int> = [4]
+    private static let legacyMigrationProtocolVersions: Set<Int> = [4]
+}
+
+// MARK: - HelperExecutableIdentity
+
+/// Evidence about the executable a live helper process actually launched from.
+/// Version/build metadata alone cannot prove that an in-place app update replaced
+/// the running daemon.
+nonisolated struct HelperExecutableIdentity: Equatable, Sendable {
+    let executableDigest: String
+    let launchIdentity: String
+    let processIdentifier: Int32
+    let executablePath: String
+    let buildNumber: Int
+    let protocolVersion: Int
+
+    var isWellFormed: Bool {
+        HelperExecutableDigest.isWellFormedDigest(executableDigest)
+            && !launchIdentity.isEmpty
+            && processIdentifier > 0
+            && buildNumber > 0
+            && protocolVersion > 0
+    }
+}
+
+// MARK: - HelperExecutableDigest
+
+nonisolated enum HelperExecutableDigest {
+    enum Failure: Error, Equatable {
+        case unreadable(path: String)
+        case tooLarge(path: String)
+    }
+
+    static let maximumExecutableByteCount = 256 * 1_024 * 1_024
+
+    static func sha256Hex(
+        atPath path: String,
+        maximumByteCount: Int = maximumExecutableByteCount
+    )
+        throws -> String
+    {
+        guard !path.isEmpty, let handle = FileHandle(forReadingAtPath: path) else {
+            throw Failure.unreadable(path: path)
+        }
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        var totalByteCount = 0
+        while true {
+            let chunk: Data?
+            do {
+                chunk = try handle.read(upToCount: 1 << 20)
+            } catch {
+                throw Failure.unreadable(path: path)
+            }
+            guard let chunk, !chunk.isEmpty else {
+                break
+            }
+            totalByteCount += chunk.count
+            guard totalByteCount <= maximumByteCount else {
+                throw Failure.tooLarge(path: path)
+            }
+            hasher.update(data: chunk)
+        }
+        guard totalByteCount > 0 else {
+            throw Failure.unreadable(path: path)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func isWellFormedDigest(_ value: String) -> Bool {
+        let bytes = Array(value.utf8)
+        return bytes.count == 64 && bytes.allSatisfy {
+            (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains($0)
+                || (UInt8(ascii: "a") ... UInt8(ascii: "f")).contains($0)
+        }
+    }
+
+    static func canonicalPath(_ path: String) -> String {
+        guard !path.isEmpty else {
+            return path
+        }
+        return URL(fileURLWithPath: path)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
+    }
+}
+
+// MARK: - HelperExecutableLocation
+
+nonisolated enum HelperExecutableLocation {
+    static func currentProcessExecutablePath() -> String {
+        var bufferSize = UInt32(PATH_MAX) * 4
+        var buffer = [CChar](repeating: 0, count: Int(bufferSize) + 1)
+        if _NSGetExecutablePath(&buffer, &bufferSize) == 0 {
+            let resolved = String(cString: buffer)
+            if !resolved.isEmpty {
+                return HelperExecutableDigest.canonicalPath(resolved)
+            }
+        }
+        if let executablePath = Bundle.main.executablePath, !executablePath.isEmpty {
+            return HelperExecutableDigest.canonicalPath(executablePath)
+        }
+        return HelperExecutableDigest.canonicalPath(CommandLine.arguments.first ?? "")
+    }
 }
 
 // MARK: - HelperProtocolVersion

@@ -7,6 +7,18 @@ protocol TracexyHelperProtocol {
     /// Helper binary version, build number, protocol version.
     func getHelperInfo(withReply reply: @escaping (String, Int, Int) -> Void)
 
+    /// Ask an already approved protocol-v5 helper to exit after acknowledging
+    /// the request. launchd keeps the registration and resolves `BundleProgram`
+    /// from the current app bundle on the next connection.
+    func prepareForExecutableRefresh(withReply reply: @escaping (Bool) -> Void)
+
+    /// Report the exact executable this helper process launched from. The digest
+    /// and per-launch UUID prove convergence after an in-place app update; they do
+    /// not replace signing or caller validation.
+    func getExecutableIdentity(
+        withReply reply: @escaping (String, String, Int32, String, Int, Int) -> Void
+    )
+
     /// Begin capturing with a typed, validated `configuration` (interface, snap
     /// length, promiscuous mode, optional BPF). Reply: (started, errorMessage).
     ///
@@ -14,9 +26,9 @@ protocol TracexyHelperProtocol {
     /// libpcap *before* replying, so an out-of-bounds value or a bad filter
     /// expression fails closed with a clear message and no capture is reported
     /// started. This is protocol v4 — the immutable `CaptureConfiguration` command
-    /// surface replaced v3's bare `interface: String`. The app fails closed against
-    /// an older helper (`getHelperInfo` classifies the protocol mismatch) rather
-    /// than downgrading the start request.
+    /// surface replaced v3's bare `interface: String`. Protocol v4 remains safe
+    /// for capture during its explicit one-time migration to v5; v3 and older do
+    /// not receive a downgraded start request.
     func startCapture(configuration: CaptureConfiguration, withReply reply: @escaping (Bool, String) -> Void)
 
     /// Stop the active capture and return the worker's final flushed batch plus

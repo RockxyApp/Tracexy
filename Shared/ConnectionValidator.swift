@@ -11,11 +11,11 @@ import Security
 /// permissive "PID passed, token absent" fallback. Validation fails closed on any audit-token
 /// problem (unavailable, wrong-sized, or unresolvable to a `SecCode`).
 ///
-/// 1. **Signing-authority match**: requires the caller and this process to share the same Apple
-///    TeamIdentifier, keeping one canonical helper usable across Apple Development Xcode builds
-///    and Developer ID release builds. When a TeamIdentifier is unavailable, validation falls
-///    back to exact certificate-chain comparison, then to the local Xcode ad-hoc DerivedData
-///    pairing.
+/// 1. **Signing-authority match**: requires the caller and the helper's frozen launch-time signing
+///    profile to share the same Apple TeamIdentifier, keeping one canonical helper usable across
+///    Apple Development Xcode builds and Developer ID release builds without re-reading replaced
+///    on-disk bytes. When a TeamIdentifier is unavailable, validation falls back to exact
+///    certificate-chain comparison, then to the local Xcode ad-hoc DerivedData pairing.
 ///
 /// 2. **Bundle identity requirement** (Apple SecRequirement pattern): validates the caller
 ///    matches one of the configured Tracexy app bundle identifiers, not just any app sharing

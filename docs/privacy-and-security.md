@@ -116,8 +116,16 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   command execution, shell, or file access. Frames are drained as typed `NSSecureCoding` objects
   (`FrameBatchMessage`/`CapturedFrameMessage`) with the secure-coding class allow-list configured on
   both endpoints; the app validates every field defensively and rejects malformed metadata rather than
-  trusting it. This is protocol **v4** — an older helper is classified incompatible and Start is
-  gated with an update prompt, never silently downgraded to an untyped drain.
+  trusting it. The current contract is protocol **v5**. Known protocol v4 helpers remain capture-
+  compatible for a one-time explicit migration; unknown or future protocols fail closed rather than
+  being silently treated as compatible. Protocol, build, and marketing version have distinct roles,
+  so matching display text alone is never accepted as proof that the expected helper is running.
+- **Approval-preserving executable updates.** Protocol v5 reports a bounded SHA-256 executable
+  digest, launch UUID, process identifier, build, and protocol. When an idle approved helper differs
+  from the signed helper embedded in the app, the app asks it to acknowledge a maintenance exit and
+  then verifies a fresh launch, exact metadata, and exact digest. Normal v5 updates do not unregister
+  the service or discard Login Items approval. The legacy v4-to-v5 transition remains an explicit
+  user action because v4 has no maintenance selector.
 - **Bidirectional code-sign validation.** The helper validates every connecting caller (signing-team
   match with a certificate-chain fallback, plus a bundle-identity allowlist checked against the
   connection's audit token to resist PID races) before accepting it. Independently, the app validates
@@ -132,7 +140,10 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   race-free: the caller requests stop and waits while the worker thread alone closes the pcap handle.
   The typed stop reply atomically returns the worker's final flush and final accounting, avoiding both
   silent tail loss and a stop→fetch race with the next capture generation.
-  The helper stops capturing when the owning app disconnects — it does not run unbounded or unattended.
+  Capture ownership is bound to the authenticated XPC connection: only that connection can drain or
+  stop its capture, and invalidating an unrelated accepted connection has no effect. The helper stops
+  capturing when the owning connection disconnects and atomically blocks new work before an idle or
+  maintenance exit — it does not run unbounded or unattended.
 
 ## Reporting a vulnerability
 
