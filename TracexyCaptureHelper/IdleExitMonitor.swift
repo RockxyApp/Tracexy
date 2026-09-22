@@ -4,7 +4,7 @@ enum IdleExitMonitor {
     // MARK: Internal
 
     static func start() {
-        queue.async { schedule() }
+        timer.resume()
     }
 
     static func resetIdleTimer() {
@@ -19,14 +19,12 @@ enum IdleExitMonitor {
     private static let idleTimeout: TimeInterval = 5 * 60
     private static let lock = NSLock()
     private static var lastActivity = Date()
-
-    private static func schedule() {
+    private static let timer: DispatchSourceTimer = {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 30, repeating: 30)
         timer.setEventHandler { checkAndExit() }
-        timer.resume()
-        RunLoop.current.run()
-    }
+        return timer
+    }()
 
     private static func checkAndExit() {
         lock.lock()
