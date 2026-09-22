@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+## [0.8.1] - 2026-09-22
+
+### Fixed
+
+- Preserve approved helper updates
+- Restore idle exit timer delivery
+
 ## [0.8.0] - 2026-09-21
 
 ### Added
