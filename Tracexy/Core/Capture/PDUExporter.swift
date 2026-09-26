@@ -146,17 +146,11 @@ nonisolated enum PDUExporter {
             }
         }
         let read = Array(streams.prefix(maximumStreams))
-        for stream in read {
-            if isCancelled() {
-                throw CancellationError()
-            }
-            guard let name = dissectorName(stream.kind, tcp: true) else {
-                continue
-            }
-            let result = try FollowStreamReader(
-                contentsOf: url, expectedIdentity: expectedIdentity, tuple: stream.tuple,
-                configuration: .init(isCancelled: isCancelled)
-            ).read()
+        // Streams are followed a group at a time, one file pass per group; a tuple
+        // listed twice is read once and exported under each of its listings.
+        let named = read.compactMap { stream in dissectorName(stream.kind, tcp: true).map { (stream.tuple, $0) } }
+        let namesOn = Dictionary(grouping: named, by: \.0).mapValues { $0.map(\.1) }
+        func keepTurns(of result: FollowStreamResult, as name: String) {
             for turn in FollowStreamExport.turns(of: result) {
                 let aToB = turn.direction == .aToB
                 keep(turn.firstOrdinal, turn.timestamp, packet(
@@ -165,6 +159,14 @@ nonisolated enum PDUExporter {
                     destination: aToB ? result.tuple.b : result.tuple.a,
                     tcp: true, payload: turn.bytes
                 ))
+            }
+        }
+        try FollowStreamReader.readEach(
+            contentsOf: url, expectedIdentity: expectedIdentity, tuples: named.map(\.0),
+            configuration: .init(isCancelled: isCancelled)
+        ) { result in
+            for name in namesOn[result.tuple] ?? [] {
+                keepTurns(of: result, as: name)
             }
         }
         pdus.sort { $0.order < $1.order }

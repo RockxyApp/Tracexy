@@ -104,71 +104,92 @@ nonisolated enum CaptureObjectScanner {
     )
         throws -> CaptureObjectList
     {
-        let follow = { (tuple: FiveTuple) throws -> FollowStreamResult in
-            if isCancelled() {
-                throw CancellationError()
-            }
-            return try FollowStreamReader(
-                contentsOf: url, expectedIdentity: expectedIdentity, tuple: tuple, sourceToken: sourceToken,
-                configuration: .init(isCancelled: isCancelled)
-            ).read()
+        // Connections are read a group at a time, one file pass per group.
+        let configuration = FollowStreamReader.Configuration(isCancelled: isCancelled)
+        let followEach = { (tuples: [FiveTuple], body: (FollowStreamResult) throws -> Void) throws in
+            try FollowStreamReader.readEach(
+                contentsOf: url, expectedIdentity: expectedIdentity, tuples: tuples, sourceToken: sourceToken,
+                configuration: configuration, body
+            )
         }
         let read = Array(streams.prefix(maximumStreams))
         var found: [CaptureObject] = []
         switch kind {
         case .ftpData:
             var transfers: [FTPDataObjectReader.Transfer] = []
-            for (index, stream) in read.enumerated() {
-                transfers += try FTPDataObjectReader.transfers(in: follow(stream.tuple))
-                onProgress(index + 1, read.count + transfers.count)
+            var done = 0
+            try followEach(read.map(\.tuple)) { result in
+                transfers += FTPDataObjectReader.transfers(in: result)
+                done += 1
+                onProgress(done, read.count + transfers.count)
             }
             let matched = FTPDataObjectReader.match(transfers, to: connections)
-            for (index, pair) in matched.enumerated() {
-                let sessionID = SessionBuilder.sessionID(for: pair.connection)
-                if let object = try FTPDataObjectReader.object(
-                    pair.transfer,
-                    in: follow(pair.connection),
-                    sessionID: sessionID
-                ) {
-                    found.append(object)
+            let pairsOn = Dictionary(grouping: matched.indices) { matched[$0].connection }
+            var objects: [Int: CaptureObject] = [:]
+            done = 0
+            try followEach(matched.map(\.connection)) { result in
+                for index in pairsOn[result.tuple] ?? [] {
+                    let pair = matched[index]
+                    objects[index] = try FTPDataObjectReader.object(
+                        pair.transfer, in: result, sessionID: SessionBuilder.sessionID(for: pair.connection)
+                    )
+                    done += 1
                 }
-                onProgress(read.count + index + 1, read.count + matched.count)
+                onProgress(read.count + done, read.count + matched.count)
             }
+            found = matched.indices.compactMap { objects[$0] }
         case .tftp:
-            let datagrams = { (tuple: FiveTuple) throws -> FollowDatagramResult in
-                if isCancelled() {
-                    throw CancellationError()
-                }
-                return try FollowDatagramReader(
-                    contentsOf: url, expectedIdentity: expectedIdentity, tuple: tuple, sourceToken: sourceToken,
-                    configuration: TFTPObjectReader.configuration(isCancelled: isCancelled)
-                ).read()
+            let datagramConfiguration = TFTPObjectReader.configuration(isCancelled: isCancelled)
+            let datagramsEach = { (tuples: [FiveTuple], body: (FollowDatagramResult) throws -> Void) throws in
+                try FollowDatagramReader.readEach(
+                    contentsOf: url, expectedIdentity: expectedIdentity, tuples: tuples, sourceToken: sourceToken,
+                    configuration: datagramConfiguration, body
+                )
             }
-            for (index, stream) in read.enumerated() {
-                let requests = try TFTPObjectReader.requests(in: datagrams(stream.tuple))
-                for pair in TFTPObjectReader.match(requests, on: stream.tuple, to: connections) {
-                    let sessionID = SessionBuilder.sessionID(for: pair.connection)
-                    if let object = try TFTPObjectReader.object(
-                        pair.request, in: datagrams(pair.connection), sessionID: sessionID
-                    ) {
-                        found.append(object)
-                    }
-                }
-                onProgress(index + 1, read.count)
+            var requests: [FiveTuple: [TFTPObjectReader.Request]] = [:]
+            try datagramsEach(read.map(\.tuple)) { result in
+                requests[result.tuple] = TFTPObjectReader.requests(in: result)
+                onProgress(requests.count, read.count + 1)
             }
+            // Pairs keep the order a stream-by-stream reading would give them.
+            var matched: [(request: TFTPObjectReader.Request, connection: FiveTuple)] = []
+            for stream in read {
+                matched += TFTPObjectReader.match(requests[stream.tuple] ?? [], on: stream.tuple, to: connections)
+            }
+            let pairsOn = Dictionary(grouping: matched.indices) { matched[$0].connection }
+            var objects: [Int: CaptureObject] = [:]
+            var done = 0
+            try datagramsEach(matched.map(\.connection)) { result in
+                for index in pairsOn[result.tuple] ?? [] {
+                    let pair = matched[index]
+                    objects[index] = try TFTPObjectReader.object(
+                        pair.request, in: result, sessionID: SessionBuilder.sessionID(for: pair.connection)
+                    )
+                }
+                done += 1
+                onProgress(read.count + done, read.count + pairsOn.count)
+            }
+            found = matched.indices.compactMap { objects[$0] }
         case .http,
              .imf,
              .x509:
-            for (index, stream) in read.enumerated() {
-                let result = try follow(stream.tuple)
-                let objects: [CaptureObject] = switch kind {
-                case .http: HTTPObjectReader.objects(of: result, sessionID: stream.sessionID)
-                case .imf: MailObjectReader.objects(of: result, sessionID: stream.sessionID)
-                default: CertificateObjectReader.objects(of: result, sessionID: stream.sessionID)
+            // Objects keep the stream order; a tuple two sessions share is read once.
+            let streamsOn = Dictionary(grouping: read.indices) { read[$0].tuple }
+            var objects: [Int: [CaptureObject]] = [:]
+            var done = 0
+            try followEach(read.map(\.tuple)) { result in
+                for index in streamsOn[result.tuple] ?? [] {
+                    let sessionID = read[index].sessionID
+                    objects[index] = switch kind {
+                    case .http: HTTPObjectReader.objects(of: result, sessionID: sessionID)
+                    case .imf: MailObjectReader.objects(of: result, sessionID: sessionID)
+                    default: CertificateObjectReader.objects(of: result, sessionID: sessionID)
+                    }
+                    done += 1
                 }
-                found += objects
-                onProgress(index + 1, read.count)
+                onProgress(done, read.count)
             }
+            found = read.indices.flatMap { objects[$0] ?? [] }
         }
         var objects: [CaptureObject] = []
         var totalBytes = 0

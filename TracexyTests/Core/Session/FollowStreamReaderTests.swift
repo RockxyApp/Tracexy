@@ -63,7 +63,7 @@ struct FollowStreamReaderTests {
             let turns = FollowStreamExport.turns(of: result)
             #expect(turns.map(\.direction) == [.aToB, .bToA, .aToB, .bToA])
             #expect(turns.map(\.firstOrdinal) == [1, 2, 3, 4])
-            #expect(turns.map { String(decoding: $0.bytes, as: UTF8.self) } == [
+            #expect(turns.map { String(bytes: $0.bytes, encoding: .utf8) } == [
                 "GET /a\r\n",
                 "200A",
                 "GET /b\r\n",
@@ -74,16 +74,16 @@ struct FollowStreamReaderTests {
             #expect(raw == Data("GET /a\r\n200AGET /b\r\n200B".utf8))
             let client = FollowStreamExport.data(turns, format: .raw, side: .aToB, tuple: result.tuple)
             #expect(client == Data("GET /a\r\nGET /b\r\n".utf8))
-            let arrays = String(
-                decoding: FollowStreamExport.data(turns, format: .cArrays, side: .both, tuple: result.tuple),
-                as: UTF8.self
-            )
+            let arrays = try #require(String(
+                bytes: FollowStreamExport.data(turns, format: .cArrays, side: .both, tuple: result.tuple),
+                encoding: .utf8
+            ))
             #expect(arrays.contains("char peer0_0[] = { /* Frame 1 */"))
             #expect(arrays.contains("char peer1_1[] = { /* Frame 4 */"))
-            let yaml = String(
-                decoding: FollowStreamExport.data(turns, format: .yaml, side: .both, tuple: result.tuple),
-                as: UTF8.self
-            )
+            let yaml = try #require(String(
+                bytes: FollowStreamExport.data(turns, format: .yaml, side: .both, tuple: result.tuple),
+                encoding: .utf8
+            ))
             #expect(yaml.hasPrefix("peers:\n  - peer: 0\n    host: 10.0.0.5\n    port: 50000\n"))
             #expect(yaml.contains("    data: !!binary |\n      \(Data("200B".utf8).base64EncodedString())"))
 
@@ -148,6 +148,74 @@ struct FollowStreamReaderTests {
             #expect(result.matchedFrameCount == 1)
             #expect(result.aToB.runs.map(\.bytes) == [mine])
             #expect(result.bToA.runs.isEmpty)
+        }
+    }
+
+    // MARK: - Many conversations in one pass
+
+    @Test
+    func groupedReadsEqualSingleReads() throws {
+        func frame(_ port: UInt16, client: Bool, seq: UInt32, _ text: String) -> [UInt8] {
+            client
+                ? Self.rawTCPFrame(
+                    src: "10.0.0.5", dst: "203.0.113.9", srcPort: 50_000, dstPort: port,
+                    seq: seq, payload: Array(text.utf8)
+                )
+                : Self.rawTCPFrame(
+                    src: "203.0.113.9", dst: "10.0.0.5", srcPort: port, dstPort: 50_000,
+                    seq: seq, payload: Array(text.utf8)
+                )
+        }
+        let ports: [UInt16] = [443, 8_443, 9_443]
+        // Interleaved, with a retransmission on one and a gap on another.
+        let frames = [
+            frame(443, client: true, seq: 1_000, "GET /a"),
+            frame(8_443, client: true, seq: 7_000, "HELLO"),
+            frame(443, client: false, seq: 5_000, "200 A"),
+            frame(8_443, client: true, seq: 7_000, "HELLO"),
+            frame(9_443, client: true, seq: 3_000, "one"),
+            frame(9_443, client: true, seq: 3_010, "after a hole"),
+            frame(8_443, client: false, seq: 9_000, "WORLD"),
+        ]
+        let tuples = ports.map {
+            FiveTuple(
+                proto: .tcp,
+                source: IPEndpoint(ip: "10.0.0.5", port: 50_000),
+                destination: IPEndpoint(ip: "203.0.113.9", port: $0)
+            )
+        }
+        let token = UUID()
+        try Self.withCapture(.pcapng(frames)) { url, identity in
+            let singles = try tuples.map {
+                try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: $0, sourceToken: token)
+                    .read()
+            }
+            for perPass in [1, 2, 64] {
+                var grouped: [FollowStreamResult] = []
+                // A repeated tuple is read once, in first-asked order.
+                try FollowStreamReader.readEach(
+                    contentsOf: url, expectedIdentity: identity, tuples: tuples + [tuples[0]],
+                    sourceToken: token, tuplesPerPass: perPass
+                ) { grouped.append($0) }
+                #expect(grouped == singles)
+            }
+            #expect(singles[1].aToB.runs.map(\.bytes) == [Array("HELLO".utf8)])
+            #expect(singles[2].limitations.contains(.sequenceGap))
+            #expect(!singles[0].limitations.contains(.sequenceGap))
+        }
+    }
+
+    @Test
+    func groupedReadRefusesANonTCPTupleBeforeScanning() throws {
+        let udp = FiveTuple(proto: .udp, source: Self.tuple.a, destination: Self.tuple.b)
+        try Self.withCapture(.pcap([Self.tcpFrame(client: true, seq: 1, payload: [1])])) { url, identity in
+            var handed = 0
+            #expect(throws: FollowStreamError.tupleNotTCP) {
+                try FollowStreamReader.readEach(
+                    contentsOf: url, expectedIdentity: identity, tuples: [Self.tuple, udp]
+                ) { _ in handed += 1 }
+            }
+            #expect(handed == 0)
         }
     }
 

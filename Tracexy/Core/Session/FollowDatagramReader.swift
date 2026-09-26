@@ -114,10 +114,13 @@ nonisolated struct FollowDatagramResult: Sendable, Equatable {
 /// every later datagram exactly; it never thins or evicts what it holds. Each
 /// retained payload is itself a prefix under a per-message bound, with the
 /// remainder counted on the message.
+/// ``readEach(contentsOf:expectedIdentity:tuples:sourceToken:configuration:tuplesPerPass:_:)``
+/// lists many conversations with one file pass per group, each exactly as a single
+/// read would.
 nonisolated final class FollowDatagramReader {
     // MARK: Lifecycle
 
-    init(
+    convenience init(
         contentsOf url: URL,
         expectedIdentity: PcapFileIdentity,
         tuple: FiveTuple,
@@ -126,11 +129,35 @@ nonisolated final class FollowDatagramReader {
     )
         throws
     {
-        guard tuple.proto == .udp else {
+        try self.init(
+            contentsOf: url, expectedIdentity: expectedIdentity, tuples: [tuple],
+            sourceToken: sourceToken, configuration: configuration
+        )
+    }
+
+    /// One pass over `url` for every tuple in `tuples` (duplicates read once).
+    /// Callers go through ``readEach``, which bounds the group size.
+    private init(
+        contentsOf url: URL,
+        expectedIdentity: PcapFileIdentity,
+        tuples: [FiveTuple],
+        sourceToken: UUID?,
+        configuration: Configuration
+    )
+        throws
+    {
+        guard tuples.allSatisfy({ $0.proto == .udp }) else {
             throw FollowStreamError.tupleNotUDP
         }
+        var order: [FiveTuple] = []
+        var conversations: [FiveTuple: Conversation] = [:]
+        for tuple in tuples where conversations[tuple] == nil {
+            order.append(tuple)
+            conversations[tuple] = Conversation()
+        }
         sourceURL = url
-        self.tuple = tuple
+        self.order = order
+        self.conversations = conversations
         self.sourceToken = sourceToken
         self.configuration = configuration
         let reader = try CaptureStreamReader(
@@ -192,6 +219,10 @@ nonisolated final class FollowDatagramReader {
         let isCancelled: @Sendable () -> Bool
     }
 
+    /// The most conversations one pass lists together. Memory for a pass is at most
+    /// this many times the retained-payload bound.
+    static let maximumTuplesPerPass = 64
+
     /// Pair each DNS response with the earliest still-unanswered query that carried
     /// the same transaction id in the opposite direction, and link the query back.
     /// A retransmitted query stays unpaired once its twin has taken the response,
@@ -221,11 +252,91 @@ nonisolated final class FollowDatagramReader {
         return paired
     }
 
+    /// List every tuple in `tuples` with one scan of `url` per group of
+    /// `tuplesPerPass`, handing each result to `body` in the order given (a repeated
+    /// tuple is read once) as soon as its group's pass ends. Each result is the one
+    /// a single read of that tuple would return.
+    ///
+    /// - Parameter tuplesPerPass: clamped to `1...maximumTuplesPerPass`.
+    /// - Throws: ``FollowStreamError/tupleNotUDP`` before any scan when a tuple is
+    ///   not UDP; otherwise whatever a single read throws, or what `body` throws.
+    static func readEach(
+        contentsOf url: URL,
+        expectedIdentity: PcapFileIdentity,
+        tuples: [FiveTuple],
+        sourceToken: UUID? = nil,
+        configuration: Configuration = Configuration(),
+        tuplesPerPass: Int = 16,
+        _ body: (FollowDatagramResult) throws -> Void
+    )
+        throws
+    {
+        guard tuples.allSatisfy({ $0.proto == .udp }) else {
+            throw FollowStreamError.tupleNotUDP
+        }
+        var seen = Set<FiveTuple>()
+        let unique = tuples.filter { seen.insert($0).inserted }
+        let group = min(max(1, tuplesPerPass), maximumTuplesPerPass)
+        var start = 0
+        while start < unique.count {
+            if configuration.isCancelled() {
+                throw CancellationError()
+            }
+            let end = min(start + group, unique.count)
+            let results = try FollowDatagramReader(
+                contentsOf: url, expectedIdentity: expectedIdentity, tuples: Array(unique[start ..< end]),
+                sourceToken: sourceToken, configuration: configuration
+            ).readAll()
+            for result in results {
+                try body(result)
+            }
+            start = end
+        }
+    }
+
     /// Scan to the terminal and return the bounded conversation.
     ///
     /// - Throws: `CancellationError`, `PacketError.malformed`, or
     ///   ``FollowStreamError/identityMismatch`` when the file changed during the scan.
     func read(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> FollowDatagramResult {
+        guard let result = try readAll(onProgress: onProgress).first else {
+            // The public initializer always asks for exactly one tuple.
+            preconditionFailure("A follow read has one requested conversation.")
+        }
+        return result
+    }
+
+    // MARK: Private
+
+    private let sourceURL: URL
+    /// Requested tuples, first-asked order, each once.
+    private let order: [FiveTuple]
+    private let sourceToken: UUID?
+    private let configuration: Configuration
+    private let reader: CaptureStreamReader
+
+    private var conversations: [FiveTuple: Conversation]
+
+    private static func dnsReading(of packet: DecodedPacket) -> FollowDNSMessage? {
+        guard packet.appProtocol == .dns, let facts = packet.dnsFacts else {
+            return nil
+        }
+        return FollowDNSMessage(
+            transactionID: facts.transactionID,
+            isResponse: facts.isResponse,
+            opcode: facts.opcode,
+            responseCode: facts.responseCode,
+            isTruncated: facts.isTruncated,
+            questionName: packet.dnsQuery ?? "",
+            questionType: packet.dnsQueryType,
+            answerRecords: packet.dnsAnswerRecords,
+            omittedAnswerCount: packet.dnsAnswersOmittedCount,
+            pairedMessageIndex: nil
+        )
+    }
+
+    /// Scan once and return every requested conversation in `order`.
+    private func readAll(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> [FollowDatagramResult] {
         var scanned = 0
         let completion: CaptureStreamCompletion
         walk: while true {
@@ -249,57 +360,28 @@ nonisolated final class FollowDatagramReader {
         case .partialHeader,
              .partialBody: .incompleteTruncatedTail(completion.reason)
         }
-        if case .incompleteTruncatedTail = completeness {
-            limitations.insert(.sourceTailTruncated)
+
+        return order.compactMap { tuple in
+            guard var conversation = conversations.removeValue(forKey: tuple) else {
+                return nil
+            }
+            if case .incompleteTruncatedTail = completeness {
+                conversation.limitations.insert(.sourceTailTruncated)
+            }
+            return FollowDatagramResult(
+                identity: reader.identity,
+                format: reader.format,
+                tuple: tuple,
+                messages: Self.pairDNS(conversation.messages),
+                omittedMessageCount: conversation.omittedMessages,
+                omittedPayloadByteCount: conversation.omittedBytes,
+                matchedFrameCount: conversation.matched,
+                scannedFrameCount: scanned,
+                limitations: conversation.limitations,
+                completeness: completeness,
+                finalProgress: completion.progress
+            )
         }
-
-        return FollowDatagramResult(
-            identity: reader.identity,
-            format: reader.format,
-            tuple: tuple,
-            messages: Self.pairDNS(messages),
-            omittedMessageCount: omittedMessages,
-            omittedPayloadByteCount: omittedBytes,
-            matchedFrameCount: matched,
-            scannedFrameCount: scanned,
-            limitations: limitations,
-            completeness: completeness,
-            finalProgress: completion.progress
-        )
-    }
-
-    // MARK: Private
-
-    private let sourceURL: URL
-    private let tuple: FiveTuple
-    private let sourceToken: UUID?
-    private let configuration: Configuration
-    private let reader: CaptureStreamReader
-
-    private var messages: [FollowDatagramMessage] = []
-    private var retainedBytes = 0
-    private var matched = 0
-    private var omittedMessages = 0
-    private var omittedBytes: UInt64 = 0
-    private var limitations: FollowDatagramLimitations = []
-    private var retentionEnded = false
-
-    private static func dnsReading(of packet: DecodedPacket) -> FollowDNSMessage? {
-        guard packet.appProtocol == .dns, let facts = packet.dnsFacts else {
-            return nil
-        }
-        return FollowDNSMessage(
-            transactionID: facts.transactionID,
-            isResponse: facts.isResponse,
-            opcode: facts.opcode,
-            responseCode: facts.responseCode,
-            isTruncated: facts.isTruncated,
-            questionName: packet.dnsQuery ?? "",
-            questionType: packet.dnsQueryType,
-            answerRecords: packet.dnsAnswerRecords,
-            omittedAnswerCount: packet.dnsAnswersOmittedCount,
-            pairedMessageIndex: nil
-        )
     }
 
     private func fold(_ event: CaptureFrameEvent, ordinal: Int) {
@@ -314,7 +396,7 @@ nonisolated final class FollowDatagramReader {
             frame, linkType: reader.defaultLinkType ?? event.reference.linkType
         )
         guard packet.transport == .udp,
-              let decoded = packet.fiveTuple, decoded == tuple,
+              let tuple = packet.fiveTuple, conversations[tuple] != nil,
               let source = packet.sourceEndpoint,
               let destination = packet.destinationEndpoint else
         {
@@ -328,37 +410,9 @@ nonisolated final class FollowDatagramReader {
         } else {
             return
         }
-        matched += 1
-
         let range = packet.udpPayloadRange.map { range in
             range.clamped(to: 0 ..< event.bytes.count)
         } ?? 0 ..< 0
-        let capturedPayload = range.count
-        if let declared = packet.udpDeclaredPayloadLength, capturedPayload < declared {
-            limitations.insert(.capturedPayloadTruncated)
-        }
-
-        let keep = min(capturedPayload, configuration.maxPayloadBytesPerMessage)
-        // Once one datagram is refused every later one is too, even a smaller one,
-        // so the retained set stays a prefix: counted exactly, never out of order.
-        if retentionEnded
-            || messages.count >= configuration.maxMessages
-            || retainedBytes + keep > configuration.maxRetainedPayloadBytes
-        {
-            retentionEnded = true
-            limitations.insert(.messageRetentionTruncated)
-            omittedMessages += 1
-            omittedBytes = omittedBytes > UInt64.max - UInt64(capturedPayload)
-                ? .max
-                : omittedBytes + UInt64(capturedPayload)
-            return
-        }
-        if keep < capturedPayload {
-            limitations.insert(.messageBytesBounded)
-        }
-        retainedBytes += keep
-        let payload = Array(event.bytes[range.lowerBound ..< range.lowerBound + keep])
-
         let provenance = SessionFrameProvenance(
             ordinal: FrameOrdinal(UInt64(ordinal)),
             timestamp: event.reference.timestamp,
@@ -369,14 +423,16 @@ nonisolated final class FollowDatagramReader {
                 SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
             }
         )
-        messages.append(FollowDatagramMessage(
+        // Mutated in place through the dictionary: retained messages are never
+        // copied per frame.
+        conversations[tuple]?.fold(
             direction: direction,
-            provenance: provenance,
-            payload: payload,
-            capturedPayloadLength: capturedPayload,
+            payload: event.bytes[range],
             declaredPayloadLength: packet.udpDeclaredPayloadLength,
-            dns: Self.dnsReading(of: packet)
-        ))
+            dns: Self.dnsReading(of: packet),
+            provenance: provenance,
+            configuration: configuration
+        )
     }
 
     private func revalidateSourceIdentity() throws {
@@ -386,6 +442,64 @@ nonisolated final class FollowDatagramReader {
         defer { try? handle.close() }
         guard PcapFileIdentity.snapshot(of: handle).matches(reader.identity) else {
             throw FollowStreamError.identityMismatch
+        }
+    }
+}
+
+// MARK: FollowDatagramReader.Conversation
+
+private extension FollowDatagramReader {
+    /// One requested conversation's retained prefix and exact counts.
+    nonisolated struct Conversation {
+        var messages: [FollowDatagramMessage] = []
+        var retainedBytes = 0
+        var matched = 0
+        var omittedMessages = 0
+        var omittedBytes: UInt64 = 0
+        var limitations: FollowDatagramLimitations = []
+        var retentionEnded = false
+
+        mutating func fold(
+            direction: ConnectionDirection,
+            payload captured: ArraySlice<UInt8>,
+            declaredPayloadLength: Int?,
+            dns: @autoclosure () -> FollowDNSMessage?,
+            provenance: SessionFrameProvenance,
+            configuration: Configuration
+        ) {
+            matched += 1
+            let capturedPayload = captured.count
+            if let declaredPayloadLength, capturedPayload < declaredPayloadLength {
+                limitations.insert(.capturedPayloadTruncated)
+            }
+
+            let keep = min(capturedPayload, configuration.maxPayloadBytesPerMessage)
+            // Once one datagram is refused every later one is too, even a smaller one,
+            // so the retained set stays a prefix: counted exactly, never out of order.
+            if retentionEnded
+                || messages.count >= configuration.maxMessages
+                || retainedBytes + keep > configuration.maxRetainedPayloadBytes
+            {
+                retentionEnded = true
+                limitations.insert(.messageRetentionTruncated)
+                omittedMessages += 1
+                omittedBytes = omittedBytes > UInt64.max - UInt64(capturedPayload)
+                    ? .max
+                    : omittedBytes + UInt64(capturedPayload)
+                return
+            }
+            if keep < capturedPayload {
+                limitations.insert(.messageBytesBounded)
+            }
+            retainedBytes += keep
+            messages.append(FollowDatagramMessage(
+                direction: direction,
+                provenance: provenance,
+                payload: Array(captured.prefix(keep)),
+                capturedPayloadLength: capturedPayload,
+                declaredPayloadLength: declaredPayloadLength,
+                dns: dns()
+            ))
         }
     }
 }

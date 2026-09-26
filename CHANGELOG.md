@@ -187,6 +187,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Export Objects** and **Export PDUs** read many connections in one pass over the capture instead of re-reading the file once per connection.
 - Status bar, inspector, History, finding and evidence text reads as plain phrases ("1 of 4 selected", "1 TLS session, 716 bytes", "NXDOMAIN response for example.com. 2 cited observations, bounded evidence.") instead of dot-separated fragments; protocol stacks read outer to inner with ›.
 - Quitting during a live capture now stops it the same way Stop does, so its sessions are kept in History; the captured packets are still discarded unless you save the capture first.
 

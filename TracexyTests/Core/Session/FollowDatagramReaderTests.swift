@@ -218,6 +218,43 @@ struct FollowDatagramReaderTests {
     }
 
     @Test
+    func groupedReadsEqualSingleReads() throws {
+        let other = FiveTuple(
+            proto: .udp,
+            source: IPEndpoint(ip: "10.0.0.5", port: 50_001),
+            destination: IPEndpoint(ip: "203.0.113.9", port: 53)
+        )
+        let frames = [
+            Self.dns(client: true, id: 1, flags: 0x0100, name: "mine.example.test"),
+            PacketBuilder.dnsQueryFrame(
+                name: "other.example.test",
+                src: "10.0.0.5",
+                dst: "203.0.113.9",
+                srcPort: 50_001
+            ),
+            Self.dns(client: false, id: 1, flags: 0x8180, name: "mine.example.test", answers: ["192.0.2.1"]),
+        ]
+        let small = FollowDatagramReader.Configuration(maxMessages: 1)
+        try Self.withCapture(frames) { url, identity in
+            for configuration in [FollowDatagramReader.Configuration(), small] {
+                let singles = try [Self.tuple, other].map {
+                    try FollowDatagramReader(
+                        contentsOf: url, expectedIdentity: identity, tuple: $0, configuration: configuration
+                    ).read()
+                }
+                var grouped: [FollowDatagramResult] = []
+                try FollowDatagramReader.readEach(
+                    contentsOf: url, expectedIdentity: identity, tuples: [Self.tuple, other, Self.tuple],
+                    configuration: configuration
+                ) { grouped.append($0) }
+                #expect(grouped == singles)
+            }
+            let pair = try FollowDatagramReader(contentsOf: url, expectedIdentity: identity, tuple: Self.tuple).read()
+            #expect(pair.messages.first?.dns?.pairedMessageIndex == 1)
+        }
+    }
+
+    @Test
     func sourceTokenMakesEveryDatagramNavigable() throws {
         let token = UUID()
         try Self.withCapture([Self.dns(client: true, id: 1, flags: 0x0100, name: "n.example.test")]) { url, identity in

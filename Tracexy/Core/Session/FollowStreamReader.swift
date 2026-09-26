@@ -20,7 +20,9 @@ import Foundation
 ///
 /// One instance performs one read; construct a fresh instance to read again. A
 /// repeated read of the same unchanged file with the same tuple/bounds is
-/// deterministic.
+/// deterministic. ``readEach(contentsOf:expectedIdentity:tuples:sourceToken:configuration:tuplesPerPass:_:)``
+/// follows many conversations with one file pass per group, each conversation
+/// folded exactly as a single read would fold it.
 nonisolated final class FollowStreamReader {
     // MARK: Lifecycle
 
@@ -39,7 +41,7 @@ nonisolated final class FollowStreamReader {
     ///   ``FollowStreamError/identityMismatch`` when the opened file no longer
     ///   matches `expectedIdentity`; rethrows the stream reader's construction error
     ///   (bad magic / short header).
-    init(
+    convenience init(
         contentsOf url: URL,
         expectedIdentity: PcapFileIdentity,
         tuple: FiveTuple,
@@ -48,11 +50,35 @@ nonisolated final class FollowStreamReader {
     )
         throws
     {
-        guard tuple.proto == .tcp else {
+        try self.init(
+            contentsOf: url, expectedIdentity: expectedIdentity, tuples: [tuple],
+            sourceToken: sourceToken, configuration: configuration
+        )
+    }
+
+    /// Prepare one pass over `url` that folds every tuple in `tuples` (duplicates
+    /// fold once). Callers go through ``readEach``, which bounds the group size.
+    private init(
+        contentsOf url: URL,
+        expectedIdentity: PcapFileIdentity,
+        tuples: [FiveTuple],
+        sourceToken: UUID?,
+        configuration: Configuration
+    )
+        throws
+    {
+        guard tuples.allSatisfy({ $0.proto == .tcp }) else {
             throw FollowStreamError.tupleNotTCP
         }
+        var order: [FiveTuple] = []
+        var conversations: [FiveTuple: Conversation] = [:]
+        for tuple in tuples where conversations[tuple] == nil {
+            order.append(tuple)
+            conversations[tuple] = Conversation(trackerConfiguration: configuration.trackerConfiguration)
+        }
         sourceURL = url
-        self.tuple = tuple
+        self.order = order
+        self.conversations = conversations
         self.sourceToken = sourceToken
         self.configuration = configuration
         let reader = try CaptureStreamReader(
@@ -69,8 +95,6 @@ nonisolated final class FollowStreamReader {
             throw FollowStreamError.identityMismatch
         }
         self.reader = reader
-        aToB = DirectionState(trackerConfiguration: configuration.trackerConfiguration)
-        bToA = DirectionState(trackerConfiguration: configuration.trackerConfiguration)
     }
 
     // MARK: Internal
@@ -118,6 +142,55 @@ nonisolated final class FollowStreamReader {
         let isCancelled: @Sendable () -> Bool
     }
 
+    /// The most conversations one pass folds together. Memory for a pass is at most
+    /// this many conversations times both directions' retained-byte bound.
+    static let maximumTuplesPerPass = 64
+
+    /// Follow every tuple in `tuples` with one scan of `url` per group of
+    /// `tuplesPerPass`, handing each conversation's result to `body` in the order
+    /// given (a repeated tuple is read once) as soon as its group's pass ends. Each
+    /// result is the one a single read of that tuple would return; only the scan is
+    /// shared.
+    ///
+    /// - Parameter tuplesPerPass: clamped to `1...maximumTuplesPerPass`. A group's
+    ///   results are released before the next group is scanned.
+    /// - Throws: ``FollowStreamError/tupleNotTCP`` before any scan when a tuple is
+    ///   not TCP; otherwise whatever a single read throws, or what `body` throws.
+    ///   A throw ends the whole call; results already handed over stay valid.
+    static func readEach(
+        contentsOf url: URL,
+        expectedIdentity: PcapFileIdentity,
+        tuples: [FiveTuple],
+        sourceToken: UUID? = nil,
+        configuration: Configuration = Configuration(),
+        tuplesPerPass: Int = 16,
+        _ body: (FollowStreamResult) throws -> Void
+    )
+        throws
+    {
+        guard tuples.allSatisfy({ $0.proto == .tcp }) else {
+            throw FollowStreamError.tupleNotTCP
+        }
+        var seen = Set<FiveTuple>()
+        let unique = tuples.filter { seen.insert($0).inserted }
+        let group = min(max(1, tuplesPerPass), maximumTuplesPerPass)
+        var start = 0
+        while start < unique.count {
+            if configuration.isCancelled() {
+                throw CancellationError()
+            }
+            let end = min(start + group, unique.count)
+            let results = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: expectedIdentity, tuples: Array(unique[start ..< end]),
+                sourceToken: sourceToken, configuration: configuration
+            ).readAll()
+            for result in results {
+                try body(result)
+            }
+            start = end
+        }
+    }
+
     /// Scan the file to its terminal and fold the requested conversation into one
     /// immutable ``FollowStreamResult``.
     ///
@@ -127,16 +200,30 @@ nonisolated final class FollowStreamReader {
     ///   corrupt metadata. Either throws before returning, so the caller adopts no
     ///   partial follow-stream state.
     func read(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> FollowStreamResult {
+        guard let result = try readAll(onProgress: onProgress).first else {
+            // The public initializer always asks for exactly one tuple.
+            preconditionFailure("A follow read has one requested conversation.")
+        }
+        return result
+    }
+
+    // MARK: Private
+
+    private let sourceURL: URL
+    /// Requested tuples, first-asked order, each once.
+    private let order: [FiveTuple]
+    private let sourceToken: UUID?
+    private let configuration: Configuration
+    private let reader: CaptureStreamReader
+
+    private var conversations: [FiveTuple: Conversation]
+
+    /// Scan once and return every requested conversation in `order`.
+    private func readAll(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> [FollowStreamResult] {
         var scanned = 0
         let completion = try walk(onProgress: onProgress, scanned: &scanned)
         try revalidateSourceIdentity()
         onProgress(completion.progress)
-
-        // Finalize each direction's gap observation from its byte-free tracker: a
-        // hole that was never bridged (still pending, or dropped by the pending
-        // bound) is a genuine sequence gap, independent of byte retention.
-        aToB.finalizeGap()
-        bToA.finalizeGap()
 
         let completeness: FollowStreamCompleteness = switch completion.reason {
         case .cleanEndOfFile: .complete
@@ -144,32 +231,29 @@ nonisolated final class FollowStreamReader {
              .partialBody: .incompleteTruncatedTail(completion.reason)
         }
 
-        return FollowStreamResult(
-            identity: reader.identity,
-            format: reader.format,
-            tuple: tuple,
-            aToB: aToB.snapshot(navigable: sourceToken != nil),
-            bToA: bToA.snapshot(navigable: sourceToken != nil),
-            matchedFrameCount: aToB.matchedFrames + bToA.matchedFrames,
-            scannedFrameCount: scanned,
-            limitations: limitations(completeness: completeness),
-            completeness: completeness,
-            finalProgress: completion.progress
-        )
+        return order.compactMap { tuple in
+            guard var conversation = conversations.removeValue(forKey: tuple) else {
+                return nil
+            }
+            // Finalize each direction's gap observation from its byte-free tracker: a
+            // hole that was never bridged (still pending, or dropped by the pending
+            // bound) is a genuine sequence gap, independent of byte retention.
+            conversation.aToB.finalizeGap()
+            conversation.bToA.finalizeGap()
+            return FollowStreamResult(
+                identity: reader.identity,
+                format: reader.format,
+                tuple: tuple,
+                aToB: conversation.aToB.snapshot(navigable: sourceToken != nil),
+                bToA: conversation.bToA.snapshot(navigable: sourceToken != nil),
+                matchedFrameCount: conversation.aToB.matchedFrames + conversation.bToA.matchedFrames,
+                scannedFrameCount: scanned,
+                limitations: conversation.limitations(completeness: completeness),
+                completeness: completeness,
+                finalProgress: completion.progress
+            )
+        }
     }
-
-    // MARK: Private
-
-    private let sourceURL: URL
-    private let tuple: FiveTuple
-    private let sourceToken: UUID?
-    private let configuration: Configuration
-    private let reader: CaptureStreamReader
-
-    private var aToB: DirectionState
-    private var bToA: DirectionState
-    /// Set when any matched frame's captured length was below its original length.
-    private var capturedFrameTruncated = false
 
     /// Drive the reader to its terminal, folding each frame exactly once.
     private func walk(
@@ -210,7 +294,7 @@ nonisolated final class FollowStreamReader {
         )
 
         guard packet.transport == .tcp,
-              let decoded = packet.fiveTuple, decoded == tuple,
+              let tuple = packet.fiveTuple, conversations[tuple] != nil,
               let facts = packet.tcpFacts,
               let source = packet.sourceEndpoint,
               let destination = packet.destinationEndpoint else
@@ -232,7 +316,7 @@ nonisolated final class FollowStreamReader {
         // A short capture proves only that this matched frame was truncated. It
         // does not prove that the omitted tail was TCP application payload.
         if event.reference.capturedLength < event.reference.originalLength {
-            capturedFrameTruncated = true
+            conversations[tuple]?.capturedFrameTruncated = true
         }
 
         let provenance = SessionFrameProvenance(
@@ -245,70 +329,17 @@ nonisolated final class FollowStreamReader {
                 SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
             }
         )
-        ingest(
+        // Mutated in place through the dictionary: a conversation's runs are never
+        // copied per frame.
+        conversations[tuple]?.ingest(
             direction: direction,
             facts: facts,
             payloadSequence: packet.tcpPayloadSequence,
             payloadBytes: packet.tcpPayloadBytes,
-            provenance: provenance
+            provenance: provenance,
+            maxRetainedBytes: configuration.maxRetainedBytesPerDirection,
+            maxRuns: configuration.maxRunsPerDirection
         )
-    }
-
-    /// Fold one matched segment into its direction state.
-    private func ingest(
-        direction: ConnectionDirection,
-        facts: TCPSegmentFacts,
-        payloadSequence: UInt32?,
-        payloadBytes: [UInt8],
-        provenance: SessionFrameProvenance
-    ) {
-        let maxBytes = configuration.maxRetainedBytesPerDirection
-        let maxRuns = configuration.maxRunsPerDirection
-        switch direction {
-        case .aToB:
-            aToB.ingest(
-                facts: facts, payloadSequence: payloadSequence, payloadBytes: payloadBytes,
-                provenance: provenance, maxRetainedBytes: maxBytes, maxRuns: maxRuns
-            )
-        case .bToA:
-            bToA.ingest(
-                facts: facts, payloadSequence: payloadSequence, payloadBytes: payloadBytes,
-                provenance: provenance, maxRetainedBytes: maxBytes, maxRuns: maxRuns
-            )
-        }
-    }
-
-    /// Combine both directions' independently-set flags with the reader-level
-    /// captured-frame and source-tail observations into one limitation set.
-    private func limitations(completeness: FollowStreamCompleteness) -> FollowStreamLimitations {
-        var flags: FollowStreamLimitations = []
-        for direction in [aToB, bToA] {
-            if direction.sequenceGap {
-                flags.insert(.sequenceGap)
-            }
-            if direction.outOfOrder {
-                flags.insert(.outOfOrder)
-            }
-            if direction.overlapConflict {
-                flags.insert(.overlapConflict)
-            }
-            if direction.serialAmbiguous {
-                flags.insert(.serialAmbiguous)
-            }
-            if direction.runRetentionTruncated {
-                flags.insert(.runRetentionTruncated)
-            }
-            if direction.byteRetentionTruncated {
-                flags.insert(.byteRetentionTruncated)
-            }
-        }
-        if capturedFrameTruncated {
-            flags.insert(.capturedFrameTruncated)
-        }
-        if case .incompleteTruncatedTail = completeness {
-            flags.insert(.sourceTailTruncated)
-        }
-        return flags
     }
 
     /// Reopen the selected path after the terminal and require it still to name
@@ -324,6 +355,85 @@ nonisolated final class FollowStreamReader {
         let current = PcapFileIdentity.snapshot(of: handle)
         guard current.matches(reader.identity) else {
             throw FollowStreamError.identityMismatch
+        }
+    }
+}
+
+// MARK: FollowStreamReader.Conversation
+
+private extension FollowStreamReader {
+    /// Both directions of one requested conversation, plus its captured-frame
+    /// observation.
+    nonisolated struct Conversation {
+        // MARK: Lifecycle
+
+        init(trackerConfiguration: TCPSequenceTracker.Configuration) {
+            aToB = DirectionState(trackerConfiguration: trackerConfiguration)
+            bToA = DirectionState(trackerConfiguration: trackerConfiguration)
+        }
+
+        // MARK: Internal
+
+        var aToB: DirectionState
+        var bToA: DirectionState
+        /// Set when any matched frame's captured length was below its original length.
+        var capturedFrameTruncated = false
+
+        /// Fold one matched segment into its direction state.
+        mutating func ingest(
+            direction: ConnectionDirection,
+            facts: TCPSegmentFacts,
+            payloadSequence: UInt32?,
+            payloadBytes: [UInt8],
+            provenance: SessionFrameProvenance,
+            maxRetainedBytes: Int,
+            maxRuns: Int
+        ) {
+            switch direction {
+            case .aToB:
+                aToB.ingest(
+                    facts: facts, payloadSequence: payloadSequence, payloadBytes: payloadBytes,
+                    provenance: provenance, maxRetainedBytes: maxRetainedBytes, maxRuns: maxRuns
+                )
+            case .bToA:
+                bToA.ingest(
+                    facts: facts, payloadSequence: payloadSequence, payloadBytes: payloadBytes,
+                    provenance: provenance, maxRetainedBytes: maxRetainedBytes, maxRuns: maxRuns
+                )
+            }
+        }
+
+        /// Combine both directions' independently-set flags with the captured-frame
+        /// and source-tail observations into one limitation set.
+        func limitations(completeness: FollowStreamCompleteness) -> FollowStreamLimitations {
+            var flags: FollowStreamLimitations = []
+            for direction in [aToB, bToA] {
+                if direction.sequenceGap {
+                    flags.insert(.sequenceGap)
+                }
+                if direction.outOfOrder {
+                    flags.insert(.outOfOrder)
+                }
+                if direction.overlapConflict {
+                    flags.insert(.overlapConflict)
+                }
+                if direction.serialAmbiguous {
+                    flags.insert(.serialAmbiguous)
+                }
+                if direction.runRetentionTruncated {
+                    flags.insert(.runRetentionTruncated)
+                }
+                if direction.byteRetentionTruncated {
+                    flags.insert(.byteRetentionTruncated)
+                }
+            }
+            if capturedFrameTruncated {
+                flags.insert(.capturedFrameTruncated)
+            }
+            if case .incompleteTruncatedTail = completeness {
+                flags.insert(.sourceTailTruncated)
+            }
+            return flags
         }
     }
 }
