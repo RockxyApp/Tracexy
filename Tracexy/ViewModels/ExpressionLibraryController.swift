@@ -51,7 +51,9 @@ final class ExpressionLibraryController: SessionExpressionPreprocessor {
 
     /// Supplies macros the app defines itself. They expand in every Session
     /// Expression whenever the source offers them.
-    @ObservationIgnored weak var builtInSource: (any ExpressionMacroBuiltInSource)?
+    @ObservationIgnored weak var builtInSource: (any ExpressionMacroBuiltInSource)? {
+        didSet { attachment &+= 1 }
+    }
 
     var barItems: [FilterButtonItem] {
         FilterButtonItem.build(buttons)
@@ -81,7 +83,8 @@ final class ExpressionLibraryController: SessionExpressionPreprocessor {
     /// The coordinator the library serves, for extensions that act on the same
     /// Project (for example moving the library between Macs).
     var attachedCoordinator: MainContentCoordinator? {
-        coordinator
+        _ = attachment
+        return coordinator
     }
 
     /// Limits govern growth only. A list that edits, reorders or removes entries is
@@ -230,6 +233,7 @@ final class ExpressionLibraryController: SessionExpressionPreprocessor {
 
     /// The accepted expression's expansion, when it used macros.
     func acceptedExpansion() -> (typed: String, expanded: String)? {
+        _ = attachment
         guard let accepted = coordinator?.activeWorkspace.acceptedInvestigationDraft,
               accepted.mode == .expression,
               let expanded = expandedText(accepted.expression) else

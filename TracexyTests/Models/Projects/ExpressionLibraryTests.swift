@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Tracexy
 
@@ -283,7 +284,16 @@ struct ExpressionLibraryWorkflowTests {
         defer { isolation.tearDown() }
         let coordinator = try await Self.openCapture(isolation)
         let controller = coordinator.filterLibrary
+        // A view or menu that asked before the library was attached hears about it.
+        var told = false
+        withObservationTracking {
+            _ = controller.acceptedExpansion()
+            _ = controller.attachedCoordinator
+        } onChange: {
+            told = true
+        }
         controller.attach(to: coordinator)
+        #expect(told)
         controller.setMacros([ExpressionMacro(name: "proto", text: "$1")])
         let workspace = coordinator.activeWorkspace
 
