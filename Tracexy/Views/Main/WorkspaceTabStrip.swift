@@ -1064,10 +1064,13 @@ final class WorkspaceTabStripView: NSView, NSTextFieldDelegate, NSViewToolTipOwn
         for (index, tab) in model.tabs.enumerated() {
             let frame = tabFrame(at: index)
             let isActive = tab.id == model.activeID
+            // A tab partly scrolled out reports only the part in view, so the
+            // VoiceOver cursor never outlines a part the strip does not show.
+            let visible = frame.intersection(stripRect)
             let element = WorkspaceTabAccessibilityElement(
                 parent: self,
                 role: .radioButton,
-                frame: frame
+                frame: visible.isNull ? frame : visible
             ) { [weak self] in
                 self?.actions.select(tab.id)
             }
@@ -1090,6 +1093,7 @@ final class WorkspaceTabStripView: NSView, NSTextFieldDelegate, NSViewToolTipOwn
                 close.setAccessibilityIdentifier("workspaceTabs.close")
                 close.setAccessibilityEnabled(model.isEnabled)
                 close.isHiddenFromAccessibility = element.isHiddenFromAccessibility
+                    || !stripRect.contains(closeFrame(in: frame))
                 elements.append(close)
             }
         }

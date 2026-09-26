@@ -60,6 +60,12 @@ struct WorkspaceTabStripViewTests {
         #expect(tabs.last?.accessibilityLabel() == "Workspace 32")
         #expect((tabs.last?.accessibilityValue() as? Int) == 1)
         #expect(!tabs.contains { $0.accessibilityLabel() == "Live" })
+        // A tab partly scrolled out reports only the part the strip shows.
+        let stripOnScreen = window.convertToScreen(strip.convert(strip.bounds, to: nil))
+        let stripLeft = stripOnScreen.minX + WorkspaceTabStripLayout.leadingInset
+        let allTabs = children.first { $0.accessibilityIdentifier() == "workspaceTabs.all" }
+        #expect(tabs.allSatisfy { $0.accessibilityFrame().minX >= stripLeft - 0.5 })
+        #expect(tabs.allSatisfy { $0.accessibilityFrame().maxX <= (allTabs?.accessibilityFrame().minX ?? .infinity) })
         #expect(children
             .contains { $0.accessibilityIdentifier() == "workspaceTabs.all" && $0.accessibilityRole() == .menuButton })
         Self.snapshot(window, name: "thirty-two-tabs")
