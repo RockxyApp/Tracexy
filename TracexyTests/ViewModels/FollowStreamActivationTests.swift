@@ -24,7 +24,7 @@ struct FollowStreamActivationTests {
         coordinator.select(session)
 
         #expect(coordinator.followStreamUnavailableReason == nil)
-        coordinator.followSelectedTCPStream()
+        coordinator.followSelectedStream()
         await coordinator.waitForFollowStream()
 
         let result = try #require(coordinator.followStreamResult)
@@ -69,7 +69,7 @@ struct FollowStreamActivationTests {
         #expect(coordinator.stoppedCaptureReadyGeneration == stoppedGeneration)
         #expect(coordinator.followStreamUnavailableReason == nil)
 
-        coordinator.followSelectedTCPStream()
+        coordinator.followSelectedStream()
         await coordinator.waitForFollowStream()
 
         let result = try #require(coordinator.followStreamResult)
@@ -77,6 +77,84 @@ struct FollowStreamActivationTests {
         #expect(result.matchedFrameCount > 0)
         #expect(result.aToB.retainedByteCount + result.bToA.retainedByteCount > 0)
         #expect(coordinator.followStreamError == nil)
+    }
+
+    @Test("A UDP session is followed datagram by datagram with navigable frames")
+    func savedUDPConversationActivation() async throws {
+        let environment = try await makeEnvironment()
+        defer { environment.teardown() }
+        let frames = [
+            PacketBuilder.dnsQueryFrame(name: "www.example.test", src: "10.0.0.5", dst: "192.0.2.53"),
+            PacketBuilder.dnsResponseFrame(
+                name: "www.example.test", answers: ["192.0.2.80"], src: "192.0.2.53", dst: "10.0.0.5"
+            ),
+        ].enumerated().map { index, bytes in
+            CapturedFrame(
+                bytes: bytes,
+                timestamp: Date(timeIntervalSince1970: 1_800_000_000 + Double(index) * 0.02),
+                originalLength: bytes.count,
+                capturedLength: bytes.count,
+                linkType: LinkType.ethernet
+            )
+        }
+        let capture = try writeCapture(named: "saved-udp-follow", frames: frames, in: environment.directory)
+        let coordinator = environment.coordinator
+        coordinator.openSavedCapture(capture)
+        await coordinator.waitForSavedCaptureOpen()
+        let session = try #require(coordinator.sessions.first { $0.protocolStack.contains(.udp) })
+        coordinator.select(session)
+
+        #expect(coordinator.followsSelectedSessionAsDatagrams)
+        #expect(coordinator.followStreamUnavailableReason == nil)
+        coordinator.followSelectedStream()
+        await coordinator.waitForFollowStream()
+
+        let result = try #require(coordinator.followDatagramResult)
+        #expect(coordinator.followStreamResult == nil)
+        #expect(result.messages.count == 2)
+        #expect(result.messages[1].dns?.pairedMessageIndex == 0)
+        #expect(result.messages[1].dns?.answerRecords == ["A 192.0.2.80"])
+        let provenance = result.messages[1].provenance
+        #expect(provenance.locator != nil)
+
+        coordinator.inspectFollowedFrame(provenance)
+        await coordinator.waitForCitedFrame()
+        guard case let .loaded(evidence) = coordinator.citedFrame.state else {
+            Issue.record("the cited datagram did not load")
+            return
+        }
+        #expect(evidence.provenance.ordinal == provenance.ordinal)
+        #expect(evidence.bytes.count == frames[1].bytes.count)
+        #expect(coordinator.activeWorkspace.inspectorTab == .layers)
+    }
+
+    @Test("A TCP follow from a saved file makes each run's first frame navigable")
+    func savedStreamRunsAreNavigable() async throws {
+        let environment = try await makeEnvironment()
+        defer { environment.teardown() }
+        let frames = ReplayCorpus.tcpConnectionCapturedFrames()
+        let capture = try writeCapture(named: "saved-follow-navigation", frames: frames, in: environment.directory)
+        let coordinator = environment.coordinator
+        coordinator.openSavedCapture(capture)
+        await coordinator.waitForSavedCaptureOpen()
+        let tuple = try #require(coordinator.connectionSnapshot.summaries.first?.tuple)
+        try coordinator.select(#require(
+            coordinator.sessions.first { $0.id == SessionBuilder.sessionID(for: tuple) }
+        ))
+        coordinator.followSelectedStream()
+        await coordinator.waitForFollowStream()
+
+        let result = try #require(coordinator.followStreamResult)
+        let run = try #require((result.aToB.runs + result.bToA.runs).first)
+        let provenance = try #require(run.firstProvenance)
+        #expect(provenance.ordinal.rawValue == UInt64(run.firstCaptureOrdinal))
+        coordinator.inspectFollowedFrame(provenance)
+        await coordinator.waitForCitedFrame()
+        guard case let .loaded(evidence) = coordinator.citedFrame.state else {
+            Issue.record("the run's first frame did not load")
+            return
+        }
+        #expect(evidence.bytes == frames[run.firstCaptureOrdinal - 1].bytes)
     }
 
     @Test("Active capture rejects Follow Stream without scanning the growing spool")
@@ -95,7 +173,7 @@ struct FollowStreamActivationTests {
         coordinator.isCapturing = true
 
         #expect(coordinator.followStreamUnavailableReason?.contains("Stop the live capture") == true)
-        coordinator.followSelectedTCPStream()
+        coordinator.followSelectedStream()
 
         #expect(coordinator.followStreamTask == nil)
         #expect(coordinator.followStreamResult == nil)
@@ -116,7 +194,7 @@ struct FollowStreamActivationTests {
             coordinator.sessions.first { $0.id == SessionBuilder.sessionID(for: tuple) }
         )
         coordinator.select(selected)
-        coordinator.followSelectedTCPStream()
+        coordinator.followSelectedStream()
         await coordinator.waitForFollowStream()
         #expect(coordinator.followStreamResult != nil)
 

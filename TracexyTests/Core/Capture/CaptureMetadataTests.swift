@@ -102,7 +102,7 @@ struct CaptureMetadataTests {
         accumulator.add(linkType: LinkType.raw, timestamp: nil, hasDecodedLinkLayer: false)
 
         let line = SessionCenterView.metadataSummary(accumulator.summary())
-        #expect(line == "2 link types · 1 untimed · 1 undecoded link layer")
+        #expect(line == "2 link types, 1 untimed, 1 undecoded link layer")
 
         var clean = CaptureMetadataAccumulator()
         clean.add(linkType: LinkType.ethernet, timestamp: Date(timeIntervalSince1970: 0), hasDecodedLinkLayer: true)

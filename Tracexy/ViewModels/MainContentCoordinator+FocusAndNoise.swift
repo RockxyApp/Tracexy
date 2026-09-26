@@ -119,11 +119,16 @@ extension MainContentCoordinator {
     /// Inserts or updates a focus set (used by the editor sheet), then persists.
     /// A save that would exceed the focus-set cap leaves the stored sets
     /// untouched and reports why through ``policyNotice``.
+    ///
+    /// A new set holds at most the rows a workspace may add now; an existing set
+    /// keeps as many as it already had, so saving one that already holds more
+    /// never drops rows.
     func saveFocusSet(_ set: FocusSet) {
+        let stored = focusSets.first { $0.id == set.id }?.rules.count ?? 0
         var normalizedSet = set
         normalizedSet.rules = SessionFilterRule.normalized(
             set.rules,
-            limit: policy.maxSessionFilterRules
+            limit: min(max(sessionFilterRuleLimit, stored), ProjectLimits.maximumFilterRules)
         )
         do {
             try focusGate.validateSavingFocusSet(normalizedSet, into: focusSets)
@@ -148,10 +153,10 @@ extension MainContentCoordinator {
         ws.processFilter = nil
         ws.ipFilter = nil
         ws.clearAggregateScope()
-        // A saved set may hold more rows than this build allows (it was saved on
-        // a different build, or the cap changed). Clamp to capacity, and never
-        // leave the builder with zero rows.
-        ws.filterRules = SessionFilterRule.normalized(set.rules, limit: policy.maxSessionFilterRules)
+        // A saved set may hold more rows than may be added now (imported, say). Its rows are applied intact — only
+        // adding rows is limited — bounded by the storage ceiling, and the
+        // builder is never left with zero rows.
+        ws.filterRules = SessionFilterRule.normalized(set.rules, limit: ProjectLimits.maximumFilterRules)
         ws.isFilterBarVisible = true
         ws.isAdvancedFilterVisible = true
     }
@@ -163,8 +168,9 @@ extension MainContentCoordinator {
 
     /// A blank draft seeded from the active workspace's current active rules, so
     /// "Add" captures whatever the user is already filtering by.
+    /// Only as many rows as a new set may hold are copied.
     func draftFocusSet() -> FocusSet {
-        let active = activeWorkspace.activeFilterRules
+        let active = Array(activeWorkspace.activeFilterRules.prefix(sessionFilterRuleLimit))
         return FocusSet(
             name: "",
             rules: active.isEmpty ? [SessionFilterRule()] : active
@@ -172,6 +178,27 @@ extension MainContentCoordinator {
     }
 
     // MARK: Noise Control
+
+    var isNoiseControlActive: Bool {
+        !mutedHosts.isEmpty || !mutedProtocols.isEmpty
+    }
+
+    var noiseRuleCount: Int {
+        mutedHosts.count + mutedProtocols.count
+    }
+
+    /// Distinct protocols present across the current capture, for the Noise sheet.
+    var presentProtocols: [ProtocolKind] {
+        var seen = Set<ProtocolKind>()
+        var ordered: [ProtocolKind] = []
+        for session in presentedSessions {
+            let proto = session.primaryProtocol
+            if seen.insert(proto).inserted {
+                ordered.append(proto)
+            }
+        }
+        return ordered.sorted { $0.label < $1.label }
+    }
 
     func isHostMuted(_ host: String) -> Bool {
         mutedHosts.contains(host)

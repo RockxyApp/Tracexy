@@ -46,6 +46,37 @@ struct ProjectCatalogRepositoryTests {
         }
     }
 
+    @Test("A repository that loaded the file still notices another writer replacing it")
+    func staleRevisionAfterOwnRead() async throws {
+        let directory = Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = JSONProjectCatalogRepository(directoryURL: directory)
+        let second = JSONProjectCatalogRepository(directoryURL: directory)
+        let loaded = try await first.load(seed: ProjectCatalog.defaultCatalog())
+        _ = try await second.load(seed: ProjectCatalog.defaultCatalog())
+
+        var update = loaded
+        update.revision = 1
+        update.projects[0].name = "First Writer"
+        try await first.save(update, expectedRevision: 0)
+
+        var stale = loaded
+        stale.revision = 1
+        stale.projects[0].name = "Stale Writer"
+        await #expect(throws: ProjectCatalogRepositoryError.staleRevision(expected: 0, actual: 1)) {
+            try await second.save(stale, expectedRevision: 0)
+        }
+        // The writer that owns the file keeps saving on top of its own revision.
+        var next = update
+        next.revision = 2
+        next.projects[0].name = "First Writer Again"
+        try await first.save(next, expectedRevision: 1)
+        let reread = try await JSONProjectCatalogRepository(directoryURL: directory)
+            .load(seed: ProjectCatalog.defaultCatalog())
+        #expect(reread.revision == 2)
+        #expect(reread.projects[0].name == "First Writer Again")
+    }
+
     @Test("Catalog symlinks are rejected without following their target")
     func symlinkRejected() async throws {
         let directory = Self.temporaryDirectory()

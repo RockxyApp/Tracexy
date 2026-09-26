@@ -87,6 +87,36 @@ nonisolated struct HistoryAutomationService: Sendable {
         )
     }
 
+    /// Read one ordinal-ascending page of a capture's findings. A v2 History file
+    /// the app has not upgraded yet is a typed ``AutomationError/findingsNotRecorded``.
+    func findingPage(_ request: AutomationFindingPageRequest) async throws -> AutomationFindingPage {
+        try request.validate()
+        let cursor = try request.cursor?.storageCursor()
+
+        try checkCancellation()
+        guard try await store.capture(id: request.captureID) != nil else {
+            throw AutomationError.captureNotFound(request.captureID)
+        }
+        try checkCancellation()
+        let page: HistoryFindingPage
+        do {
+            page = try await store.findings(
+                captureID: request.captureID, sessionID: request.sessionID, after: cursor, limit: request.pageSize
+            )
+        } catch HistoryStoreError.findingsNotRecorded {
+            throw AutomationError.findingsNotRecorded
+        }
+        try checkCancellation()
+
+        return AutomationFindingPage(
+            captureID: request.captureID,
+            findings: page.findings.filter(request.matches).map(AutomationFindingValue.init),
+            examinedCount: page.findings.count,
+            nextCursor: page.nextCursor.map { AutomationFindingCursor($0) },
+            pageSize: request.pageSize
+        )
+    }
+
     // MARK: Private
 
     private let store: SessionStore

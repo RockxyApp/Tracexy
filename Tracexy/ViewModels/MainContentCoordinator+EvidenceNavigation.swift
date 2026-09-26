@@ -80,6 +80,8 @@ extension MainContentCoordinator {
     /// the previously cited frame and rebuilds the off-main projection for the newly
     /// selected session. Existing `select(_:)` routes through it too.
     func evidenceNavigationDidChangeSelection() {
+        // ⌘T marks the frame chosen in *this* session's list.
+        sessionTimeDisplay.selectedFrame = nil
         cancelCitedFrame()
         refreshSelectedSessionEvidenceProjection()
     }

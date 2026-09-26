@@ -28,6 +28,8 @@ struct InvestigationQueryEditorView: View {
                 modePicker
                 if workspace.investigationDraft.mode == .rows {
                     combinationPicker
+                } else {
+                    libraryControls
                 }
             }
             .padding(Theme.Metrics.spacingL)
@@ -51,10 +53,25 @@ struct InvestigationQueryEditorView: View {
     private static let expressionReference = """
     Protocols: ipv4, ipv6, arp, icmp, icmpv6, tcp, udp, dns, tls, http, http2, quic, websocket, stun.
     Comparisons: ip / source.ip / destination.ip == address, ip in cidr, \
-    port / source.port / destination.port == number, host contains "text", process contains "text", \
-    bytes == / >= / <= number, finding == reset | retransmission | overlap | outOfOrder | dnsTruncation.
+    port / source.port / destination.port == number, port in 8000..8080, \
+    host / process contains "text", host / process matches "*.example.com" (* any run, ? one character), \
+    bytes == / >= / <= number, finding == connectionRefused | handshakeUnanswered | abortAfterData | \
+    halfClose | tupleReuse | reset | retransmission | overlap | outOfOrder | zeroWindow | windowFull | \
+    duplicateAck | keepAlive | fastRetransmission | spuriousRetransmission | ackedUnseen | cleartextCredentials | dnsTruncation | \
+    dnsNameError | dnsServerFailure | dnsUnanswered | \
+    icmpUnreachable | icmpPacketTooBig | icmpTimeExceeded | icmpReportedUnreachable | \
+    icmpReportedPacketTooBig | icmpReportedTimeExceeded | tlsFatalAlert | tlsWarningAlert | \
+    tlsDeprecatedVersion | tlsRepeatedRetryRequest | tlsHandshakeUnanswered.
+    Messages: http.method == GET, http.status == 404, http.status in 400..499, dhcp.message == Discover.
+    Presence (a field on its own): finding, process, latency, sni, dns.query, dns.answer.
+    TCP stages: tcp.completeness == complete | incomplete | 0…63 (SYN 1, SYN-ACK 2, ACK 4, data 8, FIN 16, RST 32).
+    Time: duration >= 5s, latency >= 200ms, latency in 50ms..1s, start >= "2027-01-15T08:00:00Z".
+    Sets: ip in {address, cidr, …}, port in {80, 443, 8000..8080}, finding in {reset, retransmission}.
     Operators: not or !, and or &&, or or ||, and parentheses.
     """
+
+    @State private var isNamingExpression = false
+    @State private var savingName = ""
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
@@ -107,15 +124,20 @@ struct InvestigationQueryEditorView: View {
                 )
                 .accessibilityLabel("Session expression")
 
+            completionRow
+
             if let error = workspace.investigationQueryError, error.rowID == nil {
                 errorText(error.message)
             }
 
-            Text(Self.expressionExample)
+            // No accessibility label override here: a selectable Text is backed by an
+            // AppKit text element, and overriding its label made SwiftUI resolve the
+            // label through that element and back into itself until the stack ran out
+            // (any accessibility client walking the popover crashed the app).
+            Text("Example: \(Self.expressionExample)")
                 .font(Theme.Typography.monoSmall)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-                .accessibilityLabel("Example session expression: \(Self.expressionExample)")
 
             Text(
                 "Session expressions match whole sessions, not individual packets. "
@@ -130,6 +152,103 @@ struct InvestigationQueryEditorView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The names that can follow what is typed. A click completes the word being typed.
+    @ViewBuilder private var completionRow: some View {
+        let completion = SessionExpressionCompletion.suggestions(for: workspace.investigationDraft.expression)
+        if !completion.candidates.isEmpty {
+            HStack(spacing: Theme.Metrics.spacingS) {
+                ForEach(completion.candidates, id: \.self) { candidate in
+                    Button(candidate) {
+                        workspace.investigationDraft.expression = SessionExpressionCompletion.applying(
+                            candidate, to: workspace.investigationDraft.expression
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(Theme.Typography.monoSmall)
+                    .accessibilityLabel("Insert \(candidate)")
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Expression suggestions")
+        }
+    }
+
+    /// Recent and saved expressions for this Project, and saving the current one.
+    private var libraryControls: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Menu("Recent") {
+                ForEach(coordinator.expressionLibrary.recent, id: \.self) { expression in
+                    Button(expression) {
+                        workspace.investigationDraft.expression = expression
+                    }
+                }
+                if !coordinator.expressionLibrary.recent.isEmpty {
+                    Divider()
+                    Button("Clear Recent") {
+                        coordinator.expressionLibrary.clearRecent()
+                    }
+                }
+            }
+            .disabled(coordinator.expressionLibrary.recent.isEmpty)
+            .fixedSize()
+            .help("Expressions you applied in this Project")
+
+            Menu("Saved") {
+                ForEach(coordinator.expressionLibrary.saved) { saved in
+                    Button(saved.name) {
+                        workspace.investigationDraft.expression = saved.expression
+                    }
+                    .help(saved.expression)
+                }
+                if !coordinator.expressionLibrary.saved.isEmpty {
+                    Divider()
+                    Menu("Delete") {
+                        ForEach(coordinator.expressionLibrary.saved) { saved in
+                            Button(saved.name, role: .destructive) {
+                                coordinator.expressionLibrary.delete(saved.id)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("Import Wireshark Display Filters…") {
+                    coordinator.presentDisplayFilterImport()
+                }
+            }
+            .fixedSize()
+            .help("Expressions you named in this Project")
+
+            Button("Save…") {
+                savingName = ""
+                isNamingExpression = true
+            }
+            .disabled(workspace.investigationDraft.expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Keep this expression under a name in this Project")
+            .popover(isPresented: $isNamingExpression, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                    Text("Save Expression")
+                        .font(Theme.Typography.bodyEmphasis)
+                    TextField("Name", text: $savingName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                        .onSubmit(saveExpression)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { isNamingExpression = false }
+                        Button("Save", action: saveExpression)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(savingName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(Theme.Metrics.spacingL)
+            }
+            Spacer()
+        }
+        .controlSize(.small)
     }
 
     private var combinationPicker: some View {
@@ -345,6 +464,12 @@ struct InvestigationQueryEditorView: View {
             .foregroundStyle(.orange)
             .accessibilityLabel("Query error: \(message)")
             .accessibilityIdentifier("investigation-query-error")
+    }
+
+    private func saveExpression() {
+        if coordinator.expressionLibrary.save(workspace.investigationDraft.expression, named: savingName) {
+            isNamingExpression = false
+        }
     }
 
     private func fieldBinding(_ row: Binding<InvestigationQueryDraftRow>)
@@ -637,12 +762,12 @@ enum InvestigationQueryChipModel {
     {
         if isEvaluating {
             return hasActiveQuery
-                ? "Investigation · updating"
-                : "Investigation · evaluating"
+                ? "Expression: updating…"
+                : "Expression: evaluating…"
         }
         return incompleteCount > 0
-            ? "Investigation · \(matchedCount) matched · \(incompleteCount) incomplete"
-            : "Investigation · \(matchedCount) matched"
+            ? "Expression: \(matchedCount) matched, \(incompleteCount) incomplete"
+            : "Expression: \(matchedCount) matched"
     }
 
     static func showsCoverage(incompleteCount: Int, coverageReasonCount: Int) -> Bool {
@@ -665,11 +790,38 @@ private extension EndpointScope {
 private extension QueryFindingKind {
     var label: String {
         switch self {
+        case .connectionRefused: "Connection refused"
+        case .handshakeUnanswered: "Handshake unanswered"
+        case .abortAfterData: "Aborted after data"
+        case .halfClose: "Half-close observed"
+        case .tupleReuse: "Connection tuple reused"
         case .reset: "TCP reset observed"
         case .retransmission: "Retransmission observed"
         case .overlap: "Overlap observed"
-        case .outOfOrder: "Out-of-order observed"
+        case .outOfOrder: "Sequence gap observed"
+        case .zeroWindow: "Zero window observed"
+        case .windowFull: "Receive window full"
+        case .duplicateAck: "Duplicate ACK observed"
+        case .keepAlive: "Keep-alive observed"
+        case .fastRetransmission: "Fast retransmission observed"
+        case .spuriousRetransmission: "Spurious retransmission observed"
+        case .ackedUnseen: "ACKed unseen segment"
+        case .cleartextCredentials: "Credentials sent in cleartext"
         case .dnsTruncation: "DNS truncation indicated"
+        case .dnsNameError: "DNS name error"
+        case .dnsServerFailure: "DNS server failure"
+        case .dnsUnanswered: "DNS query unanswered"
+        case .icmpUnreachable: "ICMP destination unreachable"
+        case .icmpPacketTooBig: "ICMP packet too big"
+        case .icmpTimeExceeded: "ICMP time exceeded"
+        case .icmpReportedUnreachable: "ICMP unreachable reported for this session"
+        case .icmpReportedPacketTooBig: "ICMP path MTU limit reported for this session"
+        case .icmpReportedTimeExceeded: "ICMP time exceeded reported for this session"
+        case .tlsFatalAlert: "TLS fatal alert observed"
+        case .tlsWarningAlert: "TLS warning alert observed"
+        case .tlsDeprecatedVersion: "Deprecated TLS version selected"
+        case .tlsRepeatedRetryRequest: "TLS retry requested more than once"
+        case .tlsHandshakeUnanswered: "TLS handshake unanswered"
         }
     }
 }
@@ -697,6 +849,8 @@ private extension QueryCoverageReason {
         case .connectionEventOrStateLimitation: "Connection event or sequence state was limited"
         case .datagramObservationOmission: "Datagram observations were incomplete"
         case .datagramFindingOmission: "Datagram findings or citations were omitted"
+        case .tlsObservationOmission: "TLS records were incomplete"
+        case .tlsFindingOmission: "TLS findings or citations were omitted"
         case .excludedTCPDNSInput: "TCP DNS evidence was excluded"
         case .capacityReached: "An evidence capacity bound was reached"
         case .captureLossReported: "Capture loss was reported"
@@ -724,7 +878,7 @@ private extension InvestigationQueryDraftError {
 
 // MARK: - SessionQueryParseError + message
 
-private extension SessionQueryParseError {
+extension SessionQueryParseError {
     /// A concise diagnostic that names the position and the offending token only. The
     /// expression itself is never echoed back.
     var message: String {
@@ -753,11 +907,14 @@ private extension SessionQueryParseError {
         case .invalidCIDR: "Enter a valid IPv4 or IPv6 CIDR block."
         case .invalidPort: "Ports must be whole numbers from 0 through 65535."
         case .invalidByteCount: "Byte counts must be non-negative whole numbers."
+        case .invalidNumber: "Use whole numbers, numeric fields such as bytes.sent, and + - * / % (with spaces around /)."
+        case let .setTooLarge(limit): "A value set can hold at most \(limit) values."
+        case .unbalancedBrace: "A closing brace is expected here."
         }
     }
 }
 
-private extension QueryValidationError {
+extension QueryValidationError {
     var message: String {
         switch self {
         case .emptyGroup: "Add at least one query row."
@@ -770,6 +927,7 @@ private extension QueryValidationError {
         case .reversedRange: "The lower bound must not exceed the upper bound."
         case .negativeByteBound: "Byte bounds cannot be negative."
         case .nonFiniteDate: "Choose finite start and end dates."
+        case let .arithmeticTooLarge(limit): "Keep each calculation within \(limit) numbers, fields and operators."
         }
     }
 }

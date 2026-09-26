@@ -18,11 +18,11 @@ enum AppPolicyViolation: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case let .workspaceTabLimitReached(limit):
-            String(localized: "This build keeps up to \(limit) workspace tabs open at once.")
+            String(localized: "New workspace tabs can be added up to \(limit) per Project. Open tabs stay available.")
         case let .focusSetLimitReached(limit):
-            String(localized: "This build stores up to \(limit) focus sets.")
+            String(localized: "New focus sets can be saved up to \(limit). Saved focus sets stay available.")
         case let .pinnedHostLimitReached(limit):
-            String(localized: "This build pins up to \(limit) hosts.")
+            String(localized: "Hosts can be pinned up to \(limit). Pinned hosts stay pinned.")
         }
     }
 }

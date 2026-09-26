@@ -5,11 +5,12 @@ import SQLite3
 
 /// A pure, actor-isolated SQLite substrate for terminal capture history. It owns
 /// exactly one connection, enables and verifies foreign keys (and, for a writable
-/// file, WAL) before installing or upgrading to schema v2 in one immediate
-/// transaction (v1 databases are migrated in place, never reset), and exposes
+/// file, WAL) before installing or upgrading to schema v3 in one immediate
+/// transaction (v1 and v2 databases are migrated in place, never reset), and exposes
 /// only atomic whole-capture replacement, bounded keyset reads and whole-group
 /// retention. It never reads settings, touches `@MainActor`, converts a
-/// `SessionSummary`/`Finding`, retains raw bytes, or schedules anything — it is a
+/// `SessionSummary`/`Finding` (callers hand it neutral records), retains raw bytes,
+/// or schedules anything — it is a
 /// terminal write/read primitive, not a live integration.
 ///
 /// Every failure is a typed ``HistoryStoreError`` (or Swift's `CancellationError`);
@@ -29,7 +30,7 @@ actor SessionStore {
             readOnly: configuration.readOnly
         )
         do {
-            try Self.migrate(database, configuration: configuration)
+            schemaVersion = try Self.migrate(database, configuration: configuration)
         } catch {
             database.close()
             throw error
@@ -44,6 +45,14 @@ actor SessionStore {
     // MARK: Internal
 
     let configuration: Configuration
+    /// The schema this connection reads. Always current for a writable store; a
+    /// read-only open of a v2 file stays at 2 and reports findings as not recorded.
+    let schemaVersion: Int64
+
+    /// Whether this database records findings (schema v3 or later).
+    var recordsFindings: Bool {
+        schemaVersion >= 3
+    }
 
     // MARK: Private
 
@@ -158,7 +167,7 @@ extension SessionStore {
 
 private extension SessionStore {
     /// The current schema version this build owns.
-    static let currentSchemaVersion: Int64 = 2
+    static let currentSchemaVersion: Int64 = 3
 
     /// The exact schema v2 DDL for a fresh database. Installed atomically;
     /// `user_version` is bumped in the same transaction.
@@ -204,7 +213,28 @@ private extension SessionStore {
         FOREIGN KEY(capture_id, session_id) REFERENCES sessions(capture_id, session_id) ON DELETE CASCADE
     );
     CREATE INDEX idx_captures_ended ON captures(ended_at, id);
-    PRAGMA user_version = 2;
+    """ + findingsTableSQL + """
+    PRAGMA user_version = 3;
+    """
+
+    /// Schema v3's one addition: each stored capture's evidence-linked findings, in
+    /// ordinal order, removed with their capture by the cascade.
+    static let findingsTableSQL = """
+    CREATE TABLE findings (
+        capture_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        finding_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        severity INTEGER NOT NULL,
+        coverage TEXT NOT NULL,
+        cited_count INTEGER NOT NULL,
+        omitted_count INTEGER NOT NULL,
+        first_cited_at REAL NULL,
+        PRIMARY KEY(capture_id, ordinal),
+        FOREIGN KEY(capture_id) REFERENCES captures(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_findings_session ON findings(capture_id, session_id);
     """
 
     /// The v1 → v2 upgrade body, run inside one immediate transaction with foreign
@@ -248,7 +278,8 @@ private extension SessionStore {
     UPDATE captures SET time_basis = 2 WHERE source_kind = 1;
     """
 
-    /// Configure the connection and bring it to schema v2.
+    /// Configure the connection and bring it to schema v3, returning the version it
+    /// reads.
     ///
     /// Every handle sets and verifies `foreign_keys = ON` before any transaction —
     /// setting it inside a transaction is silently ignored, so it must precede one.
@@ -256,7 +287,7 @@ private extension SessionStore {
     /// database preserves its journal mode. Version 0 installs v2 and version 1 is
     /// upgraded in place; a future version is a typed unsupported-schema error; a
     /// read-only database that still needs either step cannot migrate and fails typed.
-    static func migrate(_ database: SQLiteDatabase, configuration: Configuration) throws {
+    static func migrate(_ database: SQLiteDatabase, configuration: Configuration) throws -> Int64 {
         database.setBusyTimeout(configuration.busyTimeoutMilliseconds)
 
         try database.execute("PRAGMA foreign_keys = ON;")
@@ -274,7 +305,7 @@ private extension SessionStore {
         let version = try database.readIntegerPragma("user_version")
         switch version {
         case currentSchemaVersion:
-            return
+            return version
         case 0:
             guard !configuration.readOnly else {
                 throw HistoryStoreError.cannotMigrateReadOnly
@@ -287,8 +318,38 @@ private extension SessionStore {
                 throw HistoryStoreError.cannotMigrateReadOnly
             }
             try upgradeV1ToV2(database, configuration: configuration)
+            try upgradeV2ToV3(database, faultHook: configuration.faultInjection)
+        case 2:
+            // v3 only adds a table, so a read-only reader (the MCP server) can still
+            // read a v2 file's captures and sessions; it reports findings as not
+            // recorded until the app upgrades the file.
+            guard !configuration.readOnly else {
+                return 2
+            }
+            try upgradeV2ToV3(database, faultHook: configuration.faultInjection)
         default:
             throw HistoryStoreError.unsupportedSchema(version: Int(clamping: version))
+        }
+        return currentSchemaVersion
+    }
+
+    /// Add the findings table in one immediate transaction. Purely additive, so
+    /// foreign keys stay on and every existing row is untouched.
+    static func upgradeV2ToV3(_ database: SQLiteDatabase, faultHook: FaultHook?) throws {
+        try checkFault(faultHook, .migrationBegin)
+        try database.execute("BEGIN IMMEDIATE;")
+        do {
+            try checkFault(faultHook, .migrationCreateSchema)
+            try database.execute(findingsTableSQL)
+            guard try !database.hasForeignKeyViolations() else {
+                throw HistoryStoreError.corruption("v2 to v3 migration failed foreign_key_check")
+            }
+            try checkFault(faultHook, .migrationCommit)
+            try database.execute("PRAGMA user_version = 3;")
+            try database.execute("COMMIT;")
+        } catch {
+            try? database.execute("ROLLBACK;")
+            throw error
         }
     }
 
@@ -340,7 +401,7 @@ private extension SessionStore {
                 throw HistoryStoreError.corruption("v1 to v2 migration failed foreign_key_check")
             }
             try checkFault(faultHook, .migrationCommit)
-            try database.execute("PRAGMA user_version = \(currentSchemaVersion);")
+            try database.execute("PRAGMA user_version = 2;")
             try database.execute("COMMIT;")
         } catch {
             try? database.execute("ROLLBACK;")
@@ -366,9 +427,21 @@ extension SessionStore {
     /// Cancellation is honored before begin and at each 256-row batch boundary, and
     /// any failure rolls the transaction back so the prior committed record
     /// survives untouched.
-    func replaceCapture(_ capture: HistoryCaptureRecord, sessions: [HistorySessionRecord]) throws {
+    func replaceCapture(
+        _ capture: HistoryCaptureRecord,
+        sessions: [HistorySessionRecord],
+        findings: [HistoryFindingRecord] = []
+    )
+        throws
+    {
         guard !configuration.readOnly else {
             throw HistoryStoreError.readOnly
+        }
+        guard findings.count <= HistoryLimits.maxFindingsPerCapture else {
+            throw HistoryStoreError.tooManyFindings(count: findings.count)
+        }
+        for finding in findings {
+            try finding.validate()
         }
 
         try capture.validate()
@@ -389,6 +462,7 @@ extension SessionStore {
         try database.execute("BEGIN IMMEDIATE;")
         do {
             try writeCapture(capture, sessions: sessions)
+            try insertFindings(findings, captureID: capture.captureID.uuidString)
             try Self.checkFault(faultHook, .replaceCommit)
             try database.execute("COMMIT;")
         } catch {
@@ -424,6 +498,40 @@ extension SessionStore {
         try Self.checkFault(faultHook, .replaceCaptureInsert)
 
         try insertSessions(sessions, captureID: captureID)
+    }
+
+    private func insertFindings(_ findings: [HistoryFindingRecord], captureID: String) throws {
+        guard !findings.isEmpty else {
+            return
+        }
+        let insert = try database.prepare("""
+        INSERT INTO findings (
+            capture_id, ordinal, finding_id, session_id, kind, severity, coverage,
+            cited_count, omitted_count, first_cited_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """)
+        defer { insert.finalizeStatement() }
+        for (ordinal, finding) in findings.enumerated() {
+            if ordinal % HistoryLimits.cancellationBatchSize == 0 {
+                try checkCancellation()
+            }
+            insert.reset()
+            try insert.bindText(1, captureID)
+            try insert.bindInt(2, Int64(ordinal))
+            try insert.bindText(3, finding.findingID.uuidString)
+            try insert.bindText(4, finding.sessionID.uuidString)
+            try insert.bindText(5, finding.kind)
+            try insert.bindInt(6, Int64(finding.severity.rawValue))
+            try insert.bindText(7, finding.coverage)
+            try insert.bindInt(8, Int64(finding.citedObservationCount))
+            try insert.bindInt(9, finding.omittedCitationCount)
+            if let first = finding.firstCitedAt {
+                try insert.bindDouble(10, first)
+            } else {
+                try insert.bindNull(10)
+            }
+            _ = try insert.step()
+        }
     }
 
     private func insertSessions(_ sessions: [HistorySessionRecord], captureID: String) throws {
@@ -594,6 +702,66 @@ extension SessionStore {
 
         let next = rows.count == pageLimit ? HistorySessionCursor(ordinal: lastOrdinal) : nil
         return HistorySessionPage(sessions: rows, nextCursor: next)
+    }
+
+    /// Read one ordinal-ascending page of a capture's findings, optionally only one
+    /// session's. Throws ``HistoryStoreError/findingsNotRecorded`` for a v2 file
+    /// opened read-only.
+    func findings(
+        captureID: UUID,
+        sessionID: UUID? = nil,
+        after cursor: HistoryFindingCursor?,
+        limit: Int
+    )
+        throws -> HistoryFindingPage
+    {
+        guard recordsFindings else {
+            throw HistoryStoreError.findingsNotRecorded
+        }
+        let pageLimit = try Self.validatedPageLimit(limit)
+        let afterOrdinal = cursor.map { Int64($0.ordinal) } ?? -1
+        let statement = try database.prepare("""
+        SELECT ordinal, finding_id, session_id, kind, severity, coverage, cited_count, omitted_count, first_cited_at
+        FROM findings WHERE capture_id = ? AND ordinal > ? AND (? IS NULL OR session_id = ?)
+        ORDER BY ordinal ASC LIMIT ?;
+        """)
+        defer { statement.finalizeStatement() }
+        try statement.bindText(1, captureID.uuidString)
+        try statement.bindInt(2, afterOrdinal)
+        if let sessionID {
+            try statement.bindText(3, sessionID.uuidString)
+            try statement.bindText(4, sessionID.uuidString)
+        } else {
+            try statement.bindNull(3)
+            try statement.bindNull(4)
+        }
+        try statement.bindInt(5, Int64(pageLimit))
+
+        var rows: [HistoryFindingRecord] = []
+        var lastOrdinal = 0
+        while try statement.step() {
+            lastOrdinal = try Self.decodeCount(statement.columnInt64(0), field: "finding ordinal")
+            guard let findingID = UUID(uuidString: statement.columnText(1) ?? ""),
+                  let session = UUID(uuidString: statement.columnText(2) ?? "") else
+            {
+                throw HistoryStoreError.corruption("findings id was not a UUID")
+            }
+            guard let severity = HistoryFindingSeverity(rawValue: Int(clamping: statement.columnInt64(4))) else {
+                throw HistoryStoreError.corruption("findings.severity was not a known value")
+            }
+            try rows.append(HistoryFindingRecord(
+                findingID: findingID,
+                sessionID: session,
+                kind: statement.columnText(3) ?? "",
+                severity: severity,
+                coverage: statement.columnText(5) ?? "",
+                citedObservationCount: Self.decodeCount(statement.columnInt64(6), field: "cited_count"),
+                omittedCitationCount: statement.columnInt64(7),
+                firstCitedAt: statement.columnIsNull(8) ? nil : statement.columnDouble(8)
+            ))
+        }
+        let next = rows.count == pageLimit ? HistoryFindingCursor(ordinal: lastOrdinal) : nil
+        return HistoryFindingPage(findings: rows, nextCursor: next)
     }
 
     // MARK: Private

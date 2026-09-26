@@ -8,10 +8,13 @@ import Foundation
 ///
 /// Every other compressed signature the importer knows stays a refusal that names
 /// its container: expanding a format costs a validated, bounded, quota-checked
-/// decoder, and only these two have one.
+/// decoder, and only these three have one.
 nonisolated enum CaptureArchiveContainer: Sendable, Equatable {
     /// A gzip stream — possibly several concatenated members — wrapping one capture.
     case gzip
+    /// An LZ4 frame stream (what Wireshark writes with `--compress lz4`), possibly
+    /// several concatenated frames, wrapping one capture.
+    case lz4
     /// A ZIP archive. Only the exact `TCPViewerSession` schema-1 session layout is
     /// accepted; a ZIP is never searched for "some capture inside".
     case sessionZip
@@ -24,6 +27,8 @@ nonisolated enum CaptureArchiveContainer: Sendable, Equatable {
     init?(header: [UInt8]) {
         if header.starts(with: [0x1F, 0x8B]) {
             self = .gzip
+        } else if header.starts(with: [0x04, 0x22, 0x4D, 0x18]) {
+            self = .lz4
         } else if header.starts(with: [0x50, 0x4B, 0x03, 0x04]) {
             self = .sessionZip
         } else {
@@ -39,6 +44,7 @@ nonisolated enum CaptureArchiveContainer: Sendable, Equatable {
     var containerPathExtensions: Set<String> {
         switch self {
         case .gzip: ["gz", "gzip"]
+        case .lz4: ["lz4"]
         case .sessionZip: ["zip", "tcpviewsession"]
         }
     }

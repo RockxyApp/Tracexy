@@ -226,8 +226,10 @@ nonisolated enum AssistantDemoFixture {
             connections: connections,
             datagramEvidence: .empty,
             tlsEvidence: .empty,
+            segmentSeries: .empty,
             connectionAnalysis: ConnectionAssessor().assess(connections),
-            datagramAnalysis: .empty
+            datagramAnalysis: .empty,
+            tlsAnalysis: .empty
         )
     }
 
@@ -257,8 +259,10 @@ nonisolated enum AssistantDemoFixture {
             connections: connections,
             datagramEvidence: .empty,
             tlsEvidence: .empty,
+            segmentSeries: .empty,
             connectionAnalysis: ConnectionAssessor().assess(connections),
-            datagramAnalysis: .empty
+            datagramAnalysis: .empty,
+            tlsAnalysis: .empty
         )
     }
 

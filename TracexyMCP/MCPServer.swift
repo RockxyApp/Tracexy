@@ -141,6 +141,8 @@ actor MCPServer {
             "exposes": [
                 "captures": true,
                 "sessions": true,
+                "findings": true,
+                "notes": false,
                 "capturePackets": false,
                 "captureControls": false,
                 "filePaths": false,
@@ -185,6 +187,10 @@ actor MCPServer {
             "Filtering on “\(field.rawValue)” requires that field to be disclosed by the grant."
         case let .invalidCursor(field):
             "Cursor field “\(field)” is not valid."
+        case .findingsNotRecorded:
+            "This History was written before findings were recorded. Open the Project in Tracexy once to upgrade it."
+        case let .unknownFindingFilter(field):
+            "Finding filter “\(field)” is not a known value."
         }
     }
 
@@ -226,8 +232,8 @@ actor MCPServer {
             "capabilities": ["tools": ["listChanged": false]],
             "serverInfo": ["name": info.name, "version": info.version],
             "instructions": """
-            Tracexy exposes one user-authorized Project's stored capture history, read-only, over stdio. \
-            No network port is opened. Packet bytes, capture files, file paths and capture controls are not \
+            Tracexy exposes one user-authorized Project's stored capture history, read-only, over stdio: \
+            captures, their session summaries and their evidence-linked findings. No network port is opened. Packet bytes, capture files, file paths and capture controls are not \
             available. Start with describe_scope to see which fields the grant discloses.
             """,
         ])
@@ -317,6 +323,10 @@ actor MCPServer {
             )
             let page = try await service(for: grant).sessionPage(request)
             return try Self.text(AutomationExport.json(sessionPage: page))
+        case .listFindings:
+            let request = try MCPToolArguments.findingPageRequest(arguments, maxPageSize: grant.maxPageSize)
+            let page = try await service(for: grant).findingPage(request)
+            return try Self.text(AutomationExport.json(findingPage: page))
         }
     }
 

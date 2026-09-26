@@ -45,7 +45,6 @@ struct ProjectModelsTests {
 
         let snapshot = ProjectWorkspaceSnapshot(capturing: workspace)
         let restored = snapshot.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: false
         )
 
@@ -83,7 +82,6 @@ struct ProjectModelsTests {
             ]
         )
         let workspace = snapshot.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: nil
         )
         #expect(workspace.sidebarSelection == .sessions)

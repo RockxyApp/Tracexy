@@ -100,7 +100,7 @@ struct SettingsSectionTitle: View {
     // MARK: Internal
 
     var body: some View {
-        Text(text)
+        Text(localized: text)
             .font(metrics.font(weight: .medium))
     }
 
@@ -178,7 +178,7 @@ struct SettingsRow<Content: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            Text(label)
+            Text(localized: label)
                 .font(metrics.font(weight: .medium))
                 .frame(width: metrics.labelWidth, alignment: .trailing)
                 .padding(.trailing, 16)
@@ -247,7 +247,7 @@ struct SettingsFootnote: View {
     // MARK: Internal
 
     var body: some View {
-        Text(text)
+        Text(localized: text)
             .font(metrics.secondaryFont())
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -304,7 +304,7 @@ struct SettingsStatusBanner<Accessory: View>: View {
                 .background(Color.secondary.opacity(0.10), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(localized: title)
                     .font(metrics.font(weight: .semibold))
                     .accessibilityIdentifier(titleIdentifier ?? "")
                 if let detail {
@@ -405,7 +405,7 @@ struct SettingsBadge: View {
                 Image(systemName: systemName)
                     .font(metrics.metadataFont(weight: .semibold))
             }
-            Text(text)
+            Text(localized: text)
                 .font(metrics.metadataFont(weight: .medium))
         }
         .padding(.horizontal, 9)
@@ -474,7 +474,7 @@ struct SettingsDetailRow: View {
 
     var body: some View {
         GridRow {
-            Text(label)
+            Text(localized: label)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(.secondary)
                 .gridColumnAlignment(.trailing)
@@ -554,7 +554,7 @@ struct SettingsInlineMessage: View {
             Image(systemName: tone.symbol)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(tone.tint)
-            Text(text)
+            Text(localized: text)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -598,7 +598,7 @@ struct SettingsCheckbox: View {
             Toggle(title, isOn: $isOn)
                 .toggleStyle(.checkbox)
             if let description {
-                Text(description)
+                Text(localized: description)
                     .font(metrics.secondaryFont())
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -48,12 +48,18 @@ nonisolated enum TLSFactsDecoder {
         // coalesced record. The view ends at this record's declared/captured boundary.
         let boundedRecord = try? record.subset(from: 0, count: min(recordLength, record.length))
         let handshake = contentType == 22 ? boundedRecord.flatMap(handshakeFact) : nil
+        // The alert body is read only when it is unambiguously plaintext: an Alert
+        // record whose declared body is exactly the two RFC 8446 §6 bytes and whose
+        // body was fully captured. Every encrypted alert is longer (AEAD tag or CBC
+        // MAC), so ciphertext can never be mistaken for a level/description pair.
+        let alert = contentType == 21 ? alertFact(record, declaredBody: declaredBody, capturedBody: capturedBody) : nil
         return TLSRecordFact(
             contentType: contentType,
             legacyRecordVersion: legacyRecordVersion,
             declaredBodyLength: declaredBody,
             capturedBodyLength: capturedBody,
-            handshake: handshake
+            handshake: handshake,
+            alert: alert
         )
     }
 
@@ -89,6 +95,24 @@ nonisolated enum TLSFactsDecoder {
             return nil
         }
         return Int(hi) << 16 | Int(mid) << 8 | Int(lo)
+    }
+
+    /// Reads the two plaintext alert bytes. Returns `nil` unless the record declares
+    /// exactly a two-byte body and that body was fully captured, so a fragment, a
+    /// snap-length truncation or an encrypted alert all yield no fact rather than a
+    /// guess. The bytes are kept raw; naming a level or description is policy.
+    private static func alertFact(
+        _ record: PacketBuffer, declaredBody: Int, capturedBody: Int
+    )
+        -> TLSAlertFact?
+    {
+        guard declaredBody == 2, capturedBody >= 2,
+              let level = try? record.u8(5),
+              let description = try? record.u8(6) else
+        {
+            return nil
+        }
+        return TLSAlertFact(level: level, description: description)
     }
 
     /// Dispatches a Handshake record to a ClientHello/ServerHello fact. Other handshake

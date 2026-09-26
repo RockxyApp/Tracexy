@@ -15,6 +15,25 @@ import SwiftUI
 struct OverviewView: View {
     // MARK: Internal
 
+    /// Which series the small time chart beside Protocols shows.
+    enum TimeSeriesChoice: String, CaseIterable, Identifiable {
+        case sessionsStarted
+        case retransmissions
+
+        // MARK: Internal
+
+        var id: String {
+            rawValue
+        }
+
+        var title: String {
+            switch self {
+            case .sessionsStarted: "Sessions"
+            case .retransmissions: "Retransmissions"
+            }
+        }
+    }
+
     var coordinator: MainContentCoordinator
 
     var body: some View {
@@ -118,8 +137,16 @@ struct OverviewView: View {
             topApps = MainContentCoordinator.topProcesses(of: sessions, limit: 10)
             sources = MainContentCoordinator.sourceSummary(of: sessions)
             findingMarkers = OverviewView.findingMarkers(for: findings)
+            // Measured intervals are rolled up against the same visible session set as
+            // every other scoped panel, once per render.
+            responseTimes = coordinator.timingSnapshot
+                .distributions(limitedTo: visibleIDs)
+                .map(SessionResponseTimeDistributionRow.init(distribution:))
             presentedSessionCount = coordinator.presentedSessions.count
             hasTraffic = !timeline.isEmpty || presentedSessionCount > 0
+            // A narrowed scope draws its own series over the capture-wide one, on the
+            // same columns; an unnarrowed scope would only repeat the total.
+            scopedPoints = sessions.count < presentedSessionCount ? timeline.points(scope: visibleIDs) : nil
         }
 
         // MARK: Internal
@@ -128,12 +155,15 @@ struct OverviewView: View {
         let findings: [Finding]
         let timeline: TrafficTimeline
         let points: [TrafficTimelinePoint]
+        /// The sessions in view on the same columns, when the scope is narrowed.
+        let scopedPoints: [TrafficTimelinePoint]?
         let scopedBytes: Int
         let protocolShare: [(kind: ProtocolKind?, bytes: Int)]
         let topHosts: [TrafficRankingEntry]
         let topApps: [TrafficRankingEntry]
         let sources: (apps: Int, domains: Int, addresses: Int)
         let findingMarkers: [OverviewFindingMarker]
+        let responseTimes: [SessionResponseTimeDistributionRow]
         let hasTraffic: Bool
         let presentedSessionCount: Int
 
@@ -166,6 +196,8 @@ struct OverviewView: View {
     private static let maximumFindingMarkers = 64
 
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("overview.trafficMeasure") private var trafficMeasure: TrafficMeasure = .bytes
+    @AppStorage("overview.timeSeries") private var timeSeriesChoice: TimeSeriesChoice = .sessionsStarted
 
     private var isSaved: Bool {
         coordinator.isViewingSavedCapture
@@ -397,6 +429,10 @@ struct OverviewView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .fixedSize(horizontal: false, vertical: true)
+            if !report.responseTimes.isEmpty {
+                responseTimesCard(report)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(alignment: .top, spacing: Theme.Metrics.spacingL + 4) {
                 sourcesCard(report)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -414,6 +450,9 @@ struct OverviewView: View {
             findingsCard(report)
             hostsTableCard(report)
             appsTableCard(report)
+            if !report.responseTimes.isEmpty {
+                responseTimesCard(report)
+            }
             sourcesCard(report)
             healthCard
         }
@@ -575,7 +614,7 @@ struct OverviewView: View {
 
     private func figure(_ label: String, value: String, tint: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            Text(label)
+            Text(localized: label)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             Text(value)
@@ -596,24 +635,49 @@ struct OverviewView: View {
 
     /// Every accepted frame's wire bytes on the real capture clock, split by
     /// session direction, with the scoped findings pinned where their evidence
-    /// sits. Capture-wide: session filters narrow the panels below, not the frames.
+    /// sits. When the scope is narrowed, the sessions in view are drawn over the
+    /// capture-wide total on the same columns.
     private func activityCard(_ report: Report) -> some View {
         let timeline = report.timeline
-        return OverviewPanel("Traffic over time", caption: activityCaption(timeline)) {
+        return OverviewPanel(
+            "Traffic over time",
+            caption: activityCaption(
+                timeline, width: report.columnWidth,
+                scoped: report.scopedPoints?.contains { $0.totals.bytes > 0 } == true
+            )
+        ) {
             activityChart(report)
             activityFooter(report)
         } accessory: {
             HStack(spacing: Theme.Metrics.spacingL) {
-                if timeline.hasStableDirectionalBytes {
-                    valueChip("Sent", value: byteString(timeline.totals.sentBytes), color: Theme.Traffic.sent)
+                if let scoped = report.scopedPoints {
+                    valueChip(
+                        "In view",
+                        value: measureTotal(scoped.reduce(into: TrafficTotals()) { $0.add($1.totals) }, timeline),
+                        color: .accentColor
+                    )
+                    valueChip("All", value: measureTotal(timeline.totals, timeline), color: .secondary)
+                } else if timeline.hasStableDirectionalBytes {
+                    valueChip(
+                        "Sent", value: measureTotal(timeline.totals, timeline, .sent), color: Theme.Traffic.sent
+                    )
                     valueChip(
                         "Received",
-                        value: byteString(timeline.totals.receivedBytes),
+                        value: measureTotal(timeline.totals, timeline, .received),
                         color: Theme.Traffic.received
                     )
                 } else {
-                    valueChip("Total", value: byteString(timeline.totals.bytes), color: .accentColor)
+                    valueChip("Total", value: measureTotal(timeline.totals, timeline), color: .accentColor)
                 }
+                Picker("Measure", selection: $trafficMeasure) {
+                    ForEach(TrafficMeasure.allCases) { measure in
+                        Text(localized: measure.title).tag(measure)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Plot bytes, packets, or the average bit rate of each time slice")
             }
         }
     }
@@ -623,7 +687,8 @@ struct OverviewView: View {
         let timeline = report.timeline
         if timeline.firstTimedFrame != nil {
             OverviewTrafficTimelineChart(
-                timeline: timeline, points: report.points, findingMarkers: report.findingMarkers
+                timeline: timeline, points: report.points, scopedPoints: report.scopedPoints,
+                findingMarkers: report.findingMarkers, measure: trafficMeasure
             )
             .frame(height: Self.chartHeight)
         } else if !timeline.isEmpty {
@@ -647,7 +712,8 @@ struct OverviewView: View {
         let timeline = report.timeline
         let markers = report.findingMarkers
         let total = report.findings.count
-        if !markers.isEmpty || timeline.untimedFrameCount > 0 || timeline.directionMayHaveChanged {
+        let scopedIncomplete = report.scopedPoints != nil && !timeline.sessionSeriesComplete
+        if !markers.isEmpty || timeline.untimedFrameCount > 0 || timeline.directionMayHaveChanged || scopedIncomplete {
             HStack(spacing: Theme.Metrics.spacingL) {
                 if !markers.isEmpty {
                     HStack(spacing: Theme.Metrics.spacingS) {
@@ -666,6 +732,12 @@ struct OverviewView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .accessibilityIdentifier("saved-activity-untimed-notice")
+                }
+                if scopedIncomplete {
+                    Text("This capture has more session traffic than the in-view series keeps; it may read low.")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if timeline.directionMayHaveChanged {
                     Text("Client/server orientation changed during capture; this chart shows exact total bytes only.")
@@ -709,16 +781,42 @@ struct OverviewView: View {
         }
     }
 
-    /// New conversations per slice on the same clock as the traffic chart.
+    /// New conversations per slice on the same clock as the traffic chart, or —
+    /// when the scope has retransmission findings — the re-sent segments those
+    /// findings cite, on the same slices.
     private func sessionStartCard(_ report: Report) -> some View {
-        let columns = Self.sessionStartColumns(report)
-        return OverviewPanel("Sessions started", caption: "New conversations in scope") {
+        let retransmissions = Self.retransmissionColumns(report)
+        let showsRetransmissions = timeSeriesChoice == .retransmissions && retransmissions.columns != nil
+        let columns = showsRetransmissions ? retransmissions.columns ?? [] : Self.sessionStartColumns(report)
+        return OverviewPanel(
+            showsRetransmissions ? "Retransmissions" : "Sessions started",
+            caption: showsRetransmissions
+                ? retransmissionCaption(omitted: retransmissions.omitted)
+                : "New conversations in scope"
+        ) {
+            // The series control sits with the chart, not in the header, so a narrow
+            // column never squeezes the title and caption into a sliver.
+            if retransmissions.columns != nil {
+                Picker("Series", selection: $timeSeriesChoice) {
+                    ForEach(TimeSeriesChoice.allCases) { choice in
+                        Text(localized: choice.title).tag(choice)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Show sessions started or retransmitted segments over time")
+            }
             if columns.isEmpty {
                 emptyLine(report.timeline.isEmpty ? "No sessions yet" : "No timed sessions in scope")
                     .frame(height: Self.secondaryChartHeight)
             } else {
-                OverviewSessionStartChart(columns: columns, width: report.columnWidth)
-                    .frame(height: Self.secondaryChartHeight)
+                OverviewSessionStartChart(
+                    columns: columns, width: report.columnWidth,
+                    series: showsRetransmissions ? .retransmissions : .sessions
+                )
+                .frame(height: Self.secondaryChartHeight)
             }
         }
     }
@@ -755,6 +853,18 @@ struct OverviewView: View {
                 }
                 .help("Double-click an app to narrow the scope to its sessions")
             }
+        }
+    }
+
+    /// What the exchanges in scope actually waited on. It reports only intervals that
+    /// two cited frames bound, so a capture with no timed handshake, hello or answer
+    /// shows no card at all rather than an empty one.
+    private func responseTimesCard(_ report: Report) -> some View {
+        OverviewPanel("Response times", caption: "Measured between cited frames in scope") {
+            OverviewResponseTimeTable(rows: report.responseTimes) { row in
+                coordinator.selectSessionForResponseTime(row.slowestSessionID)
+            }
+            .help("Double-click a row to select the session carrying its slowest measurement")
         }
     }
 
@@ -857,7 +967,7 @@ struct OverviewView: View {
     private func valueChip(_ title: String, value: String?, color: Color) -> some View {
         HStack(spacing: Theme.Metrics.controlSpacing) {
             StatusDot(color, size: 8)
-            Text(title)
+            Text(localized: title)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             if let value {
@@ -870,10 +980,45 @@ struct OverviewView: View {
     }
 
     private func emptyLine(_ text: String) -> some View {
-        Text(text)
+        Text(localized: text)
             .font(Theme.Typography.body)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+    }
+
+    /// Distinct re-sent frames cited by the retransmission findings in scope, on
+    /// the rendered traffic columns. `nil` when no such finding is in scope.
+    private static func retransmissionColumns(
+        _ report: Report
+    )
+        -> (columns: [OverviewSessionStartChart.Column]?, omitted: UInt64)
+    {
+        let findings = report.findings.filter(\.citesRetransmittedSegments)
+        guard !findings.isEmpty, let first = report.points.first else {
+            return (nil, 0)
+        }
+        var seen = Set<String>()
+        var counts = [Int](repeating: 0, count: report.points.count)
+        let width = report.columnWidth
+        for finding in findings {
+            for frame in finding.citedFrames {
+                guard let timestamp = frame.timestamp,
+                      seen.insert("\(finding.sessionID.uuidString)#\(frame.ordinal)").inserted else
+                {
+                    continue
+                }
+                let offset = timestamp.timeIntervalSince(first.date)
+                let index = width > 0 ? Int((offset / width).rounded(.down)) : 0
+                if index >= 0, index < counts.count {
+                    counts[index] += 1
+                }
+            }
+        }
+        let omitted = findings.reduce(UInt64(0)) { $0 &+ $1.omittedCitationCount }
+        let columns = report.points.indices.map {
+            OverviewSessionStartChart.Column(date: report.points[$0].date, count: counts[$0])
+        }
+        return (columns, omitted)
     }
 
     /// Scoped findings placed at the instant of their first timed cited frame, in
@@ -920,6 +1065,28 @@ struct OverviewView: View {
         return points.indices.map { OverviewSessionStartChart.Column(date: points[$0].date, count: counts[$0]) }
     }
 
+    /// The chip value for the selected measure: a byte or packet total, or the
+    /// average bit rate across the timed span.
+    private func measureTotal(
+        _ totals: TrafficTotals,
+        _ timeline: TrafficTimeline,
+        _ part: TrafficMeasure.Part = .total
+    )
+        -> String
+    {
+        let span = trafficMeasure == .bitsPerSecond ? timeline.timedSpan : 1
+        guard trafficMeasure != .bitsPerSecond || span > 0 else {
+            return "—"
+        }
+        return trafficMeasure.format(trafficMeasure.value(of: totals, part: part, columnWidth: span))
+    }
+
+    private func retransmissionCaption(omitted: UInt64) -> String {
+        omitted == 0
+            ? "Re-sent TCP segments the findings in scope cite"
+            : "Re-sent segments the findings cite; \(omitted) more were not retained"
+    }
+
     private func statusTitle(hasTraffic: Bool) -> String {
         if coordinator.isOpeningSavedCapture {
             return "Loading"
@@ -947,13 +1114,17 @@ struct OverviewView: View {
         return timeline.totals.frames
     }
 
-    private func activityCaption(_ timeline: TrafficTimeline) -> String {
+    private func activityCaption(_ timeline: TrafficTimeline, width: TimeInterval, scoped: Bool) -> String {
         if timeline.firstTimedFrame == nil {
             return timeline.isEmpty ? "Waiting for traffic" : "No timed frames"
         }
-        let width = timeline.bucketWidth
         let slices = width < 60 ? "\(Int(width))-second" : "\(Int(width / 60))-minute"
-        return "Wire bytes in \(slices) slices across the whole capture"
+        let what = switch trafficMeasure {
+        case .bytes: "Wire bytes in \(slices) slices"
+        case .packets: "Frames in \(slices) slices"
+        case .bitsPerSecond: "Average bit rate of each \(slices) slice"
+        }
+        return scoped ? "\(what), scaled to the sessions in view" : "\(what) across the whole capture"
     }
 
     private func findingAxisLabel(placed: Int, total: Int) -> String {

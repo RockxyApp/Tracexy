@@ -39,6 +39,7 @@ struct CaptureReadinessPresentation: Equatable {
         retentionCapacity: Int,
         helperStatus: HelperClient.Status,
         isDirectCapture: Bool,
+        isPipe: Bool = false,
         captureStatistics: CaptureStatistics?,
         helperDropCount: UInt64,
         retentionEvictionCount: UInt64
@@ -50,18 +51,19 @@ struct CaptureReadinessPresentation: Equatable {
         isActionEnabled = displayState != .starting
         items = [
             Self.interfaceItem(id: interfaceID, interface: interface),
-            Self.helperItem(status: helperStatus, isDirectCapture: isDirectCapture),
+            Self.helperItem(status: helperStatus, isDirectCapture: isDirectCapture, isPipe: isPipe),
             CaptureReadinessItem(
                 label: "Capture filter",
-                value: configuration.bpf ?? "All traffic",
+                value: isPipe ? "Not applied to a pipe" : configuration.bpf ?? "All traffic",
                 systemImage: configuration.bpf == nil ? "line.3.horizontal.decrease.circle" : "text.magnifyingglass",
                 level: .neutral,
                 isMonospaced: configuration.bpf != nil
             ),
             CaptureReadinessItem(
                 label: "Packet snapshot",
-                value: "\(configuration.snapLength.formatted()) bytes · "
-                    + (configuration.promiscuous ? "promiscuous" : "standard"),
+                value: configuration.promiscuous
+                    ? "\(configuration.snapLength.formatted()) bytes, promiscuous mode"
+                    : "\(configuration.snapLength.formatted()) bytes",
                 systemImage: "shippingbox",
                 level: .neutral
             ),
@@ -114,16 +116,16 @@ struct CaptureReadinessPresentation: Equatable {
         guard let interface else {
             return CaptureReadinessItem(
                 label: "Interface",
-                value: "\(id) · unavailable",
+                value: "\(id) is unavailable",
                 systemImage: "network.slash",
                 level: .attention,
                 isMonospaced: true
             )
         }
-        let address = interface.ipv4.map { " · \($0)" } ?? ""
+        let state = interface.isUp ? interface.ipv4 ?? "" : String(localized: "not connected")
         return CaptureReadinessItem(
             label: "Interface",
-            value: "\(interface.menuLabel) · \(interface.isUp ? "up" : "not connected")\(address)",
+            value: state.isEmpty ? interface.menuLabel : "\(interface.menuLabel), \(state)",
             systemImage: interface.symbol,
             level: interface.isUp ? .ready : .attention,
             isMonospaced: false
@@ -132,10 +134,19 @@ struct CaptureReadinessPresentation: Equatable {
 
     private static func helperItem(
         status: HelperClient.Status,
-        isDirectCapture: Bool
+        isDirectCapture: Bool,
+        isPipe: Bool
     )
         -> CaptureReadinessItem
     {
+        if isPipe {
+            return CaptureReadinessItem(
+                label: "Capture path",
+                value: "Named pipe, read by Tracexy",
+                systemImage: "pipe.and.drop",
+                level: .neutral
+            )
+        }
         if isDirectCapture {
             return CaptureReadinessItem(
                 label: "Capture path",
@@ -151,13 +162,13 @@ struct CaptureReadinessPresentation: Equatable {
             value = "Helper ready"
             level = .ready
         case .installedOutdated:
-            value = "Ready · update available"
+            value = "Update available"
             level = .ready
         case .requiresApproval:
             value = "Approval needed"
             level = .attention
         case .installedIncompatible:
-            value = "Incompatible · update needed"
+            value = "Update required"
             level = .attention
         case .unreachable:
             value = "Registered but unreachable"
@@ -270,7 +281,11 @@ struct CaptureReadinessPopover: View {
     @Environment(\.openWindow) private var openWindow
 
     private var presentation: CaptureReadinessPresentation {
-        let interface = NetworkInterfaces.available().first { $0.id == coordinator.captureInterface }
+        let interface = NetworkInterfaces.applying(
+            InterfacePreferences.shared.settings,
+            to: NetworkInterfaces.available() + NetworkInterfaces.pipes(InterfacePreferences.shared.settings),
+            keeping: coordinator.captureInterface
+        ).first { $0.id == coordinator.captureInterface }
         return CaptureReadinessPresentation(
             displayState: coordinator.captureDisplayState,
             captureError: coordinator.captureError,
@@ -280,6 +295,7 @@ struct CaptureReadinessPopover: View {
             retentionCapacity: coordinator.readinessRetentionCapacity,
             helperStatus: coordinator.helper.status,
             isDirectCapture: MainContentCoordinator.forceDirectCapture,
+            isPipe: PipeCapture.isPipe(coordinator.captureInterface),
             captureStatistics: coordinator.captureStatistics,
             helperDropCount: coordinator.helperBufferDropCount,
             retentionEvictionCount: coordinator.retainedFrameEvictionCount

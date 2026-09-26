@@ -15,11 +15,14 @@ import Foundation
 /// This layer is observation-only. It records what the frames prove — it never
 /// retains a full stream, produces findings, or reaches the UI. Each connection
 /// folds every typed TCP segment once through one of two per-direction
-/// `TCPSequenceTracker`s (N2B2), emitting additional typed sequence events
-/// (advance/retransmission/overlap/out-of-order/…) alongside the lifecycle events;
-/// those trackers hold only sequence coordinates, never bytes.
+/// `TCPSequenceTracker`s, emitting additional typed sequence events
+/// (advance/retransmission/overlap/out-of-order/keep-alive) alongside the lifecycle
+/// events; those trackers hold only sequence coordinates, never bytes. One
+/// connection-wide `TCPFlowControlTracker` then classifies the same segment's
+/// acknowledgement/window shape (duplicate ACK, zero window, zero-window probe,
+/// window full) into further typed events from a few per-direction scalars.
 ///
-/// Each connection also owns two per-direction `TCPApplicationPrefixProbe`s (N2D2):
+/// Each connection also owns two per-direction `TCPApplicationPrefixProbe`s:
 /// a bounded, first-record byte reassembler in `payloadSequence` coordinates that
 /// recovers the direction's opening TLS/HTTP/DNS metadata, hands it back as a
 /// transient `ingest` result, and appends a bounded typed `.applicationRecord`
@@ -157,6 +160,15 @@ nonisolated struct ConnectionTable {
             return .none
         }
 
+        let credential = packet.tcpPayloadBytes.isEmpty ? nil : CleartextCredentialDetector.detect(
+            payload: packet.tcpPayloadBytes, sourcePort: source.port, destinationPort: destination.port
+        )
+        defer {
+            if let credential {
+                noteCredential(credential, tuple: tuple, direction: direction, provenance: provenance, facts: facts)
+            }
+        }
+
         let application = ApplicationInput(
             payloadSequence: facts.payloadSequence,
             payload: packet.tcpPayloadBytes,
@@ -200,13 +212,13 @@ nonisolated struct ConnectionTable {
             // never reopens the connection. The trackers and probes still exist
             // while the terminal state lingers in `active`, so the segment folds.
             attach(&state, provenance: provenance, loss: loss)
-            let sequenceEvent = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
+            let sequenceEvents = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
             var appEvents: [ConnectionEvent] = []
             let metadata = foldApplication(
                 &state, direction: direction, input: application,
                 provenance: provenance, facts: facts, into: &appEvents
             )
-            active[tuple] = state
+            store(state, at: tuple)
             appendEvent(
                 event(state.id, .lateSegmentAfterClose, provenance, direction: direction, facts: facts),
                 to: tuple
@@ -218,8 +230,8 @@ nonisolated struct ConnectionTable {
             if facts.flags.contains(.rst) {
                 appendEvent(event(state.id, .rst, provenance, direction: direction, facts: facts), to: tuple)
             }
-            if let sequenceEvent {
-                appendEvent(sequenceEvent, to: tuple)
+            for produced in sequenceEvents {
+                appendEvent(produced, to: tuple)
             }
             for produced in appEvents {
                 appendEvent(produced, to: tuple)
@@ -231,7 +243,7 @@ nonisolated struct ConnectionTable {
             &state, direction: direction, facts: facts,
             provenance: provenance, loss: loss, application: application
         )
-        active[tuple] = state
+        store(state, at: tuple)
         for produced in result.events {
             appendEvent(produced, to: tuple)
         }
@@ -240,7 +252,7 @@ nonisolated struct ConnectionTable {
 
     /// A first-observed-ordered snapshot of active and published connections.
     func snapshot() -> Snapshot {
-        var all = published
+        var all = zip(published, publishedAlive).compactMap { $1 ? $0 : nil }
         for state in active.values {
             all.append(state.summary())
         }
@@ -256,7 +268,7 @@ nonisolated struct ConnectionTable {
             summaries: all,
             omittedSummaryCount: omittedSummaryCount,
             activeConnectionCount: active.count,
-            publishedSummaryCount: published.count,
+            publishedSummaryCount: publishedLiveCount,
             retainedEventCount: retainedEventTotal,
             countersOverflowed: countersOverflowed
         )
@@ -270,6 +282,17 @@ nonisolated struct ConnectionTable {
     /// plain comparable tuple of already-known facts, so no optional `Date` is ever
     /// compared against another optional directly.
     private struct RecencyKey {
+        // MARK: Lifecycle
+
+        init(_ state: ConnectionState) {
+            isTimed = state.lastProvenance.timestamp != nil
+            timestamp = state.lastProvenance.timestamp
+            lastOrdinal = state.lastProvenance.ordinal.rawValue
+            firstOrdinal = state.firstProvenance.ordinal.rawValue
+        }
+
+        // MARK: Internal
+
         let isTimed: Bool
         let timestamp: Date?
         let lastOrdinal: UInt64
@@ -303,12 +326,87 @@ nonisolated struct ConnectionTable {
         let packetIsClassified: Bool
     }
 
+    /// One recency record for eviction: the documented total order (see
+    /// ``leastRecentlyUsedTuple()``), then tuple order.
+    private struct RecencyEntry: Comparable {
+        let key: RecencyKey
+        let tuple: FiveTuple
+        let version: UInt64
+
+        static func < (lhs: RecencyEntry, rhs: RecencyEntry) -> Bool {
+            lhs.key.precedes(rhs.key) || (lhs.key.equals(rhs.key) && ConnectionTable.isLower(
+                lhs.tuple,
+                than: rhs.tuple
+            ))
+        }
+
+        static func == (lhs: RecencyEntry, rhs: RecencyEntry) -> Bool {
+            lhs.tuple == rhs.tuple && lhs.version == rhs.version
+        }
+    }
+
+    /// A connection's front event for ``enforceTotalEventCap()``: ordered by the
+    /// event's occurrence ordinal, then its connection id's text, as the bound names.
+    private struct FrontEntry: Comparable {
+        enum Place {
+            case active(FiveTuple)
+            case published
+        }
+
+        let ordinal: UInt64
+        let idText: String
+        let connection: ConnectionID
+        let place: Place
+        let version: UInt64
+
+        static func < (lhs: FrontEntry, rhs: FrontEntry) -> Bool {
+            (lhs.ordinal, lhs.idText) < (rhs.ordinal, rhs.idText)
+        }
+
+        static func == (lhs: FrontEntry, rhs: FrontEntry) -> Bool {
+            lhs.connection == rhs.connection && lhs.version == rhs.version
+        }
+    }
+
+    private struct PublishedEntry: Comparable {
+        let firstOrdinal: UInt64
+        let sequence: UInt64
+        let id: ConnectionID
+
+        static func < (lhs: PublishedEntry, rhs: PublishedEntry) -> Bool {
+            (lhs.firstOrdinal, lhs.sequence) < (rhs.firstOrdinal, rhs.sequence)
+        }
+    }
+
     private let configuration: Configuration
+
+    /// Eviction order over `active`: a heap of recency records, each valid while its
+    /// version is the tuple's latest.
+    private var recency = MinHeap<RecencyEntry>()
+    private var recencyVersions: [FiveTuple: UInt64] = [:]
+    private var recencyCounter: UInt64 = 0
+    /// Each connection's oldest retained event, for the global event bound: valid
+    /// while its version is the connection's latest in `frontVersions`.
+    private var fronts = MinHeap<FrontEntry>()
+    private var frontVersions: [ConnectionID: UInt64] = [:]
+    private var frontCounter: UInt64 = 0
+    /// Where each live published summary sits in `published`. A dropped summary stays
+    /// in the array marked dead in `publishedAlive` (its events freed) until the array
+    /// is compacted, so dropping one never shifts the others.
+    private var publishedIndexByID: [ConnectionID: Int] = [:]
+    private var publishedAlive: [Bool] = []
+    private var publishedLiveCount = 0
+    /// Publication bound order: least first ordinal, then publication order.
+    private var publishedOrder = MinHeap<PublishedEntry>()
+    private var publicationCounter: UInt64 = 0
 
     /// Live connections keyed by canonical tuple, bounded by
     /// `maxActiveConnections`. A terminal connection lingers here (so late
     /// segments can attach) until replaced by a new SYN or evicted.
     private var active: [FiveTuple: ConnectionState] = [:]
+    /// Which credential kinds each connection already reported, so a login is one
+    /// event per kind rather than one per segment. Bounded with the connections.
+    private var reportedCredentials: [ConnectionID: Set<CleartextCredentialKind>] = [:]
     /// Finalized (terminal or evicted) summaries, bounded by
     /// `maxPublishedSummaries`.
     private var published: [ConnectionSummary] = []
@@ -324,8 +422,13 @@ nonisolated struct ConnectionTable {
     private var retainedEventTotal = 0
     /// FIFO memory of recently evicted tuples so a later frame for one opens a
     /// new id carrying `priorStateEvicted`. Bounded by `maxActiveConnections`.
-    private var evictedOrder: [FiveTuple] = []
-    private var evictedSet: Set<FiveTuple> = []
+    /// Oldest first from `evictedHead`; an entry counts only while its version is
+    /// the tuple's current one in `evictedVersions`, so trimming and consuming a
+    /// marker are O(1) amortized instead of shifting the whole array.
+    private var evictedOrder: [(tuple: FiveTuple, version: UInt64)] = []
+    private var evictedHead = 0
+    private var evictedVersions: [FiveTuple: UInt64] = [:]
+    private var evictedCounter: UInt64 = 0
 
     /// The per-direction tracker configuration derived from the table bounds,
     /// handed to both trackers of every connection so buffering stays bounded.
@@ -368,10 +471,25 @@ nonisolated struct ConnectionTable {
             (.pendingOverflow, [.sequenceGapObserved, .sequenceStateTruncated])
         case .serialAmbiguous:
             (.serialAmbiguous, .serialDistanceAmbiguous)
-        case .noSequenceSpace,
-             .keepAlive:
+        case .keepAlive:
+            (.keepAlive, [])
+        case .noSequenceSpace:
             nil
         }
+    }
+
+    /// A total order over tuples, used only as a final deterministic tie-break.
+    private static func isLower(_ tuple: FiveTuple, than other: FiveTuple?) -> Bool {
+        guard let other else {
+            return true
+        }
+        if tuple.proto.rawValue != other.proto.rawValue {
+            return tuple.proto.rawValue < other.proto.rawValue
+        }
+        if tuple.a != other.a {
+            return tuple.a < other.a
+        }
+        return tuple.b < other.b
     }
 
     private mutating func attachToPublishedTerminalIfNeeded(
@@ -384,7 +502,7 @@ nonisolated struct ConnectionTable {
         -> Bool
     {
         guard let id = latestPublishedByTuple[tuple],
-              let index = published.firstIndex(where: { $0.id == id }),
+              let index = publishedIndexByID[id],
               published[index].closeReason != .stateEviction else
         {
             return false
@@ -437,9 +555,9 @@ nonisolated struct ConnectionTable {
         }
 
         // Fold this first segment through its direction tracker before the
-        // lifecycle events are decided; the typed sequence event (if any) trails
+        // lifecycle events are decided; the typed sequence events (if any) trail
         // them as additional evidence.
-        let sequenceEvent = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
+        let sequenceEvents = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
 
         var events: [ConnectionEvent] = [
             event(id, .firstObserved, provenance, direction: direction, facts: facts),
@@ -492,9 +610,7 @@ nonisolated struct ConnectionTable {
             }
         }
 
-        if let sequenceEvent {
-            events.append(sequenceEvent)
-        }
+        events.append(contentsOf: sequenceEvents)
 
         // Fold the first segment's payload through its direction probe last, so any
         // application event trails the lifecycle and sequence evidence.
@@ -503,7 +619,7 @@ nonisolated struct ConnectionTable {
             provenance: provenance, facts: facts, into: &events
         )
 
-        active[tuple] = state
+        store(state, at: tuple)
         for produced in events {
             appendEvent(produced, to: tuple)
         }
@@ -528,8 +644,8 @@ nonisolated struct ConnectionTable {
         let flags = facts.flags
         var events: [ConnectionEvent] = []
         // Fold once through the direction tracker before the lifecycle branches;
-        // the typed sequence event (if any) trails this frame's lifecycle events.
-        let sequenceEvent = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
+        // the typed sequence events (if any) trail this frame's lifecycle events.
+        let sequenceEvents = sequenceFold(&state, direction: direction, facts: facts, provenance: provenance)
         // Fold the segment's payload through the direction probe exactly once. Its
         // application event(s), if any, trail every other event on this frame; the
         // metadata handoff is returned to the session fold.
@@ -543,7 +659,7 @@ nonisolated struct ConnectionTable {
             state.phase = .closed
             state.closeReason = .reset(direction)
             events.append(event(id, .rst, provenance, direction: direction, facts: facts))
-            appendIfPresent(sequenceEvent, to: &events)
+            events.append(contentsOf: sequenceEvents)
             events.append(contentsOf: appEvents)
             return (events, appMetadata)
         }
@@ -556,7 +672,7 @@ nonisolated struct ConnectionTable {
                     state.phase = .active
                 }
             }
-            appendIfPresent(sequenceEvent, to: &events)
+            events.append(contentsOf: sequenceEvents)
             events.append(contentsOf: appEvents)
             return (events, appMetadata)
         }
@@ -599,7 +715,7 @@ nonisolated struct ConnectionTable {
             }
         }
 
-        appendIfPresent(sequenceEvent, to: &events)
+        events.append(contentsOf: sequenceEvents)
         events.append(contentsOf: appEvents)
         return (events, appMetadata)
     }
@@ -711,12 +827,33 @@ nonisolated struct ConnectionTable {
 
     // MARK: Event bounds
 
+    /// One `.cleartextCredential` event per connection and kind, on the frame that
+    /// carried it. The detector's kind is kept; the payload is not.
+    private mutating func noteCredential(
+        _ kind: CleartextCredentialKind,
+        tuple: FiveTuple,
+        direction: ConnectionDirection,
+        provenance: SessionFrameProvenance,
+        facts: TCPSegmentFacts
+    ) {
+        guard let id = active[tuple]?.id, reportedCredentials[id]?.contains(kind) != true,
+              reportedCredentials.count < configuration.maxActiveConnections * 4 else
+        {
+            return
+        }
+        reportedCredentials[id, default: []].insert(kind)
+        appendEvent(ConnectionEvent(
+            connectionID: id, kind: .cleartextCredential, timestamp: provenance.timestamp,
+            provenance: provenance, direction: direction, facts: facts, credentialKind: kind
+        ), to: tuple)
+    }
+
     private mutating func appendEvent(_ produced: ConnectionEvent, to tuple: FiveTuple) {
         guard var state = active[tuple] else {
             return
         }
         state.events.append(produced)
-        active[tuple] = state
+        store(state, at: tuple)
         retainedEventTotal += 1
         enforcePerConnectionEventCap(tuple)
         enforceTotalEventCap()
@@ -735,6 +872,7 @@ nonisolated struct ConnectionTable {
             }
             retainedEventTotal -= 1
         }
+        noteFront(of: published[index].id, events: published[index].events, place: .published)
         enforceTotalEventCap()
     }
 
@@ -756,44 +894,18 @@ nonisolated struct ConnectionTable {
             }
             retainedEventTotal -= 1
         }
-        active[tuple] = state
+        store(state, at: tuple)
     }
 
     private mutating func enforceTotalEventCap() {
         let cap = configuration.maxTotalEvents
         while retainedEventTotal > cap {
             // Drop the globally oldest front event across both active and finalized
-            // summaries, chosen independently of dictionary iteration order.
-            var activeVictim: FiveTuple?
-            var publishedVictim: Int?
-            var bestOrdinal = UInt64.max
-            var bestID = ""
-            for (tuple, state) in active {
-                guard let front = state.events.first else {
-                    continue
-                }
-                let ordinal = front.occurrenceOrdinal.rawValue
-                let id = front.connectionID.rawValue.uuidString
-                if ordinal < bestOrdinal || (ordinal == bestOrdinal && (bestID.isEmpty || id < bestID)) {
-                    bestOrdinal = ordinal
-                    bestID = id
-                    activeVictim = tuple
-                    publishedVictim = nil
-                }
-            }
-            for index in published.indices {
-                guard let front = published[index].events.first else {
-                    continue
-                }
-                let ordinal = front.occurrenceOrdinal.rawValue
-                let id = front.connectionID.rawValue.uuidString
-                if ordinal < bestOrdinal || (ordinal == bestOrdinal && (bestID.isEmpty || id < bestID)) {
-                    bestOrdinal = ordinal
-                    bestID = id
-                    activeVictim = nil
-                    publishedVictim = index
-                }
-            }
+            // summaries — least occurrence ordinal, then connection id text — found
+            // through the front heap rather than a scan, independently of dictionary order.
+            let victim = oldestFront()
+            let activeVictim = victim?.tuple
+            let publishedVictim = victim?.index
             if let tuple = activeVictim, var state = active[tuple], !state.events.isEmpty {
                 state.events.removeFirst()
                 let omitted = Self.saturatingAdd(state.omittedEventCount, 1)
@@ -802,7 +914,7 @@ nonisolated struct ConnectionTable {
                 if omitted.overflowed {
                     state.limitations.insert(.counterOverflow)
                 }
-                active[tuple] = state
+                store(state, at: tuple)
             } else if let index = publishedVictim, !published[index].events.isEmpty {
                 published[index].events.removeFirst()
                 let omitted = Self.saturatingAdd(
@@ -813,6 +925,7 @@ nonisolated struct ConnectionTable {
                 if omitted.overflowed {
                     published[index].limitations.insert(.counterOverflow)
                 }
+                noteFront(of: published[index].id, events: published[index].events, place: .published)
             } else {
                 retainedEventTotal = 0
                 return
@@ -836,7 +949,7 @@ nonisolated struct ConnectionTable {
             if !wasTerminal {
                 state.phase = .closed
                 state.closeReason = .stateEviction
-                active[tuple] = state
+                store(state, at: tuple)
                 // Record the eviction against the connection's last evidence,
                 // then finalize and release it.
                 appendEvent(event(state.id, .stateEvicted, state.lastProvenance), to: tuple)
@@ -862,27 +975,88 @@ nonisolated struct ConnectionTable {
     ///    their last frame's capture **ordinal** — the named source-order fallback,
     ///    used purely for ordering.
     /// 3. Remaining ties break on the earliest first ordinal, then tuple order.
-    private func leastRecentlyUsedTuple() -> FiveTuple? {
-        var victim: FiveTuple?
-        var best: RecencyKey?
-        for (tuple, state) in active {
-            let candidate = RecencyKey(
-                isTimed: state.lastProvenance.timestamp != nil,
-                timestamp: state.lastProvenance.timestamp,
-                lastOrdinal: state.lastProvenance.ordinal.rawValue,
-                firstOrdinal: state.firstProvenance.ordinal.rawValue
-            )
-            let better: Bool = if let best {
-                candidate.precedes(best) || (candidate.equals(best) && isLower(tuple, than: victim))
-            } else {
-                true
+    private mutating func leastRecentlyUsedTuple() -> FiveTuple? {
+        // Entries are pushed on every write and skipped here once superseded or
+        // removed, so the first valid one is the victim the total order names.
+        while let top = recency.min {
+            if recencyVersions[top.tuple] == top.version, active[top.tuple] != nil {
+                return top.tuple
             }
-            if better {
-                best = candidate
-                victim = tuple
-            }
+            recency.popMin()
         }
-        return victim
+        return nil
+    }
+
+    /// Writes a live connection and records its recency for eviction.
+    private mutating func store(_ state: ConnectionState, at tuple: FiveTuple) {
+        active[tuple] = state
+        recencyCounter &+= 1
+        recencyVersions[tuple] = recencyCounter
+        recency.push(RecencyEntry(key: RecencyKey(state), tuple: tuple, version: recencyCounter))
+        noteFront(of: state.id, events: state.events, place: .active(tuple))
+        // Superseded entries accumulate; rebuild from the live table when they dominate.
+        if recency.count > 4 * active.count + 1_024 {
+            recencyVersions = recencyVersions.filter { active[$0.key] != nil }
+            recency.rebuild(active.map { tuple, state in
+                RecencyEntry(key: RecencyKey(state), tuple: tuple, version: recencyVersions[tuple] ?? 0)
+            })
+        }
+    }
+
+    /// Records a connection's current front event (or that it has none).
+    private mutating func noteFront(of id: ConnectionID, events: [ConnectionEvent], place: FrontEntry.Place) {
+        frontCounter &+= 1
+        frontVersions[id] = frontCounter
+        if let first = events.first {
+            fronts.push(FrontEntry(
+                ordinal: first.occurrenceOrdinal.rawValue, idText: first.connectionID.rawValue.uuidString,
+                connection: id, place: place, version: frontCounter
+            ))
+        }
+        if fronts.count > 4 * (active.count + publishedLiveCount) + 1_024 {
+            var rebuilt: [FrontEntry] = []
+            for (tuple, state) in active {
+                if let entry = currentFront(state.id, events: state.events, place: .active(tuple)) {
+                    rebuilt.append(entry)
+                }
+            }
+            for (summary, isAlive) in zip(published, publishedAlive) where isAlive {
+                if let entry = currentFront(summary.id, events: summary.events, place: .published) {
+                    rebuilt.append(entry)
+                }
+            }
+            fronts.rebuild(rebuilt)
+        }
+    }
+
+    private func currentFront(_ id: ConnectionID, events: [ConnectionEvent], place: FrontEntry.Place) -> FrontEntry? {
+        guard let first = events.first, let version = frontVersions[id] else {
+            return nil
+        }
+        return FrontEntry(
+            ordinal: first.occurrenceOrdinal.rawValue, idText: first.connectionID.rawValue.uuidString,
+            connection: id, place: place, version: version
+        )
+    }
+
+    /// The globally oldest front event's owner: an active tuple or a published index.
+    private mutating func oldestFront() -> (tuple: FiveTuple?, index: Int?)? {
+        while let top = fronts.min {
+            if frontVersions[top.connection] == top.version {
+                switch top.place {
+                case let .active(tuple):
+                    if active[tuple]?.id == top.connection, active[tuple]?.events.isEmpty == false {
+                        return (tuple, nil)
+                    }
+                case .published:
+                    if let index = publishedIndexByID[top.connection], !published[index].events.isEmpty {
+                        return (nil, index)
+                    }
+                }
+            }
+            fronts.popMin()
+        }
+        return nil
     }
 
     // MARK: Publication bound
@@ -890,18 +1064,27 @@ nonisolated struct ConnectionTable {
     private mutating func publish(_ state: ConnectionState) {
         let summary = state.summary()
         published.append(summary)
+        publishedAlive.append(true)
+        publishedLiveCount += 1
+        publishedIndexByID[summary.id] = published.count - 1
+        publicationCounter &+= 1
+        publishedOrder.push(PublishedEntry(
+            firstOrdinal: summary.firstProvenance.ordinal.rawValue, sequence: publicationCounter, id: summary.id
+        ))
+        noteFront(of: summary.id, events: summary.events, place: .published)
         latestPublishedByTuple[state.tuple] = state.id
         let cap = configuration.maxPublishedSummaries
-        while published.count > cap {
-            // Drop the oldest terminal/evicted summary by first ordinal.
-            var oldest = 0
-            for index in published.indices
-                where published[index].firstProvenance.ordinal.rawValue
-                < published[oldest].firstProvenance.ordinal.rawValue
-            {
-                oldest = index
+        while publishedLiveCount > cap, let oldest = publishedOrder.popMin() {
+            // Drop the oldest terminal/evicted summary: least first ordinal, then the
+            // earliest published — found through the heap, not a scan.
+            guard let index = publishedIndexByID.removeValue(forKey: oldest.id) else {
+                continue
             }
-            let removed = published.remove(at: oldest)
+            let removed = published[index]
+            publishedAlive[index] = false
+            publishedLiveCount -= 1
+            published[index].events = []
+            frontVersions[removed.id] = nil
             retainedEventTotal -= removed.events.count
             if latestPublishedByTuple[removed.tuple] == removed.id {
                 latestPublishedByTuple.removeValue(forKey: removed.tuple)
@@ -910,54 +1093,105 @@ nonisolated struct ConnectionTable {
             omittedSummaryCount = omitted.value
             countersOverflowed = countersOverflowed || omitted.overflowed
         }
+        if published.count > 2 * publishedLiveCount + 1_024 {
+            compactPublished()
+        }
+    }
+
+    /// Drops dead summaries from `published`, keeping publication order, and
+    /// re-points the index map (whose front entries record no index, only the id).
+    private mutating func compactPublished() {
+        published = zip(published, publishedAlive).compactMap { $1 ? $0 : nil }
+        publishedAlive = Array(repeating: true, count: published.count)
+        publishedIndexByID = Dictionary(uniqueKeysWithValues: published.enumerated().map { ($1.id, $0) })
     }
 
     // MARK: Evicted-tuple memory
 
     private mutating func markEvicted(_ tuple: FiveTuple) {
-        guard !evictedSet.contains(tuple) else {
+        guard evictedVersions[tuple] == nil else {
             return
         }
-        evictedSet.insert(tuple)
-        evictedOrder.append(tuple)
+        evictedCounter &+= 1
+        evictedVersions[tuple] = evictedCounter
+        evictedOrder.append((tuple, evictedCounter))
         let cap = configuration.maxActiveConnections
-        while evictedOrder.count > cap {
-            let old = evictedOrder.removeFirst()
-            evictedSet.remove(old)
+        while evictedVersions.count > cap, evictedHead < evictedOrder.count {
+            let old = evictedOrder[evictedHead]
+            evictedHead += 1
+            if evictedVersions[old.tuple] == old.version {
+                evictedVersions[old.tuple] = nil
+            }
+        }
+        if evictedHead > 1_024, evictedHead * 2 > evictedOrder.count {
+            evictedOrder.removeFirst(evictedHead)
+            evictedHead = 0
         }
     }
 
     private mutating func consumeEvictedMarker(_ tuple: FiveTuple) -> Bool {
-        guard evictedSet.remove(tuple) != nil else {
-            return false
-        }
-        if let index = evictedOrder.firstIndex(of: tuple) {
-            evictedOrder.remove(at: index)
-        }
-        return true
+        evictedVersions.removeValue(forKey: tuple) != nil
     }
 
     // MARK: Sequence integration
 
-    /// Fold one segment through its direction tracker exactly once and, unless the
-    /// segment claimed no sequence space, mark the mapped sticky limitations on the
-    /// connection and return the typed sequence event to append. Mutates only the
-    /// passed-in `state` (its tracker and limitations), never `self`.
+    /// Fold one segment through its direction tracker and the connection's
+    /// flow-control tracker exactly once each, mark the mapped sticky limitations
+    /// on the connection, and return the typed sequence/flow-control events to
+    /// append (sequence verdict first, then window/acknowledgement shapes in a
+    /// fixed order). A pure ACK with an ordinary window returns nothing. Mutates
+    /// only the passed-in `state` (its trackers and limitations), never `self`.
     private func sequenceFold(
         _ state: inout ConnectionState,
         direction: ConnectionDirection,
         facts: TCPSegmentFacts,
         provenance: SessionFrameProvenance
     )
-        -> ConnectionEvent?
+        -> [ConnectionEvent]
     {
         let output = state.foldSequence(direction: direction, facts: facts)
-        guard let mapped = Self.sequenceMapping(for: output.disposition) else {
-            // Pure ACK / zero-sequence-space: no event, no limitation.
-            return nil
+        let flow = state.foldFlowControl(
+            direction: direction, facts: facts, keepAlive: output.disposition == .keepAlive,
+            retransmission: output.disposition == .duplicate
+        )
+        var events: [ConnectionEvent] = []
+        if let mapped = Self.sequenceMapping(for: output.disposition) {
+            state.limitations.formUnion(mapped.limitations)
+            // A zero-window probe is a byte sent to be refused: its ordering verdict
+            // (an advance the peer will not accept, then duplicates of it) is not
+            // evidence, so the probe event stands in for the sequence event. Any
+            // limitation the tracker recorded still sticks.
+            if flow.contains(.zeroWindowProbe) {
+                events.append(event(state.id, .zeroWindowProbe, provenance, direction: direction, facts: facts))
+            } else {
+                events.append(event(state.id, mapped.kind, provenance, direction: direction, facts: facts))
+            }
+        } else if flow.contains(.zeroWindowProbe) {
+            events.append(event(state.id, .zeroWindowProbe, provenance, direction: direction, facts: facts))
         }
-        state.limitations.formUnion(mapped.limitations)
-        return event(state.id, mapped.kind, provenance, direction: direction, facts: facts)
+        if flow.contains(.fastRetransmission) {
+            events.append(event(state.id, .fastRetransmission, provenance, direction: direction, facts: facts))
+        }
+        if flow.contains(.spuriousRetransmission) {
+            events.append(event(
+                state.id, .spuriousRetransmission, provenance, direction: direction, facts: facts
+            ))
+        }
+        if flow.contains(.windowFull) {
+            events.append(event(state.id, .windowFull, provenance, direction: direction, facts: facts))
+        }
+        if flow.contains(.zeroWindow) {
+            events.append(event(state.id, .zeroWindow, provenance, direction: direction, facts: facts))
+        }
+        if flow.contains(.duplicateAcknowledgement) {
+            events.append(event(
+                state.id, .duplicateAcknowledgement, provenance, direction: direction, facts: facts
+            ))
+        }
+        if flow.contains(.ackedUnseenSegment) {
+            events.append(event(state.id, .ackedUnseenSegment, provenance, direction: direction, facts: facts))
+        }
+        return events
     }
 
     /// Fold one segment's payload through its direction probe exactly once. On
@@ -1010,13 +1244,6 @@ nonisolated struct ConnectionTable {
 
     // MARK: Helpers
 
-    private func appendIfPresent(_ sequenceEvent: ConnectionEvent?, to events: inout [ConnectionEvent]) {
-        guard let sequenceEvent else {
-            return
-        }
-        events.append(sequenceEvent)
-    }
-
     private func event(
         _ id: ConnectionID,
         _ kind: ConnectionEventKind,
@@ -1054,20 +1281,6 @@ nonisolated struct ConnectionTable {
 
     private func finMask(_ direction: ConnectionDirection) -> FINDirection {
         direction == .aToB ? .aToB : .bToA
-    }
-
-    /// A total order over tuples, used only as a final deterministic tie-break.
-    private func isLower(_ tuple: FiveTuple, than other: FiveTuple?) -> Bool {
-        guard let other else {
-            return true
-        }
-        if tuple.proto.rawValue != other.proto.rawValue {
-            return tuple.proto.rawValue < other.proto.rawValue
-        }
-        if tuple.a != other.a {
-            return tuple.a < other.a
-        }
-        return tuple.b < other.b
     }
 }
 
@@ -1113,6 +1326,10 @@ nonisolated private struct ConnectionState {
     /// frames from the canonically-smaller endpoint; `bToA` the reverse.
     var sequenceAToB: TCPSequenceTracker
     var sequenceBToA: TCPSequenceTracker
+    /// The connection-wide acknowledgement/window tracker, advanced by
+    /// `foldFlowControl` after the direction tracker on every segment. It holds
+    /// only per-direction scalars — never bytes — and is released with this state.
+    var flowControl = TCPFlowControlTracker()
 
     /// Per-direction first-record application probes, chosen by `foldApplication`.
     /// They hold raw payload bytes (in `payloadSequence` coordinates) only until the
@@ -1162,6 +1379,22 @@ nonisolated private struct ConnectionState {
         case .bToA:
             sequenceBToA.ingest(facts)
         }
+    }
+
+    /// Fold one segment through the connection's flow-control tracker and return
+    /// the acknowledgement/window shapes it matched. Called exactly once per
+    /// segment, after `foldSequence`, whose keep-alive verdict it needs.
+    mutating func foldFlowControl(
+        direction: ConnectionDirection,
+        facts: TCPSegmentFacts,
+        keepAlive: Bool,
+        retransmission: Bool
+    )
+        -> TCPFlowControlTracker.Observations
+    {
+        flowControl.ingest(
+            direction: direction, facts: facts, keepAlive: keepAlive, retransmission: retransmission
+        )
     }
 
     /// Fold one segment's payload through the probe for its canonical direction and

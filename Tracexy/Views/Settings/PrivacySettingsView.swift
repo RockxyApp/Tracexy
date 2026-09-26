@@ -53,8 +53,9 @@ struct PrivacySettingsView: View {
                 SettingsIndented {
                     SettingsFootnote(
                         """
-                        These protections apply to .tracexysession documents. Raw pcap and pcapng exports preserve \
-                        captured bytes and always require confirmation while a protection is enabled.
+                        These protections apply to .tracexysession documents. Mask IP addresses also applies to \
+                        Export Investigation files and saved History. Raw pcap and pcapng exports preserve captured \
+                        bytes and always require confirmation while a protection is enabled.
                         """
                     )
                 }

@@ -31,6 +31,7 @@ nonisolated enum MCPAuditTool: String, Codable, Sendable, Equatable, CaseIterabl
     case describeScope = "describe_scope"
     case listCaptures = "list_captures"
     case listSessions = "list_sessions"
+    case listFindings = "list_findings"
     case unknown
 
     // MARK: Lifecycle
@@ -42,6 +43,7 @@ nonisolated enum MCPAuditTool: String, Codable, Sendable, Equatable, CaseIterabl
         case .describeScope: self = .describeScope
         case .listCaptures: self = .listCaptures
         case .listSessions: self = .listSessions
+        case .listFindings: self = .listFindings
         case nil: self = .unknown
         }
     }

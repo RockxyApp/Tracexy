@@ -83,6 +83,7 @@ struct MCPSubprocessIntegrationTests {
             "describe_scope",
             "list_captures",
             "list_sessions",
+            "list_findings",
         ])
 
         let scope = try Self.toolObject(responses[3])

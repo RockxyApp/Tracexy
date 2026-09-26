@@ -79,8 +79,10 @@ struct SessionFramesFacetView: View {
             Text(frame.ordinal.formatted()).monospacedDigit()
         }
         .width(min: 56, ideal: 72)
-        TableColumn("Time") { frame in
-            Text(Self.timeText(frame)).monospacedDigit()
+        TableColumn(coordinator.sessionTimeDisplay.frameFormat.columnTitle) { frame in
+            Text(timeText(frame))
+                .monospacedDigit()
+                .fontWeight(frameReference?.ordinal == frame.ordinal ? .semibold : .regular)
         }
         .width(min: 84, ideal: 110)
         TableColumn("Direction") { frame in
@@ -111,6 +113,30 @@ struct SessionFramesFacetView: View {
                 }
             }
         }
+    }
+
+    /// The reference, when it was set on this session's list.
+    private var frameReference: FrameTimeReference? {
+        coordinator.sessionTimeDisplay.frameReference.flatMap { $0.sessionID == session.id ? $0 : nil }
+    }
+
+    /// Each listed frame's predecessor in capture order, for the delta format.
+    private var previousTimestamps: [UInt64: Date?] {
+        guard let frames = coordinator.sessionFramesResult?.frames else {
+            return [:]
+        }
+        var result: [UInt64: Date?] = [:]
+        var previous: Date?
+        for frame in frames.sorted(by: { $0.ordinal < $1.ordinal }) {
+            result[frame.ordinal] = previous
+            previous = frame.provenance.timestamp
+        }
+        return result
+    }
+
+    /// The session's first listed frame's time, the origin of the default format.
+    private var sessionStart: Date? {
+        coordinator.sessionFramesResult?.frames.min { $0.ordinal < $1.ordinal }?.provenance.timestamp
     }
 
     private var header: some View {
@@ -189,8 +215,29 @@ struct SessionFramesFacetView: View {
             }
         }
         .alternatingRowBackgrounds()
+        .contextMenu(forSelectionType: UInt64.self) { ordinals in
+            if let ordinal = ordinals.first, let frame = result.frames.first(where: { $0.ordinal == ordinal }),
+               let timestamp = frame.provenance.timestamp
+            {
+                let reference = FrameTimeReference(sessionID: session.id, ordinal: ordinal, timestamp: timestamp)
+                if frameReference == reference {
+                    Button("Clear Time Reference") {
+                        coordinator.sessionTimeDisplay.frameReference = nil
+                    }
+                } else {
+                    Button("Set as Time Reference") {
+                        coordinator.sessionTimeDisplay.frameReference = reference
+                    }
+                }
+            }
+        }
         .onChange(of: selection) { _, ordinal in
-            guard let ordinal, let frame = result.frames.first(where: { $0.ordinal == ordinal }) else {
+            // Re-showing the already cited frame's row (on return to this facet) is
+            // not a new choice: loading it again would bounce the inspector straight
+            // back to Layers and make this facet unreachable while a citation is up.
+            guard let ordinal, ordinal != selectedOrdinal,
+                  let frame = result.frames.first(where: { $0.ordinal == ordinal }) else
+            {
                 return
             }
             coordinator.inspectSessionFrame(frame)
@@ -217,20 +264,13 @@ struct SessionFramesFacetView: View {
                 )
             }
             if case .incompleteTruncatedTail = result.completeness {
-                Text("· capture ends mid-record")
+                Label("Capture ends mid-record", systemImage: "scissors")
             }
             Spacer(minLength: 0)
         }
         .font(Theme.Typography.caption)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("session-frames-footer")
-    }
-
-    private static func timeText(_ frame: SessionFrameReference) -> String {
-        guard let relative = frame.relativeTime else {
-            return "—"
-        }
-        return relative.formatted(.number.precision(.fractionLength(6)))
     }
 
     private static func lengthText(_ frame: SessionFrameReference) -> String {
@@ -253,5 +293,17 @@ struct SessionFramesFacetView: View {
         case .serverToClient: "arrow.down.left"
         case .unknown: "questionmark"
         }
+    }
+
+    private func timeText(_ frame: SessionFrameReference) -> String {
+        FrameTimeFormat.text(
+            coordinator.sessionTimeDisplay.frameFormat,
+            timestamp: frame.provenance.timestamp,
+            ordinal: frame.ordinal,
+            previous: previousTimestamps[frame.ordinal] ?? nil,
+            sessionStart: sessionStart,
+            captureStart: coordinator.trafficTimeline.firstTimedFrame,
+            reference: frameReference
+        )
     }
 }

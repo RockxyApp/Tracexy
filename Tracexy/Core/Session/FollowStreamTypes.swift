@@ -15,6 +15,9 @@ nonisolated struct FollowStreamRun: Sendable, Equatable {
     let firstCaptureOrdinal: Int
     /// The retained, first-observed contiguous application bytes.
     let bytes: [UInt8]
+    /// The provenance of the frame at `firstCaptureOrdinal`, published only when the
+    /// reader was given the source token, so the run can open that exact frame.
+    var firstProvenance: SessionFrameProvenance?
 }
 
 // MARK: - FollowStreamDirectionSnapshot
@@ -39,6 +42,48 @@ nonisolated struct FollowStreamDirectionSnapshot: Sendable, Equatable {
     let observedOmittedByteCount: UInt64
     /// Matched frames folded into this direction (payload-bearing or not).
     let matchedFrameCount: Int
+    /// Where each frame first delivered new bytes, ascending by offset from
+    /// `anchorSequence`: the byte at offset `x` first arrived in the frame of the
+    /// last mark at or before `x`. Bounded; see `segmentMarksDroppedFrom`.
+    var segmentMarks: [FollowStreamSegmentMark] = []
+    /// The lowest offset whose mark was dropped at the bound, if any; bytes at or
+    /// past it have no known first frame.
+    var segmentMarksDroppedFrom: Int64?
+
+    /// The frame that first delivered byte `index` of `run`, or `nil` when no mark
+    /// covers it (the mark bound was reached before that byte arrived).
+    func firstFrame(ofByte index: Int, in run: FollowStreamRun) -> SessionFrameProvenance? {
+        guard let anchor = anchorSequence else {
+            return nil
+        }
+        let offset = Int64(Int32(bitPattern: run.sequenceAnchor &- anchor)) + Int64(index)
+        var low = 0
+        var high = segmentMarks.count
+        while low < high {
+            let mid = (low + high) / 2
+            if segmentMarks[mid].offset <= offset {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        guard low > 0 else {
+            return nil
+        }
+        if let dropped = segmentMarksDroppedFrom, offset >= dropped {
+            return nil
+        }
+        return segmentMarks[low - 1].provenance
+    }
+}
+
+// MARK: - FollowStreamSegmentMark
+
+/// The first offset (from the direction anchor) at which one frame delivered bytes
+/// no earlier frame had, and that frame's provenance.
+nonisolated struct FollowStreamSegmentMark: Sendable, Equatable {
+    let offset: Int64
+    let provenance: SessionFrameProvenance
 }
 
 // MARK: - FollowStreamLimitations
@@ -121,10 +166,12 @@ nonisolated struct FollowStreamResult: Sendable, Equatable {
 
 // MARK: - FollowStreamError
 
-/// The two rejections a ``FollowStreamReader`` makes before it will scan a file.
+/// The rejections a follow reader makes before it will scan a file.
 nonisolated enum FollowStreamError: Error, Equatable {
     /// The opened file no longer matches the caller's expected identity.
     case identityMismatch
     /// The requested tuple is not TCP; follow-stream is TCP-only.
     case tupleNotTCP
+    /// The requested tuple is not UDP; a datagram follow is UDP-only.
+    case tupleNotUDP
 }

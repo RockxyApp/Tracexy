@@ -127,8 +127,11 @@ extension MainContentCoordinator {
         beginProjectTransition(.deleteProject(id))
     }
 
+    /// Writes the active Project's tabs into the catalog. An autosave passes
+    /// `isAutosave` so a refusal it already reported is not raised again on every
+    /// debounce; an explicit save always reports.
     @discardableResult
-    func flushProjectWorkspaceSnapshot() -> Bool {
+    func flushProjectWorkspaceSnapshot(isAutosave: Bool = false) -> Bool {
         guard projectStore.isMutable else {
             lastProjectOperationError = .storeNotReady
             return false
@@ -139,9 +142,13 @@ extension MainContentCoordinator {
                 activeWorkspaceID: workspaces.activeWorkspaceID
             )
             lastProjectOperationError = nil
+            projectAutosaveRefusal = nil
             return true
         } catch let error as ProjectMutationError {
-            lastProjectOperationError = error
+            if !isAutosave || projectAutosaveRefusal != error {
+                lastProjectOperationError = error
+            }
+            projectAutosaveRefusal = error
             return false
         } catch {
             projectTransferErrorMessage = error.localizedDescription
@@ -150,6 +157,15 @@ extension MainContentCoordinator {
     }
 
     func flushProjectStateForTermination() async {
+        // Quit checkpoint: a running capture is stopped through the ordinary Stop path
+        // so its sessions reach History, exactly as if the user had pressed Stop. The
+        // wait is bounded — a helper that never returns its final tail must not hold
+        // the quit hostage — and an unconfirmed drain simply quits with what History
+        // already has.
+        if isCapturing || isStarting {
+            stopCapture()
+            _ = await waitForFinalCaptureDrain(timeout: Self.quitCheckpointDrainTimeout)
+        }
         cancelCaptureImport()
         await pendingCaptureImportTask?.value
         _ = await projectTransitionTask?.value
@@ -161,6 +177,9 @@ extension MainContentCoordinator {
         _ = flushProjectWorkspaceSnapshot()
         await projectStore.waitForPendingPersistence()
     }
+
+    /// How long a quit waits for a running capture's final drain before giving up.
+    static let quitCheckpointDrainTimeout: Duration = .seconds(5)
 
     func retryProjectCatalogLoad() async {
         // Reload is startup recovery, not permission to replace an investigation
@@ -329,8 +348,7 @@ extension MainContentCoordinator {
     func hydratePersistedWorkspaces(of project: Project, into runtime: ProjectRuntimeState) {
         runtime.workspaces.applyProjectWorkspaces(
             project.workspaces,
-            activeWorkspaceID: project.activeWorkspaceID,
-            maxFilterRules: policy.maxSessionFilterRules
+            activeWorkspaceID: project.activeWorkspaceID
         )
     }
 
@@ -441,7 +459,7 @@ extension MainContentCoordinator {
                 self.projectWorkspaceAutosaveTask = nil
                 return
             }
-            _ = self.flushProjectWorkspaceSnapshot()
+            _ = self.flushProjectWorkspaceSnapshot(isAutosave: true)
             self.projectWorkspaceAutosaveTask = nil
             self.projectWorkspaceAutosaveOwner = nil
         }

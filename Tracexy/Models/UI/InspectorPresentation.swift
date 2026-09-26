@@ -12,6 +12,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     // conversations of different protocols.
     case timeline
     case evidence
+    case ladder
     case frames
     case stream
     case layers
@@ -29,6 +30,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .timeline: "Timeline"
         case .evidence: "Evidence"
+        case .ladder: "Ladder"
         case .frames: "Frames"
         case .stream: "Stream"
         case .layers: "Layers"
@@ -42,6 +44,7 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .timeline: "chart.bar.xaxis"
         case .evidence: "point.3.connected.trianglepath.dotted"
+        case .ladder: "arrow.left.arrow.right.circle"
         case .frames: "list.number"
         case .stream: "arrow.left.arrow.right.square"
         case .layers: "square.stack.3d.up"
@@ -68,13 +71,15 @@ enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         var tabs: [InspectorTab] = [.timeline]
         if hasSessionEvidence {
             tabs.append(.evidence)
+            tabs.append(.ladder)
         }
         // Frames needs a stable source to rescan; it never appears for an active
         // live capture, whose spool is still growing.
         if hasFrameSource {
             tabs.append(.frames)
         }
-        if session.protocolStack.contains(.tcp) {
+        // TCP is followed as a byte stream, UDP datagram by datagram.
+        if session.protocolStack.contains(.tcp) || session.protocolStack.contains(.udp) {
             tabs.append(.stream)
         }
         if !session.decodedLayers.isEmpty {

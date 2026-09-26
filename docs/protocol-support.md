@@ -64,8 +64,14 @@ field-by-field parse.
   message, then releases the bytes. This automatic path does not reconstruct long-lived streams
   or application bodies. A separate, explicit **Follow Stream** action reads a stable saved or
   fully stopped capture on demand, with bounded output and visible coverage limits.
-- **No deep HTTP/2** parsing, **no HTTP/3**, and **no WebSocket** decode. (`http2` and `websocket`
-  exist as protocol labels for grouping, but the decoder never produces them from bytes.)
+- **HTTP/2 is read in Follow Stream only.** A followed TCP stream that opens with the HTTP/2 connection
+  preface, or that switches to HTTP/2 with an HTTP/1.1 `Upgrade: h2c`, is read into frames, streams and
+  HPACK-decoded headers (see [usage](usage.md)); the automatic session path marks a session `http2` from the
+  preface, a `101` agreeing to `h2c`, or a TLS 1.2 ALPN `h2`, and does not read frames.
+  HTTP/2 inside encrypted TLS is not read. **No HTTP/3.**
+- **WebSocket is read in Follow Stream only.** After an HTTP/1.1 `101` upgrade to `websocket`, a followed
+  stream's frames are read into messages (unmasked, reassembled, and inflated when permessage-deflate was
+  accepted); the automatic session path only marks the session `websocket` from the Upgrade.
 
 For how these decoded values become sessions and correlated actions, see [architecture](architecture.md)
 and [usage](usage.md).

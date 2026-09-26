@@ -13,6 +13,8 @@ nonisolated enum FrameExportScope: Sendable, Equatable {
     /// Frames whose capture time lies in the closed range. Untimed frames are
     /// excluded and counted.
     case timeRange(start: Date, end: Date)
+    /// Exactly these frames, by 1-based capture-order number (the marked frames).
+    case frames(Set<UInt64>)
 }
 
 // MARK: - FrameExportFormat
@@ -42,12 +44,58 @@ nonisolated enum FrameExportFormat: String, Sendable, CaseIterable, Identifiable
 // MARK: - FrameExportOptions
 
 nonisolated struct FrameExportOptions: Sendable, Equatable {
+    /// Most comments written, and the most UTF-8 bytes kept of each.
+    static let maximumCaptureComments = 500
+    static let maximumCommentBytes = 16_000
+
+    static let duplicateWindow = 5
+    static let maximumNameRecords = 10_000
+    static let truncationRange = 14 ... 262_144
+
+    /// Address → name pairs written into a PCAPNG Name Resolution Block, so
+    /// Wireshark shows the same names (resolved from the capture's DNS answers or
+    /// given by the investigator). Left out when addresses are replaced.
+    var nameRecords: [FrameExportNameRecord] = []
+
     var format: FrameExportFormat = .pcapng
     /// Copy section hardware/OS/application/comments and interface names,
     /// descriptions, filters and per-frame options from a pcapng source.
     var preservesMetadata = true
     /// Wrap the output in a gzip stream (`.gz`).
     var compressesWithGzip = false
+    /// Capture comments added to the PCAPNG section header (the investigator's
+    /// notes). Classic PCAP has nowhere to carry them and ignores them.
+    var captureComments: [String] = []
+    /// A comment for the first exported frame of each of these sessions (the
+    /// investigator's notes), so Wireshark shows it on that packet. PCAPNG only;
+    /// a frame without a capture time has no options to carry it.
+    var sessionFrameComments: [UUID: String] = [:]
+    /// Comments for individual frames, by 1-based capture-order number (Wireshark's
+    /// Packet Comment…). PCAPNG only; written beside any session note on that frame.
+    var frameComments: [UInt64: String] = [:]
+    /// Replace the addresses in every packet header (see ``AddressAnonymizer``).
+    /// Copied metadata and comments are left out, since they can name hosts too;
+    /// frames whose headers cannot be parsed are left out and counted.
+    var anonymizesAddresses = false
+    /// Strip Headers: write each frame's inner packet instead of the whole frame.
+    /// Frames without that inner layer are left out and counted.
+    var stripsHeaders: FrameHeaderStrip?
+    /// editcap -d: leave out a frame whose bytes equal one of the previous
+    /// ``duplicateWindow`` frames exactly.
+    var removesDuplicates = false
+    /// editcap -s: keep at most this many captured bytes of each frame (the
+    /// original length is kept). `nil` keeps every byte.
+    var truncatesTo: Int?
+    /// Seconds added to every written frame's time (editcap `-t`, Wireshark's Time
+    /// Shift); frames are chosen by their original times.
+    var shiftsTimeBy: TimeInterval = 0
+}
+
+// MARK: - FrameExportNameRecord
+
+nonisolated struct FrameExportNameRecord: Sendable, Equatable {
+    let address: String
+    let name: String
 }
 
 // MARK: - FrameExportSummary
@@ -65,6 +113,20 @@ nonisolated struct FrameExportSummary: Sendable, Equatable {
     /// Interface options that could not be re-emitted (truncated strings).
     let omittedInterfaceOptionCount: Int
     let completeness: CaptureLoadCompleteness
+    /// Frames an address-replacing export left out because their headers could not
+    /// be parsed safely.
+    var unanonymizedFrameCount = 0
+    /// Frames a Strip Headers export left out because they carry no inner packet
+    /// of the requested kind.
+    var unstrippedFrameCount = 0
+    /// Frames left out as exact duplicates of a recent frame.
+    var removedDuplicateCount = 0
+    /// Frames whose captured bytes were cut to the byte limit.
+    var truncatedFrameCount = 0
+    /// Address names written into the Name Resolution Block.
+    var writtenNameCount = 0
+    /// Distinct addresses replaced (MAC, IPv4 and IPv6 together).
+    var replacedAddressCount = 0
 }
 
 // MARK: - FrameExportError
@@ -142,17 +204,84 @@ nonisolated enum CaptureFrameExporter {
             }
         }
 
-        var state = WriterState(format: options.format, preservesMetadata: options.preservesMetadata)
+        var state = WriterState(
+            format: options.format,
+            preservesMetadata: options.preservesMetadata && !options.anonymizesAddresses,
+            captureComments: options.anonymizesAddresses ? [] : options.captureComments,
+            nameRecords: options.anonymizesAddresses ? [] : options.nameRecords
+        )
+        var anonymizer = options.anonymizesAddresses ? AddressAnonymizer() : nil
+        var unanonymized = 0
+        var unstripped = 0
+        var duplicates = 0
+        var truncated = 0
+        var recent: [[UInt8]] = []
         var scanned = 0
+        var commentedSessions: Set<UUID> = []
         var completion: CaptureStreamCompletion?
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
                 scanned += 1
-                if try matches(event, scope: scope) {
+                if try matches(event, ordinal: UInt64(scanned), scope: scope) {
+                    if options.removesDuplicates {
+                        if recent.contains(event.bytes) {
+                            duplicates += 1
+                            continue walk
+                        }
+                        recent.append(event.bytes)
+                        if recent.count > FrameExportOptions.duplicateWindow {
+                            recent.removeFirst()
+                        }
+                    }
+                    var written = event
+                    if let target = options.stripsHeaders {
+                        guard let inner = FrameHeaderStripper.strip(event, to: target) else {
+                            unstripped += 1
+                            continue walk
+                        }
+                        written = inner
+                    }
+                    if anonymizer != nil {
+                        guard let bytes = anonymizer?.anonymize(written.bytes, linkType: written.reference.linkType) else {
+                            unanonymized += 1
+                            continue walk
+                        }
+                        written = CaptureFrameEvent(
+                            reference: written.reference,
+                            bytes: bytes,
+                            progress: event.progress
+                        )
+                    }
+                    if let limit = options.truncatesTo.map({ min(
+                        max($0, FrameExportOptions.truncationRange.lowerBound),
+                        FrameExportOptions.truncationRange.upperBound
+                    ) }), written.bytes.count > limit {
+                        written = Self.truncated(written, to: limit)
+                        truncated += 1
+                    }
+                    if options.shiftsTimeBy != 0 {
+                        written = Self.shifted(written, by: options.shiftsTimeBy)
+                    }
+                    var comment: String?
+                    // An untimed frame is a Simple Packet Block, which has no options;
+                    // the note waits for the session's first timed frame.
+                    if !options.anonymizesAddresses, !options.sessionFrameComments.isEmpty,
+                       event.reference.timestamp != nil,
+                       let id = sessionID(of: event),
+                       !commentedSessions.contains(id), let text = options.sessionFrameComments[id]
+                    {
+                        comment = text
+                        commentedSessions.insert(id)
+                    }
+                    if !options.anonymizesAddresses, event.reference.timestamp != nil,
+                       let text = options.frameComments[UInt64(scanned)], !text.isEmpty
+                    {
+                        comment = comment.map { $0 + "\n" + text } ?? text
+                    }
                     try state.write(
-                        event, properties: reader.fileProperties, sourceFormat: reader.format,
-                        optionSource: optionSource, into: &sink
+                        written, properties: reader.fileProperties, sourceFormat: reader.format,
+                        optionSource: optionSource, comment: comment, into: &sink
                     )
                 }
                 if scanned % 256 == 0 {
@@ -196,7 +325,47 @@ nonisolated enum CaptureFrameExporter {
             unrepresentableFrameCount: state.unrepresentableFrames,
             omittedFrameOptionCount: state.omittedFrameOptions,
             omittedInterfaceOptionCount: state.omittedInterfaceOptions,
-            completeness: completeness
+            completeness: completeness,
+            unanonymizedFrameCount: unanonymized,
+            unstrippedFrameCount: unstripped,
+            removedDuplicateCount: duplicates,
+            truncatedFrameCount: truncated,
+            writtenNameCount: state.writtenNames,
+            replacedAddressCount: anonymizer.map {
+                $0.replacedMACCount + $0.replacedIPv4Count + $0.replacedIPv6Count
+            } ?? 0
+        )
+    }
+
+    /// `event` at a time `shift` seconds later (earlier when negative); an untimed
+    /// frame stays untimed.
+    static func shifted(_ event: CaptureFrameEvent, by shift: TimeInterval) -> CaptureFrameEvent {
+        let reference = event.reference
+        return CaptureFrameEvent(
+            reference: CaptureFrameReference(
+                payloadOffset: reference.payloadOffset, capturedLength: reference.capturedLength,
+                originalLength: reference.originalLength,
+                timestamp: reference.timestamp?.addingTimeInterval(shift),
+                linkType: reference.linkType, sectionIndex: reference.sectionIndex, interfaceID: reference.interfaceID,
+                hasComment: reference.hasComment, copyableOptionsRange: reference.copyableOptionsRange
+            ),
+            bytes: event.bytes,
+            progress: event.progress
+        )
+    }
+
+    /// `event` with its captured bytes cut to `limit`; the original length stays.
+    static func truncated(_ event: CaptureFrameEvent, to limit: Int) -> CaptureFrameEvent {
+        let reference = event.reference
+        return CaptureFrameEvent(
+            reference: CaptureFrameReference(
+                payloadOffset: reference.payloadOffset, capturedLength: limit,
+                originalLength: max(reference.originalLength, reference.capturedLength), timestamp: reference.timestamp,
+                linkType: reference.linkType, sectionIndex: reference.sectionIndex, interfaceID: reference.interfaceID,
+                hasComment: reference.hasComment, copyableOptionsRange: reference.copyableOptionsRange
+            ),
+            bytes: Array(event.bytes.prefix(limit)),
+            progress: event.progress
         )
     }
 
@@ -211,16 +380,26 @@ nonisolated enum CaptureFrameExporter {
     private struct WriterState {
         // MARK: Lifecycle
 
-        init(format: FrameExportFormat, preservesMetadata: Bool) {
+        init(
+            format: FrameExportFormat,
+            preservesMetadata: Bool,
+            captureComments: [String] = [],
+            nameRecords: [FrameExportNameRecord] = []
+        ) {
             self.format = format
             self.preservesMetadata = preservesMetadata
+            self.captureComments = captureComments
+            self.nameRecords = nameRecords
         }
 
         // MARK: Internal
 
         let format: FrameExportFormat
         let preservesMetadata: Bool
+        let captureComments: [String]
+        let nameRecords: [FrameExportNameRecord]
         var writtenFrames = 0
+        var writtenNames = 0
         var unrepresentableFrames = 0
         var omittedFrameOptions = 0
         var omittedInterfaceOptions = 0
@@ -230,6 +409,7 @@ nonisolated enum CaptureFrameExporter {
             properties: CaptureFileProperties,
             sourceFormat: CaptureStreamFormat,
             optionSource: FileHandle,
+            comment: String? = nil,
             into sink: inout OutputSink
         )
             throws
@@ -243,6 +423,7 @@ nonisolated enum CaptureFrameExporter {
                     properties: properties,
                     sourceFormat: sourceFormat,
                     optionSource: optionSource,
+                    comment: comment,
                     into: &sink
                 )
             }
@@ -253,6 +434,19 @@ nonisolated enum CaptureFrameExporter {
         private var wroteHeader = false
         private var classicLinkType: UInt32?
         private var interfaces: [CaptureInterface.ID: OutputInterface] = [:]
+
+        /// `comment` cut to ``FrameExportOptions/maximumCommentBytes`` at a
+        /// character boundary.
+        private static func boundedComment(_ comment: String) -> String {
+            var kept = ""
+            for character in comment {
+                guard kept.utf8.count + String(character).utf8.count <= FrameExportOptions.maximumCommentBytes else {
+                    break
+                }
+                kept.append(character)
+            }
+            return kept
+        }
 
         private mutating func writeClassic(_ event: CaptureFrameEvent, into sink: inout OutputSink) throws {
             guard let timestamp = event.reference.timestamp else {
@@ -291,12 +485,16 @@ nonisolated enum CaptureFrameExporter {
             properties: CaptureFileProperties,
             sourceFormat: CaptureStreamFormat,
             optionSource: FileHandle,
+            comment: String?,
             into sink: inout OutputSink
         )
             throws
         {
             if !wroteHeader {
                 try sink.write(sectionHeader(properties: properties))
+                if let names = nameResolutionBlock() {
+                    try sink.write(names)
+                }
                 wroteHeader = true
             }
             let key = CaptureInterface.ID(
@@ -327,12 +525,20 @@ nonisolated enum CaptureFrameExporter {
                 while body.count % 4 != 0 {
                     body.append(0)
                 }
+                // The investigator's note leads the option list; any copied source
+                // options (with their own end marker, if present) follow it.
+                let noted = comment.map(Self.boundedComment).flatMap { $0.isEmpty ? nil : $0 }
+                if let noted {
+                    appendOption(code: 1, value: Array(noted.utf8), to: &body)
+                }
+                var copiedOptions = false
                 if preservesMetadata, sourceFormat == .pcapng {
                     if let range = event.reference.copyableOptionsRange,
                        range.count <= CaptureFrameExporter.maxCopiedOptionBytes,
                        let copied = try? readOptions(range, from: optionSource)
                     {
                         body.append(copied)
+                        copiedOptions = true
                     } else if event.reference.hasComment || (event.reference.copyableOptionsRange == nil
                         && sourceFormat == .pcapng && event.reference.hasComment)
                     {
@@ -340,6 +546,10 @@ nonisolated enum CaptureFrameExporter {
                     }
                 } else if event.reference.hasComment {
                     omittedFrameOptions += 1
+                }
+                if noted != nil, !copiedOptions {
+                    append16(0, to: &body)
+                    append16(0, to: &body)
                 }
                 try sink.write(block(type: 0x00000006, body: body))
             } else {
@@ -390,6 +600,12 @@ nonisolated enum CaptureFrameExporter {
                 }
                 if let application = section.application {
                     appendTextOption(code: 4, application, to: &options)
+                }
+            }
+            for comment in captureComments.prefix(FrameExportOptions.maximumCaptureComments) {
+                let kept = Self.boundedComment(comment)
+                if !kept.isEmpty {
+                    appendOption(code: 1, value: Array(kept.utf8), to: &options)
                 }
             }
             if !options.isEmpty {
@@ -482,6 +698,46 @@ nonisolated enum CaptureFrameExporter {
             while data.count % 4 != 0 {
                 data.append(0)
             }
+        }
+
+        /// A Name Resolution Block (type 4): one IPv4 (1) or IPv6 (2) record per
+        /// address and name, then the end record. `nil` when there is nothing to name.
+        private mutating func nameResolutionBlock() -> Data? {
+            var body = Data()
+            var count = 0
+            for record in nameRecords.prefix(FrameExportOptions.maximumNameRecords) {
+                let name = Array(record.name.utf8.prefix(255))
+                guard !name.isEmpty, !name.contains(0) else {
+                    continue
+                }
+                var v4 = in_addr()
+                var v6 = in6_addr()
+                let type: UInt16
+                var value: [UInt8]
+                if record.address.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
+                    type = 1
+                    value = withUnsafeBytes(of: &v4) { Array($0) }
+                } else if record.address.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
+                    type = 2
+                    value = withUnsafeBytes(of: &v6) { Array($0) }
+                } else {
+                    continue
+                }
+                value += name + [0]
+                append16(type, to: &body)
+                append16(UInt16(value.count), to: &body)
+                body.append(contentsOf: value)
+                while body.count % 4 != 0 {
+                    body.append(0)
+                }
+                count += 1
+            }
+            guard count > 0 else {
+                return nil
+            }
+            append32(0, to: &body) // nrb_record_end
+            writtenNames = count
+            return block(type: 4, body: body)
         }
 
         private func block(type: UInt32, body: Data) -> Data {
@@ -620,28 +876,35 @@ nonisolated enum CaptureFrameExporter {
         private var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
     }
 
-    private static func matches(_ event: CaptureFrameEvent, scope: FrameExportScope) throws -> Bool {
+    /// The session a frame folds into, by its decoded canonical tuple.
+    private static func sessionID(of event: CaptureFrameEvent) -> UUID? {
+        let frame = CapturedFrame(
+            bytes: event.bytes,
+            timestamp: event.reference.timestamp,
+            originalLength: event.reference.originalLength,
+            capturedLength: event.reference.capturedLength,
+            linkType: event.reference.linkType
+        )
+        return SessionBuilder.decodePacket(frame, linkType: event.reference.linkType).fiveTuple
+            .map(SessionBuilder.sessionID(for:))
+    }
+
+    private static func matches(_ event: CaptureFrameEvent, ordinal: UInt64, scope: FrameExportScope) throws -> Bool {
         switch scope {
         case .wholeCapture:
             return true
+        case let .frames(ordinals):
+            return ordinals.contains(ordinal)
         case let .timeRange(start, end):
             guard let timestamp = event.reference.timestamp else {
                 return false
             }
             return timestamp >= start && timestamp <= end
         case let .sessions(ids):
-            let frame = CapturedFrame(
-                bytes: event.bytes,
-                timestamp: event.reference.timestamp,
-                originalLength: event.reference.originalLength,
-                capturedLength: event.reference.capturedLength,
-                linkType: event.reference.linkType
-            )
-            let packet = SessionBuilder.decodePacket(frame, linkType: event.reference.linkType)
-            guard let tuple = packet.fiveTuple else {
+            guard let id = sessionID(of: event) else {
                 return false
             }
-            return ids.contains(SessionBuilder.sessionID(for: tuple))
+            return ids.contains(id)
         }
     }
 }

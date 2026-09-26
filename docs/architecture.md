@@ -154,13 +154,20 @@ newline-delimited JSON-RPC 2.0 over stdin/stdout to a client the user starts. **
 network port**, writes diagnostics only to stderr, and keeps stdout protocol-only.
 
 It implements `initialize`, `ping`, `tools/list` and `tools/call`, and advertises exactly one
-capability (`tools`) and exactly three read-only tools:
+capability (`tools`) and exactly four read-only tools:
 
 | Tool | What it returns |
 | --- | --- |
 | `describe_scope` | The authorized Project, disclosed field families, row ceiling, grant revision/issuance, and the read-only/no-port guarantees |
 | `list_captures` | One newest-first page of stored captures, plus an opaque resume cursor |
 | `list_sessions` | One ordinal-ascending page of a capture's session summaries, filtered on that single examined page |
+| `list_findings` | One ordinal-ascending page of a capture's evidence-linked findings — the Session Expression kind name, severity, coverage, cited/omitted counts and first cited instant — optionally for one session, kind or severity |
+
+History schema v3 stores each capture's findings beside its sessions (`findings` table, cascaded with the
+capture). A finding names its session only by ID, so it discloses nothing the grant withholds; notes are
+not stored in History and not exposed. The executable opens History read-only: a v2 file the app has not
+reopened yet still serves captures and sessions, and `list_findings` answers that findings were not
+recorded until the app upgrades it.
 
 There are no resources, no prompts, no writes, no capture controls, no raw-frame access, no endpoint
 predicate, no CSV or file output, no arbitrary SQL and no path argument. Pagination, filtering,
@@ -212,7 +219,6 @@ These are design intent — do not write code, or read these docs, as if they ex
 - deeper **analysis / security** policy beyond the selected evidence-linked TCP and datagram findings;
 - raw capture/evidence persistence beyond the implemented terminal-summary SQLite History store;
 - any **remote or BYOK assistant provider**. The Community checkout implements local, credential-free
-  models only; a future Pro packaging decision may add remote providers, and until it does there is no
-  credential, Keychain item, entitlement or purchase path anywhere in Core, Shared, the helper, the
-  formats, storage or the transports. Any future remote-provider policy requires a separate
+  models only, and there is no credential, Keychain item, entitlement or purchase path anywhere in
+  Core, Shared, the helper, the formats, storage or the transports. Any future remote-provider policy requires a separate
   product decision and is *not* implemented here.

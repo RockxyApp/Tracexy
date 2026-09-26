@@ -24,7 +24,7 @@ nonisolated struct CaptureSaveOperation: Sendable {
                 try FileManager.default.copyItem(at: source, to: destination)
             }.value
         } else {
-            try await spool.copy(to: destination)
+            try await spool.copyWholeCapture(to: destination)
         }
     }
 
@@ -97,6 +97,8 @@ extension MainContentCoordinator {
         let originProjectID = activeRuntime.projectID
         let originGeneration = startGeneration
         let previousSave = pendingCaptureIOTask
+        // Notes written during a live run follow it into the saved file.
+        let liveNoteScope = savedSource == nil ? investigationNotes.scope.flatMap { $0.isLiveRun ? $0 : nil } : nil
         captureIORequestID &+= 1
         let requestID = captureIORequestID
         pendingCaptureIOTask = Task { @MainActor [weak self] in
@@ -127,6 +129,9 @@ extension MainContentCoordinator {
                 return
             }
             self.refreshSavedCaptures()
+            if failure == nil, let liveNoteScope, let originProjectID {
+                self.carryInvestigationNotes(from: liveNoteScope, toCaptureAt: url, projectID: originProjectID)
+            }
             self.reportCaptureIOOutcome(
                 failure: failure,
                 warning: warning.map {
@@ -186,7 +191,7 @@ extension MainContentCoordinator {
             let temporaryURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("tracexy-export-\(UUID().uuidString).pcapng")
             defer { try? FileManager.default.removeItem(at: temporaryURL) }
-            try await spool.copy(to: temporaryURL)
+            try await spool.copyWholeCapture(to: temporaryURL)
             return try SessionExporter.frames(matching: sessionID, streamingFrom: temporaryURL)
         }.value
         return await (

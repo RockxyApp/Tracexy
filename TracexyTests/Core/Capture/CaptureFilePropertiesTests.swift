@@ -71,7 +71,7 @@ struct CaptureFilePropertiesTests {
         #expect(blocks.nameResolutionBlockCount == 1)
         #expect(blocks.customBlockCount == 1)
         #expect(blocks.decryptionSecrets.count == 1)
-        #expect(blocks.decryptionSecrets.first?.secretsType == 0x544C4B4C)
+        #expect(blocks.decryptionSecrets.first?.secretsType == 0x544C534B)
         #expect(blocks.decryptionSecrets.first?.kindLabel == "TLS key log")
         #expect(blocks.decryptionSecrets.first?.secretsLength == UInt64("CLIENT_RANDOM 00 11\n".utf8.count))
         #expect(blocks.unknownBlockTypes == [0x000000F0: 1])
@@ -261,7 +261,7 @@ struct CaptureFilePropertiesTests {
     func secretsLengthOverrunIsMalformedAndSecretsAreNeverRetained() throws {
         var file = PcapngFixture.sectionHeader(little: true)
         file += PcapngFixture.interfaceDescription(little: true)
-        var body = PcapngFixture.u32(0x544C4B4C, true) + PcapngFixture.u32(4_000, true)
+        var body = PcapngFixture.u32(0x544C534B, true) + PcapngFixture.u32(4_000, true)
         body += [1, 2, 3, 4]
         file += PcapngFixture.block(type: 0x0000000A, little: true, body: body)
         #expect(throws: PacketError.self) {

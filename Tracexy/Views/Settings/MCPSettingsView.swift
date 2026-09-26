@@ -27,6 +27,7 @@ struct MCPSettingsView: View {
     var body: some View {
         SettingsPane {
             mcpSection
+            commandLineSection
             assistantSection
         }
         .task {
@@ -38,6 +39,14 @@ struct MCPSettingsView: View {
     }
 
     // MARK: Private
+
+    private static var linkCommand: String {
+        guard let path = Bundle.main.executablePath else {
+            return ""
+        }
+        let quoted = "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return "ln -sf \(quoted) /usr/local/bin/tracexy"
+    }
 
     @State private var access: MCPAccessModel
     @State private var maxPageSize = MCPAccessModel.defaultMaxPageSize
@@ -64,7 +73,7 @@ struct MCPSettingsView: View {
                 SettingsFootnote(
                     """
                     Tracexy never opens a network port. The bundled TracexyMCP command speaks JSON-RPC over \
-                    stdin and stdout to a client you start, exposes three read-only tools, and can read only \
+                    stdin and stdout to a client you start, exposes four read-only tools, and can read only \
                     the one Project you grant below.
                     """
                 )
@@ -229,6 +238,39 @@ struct MCPSettingsView: View {
                     used — never the values a client searched for, and never anything it read back.
                     """
                 )
+            }
+        }
+    }
+
+    // MARK: Command line
+
+    /// The app binary is also a read-only `tracexy` command. Tracexy never installs
+    /// it anywhere; the user links it into their PATH themselves if they want it.
+    private var commandLineSection: some View {
+        SettingsSection("Command Line") {
+            SettingsRow(label: "Inside Tracexy.app") {
+                Text("Contents/MacOS/Tracexy")
+                    .font(Theme.Typography.monoSmall)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("cli.commandPath")
+            }
+            SettingsIndented {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
+                    SettingsFootnote(
+                        """
+                        Run it with summary, sessions or findings and a capture file to print the same sessions and \
+                        findings this window shows, as text, CSV or JSON — for scripts and CI. It only reads the file: \
+                        it never captures, never writes, and never touches your Projects or History. The copied \
+                        command links it as “tracexy” in /usr/local/bin; run it in Terminal yourself.
+                        """
+                    )
+                    Button("Copy Link Command") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Self.linkCommand, forType: .string)
+                    }
+                    .disabled(Self.linkCommand.isEmpty)
+                    .accessibilityIdentifier("cli.copyLinkCommand")
+                }
             }
         }
     }

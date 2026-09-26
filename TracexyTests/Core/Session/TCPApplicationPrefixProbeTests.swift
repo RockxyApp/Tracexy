@@ -3,7 +3,7 @@ import Testing
 
 // MARK: - TCPApplicationPrefixProbeTests
 
-/// The bounded, per-direction first-record application probe (N2D2). It reassembles
+/// The bounded, per-direction first-record application probe. It reassembles
 /// only enough of one direction's TCP byte stream — in `payloadSequence`
 /// coordinates, separate from the byte-free `TCPSequenceTracker` — to classify the
 /// opening TLS/HTTP/DNS record, then releases the bytes. These tests exercise its

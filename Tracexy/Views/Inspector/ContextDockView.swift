@@ -155,9 +155,38 @@ struct ContextDockView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Metrics.contextTableGroupSpacing) {
+                        if let evidence = selectedEvidence(for: session),
+                           let leading = DetailsLeadingSection.installed
+                        {
+                            leading(evidence) { provenance in
+                                inspectCitation(provenance, for: session)
+                            }
+                        }
+
                         ContextInspectorTable(title: "Assessment") {
                             ContextInspectorFullRow {
                                 verdict(for: session)
+                            }
+                        }
+
+                        // How long the exchange took, with the same cited frames
+                        // and inspect route as the groups around it.
+                        let responseTimes = SessionResponseTimes(
+                            measurements: coordinator.timingSnapshot.measurements(for: session.id)
+                        )
+                        if !responseTimes.isEmpty {
+                            SessionResponseTimeView(responseTimes: responseTimes) { provenance in
+                                inspectCitation(provenance, for: session)
+                            }
+                        }
+
+                        // The whole conversation's shape, under the single exchanges
+                        // above it: same frames, same inspect route, one chart at a
+                        // time so the column stays readable.
+                        let streamHealth = self.streamHealth(for: session)
+                        if !streamHealth.isEmpty {
+                            SessionStreamHealthView(health: streamHealth) { provenance in
+                                inspectCitation(provenance, for: session)
                             }
                         }
 
@@ -193,7 +222,7 @@ struct ContextDockView: View {
                         }
 
                         if baselineHistory(for: session).count >= 3 {
-                            ContextInspectorTable(title: "Host Baseline · Last 60 Min") {
+                            ContextInspectorTable(title: "Host Baseline (Last Hour)") {
                                 ContextInspectorFullRow {
                                     hostBaseline(for: session)
                                 }
@@ -211,6 +240,15 @@ struct ContextDockView: View {
                                 analysisFindings(for: session)
                             }
                         }
+
+                        // The investigator's own words, under what the app flagged.
+                        SessionNotesView(
+                            store: coordinator.investigationNotes,
+                            session: session,
+                            findings: findings(for: session),
+                            unavailableReason: coordinator.investigationNotesUnavailableReason
+                        )
+                        .id("\(coordinator.investigationNotes.scope?.rawValue ?? "none")|\(session.id)")
 
                         if let activity, activity.sessions.count > 1 {
                             ContextInspectorTable(title: "Grouping Evidence") {
@@ -292,7 +330,7 @@ struct ContextDockView: View {
 
     private func identity(for session: SessionSummary, activity: Activity?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(activity?.title ?? session.host)
+            Text(activity?.title ?? coordinator.addressNames.displayHost(for: session))
                 .font(Theme.Typography.title)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -513,7 +551,7 @@ struct ContextDockView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Button("Ungroup · edit grouping") {
+            Button("Ungroup Sessions") {
                 coordinator.activeWorkspace.sessionGrouping = .none
             }
             .tracexyGlassButtonStyle()
@@ -541,7 +579,7 @@ struct ContextDockView: View {
                         Spacer(minLength: 0)
                         confidencePill(activity.confidence)
                     }
-                    Text("1 of \(activity.sessions.count) sessions · view whole action ›")
+                    Text("1 of \(activity.sessions.count) sessions in this action")
                         .font(Theme.Typography.micro)
                         .foregroundStyle(.secondary)
                 }
@@ -606,6 +644,19 @@ struct ContextDockView: View {
         return selection
     }
 
+    /// The TCP health charts for one session, derived once per render from the published fold's
+    /// per-segment series. It reads `investigationSnapshot` rather than a published
+    /// copy of its own because this is the only reader: the series is fold evidence,
+    /// not an analysis every surface consults. A session with no retained TCP segments
+    /// — a UDP flow, or a TCP flow first seen after the capture-wide series bound —
+    /// projects empty and the panel omits itself rather than drawing an empty axis.
+    private func streamHealth(for session: SessionSummary) -> SessionStreamHealth {
+        guard let summary = coordinator.investigationSnapshot.segmentSeries.summary(for: session.id) else {
+            return .empty
+        }
+        return SessionStreamHealth(health: TCPStreamHealth(summary: summary))
+    }
+
     /// The coordinator owns the move to Layers and remembers the facet it
     /// interrupted, so this only has to make sure the dock is actually on screen.
     private func inspectCitation(_ provenance: SessionFrameProvenance, for session: SessionSummary) {
@@ -618,16 +669,15 @@ struct ContextDockView: View {
     // MARK: Derivation
 
     private func subtitle(for session: SessionSummary, activity: Activity?) -> String {
-        var parts: [String] = []
-        if let process = session.processName {
-            parts.append(process)
-        }
-        if let activity, activity.sessions.count > 1 {
-            parts.append("\(activity.sessions.count) sessions")
+        let what = if let activity, activity.sessions.count > 1 {
+            String(localized: "\(activity.sessions.count) sessions")
         } else {
-            parts.append(session.protocolStack.map(\.label).joined(separator: " · "))
+            session.protocolStack.last?.label ?? ""
         }
-        return parts.joined(separator: " · ")
+        guard let process = session.processName else {
+            return what
+        }
+        return what.isEmpty ? process : String(localized: "\(what) from \(process)")
     }
 
     /// One bar per protocol of the action, summing the time its sessions held.
@@ -735,12 +785,12 @@ struct ContextDockView: View {
         // host / same process) is an observed fact and stays truthful without it.
         let time = peer.startTime.map { $0.formatted(date: .omitted, time: .standard) } ?? "—"
         if peer.host == session.host {
-            return "Same host · \(time)"
+            return String(localized: "Same host, started \(time)")
         }
         if let process = session.processName, peer.processName == process {
-            return "Same process · \(process)"
+            return String(localized: "Also from \(process)")
         }
-        return "Related · \(time)"
+        return String(localized: "Started \(time)")
     }
 
     /// Peers worth offering: the same host first, then the same process. Capped —
@@ -793,14 +843,15 @@ enum ContextDockDetailsFooter {
         guard hasSelection else {
             return "No selection"
         }
-        var parts = [sessionCount == 1 ? "1 session" : "\(sessionCount) sessions"]
-        if let primaryProtocol, !primaryProtocol.isEmpty {
-            parts.append(primaryProtocol)
+        let sessions = if let primaryProtocol, !primaryProtocol.isEmpty {
+            sessionCount == 1 ? "1 \(primaryProtocol) session" : "\(sessionCount) \(primaryProtocol) sessions"
+        } else {
+            sessionCount == 1 ? "1 session" : "\(sessionCount) sessions"
         }
-        if let formattedBytes, !formattedBytes.isEmpty {
-            parts.append(formattedBytes)
+        guard let formattedBytes, !formattedBytes.isEmpty else {
+            return sessions
         }
-        return parts.joined(separator: " · ")
+        return "\(sessions), \(formattedBytes)"
     }
 }
 

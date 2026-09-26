@@ -78,7 +78,11 @@ nonisolated enum SessionBuilder {
     /// order (last write wins), identical whether accumulated incrementally or in
     /// a single batch pass.
     static func learnResolved(from packet: DecodedPacket, into resolved: inout [String: String]) {
-        guard packet.appProtocol == .dns, let name = packet.dnsQuery, !name.isEmpty else {
+        // Multicast DNS answers are how Bonjour devices name themselves on the local
+        // network, so they teach names exactly like unicast DNS answers.
+        guard [.dns, .mdns, .llmnr].contains(packet.appProtocol),
+              let name = packet.dnsQuery, !name.isEmpty else
+        {
             return
         }
         for answer in packet.dnsAnswers where !answer.hasPrefix("CNAME") {
@@ -96,7 +100,7 @@ nonisolated enum SessionBuilder {
     )
         -> String
     {
-        if appProto == .dns, let query = dnsQuery {
+        if appProto == .dns || appProto == .mdns || appProto == .llmnr, let query = dnsQuery {
             return query
         }
         if let sni {

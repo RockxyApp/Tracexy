@@ -453,7 +453,7 @@ extension MainContentCoordinator {
         captureStatistics = nil
         helperBufferDropCount = 0
         retainedFrames = result.retainedTail
-        removedSessionIDs.removeAll()
+        clearCaptureLocalSessionMarks()
         clearAllInvestigationQueries()
         sessions = result.sessions
         // Adopt the loader's connection snapshot *and* its exact connection and
@@ -467,8 +467,10 @@ extension MainContentCoordinator {
             connections: result.connections,
             datagramEvidence: result.datagramEvidence,
             tlsEvidence: result.tlsEvidence,
+            segmentSeries: result.segmentSeries,
             connectionAnalysis: result.connectionAnalysis,
             datagramAnalysis: result.datagramAnalysis,
+            tlsAnalysis: result.tlsAnalysis,
             trafficTimeline: result.trafficTimeline
         ))
         throughputSamples = []
@@ -483,6 +485,7 @@ extension MainContentCoordinator {
         unavailableReferencedCapture = nil
         savedCaptureEvidence = result.evidence
         savedCaptureEvidenceURL = request.capture.url
+        refreshInvestigationNoteScope()
         stoppedCaptureReadyGeneration = nil
         selectedSessionEvidenceBytes = []
         selectedSessionEvidenceID = nil
@@ -513,6 +516,13 @@ extension MainContentCoordinator {
         // start-generation guards above passed and the result was atomically
         // adopted. Reopening the same file is a new History event (fresh UUID).
         persistTerminalSavedHistory(result: result, request: request)
+        if let expression = pendingOpenExpression {
+            pendingOpenExpression = nil
+            applySessionExpression(expression)
+        }
+        if allFrames.pendingReveal != nil {
+            loadAllFrames(force: true)
+        }
     }
 
     private func failSavedCaptureOpen(message: String, requestID: Int) {
@@ -523,6 +533,7 @@ extension MainContentCoordinator {
         isOpeningSavedCapture = false
         savedCaptureOpenProgress = nil
         savedCaptureOpenTask = nil
+        pendingOpenExpression = nil
     }
 
     private func finishCancelledSavedCaptureOpen(requestID: Int) {
@@ -532,6 +543,7 @@ extension MainContentCoordinator {
         isOpeningSavedCapture = false
         savedCaptureOpenProgress = nil
         savedCaptureOpenTask = nil
+        pendingOpenExpression = nil
     }
 
     private func finishSelectedEvidenceLoad(bytes: [UInt8], sessionID: UUID, requestID: Int) {
@@ -647,6 +659,7 @@ extension MainContentCoordinator {
                     stoppedGeneration: expectedGeneration,
                     completeness: terminalHistoryCompleteness ?? .incomplete
                 )
+                self.finishLiveFileSet()
             }
         }
     }

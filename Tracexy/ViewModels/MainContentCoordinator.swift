@@ -46,7 +46,7 @@ final class MainContentCoordinator {
         projectStore = ProjectStore(
             maxProjects: resolvedPolicy.maxProjects,
             maxWorkspacesPerProject: resolvedPolicy.maxWorkspaceTabs,
-            repository: projectRepository
+            maxFilterRulesPerWorkspace: resolvedPolicy.maxSessionFilterRules, repository: projectRepository
         )
         focusGate = FocusPolicyGate(
             maxFocusSets: resolvedPolicy.maxFocusSets,
@@ -101,6 +101,11 @@ final class MainContentCoordinator {
         hiddenSourceApps = bootRuntime.hiddenSourceApps
         hiddenSourceDomains = bootRuntime.hiddenSourceDomains
         hiddenSourceIPs = bootRuntime.hiddenSourceIPs
+        investigationNotes.bind(to: bootDefaults)
+        expressionLibrary.bind(to: bootDefaults)
+        addressNames.bind(to: bootDefaults)
+        investigationViewStates.bind(to: bootDefaults)
+        bindViewPreferences(to: bootDefaults)
         refreshSavedCaptures()
         // Before any destructive/privileged helper op (force reset), settle the
         // active capture, retire what the destroyed connection still owes, and
@@ -162,13 +167,13 @@ final class MainContentCoordinator {
         return formatter
     }()
 
-    /// The capacity limits this build runs under. Held so the views that need
-    /// to *show* a limit can read it; nothing reads it to decide behaviour —
-    /// that is the gates' job.
-    let policy: any AppPolicy
+    /// The capacity limits currently in force: views read it to show a limit,
+    /// and the growth checks for filter rows, buttons and macros read their
+    /// numbers from it. Replaced only through ``applyPolicy(_:)``.
+    var policy: any AppPolicy
 
     /// Capacity gate for focus sets and pinned hosts.
-    let focusGate: FocusPolicyGate
+    var focusGate: FocusPolicyGate
 
     /// Composition seam for per-Project storage: History database, managed
     /// capture folder, live spool, and preferences suite.
@@ -215,6 +220,9 @@ final class MainContentCoordinator {
     /// The Project a queued autosave was scheduled for. A debounce that survives
     /// into another Project is discarded rather than writing B's workspaces into A.
     var projectWorkspaceAutosaveOwner: UUID?
+    /// The refusal an autosave last reported, so a debounced save that keeps being
+    /// refused for the same reason raises the alert once, not after every pause.
+    var projectAutosaveRefusal: ProjectMutationError?
 
     /// The one Project lifecycle path's state. `pending` forbids capture start and
     /// further transitions; `failed` keeps the outgoing Project active with a retry.
@@ -295,6 +303,8 @@ final class MainContentCoordinator {
     var isStarting = false
     var captureInterface = "en0"
     var captureError: String?
+    /// Capture ▸ Refresh Interfaces: bumped so interface lists read the system again.
+    var interfaceListToken = 0
     /// Prevents overlapping export panels while a selected session is being
     /// scoped and serialized away from the main actor.
     private(set) var isExportingSession = false
@@ -365,6 +375,8 @@ final class MainContentCoordinator {
     /// workspace remains intact while this is true; only monotonic byte progress
     /// crosses back to the UI before the immutable result is adopted.
     var isOpeningSavedCapture = false
+    /// File ▸ Open…'s Session Expression, applied once the chosen capture has opened.
+    var pendingOpenExpression: String?
     var savedCaptureOpenProgress: PcapStreamProgress?
     /// A successfully recovered truncated tail is usable, but must remain visibly
     /// distinct from a clean file.
@@ -405,6 +417,13 @@ final class MainContentCoordinator {
     var frameExportProgress: PcapStreamProgress?
     var frameExportName: String?
     var frameExportTask: Task<Void, Never>?
+    /// File ▸ Merge Captures… in flight.
+    var captureMergeTask: Task<Void, Never>?
+    /// Settings → Capture → Save as a file set: the set the last live capture wrote.
+    var lastFileSet: LiveCaptureSpool.FileSetSummary?
+    /// File ▸ Split Capture…: the options sheet, then the split in flight.
+    var isSplitCapturePresented = false
+    var captureSplitTask: Task<Void, Never>?
     var frameExportRequestID = 0
     var isCancellingFrameExport = false
     /// Get Info ▸ Compute digests: on demand, cancellable, reset with the capture.
@@ -422,7 +441,7 @@ final class MainContentCoordinator {
     var selectedSessionEvidenceRequestID = 0
     var selectedSessionEvidenceTask: Task<Void, Never>?
 
-    // MARK: Evidence navigation (U2D1)
+    // MARK: Evidence navigation
 
     // The selected session's presentation-neutral connection/TLS projection and the
     // one explicitly cited frame, each with its own request/task pipeline. Native
@@ -431,6 +450,12 @@ final class MainContentCoordinator {
     // evidence can never outlive the selection or source it described.
     var evidenceProjection = EvidenceProjectionPipeline()
     var citedFrame = CitedFramePipeline()
+    /// Show Packet Bytes: the bytes its window was last opened on.
+    let packetBytesInspection = PacketBytesInspection()
+    /// View ▸ All Frames: the whole capture's frame list.
+    let allFrames = CaptureFrameListState()
+    /// File ▸ Export Objects for the open capture.
+    let exportObjects = CaptureObjectListState()
 
     /// The AI Assistant's bounded, in-memory state: the local-endpoint status, the
     /// derived brief for the current selection, and one conversation per Project
@@ -447,6 +472,27 @@ final class MainContentCoordinator {
     /// coordinator memory only after the user requests this operation and are
     /// retired at every selection/capture/source boundary.
     var followStreamResult: FollowStreamResult?
+    /// The UDP counterpart: a bounded capture-order prefix of the selected
+    /// conversation's datagrams, under the same request/boundary rules.
+    var followDatagramResult: FollowDatagramResult?
+    /// The active Project's investigation notes and the capture they are scoped to.
+    let investigationNotes = InvestigationNotesStore()
+    /// The active Project's recent and saved session expressions.
+    let expressionLibrary = SessionExpressionLibrary()
+    /// The active Project's filter buttons and expression macros.
+    let filterLibrary = ExpressionLibraryController()
+    /// Settings → Capture → Stop automatically, and why the last capture stopped itself.
+    let autoStop = CaptureAutoStop()
+    /// Names the investigator gave to addresses in the active Project.
+    let addressNames = AddressNameBook()
+    /// Where each capture file was left (selection, session expression), per Project.
+    let investigationViewStates = InvestigationViewStates()
+    /// View ▸ Session Time for the active Project.
+    let sessionTimeDisplay = SessionTimeDisplay()
+    /// View ▸ Validate Checksums for the active Project.
+    let packetDetailOptions = PacketDetailOptions()
+    /// Capture ▸ Decode As…: the active Project's port → protocol rules.
+    let decodeAs = DecodeAsSettings()
     var followStreamProgress: PcapStreamProgress?
     var followStreamError: String?
     var isLoadingFollowStream = false
@@ -583,6 +629,9 @@ final class MainContentCoordinator {
     /// ``presentedSessions`` so a removed sensitive row cannot reappear in an
     /// Overview rollup, Flow Map, Sources, finding, or related-session card.
     var removedSessionIDs: Set<UUID> = []
+    /// Sessions pinned above the Sessions table for this capture (Wireshark's pinned
+    /// packets). Capture-scoped like ``removedSessionIDs`` and never persisted.
+    var pinnedSessionIDs: [UUID] = []
 
     /// The *active Project's* complete local raw-frame retention for save/export.
     /// Every Project keeps its own spool actor while parked, so starting, clearing
@@ -615,7 +664,7 @@ final class MainContentCoordinator {
     /// published in lock-step with ``connectionSnapshot`` and ``sessions`` behind
     /// the same generation guard, and only ever through ``adoptInvestigation``.
     ///
-    /// This is the exact N3A2a assessment of ``connectionSnapshot`` — never
+    /// This is the exact assessment of ``connectionSnapshot`` — never
     /// re-derived on the main actor — adopted alongside the session summaries and
     /// reset to the empty analysis at every capture boundary so stale findings can
     /// never outlive the capture they described.
@@ -626,11 +675,30 @@ final class MainContentCoordinator {
     /// ``sessions`` behind the same generation guard, and only ever through
     /// ``adoptInvestigation``.
     ///
-    /// This is the exact N3B3a assessment of the same fold's datagram evidence —
+    /// This is the exact assessment of the same fold's datagram evidence —
     /// never re-derived on the main actor — adopted alongside the connection
     /// evidence/analysis and reset to the empty analysis at every capture boundary
     /// so stale findings can never outlive the capture they described.
     private(set) var datagramAnalysisSnapshot = DatagramAnalysisSnapshot.empty
+
+    /// The immutable passive *TLS* analysis for the current capture, published in
+    /// lock-step with the connection and datagram analyses behind the same generation
+    /// guard, and only ever through ``adoptInvestigation``.
+    ///
+    /// This is the exact TLS assessment of the same fold's TLS record evidence — never
+    /// re-derived on the main actor — and it is reset to the empty analysis at every
+    /// capture boundary so stale findings can never outlive the capture they described.
+    private(set) var tlsAnalysisSnapshot = TLSAnalysisSnapshot.empty
+
+    /// The immutable passive *response-time measurements* for the current capture,
+    /// published in lock-step with the three analyses behind the same generation guard,
+    /// and only ever through ``adoptInvestigation``.
+    ///
+    /// This is the exact response-time measurement of the same fold's connection, TLS and datagram
+    /// evidence — never re-derived on the main actor — and it is reset to the empty
+    /// snapshot at every capture boundary so stale intervals can never outlive the
+    /// capture they were measured in.
+    private(set) var timingSnapshot = SessionTimingSnapshot.empty
 
     /// The complete immutable query input matching the currently published sessions
     /// and analyses. Live publication replaces its sessions only with the process-
@@ -667,6 +735,12 @@ final class MainContentCoordinator {
     /// Project hydration binds first, and are never handed to a second Project.
     let injectedSessionStore: SessionStore?
     let injectedLiveCaptureSpool: LiveCaptureSpool?
+
+    let pipeCapture = PipeCapture()
+    /// The validated configuration for the capture currently starting/running,
+    /// built from the live Capture-Settings preferences at ``startCapture()`` and
+    /// consumed by both the direct and helper backends so neither re-reads defaults.
+    private(set) var activeCaptureConfiguration: CaptureConfiguration?
 
     /// True while the Project boundary is settling — a transition is running, or a
     /// stopped capture still owes its exact final drain. New capture I/O, Library
@@ -757,8 +831,14 @@ final class MainContentCoordinator {
             }
             result.append(Finding(finding, host: host))
         }
+        for finding in tlsAnalysisSnapshot.findings {
+            guard presentedIDs.contains(finding.sessionID), let host = hostBySessionID[finding.sessionID] else {
+                continue
+            }
+            result.append(Finding(finding, host: host))
+        }
         // Stable sort: worst severity first, insertion order preserved within a rank.
-        return result.enumerated()
+        return (result + contributedFindings(among: presentedIDs)).enumerated()
             .sorted { lhs, rhs in
                 lhs.element.severity.rawValue == rhs.element.severity.rawValue
                     ? lhs.offset < rhs.offset
@@ -833,12 +913,13 @@ final class MainContentCoordinator {
             return "capture error — \(captureError)"
         }
         if isCapturing {
-            return "\(captureInterface) · live · \(presentedSessions.count.formatted()) sessions"
+            return "Capturing on \(captureInterface), \(presentedSessions.count.formatted()) sessions"
         }
         if sessions.isEmpty {
             return "idle — press Start to capture"
         }
-        return "\(presentedSessions.count.formatted()) sessions"
+        let count = "\(presentedSessions.count.formatted()) sessions"
+        return autoStop.stoppedReason.map { "\(count), \($0)" } ?? count
     }
 
     /// The immutable settings the running/starting capture actually adopted, or
@@ -868,46 +949,11 @@ final class MainContentCoordinator {
         return CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
     }
 
-    // MARK: Aggregate rollups (status bar)
-
-    var totalBytes: Int {
-        presentedSessions.reduce(0) { $0 + $1.totalBytes }
-    }
-
-    var totalBytesUp: Int {
-        presentedSessions.reduce(0) { $0 + $1.bytesUp }
-    }
-
-    var totalBytesDown: Int {
-        presentedSessions.reduce(0) { $0 + $1.bytesDown }
-    }
-
     // MARK: Saved captures
 
     /// Whether there is anything to save (frames retained from a live or open capture).
     var canSaveCapture: Bool {
         !retainedFrames.isEmpty && !isImportingCapture
-    }
-
-    var isNoiseControlActive: Bool {
-        !mutedHosts.isEmpty || !mutedProtocols.isEmpty
-    }
-
-    var noiseRuleCount: Int {
-        mutedHosts.count + mutedProtocols.count
-    }
-
-    /// Distinct protocols present across the current capture, for the Noise sheet.
-    var presentProtocols: [ProtocolKind] {
-        var seen = Set<ProtocolKind>()
-        var ordered: [ProtocolKind] = []
-        for session in presentedSessions {
-            let proto = session.primaryProtocol
-            if seen.insert(proto).inserted {
-                ordered.append(proto)
-            }
-        }
-        return ordered.sorted { $0.label < $1.label }
     }
 
     // MARK: Panel layout
@@ -1009,27 +1055,8 @@ final class MainContentCoordinator {
         return host.contains(".") && host.contains { $0.isLetter }
     }
 
-    /// The active Project's managed capture Library folder, created on demand.
-    ///
-    /// The legacy-owner Project keeps the pre-Projects
-    /// `Application Support/<namespace>/Captures`; every other Project is rooted
-    /// under `Projects/<uuid>/Captures`. Nothing is copied, moved, or deleted.
-    func capturesDirectory() -> URL? {
-        activeCapturesDirectory
-    }
-
     func setSessionExporting(_ isExporting: Bool) {
         isExportingSession = isExporting
-    }
-
-    // MARK: Correlation
-
-    func select(_ session: SessionSummary) {
-        cancelFollowStream(clearResult: true)
-        activeWorkspace.selectedSessionID = session.id
-        loadSelectedSavedCaptureEvidence()
-        evidenceNavigationDidChangeSelection()
-        revealPanelsForSelection()
     }
 
     /// Saved-opening activation is split into its own file, while the engine
@@ -1052,6 +1079,8 @@ final class MainContentCoordinator {
         connectionSnapshot = snapshot.connections
         connectionAnalysisSnapshot = snapshot.connectionAnalysis
         datagramAnalysisSnapshot = snapshot.datagramAnalysis
+        tlsAnalysisSnapshot = snapshot.tlsAnalysis
+        timingSnapshot = snapshot.timing
         refreshActiveInvestigationQueries()
         refreshSelectedSessionEvidenceProjection()
     }
@@ -1100,11 +1129,12 @@ final class MainContentCoordinator {
         // Supersede any in-flight engine work so a late snapshot can't repopulate
         // the list after a clear, and zero the accounting counters.
         startGeneration &+= 1
-        resetSessionEngine(token: startGeneration)
+        // A clear during a file-set capture starts a fresh set folder.
+        resetSessionEngine(token: startGeneration, fileSet: isCapturing ? fileSetPolicyForNewCapture() : nil)
         captureStatistics = nil
         helperBufferDropCount = 0
         retainedFrames.reset()
-        removedSessionIDs.removeAll()
+        clearCaptureLocalSessionMarks()
         sessions = []
         // Clear connection + analysis publication at the boundary so a late
         // generation can never revive any of them alongside the cleared sessions.
@@ -1127,6 +1157,7 @@ final class MainContentCoordinator {
         // backend. Start a fresh lifetime for the post-clear engine generation so
         // its eventual terminal snapshot can still enter History.
         retireLiveHistoryLifetime()
+        investigationNotes.scope = nil
         if isCapturing {
             beginLiveHistoryLifetime(captureGeneration: startGeneration)
         }
@@ -1202,7 +1233,7 @@ final class MainContentCoordinator {
         retainedFrames = RetainedFrameBuffer(
             capacity: CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
         )
-        removedSessionIDs.removeAll()
+        clearCaptureLocalSessionMarks()
         sessions = []
         // Clear stale connection + analysis publication at the start boundary
         // before any new capture work can publish over it.
@@ -1213,7 +1244,8 @@ final class MainContentCoordinator {
         lastSessionsUpdate = .distantPast
         // Capture boundary: clear engine state + all drop/eviction counters so a
         // new capture starts from a clean, zeroed accounting.
-        resetSessionEngine(token: startGeneration)
+        lastFileSet = nil
+        resetSessionEngine(token: startGeneration, fileSet: fileSetPolicyForNewCapture())
         helperBufferDropCount = 0
         captureStatistics = nil
         // Surface the live session table so captured traffic is actually visible
@@ -1226,6 +1258,10 @@ final class MainContentCoordinator {
         // default script path remains production-shaped and exercises the helper.
         // Direct mode works whenever the user can access a free BPF device (for
         // example through ChmodBPF / access_bpf). No sudo or helper approval.
+        if PipeCapture.isPipe(configuration.interface) {
+            startPipe(configuration)
+            return
+        }
         if Self.forceDirectCapture {
             startDirect()
             return
@@ -1268,7 +1304,7 @@ final class MainContentCoordinator {
         // request return and enqueue its frames before sending Stop; invalidating
         // it now would discard an already-drained batch in transit. The normal
         // reply path calls `performStopCapture()` immediately afterward.
-        if !Self.forceDirectCapture, helperFetchInFlight {
+        if !usesInProcessCapture, helperFetchInFlight {
             helperStopRequested = true
             isStarting = false
             // Stop is now owed a final drain even though `performStopCapture` has
@@ -1342,7 +1378,7 @@ final class MainContentCoordinator {
             // instead of asking the helper for a reply it can no longer send.
             performStopCapture(canAwaitHelperReply: false)
         }
-        if !Self.forceDirectCapture {
+        if !usesInProcessCapture {
             captureError = "Capture stopped because the capture helper was reset. Only the packets Tracexy had "
                 + "already accepted are available — the last batch could not be confirmed."
         }
@@ -1355,11 +1391,6 @@ final class MainContentCoordinator {
     /// exactly once, so the main actor never re-decodes retained history.
     private let sessionEngine = LiveSessionEngine()
     private var lastSessionsUpdate = Date.distantPast
-
-    /// The validated configuration for the capture currently starting/running,
-    /// built from the live Capture-Settings preferences at ``startCapture()`` and
-    /// consumed by both the direct and helper backends so neither re-reads defaults.
-    private var activeCaptureConfiguration: CaptureConfiguration?
 
     private var pollTimer: Timer?
     /// At most one helper frame-drain request may be outstanding. Without this
@@ -1406,7 +1437,7 @@ final class MainContentCoordinator {
         helperFetchGeneration &+= 1
         helperFetchInFlight = false
         var awaitsHelperStopReply = false
-        if canAwaitHelperReply, !Self.forceDirectCapture, let proxy = try? helper.proxy() {
+        if canAwaitHelperReply, !usesInProcessCapture, let proxy = try? helper.proxy() {
             awaitsHelperStopReply = true
             proxy.stopCapture { [weak self] batch in
                 // The helper worker has now finished its read loop, sampled final
@@ -1468,17 +1499,18 @@ final class MainContentCoordinator {
         // no live lifetime, so nothing is frozen and no History is created.
         freezeLiveHistoryLifetime(captureGeneration: captureToken, stoppedGeneration: stoppedToken)
         live?.stop()
+        pipeCapture.stop()
         isCapturing = false
         isStarting = false
         captureStartedAt = nil
         if !awaitsHelperStopReply {
-            if !Self.forceDirectCapture {
+            if !usesInProcessCapture {
                 captureError = "The helper’s final capture batch could not be confirmed. Only the recoverable prefix is available."
             }
             publishStoppedSnapshotAfterCurrentIngest(
                 captureToken: captureToken,
                 stoppedToken: stoppedToken,
-                finalDrainConfirmed: Self.forceDirectCapture
+                finalDrainConfirmed: usesInProcessCapture
             )
         }
     }
@@ -1943,7 +1975,8 @@ extension MainContentCoordinator {
     /// Clears the engine and adopts a new capture generation. Enqueued on the
     /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
     /// work carries the previous token and is dropped by the engine's epoch guard.
-    private func resetSessionEngine(token: Int) {
+    private func resetSessionEngine(token: Int, fileSet: LiveCaptureSpool.FileSetPolicy? = nil) {
+        retireCaptureLocalTools()
         let engine = sessionEngine
         let spool = liveCaptureSpool
         // The runtime this reset belongs to, captured before the first `await`. A
@@ -1955,7 +1988,7 @@ extension MainContentCoordinator {
             await previous?.value
             await engine.reset(epoch: token)
             do {
-                try await spool.reset(epoch: token)
+                try await spool.reset(epoch: token, fileSet: fileSet)
             } catch {
                 let message = "Capture spool unavailable — \(error.localizedDescription)"
                 if self.activeRuntime !== origin {
@@ -1982,7 +2015,7 @@ extension MainContentCoordinator {
         captureError = "Capture ended because the source stopped: \(message)"
     }
 
-    private func handleCaptureError(_ message: String) {
+    func handleCaptureError(_ message: String) {
         pollTimer?.invalidate()
         pollTimer = nil
         helperFetchGeneration &+= 1

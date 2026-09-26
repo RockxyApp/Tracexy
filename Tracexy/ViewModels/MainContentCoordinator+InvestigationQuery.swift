@@ -33,6 +33,34 @@ extension MainContentCoordinator {
         scheduleInvestigationQuery(draft, in: workspace, clearsError: true)
     }
 
+    /// Apply `expression` as the workspace's session expression, replacing the draft
+    /// text and switching the editor to expression mode.
+    func applySessionExpression(_ expression: String, in workspace: WorkspaceState? = nil) {
+        let workspace = workspace ?? activeWorkspace
+        var draft = workspace.investigationDraft
+        draft.mode = .expression
+        draft.expression = expression
+        applyInvestigationQuery(draft, in: workspace)
+    }
+
+    /// "Investigate Sessions Like This": narrow the current expression (or start one)
+    /// with `term` and apply it.
+    func investigateSessions(narrowingWith term: String, in workspace: WorkspaceState? = nil) {
+        let workspace = workspace ?? activeWorkspace
+        let base = workspace.acceptedInvestigationDraft?.mode == .expression
+            ? workspace.acceptedInvestigationDraft?.expression ?? ""
+            : ""
+        applySessionExpression(SessionExpressionTerm.narrowing(base, with: term), in: workspace)
+    }
+
+    /// A report window's drill-in: narrow the expression with `term` and bring the
+    /// Sessions list forward so the matching sessions are what the user sees.
+    func showSessions(narrowingWith term: String) {
+        let workspace = activeWorkspace
+        workspace.sidebarSelection = .sessions
+        investigateSessions(narrowingWith: term, in: workspace)
+    }
+
     /// Disable the accepted query without altering any persisted search/filter values.
     /// The editable draft stays available if the user opens Investigate again.
     func clearInvestigationQuery(in workspace: WorkspaceState? = nil) {
@@ -114,7 +142,19 @@ extension MainContentCoordinator {
         let taskToken = UUID()
         let expectedGeneration = startGeneration
         let snapshot = investigationSnapshot
+        let tags = investigationNotes.currentTagNames
         investigationQueryTasks.removeValue(forKey: workspaceID)?.task.cancel()
+        // The library's preprocessor (none by default) rewrites the text that is
+        // compiled; `draft` stays what is accepted and remembered.
+        let compilable: InvestigationQueryDraft
+        switch expressionLibrary.compilable(draft) {
+        case let .success(prepared):
+            compilable = prepared
+        case let .failure(error):
+            workspace.investigationQueryError = error
+            workspace.isEvaluatingInvestigationQuery = false
+            return
+        }
         workspace.isEvaluatingInvestigationQuery = true
         if clearsError {
             workspace.investigationQueryError = nil
@@ -127,8 +167,9 @@ extension MainContentCoordinator {
         let task = Task { @MainActor [weak self, workspace] in
             do {
                 let execution = try await Self.executeInvestigationQuery(
-                    draft,
-                    over: snapshot
+                    compilable,
+                    over: snapshot,
+                    tags: tags
                 )
                 guard let self else {
                     return
@@ -156,6 +197,11 @@ extension MainContentCoordinator {
                 workspace.investigationCoverageReasons = execution.result.coverage?.reasons ?? []
                 workspace.investigationQueryError = nil
                 workspace.isEvaluatingInvestigationQuery = false
+                // Only a user's Apply of a compiled expression is remembered; a live
+                // re-evaluation of the accepted query is not a new use of it.
+                if clearsError, draft.mode == .expression {
+                    self.expressionLibrary.recordApplied(draft.expression)
+                }
                 self.reconcileLiveFollowing(in: workspace)
             } catch is CancellationError {
                 self?.finishCancelledInvestigationQuery(
@@ -231,7 +277,8 @@ extension MainContentCoordinator {
 
     nonisolated private static func executeInvestigationQuery(
         _ draft: InvestigationQueryDraft,
-        over snapshot: InvestigationSnapshot
+        over snapshot: InvestigationSnapshot,
+        tags: [UUID: Set<String>] = [:]
     )
         async throws -> InvestigationQueryExecution
     {
@@ -239,11 +286,13 @@ extension MainContentCoordinator {
             let compiler = InvestigationQueryDraftCompiler()
             let compilation = try compiler.compile(draft)
             try Task.checkCancellation()
-            let result = try compiler.engine.evaluate(
-                compilation.compiled,
-                over: snapshot,
-                isCancelled: { Task.isCancelled }
-            )
+            let result = try InvestigationQueryEngine.$sessionTags.withValue(tags) {
+                try compiler.engine.evaluate(
+                    compilation.compiled,
+                    over: snapshot,
+                    isCancelled: { Task.isCancelled }
+                )
+            }
             return InvestigationQueryExecution(compilation: compilation, result: result)
         }
         return try await withTaskCancellationHandler {

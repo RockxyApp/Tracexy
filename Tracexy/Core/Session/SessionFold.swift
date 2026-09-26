@@ -63,12 +63,14 @@ nonisolated struct SessionFoldSnapshot: Sendable {
         connections: ConnectionTable.Snapshot,
         datagramEvidence: DatagramEvidenceTable.Snapshot,
         tlsEvidence: TLSEvidenceTable.Snapshot,
+        segmentSeries: TCPSegmentSeriesTable.Snapshot,
         trafficTimeline: TrafficTimeline = .empty
     ) {
         self.sessions = sessions
         self.connections = connections
         self.datagramEvidence = datagramEvidence
         self.tlsEvidence = tlsEvidence
+        self.segmentSeries = segmentSeries
         self.trafficTimeline = trafficTimeline
     }
 
@@ -84,6 +86,11 @@ nonisolated struct SessionFoldSnapshot: Sendable {
     /// per-frame records are retained with exact provenance; multi-frame recovered
     /// records are excluded-counted, never cited.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded, cross-path-equal per-segment TCP series for the same ordered frames.
+    /// Additive alongside `tlsEvidence`; keyed by tuple-derived session id. Each flow
+    /// holds a complete capture-order *prefix* of its segments, so every series the
+    /// analysis derives from it is exact over the run it covers.
+    let segmentSeries: TCPSegmentSeriesTable.Snapshot
     /// Bounded capture-wide bytes over time, split by session direction, for the
     /// same accepted frames. Additive; callers that assemble a snapshot from parts
     /// without a timeline get an empty one.

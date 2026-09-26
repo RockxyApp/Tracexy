@@ -86,6 +86,37 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
     }
 }
 
+// MARK: - DecodeStop
+
+/// Why decoding a frame stopped before its last header, as Wireshark's Expert
+/// Info separates them: a header the decoder rejected, or a frame the capture's
+/// snapshot length cut inside a header.
+nonisolated enum DecodeStop: Hashable, Sendable {
+    case malformed(String)
+    case cutShort
+
+    // MARK: Internal
+
+    /// Wireshark's Info-column suffix.
+    var infoSuffix: String {
+        switch self {
+        case .malformed: "[Malformed Packet]"
+        case .cutShort: "[Packet size limited during capture]"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case let .malformed(reason):
+            String(localized: "Malformed: \(reason). Layers after the problem were not decoded.")
+        case .cutShort:
+            String(
+                localized: "The capture's snapshot length cut this frame inside a header, so later layers are missing."
+            )
+        }
+    }
+}
+
 // MARK: - DecodedPacket
 
 nonisolated struct DecodedPacket {
@@ -111,9 +142,15 @@ nonisolated struct DecodedPacket {
     /// Originating process (from pktap), propagated to the session. nil = unknown.
     var processName: String?
     var layers: [DecodedLayer]
+    /// Set when decoding stopped early; `nil` when every header read cleanly.
+    var decodeStop: DecodeStop?
     var fiveTuple: FiveTuple?
     var transport: ProtocolKind?
     var appProtocol: ProtocolKind?
+    /// A protocol this frame shows the session switched to or negotiated: HTTP/2 (a
+    /// cleartext preface, or ALPN "h2" chosen in a visible ServerHello) or WebSocket
+    /// (an HTTP/1 Upgrade). Added to the session's stack.
+    var negotiatedApplication: ProtocolKind?
     var sni: String?
     var dnsQuery: String?
     var dnsAnswers: [String]
@@ -121,6 +158,19 @@ nonisolated struct DecodedPacket {
     /// retention cap. This is an occurrence count, not exact unique cardinality;
     /// exact uniqueness for an unbounded stream would itself require unbounded state.
     var dnsAnswersOmittedCount: Int = 0
+    /// The first question's QTYPE, when the question section was intact.
+    var dnsQueryType: UInt16?
+    /// The first question's class (1 = IN).
+    var dnsQueryClass: UInt16?
+    /// Each answer record's type, in order, at most 64.
+    var dnsAnswerTypes: [UInt16] = []
+    /// The DNS message's length in bytes (without a TCP length prefix).
+    var dnsMessageLength: Int?
+    /// A SIP message's start line and dialog headers, for Statistics ▸ SIP.
+    var sip: SIPMessageFacts?
+    /// Human-readable answer records ("A 192.0.2.1", "CNAME host.example"), the same
+    /// strings the decode tree shows, under the same retention cap as `dnsAnswers`.
+    var dnsAnswerRecords: [String] = []
     /// Typed, decode-derived facts for a TCP segment, read from exact header
     /// offsets. `nil` for non-TCP packets. Session logic reads control bits from
     /// here rather than string-matching a rendered field.
@@ -146,6 +196,16 @@ nonisolated struct DecodedPacket {
     /// reassembly; packet decoding itself remains stateless.
     var tcpPayloadSequence: UInt32?
     var tcpPayloadBytes: [UInt8] = []
+    /// Absolute range of a UDP datagram's captured payload within `rawBytes`,
+    /// clamped to the UDP-declared length when that length is trustworthy. A
+    /// range, not a copy, so the always-on fold pays nothing for it; only an
+    /// explicit on-demand reader slices the bytes out.
+    var udpPayloadRange: Range<Int>?
+    /// Payload length the UDP header declared (`length - 8`), or `nil` when the
+    /// field was absent, zero (offload) or below the header size.
+    var udpDeclaredPayloadLength: Int?
+    /// How many tunnels (GRE, VXLAN) this frame was unwrapped through; bounds nesting.
+    var tunnelDepth = 0
 
     /// Protocol stack outer→inner, e.g. [.tcp, .tls]. Used by the session list.
     ///
@@ -154,7 +214,11 @@ nonisolated struct DecodedPacket {
     /// them keeps the bounded history capacity for inner protocols.
     var protocolStack: [ProtocolKind] {
         var seen = Set<ProtocolKind>()
-        return layers.map(\.proto).filter {
+        // A tunnelled frame is a session of its *inner* flow: the stack starts at the
+        // innermost tunnel, so outer transport never mixes with inner (a TCP flow
+        // carried in VXLAN is not also a UDP session).
+        let start = layers.lastIndex { $0.proto == .gre || $0.proto == .vxlan } ?? layers.startIndex
+        return layers[start...].map(\.proto).filter {
             $0 != .ethernet && $0 != .linuxCooked && seen.insert($0).inserted
         }
     }

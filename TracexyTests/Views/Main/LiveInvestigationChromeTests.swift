@@ -86,19 +86,19 @@ struct LiveInvestigationChromeTests {
             hasActiveQuery: false,
             matchedCount: 0,
             incompleteCount: 0
-        ) == "Investigation · evaluating")
+        ) == "Expression: evaluating…")
         #expect(InvestigationQueryChipModel.label(
             isEvaluating: true,
             hasActiveQuery: true,
             matchedCount: 4,
             incompleteCount: 2
-        ) == "Investigation · updating")
+        ) == "Expression: updating…")
         #expect(InvestigationQueryChipModel.label(
             isEvaluating: false,
             hasActiveQuery: true,
             matchedCount: 4,
             incompleteCount: 2
-        ) == "Investigation · 4 matched · 2 incomplete")
+        ) == "Expression: 4 matched, 2 incomplete")
         #expect(InvestigationQueryChipModel.showsCoverage(incompleteCount: 0, coverageReasonCount: 1))
         #expect(!InvestigationQueryChipModel.showsCoverage(incompleteCount: 0, coverageReasonCount: 0))
     }
@@ -111,8 +111,9 @@ struct LiveInvestigationChromeTests {
         )
 
         #expect(presentation.title == "Stopped")
-        #expect(item("Interface", in: presentation)?.value.contains("Wi-Fi (en0) · up") == true)
-        #expect(item("Capture helper", in: presentation)?.value == "Incompatible · update needed")
+        #expect(item("Interface", in: presentation)?.value.hasPrefix("Wi-Fi (en0)") == true)
+        #expect(item("Interface", in: presentation)?.value.contains("not connected") == false)
+        #expect(item("Capture helper", in: presentation)?.value == "Update required")
         #expect(item("Capture helper", in: presentation)?.level == .attention)
         #expect(item("Capture filter", in: presentation)?.value == "All traffic")
         #expect(item("Interface drops", in: presentation)?.value == "Unknown while stopped")
@@ -124,7 +125,7 @@ struct LiveInvestigationChromeTests {
         let presentation = makeReadiness(interface: nil)
         let interface = item("Interface", in: presentation)
 
-        #expect(interface?.value == "en0 · unavailable")
+        #expect(interface?.value == "en0 is unavailable")
         #expect(interface?.level == .attention)
     }
 

@@ -105,13 +105,13 @@ struct DatagramAnalysisTests {
 
     // MARK: ICMP never maps — v4/v6, any type/code
 
-    @Test("ICMP v4/v6 with arbitrary type/code produce zero findings and exact retained ICMP coverage")
+    @Test("Non-error ICMP v4/v6 types produce zero findings and exact retained ICMP coverage")
     func icmpNeverMapsAndCountsExactly() {
-        // A spread across both families and a range of arbitrary type/code values,
-        // including unreachable, too-big, time-exceeded, parameter-problem, redirect
-        // and echo. None is a finding here.
-        let icmpv4: [(UInt8, UInt8)] = [(3, 0), (3, 1), (3, 3), (11, 0), (5, 1), (8, 0)]
-        let icmpv6: [(UInt8, UInt8)] = [(1, 0), (1, 4), (2, 0), (3, 0), (4, 1), (128, 0)]
+        // A spread across both families of non-error type/code values — echo, redirect,
+        // router/neighbour discovery, parameter problem, timestamp. None is a finding;
+        // the error families are covered by `DatagramOutcomeFindingTests`.
+        let icmpv4: [(UInt8, UInt8)] = [(8, 0), (0, 0), (5, 1), (9, 0), (10, 0), (13, 0)]
+        let icmpv6: [(UInt8, UInt8)] = [(128, 0), (129, 0), (133, 0), (134, 0), (135, 0), (4, 1)]
         var observations: [DatagramEvidenceObservation] = []
         for (index, (type, code)) in icmpv4.enumerated() {
             observations.append(icmpObservation(
@@ -144,8 +144,8 @@ struct DatagramAnalysisTests {
                 direction: .aToB,
                 provenance: provenance(2),
                 family: .ipv4,
-                type: 3,
-                code: 1
+                type: 8,
+                code: 0
             ),
             dnsObservation(tuple: tupleA, direction: .bToA, provenance: provenance(3), isTruncated: true),
             icmpObservation(
@@ -153,7 +153,7 @@ struct DatagramAnalysisTests {
                 direction: .bToA,
                 provenance: provenance(4),
                 family: .ipv6,
-                type: 1,
+                type: 129,
                 code: 0
             ),
         ]
@@ -363,7 +363,7 @@ struct DatagramAnalysisTests {
         #expect(result.inputCapacityReached)
     }
 
-    @Test("All N3B2 input coverage counters are propagated verbatim onto the analysis snapshot")
+    @Test("All input coverage counters are propagated verbatim onto the analysis snapshot")
     func propagatesEveryInputCounter() throws {
         let snap = try snapshot(
             [summary(tuple: tupleA, observations: [

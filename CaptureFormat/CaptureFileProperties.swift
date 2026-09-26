@@ -192,7 +192,7 @@ nonisolated struct CaptureSecretsBlockSummary: Sendable, Equatable {
 
     var kindLabel: String {
         switch secretsType {
-        case 0x544C4B4C: String(localized: "TLS key log")
+        case 0x544C534B: String(localized: "TLS key log")
         case 0x57474B4C: String(localized: "WireGuard keys")
         case 0x5A4E574B: String(localized: "ZigBee NWK key")
         case 0x5A415053: String(localized: "ZigBee APS key")

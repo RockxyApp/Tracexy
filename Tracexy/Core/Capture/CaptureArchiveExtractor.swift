@@ -41,6 +41,8 @@ nonisolated enum CaptureArchiveExtractor {
         switch container {
         case .gzip:
             try expandGzip(from: source, to: output, onProgress: onProgress, isCancelled: isCancelled)
+        case .lz4:
+            try expandLZ4(from: source, to: output, onProgress: onProgress, isCancelled: isCancelled)
         case .sessionZip:
             try expandSessionArchive(
                 from: source,
@@ -91,6 +93,124 @@ nonisolated enum CaptureArchiveExtractor {
     /// several inputs; anything after the last member that does not begin a new
     /// member is refused rather than silently ignored, since trailing bytes mean
     /// the file is not what it claims to be.
+    /// LZ4 frames (lz4 frame format v1.6): magic, frame descriptor with its header
+    /// checksum, blocks (compressed or stored, optional block checksums), end mark,
+    /// optional content checksum; concatenated frames and skippable frames are read
+    /// in turn. Dictionary IDs are refused. Every checksum present is verified.
+    private static func expandLZ4(
+        from source: CaptureArchiveSource,
+        to output: CaptureArchiveOutput,
+        onProgress: (UInt64) -> Void,
+        isCancelled: () -> Bool
+    )
+        throws
+    {
+        var position: UInt64 = 0
+        func read(_ count: Int) throws -> [UInt8] {
+            guard count >= 0, position + UInt64(count) <= source.size else {
+                throw CaptureArchiveError.truncated
+            }
+            var bytes = [UInt8](repeating: 0, count: count)
+            let got = try source.read(at: position, into: &bytes, destination: 0, count: count)
+            guard got == count else {
+                throw CaptureArchiveError.truncated
+            }
+            position += UInt64(count)
+            return bytes
+        }
+        func le32(_ bytes: [UInt8], _ at: Int = 0) -> UInt32 {
+            UInt32(bytes[at]) | UInt32(bytes[at + 1]) << 8 | UInt32(bytes[at + 2]) << 16 | UInt32(bytes[at + 3]) << 24
+        }
+        var frames = 0
+        while position < source.size {
+            if isCancelled() {
+                throw CancellationError()
+            }
+            let magic = try le32(read(4))
+            if magic & 0xFFFFFFF0 == 0x184D2A50 {
+                let length = try le32(read(4))
+                _ = try read(Int(length))
+                continue
+            }
+            guard magic == 0x184D2204 else {
+                throw frames == 0 ? CaptureArchiveError.malformed("not an LZ4 frame") : CaptureArchiveError
+                    .trailingContent
+            }
+            var descriptor = try read(2)
+            let flags = descriptor[0]
+            guard flags >> 6 == 1, flags & 0x02 == 0, descriptor[1] & 0x8F == 0 else {
+                throw CaptureArchiveError.malformed("an LZ4 frame descriptor uses reserved bits")
+            }
+            guard flags & 0x01 == 0 else {
+                throw CaptureArchiveError.unsupportedFeature("LZ4 dictionaries")
+            }
+            let linked = flags & 0x20 == 0
+            let blockChecksums = flags & 0x10 != 0
+            let contentChecksum = flags & 0x04 != 0
+            if flags & 0x08 != 0 {
+                descriptor += try read(8)
+            }
+            let blockSizeID = Int(descriptor[1] >> 4)
+            guard (4 ... 7).contains(blockSizeID) else {
+                throw CaptureArchiveError.malformed("an LZ4 block size is not defined")
+            }
+            let maximumBlock = 1 << (8 + 2 * blockSizeID)
+            let headerChecksum = try read(1)[0]
+            guard UInt8(XXHash32.hash(descriptor[...]) >> 8 & 0xFF) == headerChecksum else {
+                throw CaptureArchiveError.malformed("an LZ4 frame header checksum does not match")
+            }
+            var decoder = LZ4BlockDecoder()
+            var content = XXHash32()
+            while true {
+                if isCancelled() {
+                    throw CancellationError()
+                }
+                let word = try le32(read(4))
+                if word == 0 {
+                    break
+                }
+                let stored = word & 0x80000000 != 0
+                let length = Int(word & 0x7FFFFFFF)
+                guard length <= maximumBlock else {
+                    throw CaptureArchiveError.malformed("an LZ4 block is larger than its frame allows")
+                }
+                let block = try read(length)
+                if blockChecksums {
+                    guard try le32(read(4)) == XXHash32.hash(block[...]) else {
+                        throw CaptureArchiveError.malformed("an LZ4 block checksum does not match")
+                    }
+                }
+                let produced: [UInt8]
+                if stored {
+                    produced = block
+                    // A stored block still becomes history for the next linked block.
+                    decoder.remember(block, linked: linked)
+                } else {
+                    do {
+                        produced = try decoder.decode(block[...], maximumOutput: maximumBlock, linked: linked)
+                    } catch {
+                        throw CaptureArchiveError.malformed("an LZ4 block does not decode")
+                    }
+                }
+                if contentChecksum {
+                    content.update(produced[...])
+                }
+                try output.write(produced, offset: 0, count: produced.count, compressedConsumed: position)
+                onProgress(position)
+            }
+            if contentChecksum {
+                guard try le32(read(4)) == content.digest() else {
+                    throw CaptureArchiveError.malformed("an LZ4 content checksum does not match")
+                }
+            }
+            frames += 1
+        }
+        guard frames > 0 else {
+            throw CaptureArchiveError.truncated
+        }
+        onProgress(position)
+    }
+
     private static func expandGzip(
         from source: CaptureArchiveSource,
         to output: CaptureArchiveOutput,

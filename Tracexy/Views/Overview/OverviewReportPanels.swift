@@ -26,8 +26,8 @@ struct OverviewPanel<Content: View, Accessory: View>: View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(Theme.Typography.surfaceTitle)
-                    Text(caption).font(Theme.Typography.caption).foregroundStyle(.secondary)
+                    Text(localized: title).font(Theme.Typography.surfaceTitle)
+                    Text(localized: caption).font(Theme.Typography.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: Theme.Metrics.spacingM)
                 accessory
@@ -177,17 +177,24 @@ struct OverviewSessionStartChart: View {
         }
     }
 
+    enum Series {
+        case sessions
+        case retransmissions
+    }
+
     let columns: [Column]
     let width: TimeInterval
+    var series: Series = .sessions
 
     var body: some View {
         Chart(columns) { column in
             BarMark(
                 x: .value("Time", column.date, unit: .second),
-                y: .value("Sessions", column.count),
+                y: .value(series == .sessions ? "Sessions" : "Segments", column.count),
                 width: .automatic
             )
-            .foregroundStyle(Color.accentColor.gradient)
+            .foregroundStyle(series == .sessions ? Color.accentColor.gradient : Theme.color(for: SessionStatus.warning)
+                .gradient)
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 2)) { value in
@@ -213,8 +220,11 @@ struct OverviewSessionStartChart: View {
                 .foregroundStyle(.tertiary)
             }
         }
-        .accessibilityLabel("Sessions started over time")
-        .accessibilityValue("\(columns.reduce(0) { $0 + $1.count }) sessions across \(columns.count) slices")
+        .accessibilityLabel(series == .sessions ? "Sessions started over time" : "Retransmitted segments over time")
+        .accessibilityValue(
+            "\(columns.reduce(0) { $0 + $1.count }) \(series == .sessions ? "sessions" : "segments")"
+                + " across \(columns.count) slices"
+        )
     }
 }
 
@@ -382,5 +392,76 @@ struct OverviewFactTable: View {
             RoundedRectangle(cornerRadius: Theme.Metrics.pillCornerRadius, style: .continuous)
                 .stroke(.primary.opacity(Theme.Glass.neutralStrokeOpacity), lineWidth: 1)
         }
+    }
+}
+
+// MARK: - OverviewResponseTimeTable
+
+/// The scope's measured response times, one row per kind: how many intervals were
+/// measured, and the fastest, median and slowest of them. Opening a row selects the
+/// session that carried the slowest one, so the table ends in the investigation rather
+/// than in a number.
+///
+/// Every word and value comes from ``SessionResponseTimeDistributionRow``; this view
+/// only lays them out.
+struct OverviewResponseTimeTable: View {
+    // MARK: Internal
+
+    let rows: [SessionResponseTimeDistributionRow]
+    let onOpenSlowest: (SessionResponseTimeDistributionRow) -> Void
+
+    var body: some View {
+        Table(rows, selection: $selection) {
+            TableColumn("Measured") { row in
+                Text(row.label)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .width(min: 150, ideal: 220)
+            TableColumn("Count") { row in
+                numeric(row.count.formatted())
+            }
+            .width(min: 50, ideal: 58)
+            TableColumn("Fastest") { row in
+                numeric(row.fastest)
+            }
+            .width(min: 66, ideal: 78)
+            TableColumn("Median") { row in
+                numeric(row.median)
+            }
+            .width(min: 66, ideal: 78)
+            TableColumn("Slowest") { row in
+                numeric(row.slowest)
+            }
+            .width(min: 66, ideal: 78)
+        }
+        .tableStyle(.bordered)
+        .frame(height: Self.rowHeight * CGFloat(rows.count) + Self.headerHeight)
+        .contextMenu(forSelectionType: SessionResponseTimeDistributionRow.ID.self) { ids in
+            if let row = rows.first(where: { ids.contains($0.id) }) {
+                Button("Select Slowest Session") { onOpenSlowest(row) }
+            }
+        } primaryAction: { ids in
+            if let row = rows.first(where: { ids.contains($0.id) }) {
+                onOpenSlowest(row)
+            }
+        }
+        .accessibilityLabel("Response times")
+        .accessibilityValue(rows.map {
+            "\($0.label) \($0.countLabel), median \($0.median), slowest \($0.slowest)"
+        }.joined(separator: ", "))
+    }
+
+    // MARK: Private
+
+    private static let rowHeight: CGFloat = 24
+    private static let headerHeight: CGFloat = 36
+
+    @State private var selection: SessionResponseTimeDistributionRow.ID?
+
+    private func numeric(_ text: String) -> some View {
+        Text(text)
+            .monospacedDigit()
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

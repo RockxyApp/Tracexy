@@ -238,7 +238,7 @@ struct FlowMapView: View {
         HStack(spacing: Theme.Metrics.spacingM) {
             Label("Flow", systemImage: "globe.americas")
                 .font(Theme.Typography.title)
-            Text("\(endpoints.count) addresses · \(routes.count) regions")
+            Text("\(endpoints.count) addresses in \(routes.count) regions")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             Spacer(minLength: Theme.Metrics.spacingM)

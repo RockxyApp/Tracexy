@@ -267,7 +267,7 @@ enum CaptureContainerFixtures {
         ))
         file += interfaceStatistics(little: little, interfaceID: 1, options: StatisticsOptions(received: 1, dropped: 0))
         file += nameResolution(little: little)
-        file += decryptionSecrets(little: little, secretsType: 0x544C4B4C, secrets: Array("CLIENT_RANDOM 00 11\n".utf8))
+        file += decryptionSecrets(little: little, secretsType: 0x544C534B, secrets: Array("CLIENT_RANDOM 00 11\n".utf8))
         file += customBlock(little: little)
         file += unknownBlock(little: little, type: 0x000000F0)
         return file
@@ -298,6 +298,13 @@ enum WiresharkOracle {
     enum OracleError: Error {
         case unavailable
         case failed(status: Int32, output: String)
+    }
+
+    /// One PDML `<field>` of a frame: its abbreviated name and byte span.
+    struct PDMLField: Equatable {
+        let name: String
+        let position: Int
+        let size: Int
     }
 
     static var capinfosURL: URL? {
@@ -357,11 +364,18 @@ enum WiresharkOracle {
         return CapinfosReport(fields: fields)
     }
 
-    static func tsharkFields(_ file: URL, fields: [String], filter: String? = nil) throws -> [[String]] {
+    static func tsharkFields(
+        _ file: URL,
+        fields: [String],
+        filter: String? = nil,
+        extraArguments: [String] = []
+    )
+        throws -> [[String]]
+    {
         guard let tool = tsharkURL else {
             throw OracleError.unavailable
         }
-        var arguments = ["-r", file.path, "-T", "fields", "-E", "separator=\t"]
+        var arguments = ["-r", file.path, "-T", "fields", "-E", "separator=\t"] + extraArguments
         for field in fields {
             arguments += ["-e", field]
         }
@@ -374,7 +388,38 @@ enum WiresharkOracle {
         }
     }
 
+    /// `tshark -T pdml` for one frame, flattened to every named field with a
+    /// non-empty byte span — the oracle for which bytes Wireshark ties to a field.
+    static func tsharkPDMLFields(_ file: URL, frame: Int) throws -> [PDMLField] {
+        guard let tool = tsharkURL else {
+            throw OracleError.unavailable
+        }
+        let output = try run(tool, arguments: ["-r", file.path, "-T", "pdml", "-Y", "frame.number == \(frame)"])
+        let collector = PDMLCollector()
+        let parser = XMLParser(data: Data(output.utf8))
+        parser.delegate = collector
+        parser.parse()
+        return collector.fields
+    }
+
     // MARK: Private
+
+    private final class PDMLCollector: NSObject, XMLParserDelegate {
+        var fields: [PDMLField] = []
+
+        func parser(
+            _: XMLParser, didStartElement element: String, namespaceURI _: String?, qualifiedName _: String?,
+            attributes: [String: String] = [:]
+        ) {
+            guard element == "field", let name = attributes["name"], !name.isEmpty,
+                  let position = attributes["pos"].flatMap(Int.init),
+                  let size = attributes["size"].flatMap(Int.init), size > 0 else
+            {
+                return
+            }
+            fields.append(PDMLField(name: name, position: position, size: size))
+        }
+    }
 
     private static func run(_ tool: URL, arguments: [String]) throws -> String {
         let process = Process()

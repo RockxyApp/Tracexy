@@ -18,9 +18,12 @@ struct WorkspacePresentationContractTests {
         #expect(root.contains("await coordinator.adoptAssistantDemoFixture()"))
         #expect(root.contains("walkthrough is fully synthetic"))
         #expect(app.contains(".defaultAppStorage(coordinator.activeProjectDefaults)"))
-        // Focus Set editor, Noise Control, Settings, Session Inspector and Capture
-        // Info scenes all remount on the Project identity.
-        #expect(app.components(separatedBy: ".id(coordinator.projectStore.activeProjectID)").count == 6)
+        // Focus Set editor, Noise Control, Resolved Addresses, Protocol Hierarchy,
+        // DNS Lookups, Message Counts, Settings, Session Inspector and Capture Info
+        // scenes all remount on the Project identity.
+        let statistics = try readProjectFile("Tracexy/StatisticsWindowScenes.swift")
+        let remounts = (app + statistics).components(separatedBy: ".id(coordinator.projectStore.activeProjectID)")
+        #expect(remounts.count == 34)
         #expect(root.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("ProjectTransitionPresentation("))
         #expect(manager.contains("unsaved in-memory sessions and evidence"))

@@ -48,6 +48,61 @@ struct FollowStreamReaderTests {
         }
     }
 
+    // MARK: - Turns and export formats (Wireshark's Show as / Save as)
+
+    @Test
+    func turnsInterleaveInCaptureOrderAndExportLikeWireshark() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 1_000, payload: Array("GET /a\r\n".utf8)),
+            Self.tcpFrame(client: false, seq: 5_000, payload: Array("200A".utf8)),
+            Self.tcpFrame(client: true, seq: 1_008, payload: Array("GET /b\r\n".utf8)),
+            Self.tcpFrame(client: false, seq: 5_004, payload: Array("200B".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: Self.tuple).read()
+            let turns = FollowStreamExport.turns(of: result)
+            #expect(turns.map(\.direction) == [.aToB, .bToA, .aToB, .bToA])
+            #expect(turns.map(\.firstOrdinal) == [1, 2, 3, 4])
+            #expect(turns.map { String(decoding: $0.bytes, as: UTF8.self) } == [
+                "GET /a\r\n",
+                "200A",
+                "GET /b\r\n",
+                "200B"
+            ])
+
+            let raw = FollowStreamExport.data(turns, format: .raw, side: .both, tuple: result.tuple)
+            #expect(raw == Data("GET /a\r\n200AGET /b\r\n200B".utf8))
+            let client = FollowStreamExport.data(turns, format: .raw, side: .aToB, tuple: result.tuple)
+            #expect(client == Data("GET /a\r\nGET /b\r\n".utf8))
+            let arrays = String(
+                decoding: FollowStreamExport.data(turns, format: .cArrays, side: .both, tuple: result.tuple),
+                as: UTF8.self
+            )
+            #expect(arrays.contains("char peer0_0[] = { /* Frame 1 */"))
+            #expect(arrays.contains("char peer1_1[] = { /* Frame 4 */"))
+            let yaml = String(
+                decoding: FollowStreamExport.data(turns, format: .yaml, side: .both, tuple: result.tuple),
+                as: UTF8.self
+            )
+            #expect(yaml.hasPrefix("peers:\n  - peer: 0\n    host: 10.0.0.5\n    port: 50000\n"))
+            #expect(yaml.contains("    data: !!binary |\n      \(Data("200B".utf8).base64EncodedString())"))
+
+            if WiresharkOracle.isAvailable {
+                // tshark's raw follow prints each turn as hex, server turns indented by a tab.
+                let output = try WiresharkOracle.tsharkFields(
+                    url, fields: ["frame.number"], extraArguments: ["-q", "-z", "follow,tcp,raw,0"]
+                ).map { $0.joined(separator: "\t") }
+                let hexTurns = output.filter { line in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    return !trimmed.isEmpty && trimmed.allSatisfy(\.isHexDigit)
+                }
+                let ours = turns.map { $0.bytes.map { String(format: "%02x", $0) }.joined() }
+                // The field column (frame numbers) precedes the follow output; keep the turns.
+                #expect(Array(hexTurns.suffix(ours.count)).map { $0.trimmingCharacters(in: .whitespaces) } == ours)
+            }
+        }
+    }
+
     // MARK: - PCAPNG
 
     @Test

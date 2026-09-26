@@ -78,9 +78,9 @@ These are current source claims:
 
 Do not present these as shipped:
 
-- deep HTTP/2 decoding;
+- HTTP/2 inside encrypted TLS, or HTTP/2 frames outside Follow Stream;
 - deep HTTP/3 or QUIC frame/payload decoding;
-- WebSocket decoding;
+- WebSocket decoding outside Follow Stream, or inside encrypted TLS (wss);
 - TLS analysis or decrypted HTTPS payload visibility;
 - general always-on TCP stream or record reassembly;
 - user-visible connection/TLS evidence navigation beyond current views;

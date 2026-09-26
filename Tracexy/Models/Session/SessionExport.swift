@@ -92,6 +92,17 @@ nonisolated enum SessionExportFormat: String, CaseIterable, Identifiable, Sendab
     }
 }
 
+// MARK: - SessionExportNote
+
+nonisolated struct SessionExportNote: Sendable, Equatable, Codable {
+    /// "session" for a note on the whole session, "finding" for a note on one finding.
+    let subject: String
+    /// The finding's title, for a finding note.
+    let findingTitle: String?
+    let text: String
+    let updatedAt: Date
+}
+
 // MARK: - SessionExportArtifact
 
 nonisolated struct SessionExportArtifact: Sendable {
@@ -221,7 +232,8 @@ nonisolated enum SessionExporter {
         frames: [CapturedFrame],
         defaultLinkType: UInt32,
         format: SessionExportFormat,
-        privacy: SessionExportPrivacyPolicy = .none
+        privacy: SessionExportPrivacyPolicy = .none,
+        notes: [SessionExportNote] = []
     )
         throws -> SessionExportArtifact
     {
@@ -236,7 +248,8 @@ nonisolated enum SessionExporter {
                 session: session,
                 frames: frames,
                 defaultLinkType: defaultLinkType,
-                privacy: privacy
+                privacy: privacy,
+                notes: notes
             )
         case .pcap:
             // Raw formats emit unmodified on-wire bytes; we cannot honor a
@@ -274,6 +287,9 @@ nonisolated enum SessionExporter {
         let exportedAt: Date
         let session: Summary
         let frames: [Frame]
+        /// The investigator's notes on this session and its findings. The key is
+        /// absent when there are none, so a document without notes is unchanged.
+        let notes: [SessionExportNote]?
     }
 
     /// Protected native document. Omits the `bytes` key entirely and carries
@@ -285,6 +301,10 @@ nonisolated enum SessionExporter {
         let privacy: PrivacyMetadata
         let session: Summary
         let frames: [ProtectedFrame]
+        /// As in ``Document``. Notes are the investigator's own words and are carried
+        /// as written: masking and stripping apply to decoded evidence, not to them,
+        /// and ``PrivacyMetadata/includesInvestigationNotes`` says so.
+        let notes: [SessionExportNote]?
     }
 
     /// Machine-readable record of the applied protections. `includesRawFrameBytes`
@@ -294,6 +314,9 @@ nonisolated enum SessionExporter {
         let strippedCredentials: Bool
         let maskedIPAddresses: Bool
         let includesRawFrameBytes: Bool
+        /// Present (true) only when the document carries notes, which no protection
+        /// rewrites.
+        let includesInvestigationNotes: Bool?
     }
 
     private struct Summary: Codable {
@@ -381,10 +404,12 @@ nonisolated enum SessionExporter {
         session: SessionSummary,
         frames: [CapturedFrame],
         defaultLinkType: UInt32,
-        privacy: SessionExportPrivacyPolicy
+        privacy: SessionExportPrivacyPolicy,
+        notes: [SessionExportNote]
     )
         throws -> Data
     {
+        let exportedNotes = notes.isEmpty ? nil : notes
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -410,7 +435,8 @@ nonisolated enum SessionExporter {
                         processName: frame.processName,
                         bytes: Data(frame.bytes)
                     )
-                }
+                },
+                notes: exportedNotes
             )
             return try encoder.encode(document)
         }
@@ -422,7 +448,8 @@ nonisolated enum SessionExporter {
                 redactedPayloadBodies: privacy.redactPayloadBodies,
                 strippedCredentials: privacy.stripCredentials,
                 maskedIPAddresses: privacy.maskIPAddresses,
-                includesRawFrameBytes: false
+                includesRawFrameBytes: false,
+                includesInvestigationNotes: exportedNotes == nil ? nil : true
             ),
             session: summary(for: session, privacy: privacy),
             frames: frames.map { frame in
@@ -433,7 +460,8 @@ nonisolated enum SessionExporter {
                     linkType: frame.linkType ?? defaultLinkType,
                     processName: frame.processName
                 )
-            }
+            },
+            notes: exportedNotes
         )
         return try encoder.encode(document)
     }
@@ -574,20 +602,38 @@ nonisolated enum PrivacyMask {
     /// address at the end of prose cannot escape masking. Preserve the punctuation
     /// exactly; malformed tokens remain untouched.
     private static func maskingAddressToken(_ token: String) -> String {
-        if isIPAddress(token) {
-            return placeholder
+        if let masked = maskingAddressOrEndpoint(token) {
+            return masked
         }
 
         var candidate = token
         var suffix = ""
-        while candidate.last == "." {
+        while let last = candidate.last, last == "." || last == ":" {
             candidate.removeLast()
-            suffix.append(".")
-            if isIPAddress(candidate) {
-                return placeholder + suffix
+            suffix.insert(last, at: suffix.startIndex)
+            if let masked = maskingAddressOrEndpoint(candidate) {
+                return masked + suffix
             }
         }
         return token
+    }
+
+    /// The placeholder for a bare address, or placeholder plus port for an
+    /// `address:port` endpoint in prose ("10.0.0.5:51000"), else `nil`.
+    private static func maskingAddressOrEndpoint(_ token: String) -> String? {
+        if isIPAddress(token) {
+            return placeholder
+        }
+        guard let separator = token.lastIndex(of: ":") else {
+            return nil
+        }
+        let port = token[token.index(after: separator)...]
+        guard !port.isEmpty, port.count <= 5, port.allSatisfy(\.isASCII), port.allSatisfy(\.isNumber),
+              isIPAddress(String(token[..<separator])) else
+        {
+            return nil
+        }
+        return "\(placeholder):\(port)"
     }
 
     private static func isIPAddress(_ token: String) -> Bool {

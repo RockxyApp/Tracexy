@@ -19,7 +19,7 @@ struct CaptureSettingsView: View {
                         ForEach(interfaceGroups) { group in
                             Section(group.category.title) {
                                 ForEach(group.interfaces) { iface in
-                                    Text(iface.menuLabel).tag(iface.id)
+                                    Text(iface.pickerLabel).tag(iface.id)
                                 }
                             }
                         }
@@ -65,6 +65,15 @@ struct CaptureSettingsView: View {
                         .disabled(filterMode != CaptureFilterMode.custom.rawValue)
                 }
 
+                if filterMode == CaptureFilterMode.custom.rawValue {
+                    SettingsIndented {
+                        VStack(alignment: .leading, spacing: 6) {
+                            filterValidationLine
+                            savedFilterControls
+                        }
+                    }
+                }
+
                 SettingsDivider()
 
                 SettingsIndented {
@@ -101,6 +110,81 @@ struct CaptureSettingsView: View {
 
                 SettingsDivider()
 
+                SettingsRow(label: "Stop automatically:") {
+                    HStack(spacing: 8) {
+                        Picker("Stop after time", selection: $autoStopMinutes) {
+                            Text("Never").tag(0)
+                            Text("After 1 minute").tag(1)
+                            Text("After 5 minutes").tag(5)
+                            Text("After 15 minutes").tag(15)
+                            Text("After 1 hour").tag(60)
+                            Text("After 8 hours").tag(480)
+                        }
+                        .labelsHidden()
+                        .frame(width: metrics.menuWidth(160))
+                        Picker("Stop after packets", selection: $autoStopPackets) {
+                            Text("Any packet count").tag(0)
+                            Text("After 10,000 packets").tag(10_000)
+                            Text("After 100,000 packets").tag(100_000)
+                            Text("After 1,000,000 packets").tag(1_000_000)
+                        }
+                        .labelsHidden()
+                        .frame(width: metrics.menuWidth(200))
+                    }
+                    .frame(minHeight: metrics.controlHeight)
+                }
+
+                SettingsIndented {
+                    SettingsFootnote(
+                        "A live capture stops by itself at whichever limit comes first, and its sessions go to History "
+                            + "as when you press Stop. Clearing the list during capture restarts the packet count."
+                    )
+                }
+
+                SettingsDivider()
+
+                SettingsRow(label: "Save as a file set:") {
+                    HStack(spacing: 8) {
+                        Picker("New file after size", selection: $fileSetMegabytes) {
+                            Text("Off").tag(0)
+                            Text("Every 10 MB").tag(10)
+                            Text("Every 100 MB").tag(100)
+                            Text("Every 1 GB").tag(1_000)
+                        }
+                        .labelsHidden()
+                        .frame(width: metrics.menuWidth(140))
+                        Picker("New file after time", selection: $fileSetMinutes) {
+                            Text("Any duration").tag(0)
+                            Text("Every minute").tag(1)
+                            Text("Every 10 minutes").tag(10)
+                            Text("Every hour").tag(60)
+                        }
+                        .labelsHidden()
+                        .frame(width: metrics.menuWidth(160))
+                        Picker("Files to keep", selection: $fileSetKeep) {
+                            Text("Keep every file").tag(0)
+                            Text("Keep newest 5").tag(5)
+                            Text("Keep newest 20").tag(20)
+                            Text("Keep newest 100").tag(100)
+                        }
+                        .labelsHidden()
+                        .disabled(fileSetMegabytes == 0 && fileSetMinutes == 0)
+                        .frame(width: metrics.menuWidth(160))
+                    }
+                    .frame(minHeight: metrics.controlHeight)
+                }
+
+                SettingsIndented {
+                    SettingsFootnote(
+                        "While capturing, Tracexy starts a new file at whichever limit comes first and keeps the set in "
+                            + "this Project’s Captures folder, named so File ▸ Next File in Set walks it. Keeping only the "
+                            + "newest files deletes older ones as the capture runs; a finding that cites a deleted file "
+                            + "says so. Follow and Frames read the newest file; Save Capture keeps every file still kept."
+                    )
+                }
+
+                SettingsDivider()
+
                 SettingsRow(label: "Retain up to:") {
                     Picker("", selection: $retainPackets) {
                         Text("8 000 packets").tag(8_000)
@@ -113,7 +197,19 @@ struct CaptureSettingsView: View {
                 }
             }
         }
-        .onAppear { interfaceGroups = NetworkInterfaces.grouped() }
+        .onAppear { interfaceGroups = listedGroups }
+        .onChange(of: InterfacePreferences.shared.settings) { interfaceGroups = listedGroups }
+        .task(id: bpf) {
+            // Debounced so validation follows typing without compiling every keystroke.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else {
+                return
+            }
+            let expression = bpf
+            validation = await Task.detached(priority: .utility) {
+                CaptureFilterValidator.validate(expression)
+            }.value
+        }
         .sheet(isPresented: $isImportingFilter) {
             CaptureFilterImportSheet(bpf: $bpf, filterMode: $filterMode)
         }
@@ -128,16 +224,117 @@ struct CaptureSettingsView: View {
     @AppStorage(SettingsKeys.snapLength) private var snapLength = 65_536
     @AppStorage(SettingsKeys.promiscuous) private var promiscuous = false
     @AppStorage(SettingsKeys.retainPackets) private var retainPackets = 8_000
+    @AppStorage(SettingsKeys.autoStopMinutes) private var autoStopMinutes = 0
+    @AppStorage(SettingsKeys.autoStopPackets) private var autoStopPackets = 0
+    @AppStorage(SettingsKeys.fileSetMegabytes) private var fileSetMegabytes = 0
+    @AppStorage(SettingsKeys.fileSetMinutes) private var fileSetMinutes = 0
+    @AppStorage(SettingsKeys.fileSetKeep) private var fileSetKeep = 0
+
+    @AppStorage(SettingsKeys.savedCaptureFilters) private var savedFiltersData = Data("[]".utf8)
 
     @State private var interfaceGroups: [InterfaceGroup] = []
+
     @State private var isImportingFilter = false
+    @State private var validation: CaptureFilterValidation = .empty
+    @State private var isNamingFilter = false
+    @State private var filterName = ""
 
     private let metrics = SettingsDisplayMetrics.standard
+
+    /// The interfaces Capture ▸ Manage Interfaces leaves listed; the default stays listed.
+    private var listedGroups: [InterfaceGroup] {
+        NetworkInterfaces.grouped(InterfacePreferences.shared.settings, keeping: defaultInterface)
+    }
+
+    private var savedFilters: [SavedCaptureFilter] {
+        SavedCaptureFilter.decode(savedFiltersData)
+    }
 
     /// The discovered interfaces, flattened out of their display groups, for the
     /// tunnel-guidance lookup.
     private var allInterfaces: [NetworkInterface] {
         interfaceGroups.flatMap(\.interfaces)
+    }
+
+    /// libpcap's verdict on the expression, checked without opening an interface.
+    @ViewBuilder private var filterValidationLine: some View {
+        switch validation {
+        case .empty:
+            SettingsFootnote("With no expression, every packet is captured.")
+        case let .valid(count):
+            Label("Valid filter", systemImage: "checkmark.circle")
+                .font(Theme.Typography.chrome)
+                .foregroundStyle(.secondary)
+                .help("libpcap compiled it to \(count) BPF instructions for Ethernet interfaces.")
+        case let .invalid(message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(Theme.Typography.chrome)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        case .unavailable:
+            SettingsFootnote("This expression is checked when capture starts.")
+        }
+    }
+
+    private var savedFilterControls: some View {
+        HStack(spacing: 8) {
+            Menu("Saved Filters") {
+                ForEach(savedFilters) { filter in
+                    Button(filter.name) { bpf = filter.expression }
+                        .help(filter.expression)
+                }
+                if !savedFilters.isEmpty {
+                    Divider()
+                    Menu("Delete") {
+                        ForEach(savedFilters) { filter in
+                            Button(filter.name, role: .destructive) {
+                                savedFiltersData = SavedCaptureFilter.encode(savedFilters.filter { $0.id != filter.id })
+                            }
+                        }
+                    }
+                }
+            }
+            .disabled(savedFilters.isEmpty)
+            .fixedSize()
+
+            Button("Save Filter…") {
+                filterName = ""
+                isNamingFilter = true
+            }
+            .disabled({
+                if case .valid = validation {
+                    return false
+                }
+                return true
+            }())
+            .help("Keep this expression under a name in this Project")
+            .popover(isPresented: $isNamingFilter, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Save Capture Filter")
+                        .font(Theme.Typography.surfaceTitle)
+                    TextField("Name", text: $filterName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
+                        .onSubmit(saveFilter)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { isNamingFilter = false }
+                        Button("Save", action: saveFilter)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(filterName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(14)
+            }
+        }
+        .controlSize(.small)
+    }
+
+    private func saveFilter() {
+        if let updated = SavedCaptureFilter.saving(bpf, named: filterName, into: savedFilters) {
+            savedFiltersData = SavedCaptureFilter.encode(updated)
+            isNamingFilter = false
+        }
     }
 }
 

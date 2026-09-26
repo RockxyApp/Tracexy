@@ -178,12 +178,17 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     /// The bounded TLS record evidence folded from the same accepted frames. Additive
     /// evidence alongside `sessions`; not yet surfaced in Views.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// The bounded per-segment TCP series folded from the same accepted frames — one
+    /// complete capture-order prefix per flow, the input to the TCP health charts.
+    let segmentSeries: TCPSegmentSeriesTable.Snapshot
     /// The passive connection analysis assessed exactly once from `connections`.
     /// Additive evidence alongside `sessions`; not yet surfaced in Views.
     let connectionAnalysis: ConnectionAnalysisSnapshot
     /// The passive datagram analysis assessed exactly once from `datagramEvidence`.
     /// Additive evidence alongside `sessions`; not yet surfaced in Views.
     let datagramAnalysis: DatagramAnalysisSnapshot
+    /// The passive TLS analysis assessed exactly once from `tlsEvidence`.
+    let tlsAnalysis: TLSAnalysisSnapshot
     /// Bounded capture-wide bytes over time by session direction, folded from the
     /// same accepted frames.
     let trafficTimeline: TrafficTimeline
@@ -358,8 +363,10 @@ nonisolated final class SavedCaptureStreamLoader {
             connections: investigation.connections,
             datagramEvidence: fold.datagramEvidence,
             tlsEvidence: fold.tlsEvidence,
+            segmentSeries: fold.segmentSeries,
             connectionAnalysis: investigation.connectionAnalysis,
             datagramAnalysis: investigation.datagramAnalysis,
+            tlsAnalysis: investigation.tlsAnalysis,
             trafficTimeline: fold.trafficTimeline,
             evidence: evidence,
             retainedTail: tail,

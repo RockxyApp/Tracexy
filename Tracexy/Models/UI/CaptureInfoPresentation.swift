@@ -190,7 +190,7 @@ enum CaptureInfoFormatting {
         }
     }
 
-    static func linkType(_ value: UInt32) -> String {
+    nonisolated static func linkType(_ value: UInt32) -> String {
         let name: String? = switch value {
         case LinkType.null: "BSD loopback"
         case LinkType.ethernet: "Ethernet"

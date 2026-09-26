@@ -91,7 +91,7 @@ struct ContextInspectorInsightRow: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(color)
                     .frame(width: 16)
-                Text(title)
+                Text(localized: title)
                     .font(Theme.Typography.captionMedium)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -131,7 +131,7 @@ private struct ContextInspectorTableHeader: View {
     let title: String
 
     var body: some View {
-        Text(title)
+        Text(localized: title)
             .font(Theme.Typography.bodyEmphasis)
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - SessionEvidenceContextSummaryView
 
-/// Compact right-dock explanation of the retained connection/TLS model. The
+/// Compact right-dock explanation of the retained connection/TLS/datagram model. The
 /// complete chronological observations stay in the bottom Evidence facet; this
 /// view names the scope, coverage, and route to those literal citations.
 struct SessionEvidenceContextSummaryView: View {
@@ -26,6 +26,13 @@ struct SessionEvidenceContextSummaryView: View {
             )
         }
 
+        if let datagrams = selection.datagrams {
+            ContextInspectorFieldTable(
+                title: "Datagram Evidence",
+                fields: datagramFields(datagrams)
+            )
+        }
+
         if !selection.isEmpty || hasGlobalCoverageCaveat {
             ContextInspectorTable(title: "Evidence Navigation") {
                 ContextInspectorFullRow {
@@ -38,7 +45,7 @@ struct SessionEvidenceContextSummaryView: View {
                             openEvidence()
                         }
                         .controlSize(.small)
-                        .help("Show retained connection and TLS observations in capture order")
+                        .help("Show retained connection, TLS and datagram observations in capture order")
                     }
                 }
             }
@@ -97,7 +104,7 @@ struct SessionEvidenceContextSummaryView: View {
         if !omitted.isEmpty {
             fields.append(ContextTableField(
                 label: "Omitted Events",
-                value: omitted.joined(separator: " · ")
+                value: omitted.joined(separator: ", ")
             ))
         }
 
@@ -105,7 +112,7 @@ struct SessionEvidenceContextSummaryView: View {
             .sorted()
         fields.append(ContextTableField(
             label: "Frame Coverage",
-            value: loss.joined(separator: " · "),
+            value: loss.joined(separator: ", "),
             monospaced: false
         ))
         return fields
@@ -118,6 +125,9 @@ struct SessionEvidenceContextSummaryView: View {
             || selection.tlsCoverage.excludedReassembledRecordCount > 0
             || selection.tlsCoverage.capacityReached
             || selection.tlsCoverage.countersOverflowed
+            || selection.datagramCoverage.omittedObservationCount > 0
+            || selection.datagramCoverage.capacityReached
+            || selection.datagramCoverage.countersOverflowed
     }
 
     private var navigationExplanation: String {
@@ -125,6 +135,43 @@ struct SessionEvidenceContextSummaryView: View {
             return "No exact session evidence was retained. Capture-level bounds still prevent treating that absence as proof."
         }
         return "Review retained observations in capture order, then load one cited frame from the current local source."
+    }
+
+    private func datagramFields(_ datagrams: DatagramEvidenceSummary) -> [ContextTableField] {
+        var dns = 0
+        var icmp = 0
+        for observation in datagrams.observations {
+            switch observation.kind {
+            case .dns: dns += 1
+            case .icmp: icmp += 1
+            }
+        }
+        var fields: [ContextTableField] = []
+        if dns > 0 {
+            fields.append(ContextTableField(label: "DNS Messages", value: dns.formatted()))
+        }
+        if icmp > 0 {
+            fields.append(ContextTableField(label: "ICMP Messages", value: icmp.formatted()))
+        }
+        fields.append(ContextTableField(
+            label: "Frame Coverage",
+            value: SessionEvidenceCopy.lossLabel(datagrams.lossKnowledge),
+            monospaced: false
+        ))
+        if datagrams.omittedObservationCount > 0 {
+            fields.append(ContextTableField(
+                label: "Omitted",
+                value: datagrams.omittedObservationCount.formatted()
+            ))
+        }
+        if datagrams.snapLengthTruncationObserved {
+            fields.append(ContextTableField(
+                label: "Snap Length",
+                value: "Truncation observed",
+                monospaced: false
+            ))
+        }
+        return fields
     }
 
     private func tlsFields(_ tls: TLSEvidenceSummary) -> [ContextTableField] {

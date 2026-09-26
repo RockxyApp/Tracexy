@@ -46,8 +46,8 @@ struct EvidenceNavigationActivationTests {
         let published = coordinator.evidenceProjection.selection
 
         let stale = SessionEvidenceSelection(
-            sessionID: UUID(), connections: [], tls: nil,
-            connectionCoverage: .empty, tlsCoverage: .empty
+            sessionID: UUID(), connections: [], tls: nil, datagrams: nil,
+            connectionCoverage: .empty, tlsCoverage: .empty, datagramCoverage: .empty
         )
         // Stale request id — rejected.
         coordinator.publishSelectedSessionEvidenceProjection(
