@@ -127,7 +127,7 @@ struct ProjectStoreTests {
             == ProjectCatalogCoding.encodedByteCount(of: validated))
     }
 
-    @Test("Every published maximum fits: 128 Projects, 32 tabs each, 64 long rules a tab")
+    @Test("Every storage ceiling holds at once: all Projects, tabs and long rule rows")
     func fullCapacityFits() throws {
         func fullProject(value: String) -> Project {
             let tabs = (0 ..< ProjectLimits.maximumWorkspacesPerProject).map { tab in

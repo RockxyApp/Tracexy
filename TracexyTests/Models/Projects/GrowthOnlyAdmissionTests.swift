@@ -55,6 +55,22 @@ struct GrowthOnlyAdmissionTests {
         #expect(store.activeProject.name == "Still Mine")
     }
 
+    @Test("An import prepared before the limits fell is refused for its rule rows at commit")
+    func commitRechecksImportedRuleRows() async throws {
+        let store = ProjectStore(maxProjects: 4, maxWorkspacesPerProject: 4, maxFilterRulesPerWorkspace: 8)
+        let prepared = try store.prepareTransition(.adopt(Self.project(named: "Eight", rules: 8)))
+        store.updateLimits(maxProjects: 4, maxWorkspacesPerProject: 4, maxFilterRulesPerWorkspace: 2)
+        await #expect(throws: ProjectMutationError.filterRuleCapacityReached(limit: 2)) {
+            try await store.commitPreparedTransition(prepared)
+        }
+        #expect(store.projects.count == 1)
+        #expect(!store.isCatalogTransitionPrepared)
+
+        let fitting = try store.prepareTransition(.adopt(Self.project(named: "Two", rules: 2)))
+        try await store.commitPreparedTransition(fitting)
+        #expect(store.projects.count == 2)
+    }
+
     @Test("Switching Projects is never refused by a lowered limit")
     func selectIsNotGrowth() async throws {
         let store = ProjectStore(maxProjects: 3, maxWorkspacesPerProject: 4)

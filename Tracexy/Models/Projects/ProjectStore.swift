@@ -109,6 +109,9 @@ nonisolated struct PreparedProjectCatalogTransition: Sendable {
     /// Whether committing adds a Project, so the limit is checked again then: it
     /// may have been lowered while the transition waited for a capture to drain.
     fileprivate var addsProject = false
+    /// The Project an import adds, whose tabs and rule rows are checked again at
+    /// commit for the same reason.
+    fileprivate var importedProjectID: UUID?
 }
 
 // MARK: - ProjectStore
@@ -479,6 +482,9 @@ final class ProjectStore {
             expectedRevision: expectedRevision
         )
         prepared.addsProject = candidate.projects.count > catalog.projects.count
+        if case .adopt = transition {
+            prepared.importedProjectID = destination.id
+        }
         preparedTransitionID = prepared.id
         return prepared
     }
@@ -505,6 +511,16 @@ final class ProjectStore {
         if prepared.addsProject, catalog.projects.count >= maxProjects {
             preparedTransitionID = nil
             throw ProjectMutationError.capacityReached(limit: maxProjects)
+        }
+        if let id = prepared.importedProjectID,
+           let imported = prepared.candidate.projects.first(where: { $0.id == id })
+        {
+            do {
+                try checkImportCapacity(imported)
+            } catch {
+                preparedTransitionID = nil
+                throw error
+            }
         }
         if let repository {
             let previousPersistenceState = persistenceState
@@ -707,6 +723,17 @@ final class ProjectStore {
         return revision + 1
     }
 
+    /// An imported Project's tabs and rule rows all arrive new, so the current
+    /// limits apply to them just as they do to adding a tab or a row.
+    private func checkImportCapacity(_ project: Project) throws {
+        guard project.workspaces.count <= maxWorkspacesPerProject else {
+            throw ProjectMutationError.workspaceCapacityReached(limit: maxWorkspacesPerProject)
+        }
+        guard project.workspaces.allSatisfy({ $0.filterRules.count <= maxFilterRulesPerWorkspace }) else {
+            throw ProjectMutationError.filterRuleCapacityReached(limit: maxFilterRulesPerWorkspace)
+        }
+    }
+
     /// Validate an imported configuration and regenerate every identity. Shared by
     /// the direct insert and the prepared transition so both apply the same policy.
     private func validatedImport(_ project: Project) throws -> Project {
@@ -717,14 +744,7 @@ final class ProjectStore {
         guard !containsProjectName(normalizedName, excluding: nil) else {
             throw ProjectMutationError.duplicateName
         }
-        guard project.workspaces.count <= maxWorkspacesPerProject else {
-            throw ProjectMutationError.workspaceCapacityReached(limit: maxWorkspacesPerProject)
-        }
-        // Importing is growth: every rule row arrives new, so the rule limit applies
-        // to it just as it does to adding a row in the filter bar.
-        guard project.workspaces.allSatisfy({ $0.filterRules.count <= maxFilterRulesPerWorkspace }) else {
-            throw ProjectMutationError.filterRuleCapacityReached(limit: maxFilterRulesPerWorkspace)
-        }
+        try checkImportCapacity(project)
 
         var source = project
         source.name = normalizedName
