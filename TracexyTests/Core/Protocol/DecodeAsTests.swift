@@ -41,7 +41,7 @@ struct DecodeAsTests {
     func settingsPersistPerProject() throws {
         let suite = "decode-as-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let settings = DecodeAsSettings()
         settings.bind(to: defaults)
         #expect(settings.rules.isEmpty)

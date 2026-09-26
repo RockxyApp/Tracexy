@@ -52,7 +52,7 @@ struct FrameAddressNamesTests {
 
         let suite = "frame-names-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let book = AddressNameBook()
         book.bind(to: defaults)
         book.setSubnetName("lab", for: "192.0.2.0/24")
@@ -77,7 +77,7 @@ struct FrameAddressNamesTests {
     func theChoiceIsKeptPerProjectAndOffByDefault() throws {
         let suite = "frame-names-option-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let options = PacketDetailOptions()
         options.bind(to: defaults)
         #expect(!options.resolvesNetworkAddresses)

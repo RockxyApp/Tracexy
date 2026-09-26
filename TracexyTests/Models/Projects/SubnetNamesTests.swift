@@ -38,7 +38,7 @@ struct SubnetNamesTests {
     func theMostSpecificBlockWinsAndAnAddressNameWinsOverBoth() throws {
         let suite = "subnet-names-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
 
         let book = AddressNameBook()
         book.bind(to: defaults)

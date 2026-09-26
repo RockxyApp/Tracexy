@@ -3,7 +3,7 @@ import Testing
 @testable import Tracexy
 
 @Suite("Privacy settings")
-struct PrivacySettingsTests {
+final class PrivacySettingsTests {
     // MARK: Internal
 
     @Test("Fresh defaults resolve to protective session export settings")
@@ -68,10 +68,20 @@ struct PrivacySettingsTests {
 
     // MARK: Private
 
+    /// The scratch domains this test made, removed when it ends.
+    private var suites: [String] = []
+
+    deinit {
+        for suite in suites {
+            TestPreferences.remove(suite)
+        }
+    }
+
     private func scratchDefaults() throws -> UserDefaults {
         let suiteName = "PrivacySettingsTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
+        TestPreferences.remove(suiteName)
+        suites.append(suiteName)
         return defaults
     }
 }

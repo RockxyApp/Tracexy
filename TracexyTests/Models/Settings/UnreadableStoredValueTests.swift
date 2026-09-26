@@ -14,7 +14,7 @@ struct UnreadableStoredValueTests {
     func savedExpressionsAreSetAside() throws {
         let suite = "unreadable-expressions-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let key = ProjectScopedSettingsKeys.savedSessionExpressions
         let newer = Data(#"{"version": 2, "items": []}"#.utf8)
         defaults.set(newer, forKey: key)
@@ -34,7 +34,7 @@ struct UnreadableStoredValueTests {
     func readableListLeavesNoBackup() throws {
         let suite = "readable-expressions-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let library = SessionExpressionLibrary()
         library.bind(to: defaults)
         #expect(library.save("dns", named: "DNS"))

@@ -26,7 +26,7 @@ struct CaptureAutoStopTests {
     func resolvesFromDefaults() throws {
         let suite = "com.amunx.tracexy.tests.autostop.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         #expect(!CaptureAutoStop.Limits.resolve(defaults: defaults).isEnabled)
         defaults.set(15, forKey: SettingsKeys.autoStopMinutes)
         defaults.set(-3, forKey: SettingsKeys.autoStopPackets)

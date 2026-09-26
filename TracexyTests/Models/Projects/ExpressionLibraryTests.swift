@@ -244,7 +244,7 @@ struct FilterButtonGroupingTests {
     func storeSanitizes() throws {
         let suite = "ExpressionLibraryTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         var buttons = (0 ..< FilterButton.maximumButtons + 20).map { FilterButton(label: "B\($0)", expression: "tcp") }
         buttons.insert(FilterButton(label: "", expression: "tcp"), at: 0)
         buttons.insert(FilterButton(label: "bell\u{7}", expression: "tcp"), at: 0)

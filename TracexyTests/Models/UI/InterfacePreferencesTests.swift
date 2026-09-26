@@ -24,7 +24,7 @@ struct InterfacePreferencesTests {
     func editsPersistAndClean() throws {
         let suite = "interface-preferences-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
 
         let preferences = InterfacePreferences(defaults: defaults)
         preferences.setShown(false, for: "awdl0")
@@ -48,7 +48,7 @@ struct InterfacePreferencesTests {
     func unreadableStoredSettingsStartEmpty() throws {
         let suite = "interface-preferences-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         defaults.set(Data("not json".utf8), forKey: SettingsKeys.interfaceSettings)
         #expect(InterfacePreferences(defaults: defaults).settings == InterfaceSettings())
     }

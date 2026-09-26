@@ -215,7 +215,7 @@ struct SessionExpressionLanguageTests {
     func libraryKeepsRecentAndSavedPerSuite() throws {
         let suite = "com.amunx.tracexy.tests.expressions.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let library = SessionExpressionLibrary()
         library.bind(to: defaults)
         for index in 0 ..< SessionExpressionLibrary.maximumRecent + 3 {

@@ -8,12 +8,12 @@ import Testing
 /// evicting one, written through to the Project suite, and carried from a live run
 /// to the file it was saved as.
 @MainActor
-struct InvestigationNotesTests {
+final class InvestigationNotesTests {
     // MARK: Internal
 
     @Test
     func writeReadReplaceAndClear() {
-        let (store, _) = Self.makeStore()
+        let (store, _) = makeStore()
         store.scope = Self.captureA
         let target = InvestigationNoteTarget.session(Self.session)
 
@@ -32,7 +32,7 @@ struct InvestigationNotesTests {
 
     @Test
     func theSameSessionIdInAnotherCaptureHasItsOwnNote() {
-        let (store, _) = Self.makeStore()
+        let (store, _) = makeStore()
         let target = InvestigationNoteTarget.session(Self.session)
         store.scope = Self.captureA
         store.setText("Seen in capture A", for: target)
@@ -47,7 +47,7 @@ struct InvestigationNotesTests {
 
     @Test
     func noCaptureMeansNoNote() {
-        let (store, _) = Self.makeStore()
+        let (store, _) = makeStore()
         #expect(!store.setText("orphan", for: .session(Self.session)))
         #expect(store.lastRefusal == .noCaptureScope)
         #expect(store.notes.isEmpty)
@@ -55,7 +55,7 @@ struct InvestigationNotesTests {
 
     @Test
     func anExplicitScopeWritesBackToTheCaptureTheEditorOpenedOn() {
-        let (store, _) = Self.makeStore()
+        let (store, _) = makeStore()
         store.scope = Self.captureB
         store.setText("written while A was on screen", for: .session(Self.session), in: Self.captureA)
         #expect(store.text(for: .session(Self.session)).isEmpty)
@@ -64,7 +64,7 @@ struct InvestigationNotesTests {
 
     @Test
     func boundsCutLongTextAndRefuseANewNoteWithoutEvicting() {
-        let (store, _) = Self.makeStore()
+        let (store, _) = makeStore()
         store.scope = Self.captureA
         let long = String(repeating: "x", count: InvestigationNotesStore.maximumCharacters + 10)
         store.setText(long, for: .session(Self.session))
@@ -85,7 +85,7 @@ struct InvestigationNotesTests {
 
     @Test
     func notesPersistThroughTheProjectSuite() {
-        let (store, defaults) = Self.makeStore()
+        let (store, defaults) = makeStore()
         store.scope = Self.captureA
         let finding = UUID()
         store.setText("Session note", for: .session(Self.session))
@@ -102,7 +102,7 @@ struct InvestigationNotesTests {
 
     @Test
     func aSavedLiveRunCarriesItsNotesAndKeepsTheFilesOwn() {
-        let (store, defaults) = Self.makeStore()
+        let (store, defaults) = makeStore()
         let live = InvestigationNoteScope.liveRun()
         #expect(live.isLiveRun)
         store.scope = live
@@ -147,10 +147,20 @@ struct InvestigationNotesTests {
     private static let captureA = InvestigationNoteScope(rawValue: "capture:a:1")
     private static let captureB = InvestigationNoteScope(rawValue: "capture:b:1")
 
-    private static func makeStore() -> (InvestigationNotesStore, UserDefaults) {
+    /// The scratch domains this test made, removed when it ends.
+    private var suites: [String] = []
+
+    deinit {
+        for suite in suites {
+            TestPreferences.remove(suite)
+        }
+    }
+
+    private func makeStore() -> (InvestigationNotesStore, UserDefaults) {
         let suite = "com.amunx.tracexy.tests.notes.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard
-        defaults.removePersistentDomain(forName: suite)
+        TestPreferences.remove(suite)
+        suites.append(suite)
         let store = InvestigationNotesStore()
         store.bind(to: defaults)
         return (store, defaults)

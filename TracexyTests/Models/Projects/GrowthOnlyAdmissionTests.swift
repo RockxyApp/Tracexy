@@ -108,7 +108,7 @@ struct GrowthOnlyAdmissionTests {
     @Test("Saved Session Expressions stop at 40 new names; replacing an existing name still works")
     func savedExpressionsStopAtForty() {
         let (defaults, suite) = Self.defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let library = SessionExpressionLibrary()
         library.bind(to: defaults)
         for index in 0 ..< SessionExpressionLibrary.maximumSaved {
@@ -124,7 +124,7 @@ struct GrowthOnlyAdmissionTests {
     @Test("A stored library this build cannot fully read is set aside before it can be overwritten")
     func unreadableLibrariesAreSetAside() throws {
         let (defaults, suite) = Self.defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let buttonsKey = ExpressionLibraryStore.buttonsKey
         let macrosKey = ExpressionLibraryStore.macrosKey
 
@@ -149,7 +149,7 @@ struct GrowthOnlyAdmissionTests {
     @Test("A fully readable library sets nothing aside")
     func readableLibrariesSetNothingAside() {
         let (defaults, suite) = Self.defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         ExpressionLibraryStore.save([FilterButton(label: "DNS", expression: "dns")], to: defaults)
         ExpressionLibraryStore.save([ExpressionMacro(name: "web", text: "port == 443")], to: defaults)
         #expect(ExpressionLibraryStore.loadButtons(from: defaults).count == 1)

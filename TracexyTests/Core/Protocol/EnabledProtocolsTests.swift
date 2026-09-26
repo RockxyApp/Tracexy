@@ -37,7 +37,7 @@ struct EnabledProtocolsTests {
     func theChoiceIsKeptPerProject() throws {
         let suite = "enabled-protocols-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let settings = DecodeAsSettings()
         settings.publishesToDecoder = false
         settings.bind(to: defaults)

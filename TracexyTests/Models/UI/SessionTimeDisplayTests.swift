@@ -28,8 +28,8 @@ struct SessionTimeDisplayTests {
         let defaultsA = try #require(UserDefaults(suiteName: first))
         let defaultsB = try #require(UserDefaults(suiteName: second))
         defer {
-            defaultsA.removePersistentDomain(forName: first)
-            defaultsB.removePersistentDomain(forName: second)
+            TestPreferences.remove(first)
+            TestPreferences.remove(second)
         }
         let display = SessionTimeDisplay()
         display.bind(to: defaultsA)

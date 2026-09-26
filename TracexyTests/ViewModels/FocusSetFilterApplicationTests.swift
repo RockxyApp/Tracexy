@@ -116,7 +116,7 @@ struct FocusSetFilterApplicationTests {
             layoutPreferences: WorkspaceLayoutPreferences(defaults: defaults)
         )
         return Environment(coordinator: coordinator) {
-            defaults.removePersistentDomain(forName: suiteName)
+            TestPreferences.remove(suiteName)
         }
     }
 }

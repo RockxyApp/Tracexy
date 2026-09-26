@@ -62,7 +62,7 @@ struct CaptureSettingsTests {
     func settingsResolution() throws {
         let suiteName = "CaptureSettingsTests.\(UUID().uuidString)"
         let suite = try #require(UserDefaults(suiteName: suiteName))
-        defer { suite.removePersistentDomain(forName: suiteName) }
+        defer { TestPreferences.remove(suiteName) }
         suite.set(-1, forKey: SettingsKeys.snapLength)
         suite.set(true, forKey: SettingsKeys.promiscuous)
         suite.set(CaptureFilterMode.custom.rawValue, forKey: SettingsKeys.captureFilterMode)

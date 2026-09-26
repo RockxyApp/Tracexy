@@ -10,7 +10,7 @@ struct SessionTagsTests {
     func tagsArePerScopePersistedAndCarried() throws {
         let suite = "session-tags-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let store = InvestigationNotesStore()
         store.bind(to: defaults)
         let session = UUID()

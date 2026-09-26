@@ -35,7 +35,7 @@ struct ByteDumpStyleTests {
     func theChoiceIsKeptPerProject() throws {
         let suite = "byte-dump-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let options = PacketDetailOptions()
         options.bind(to: defaults)
         #expect(options.byteDumpStyle == .hex)

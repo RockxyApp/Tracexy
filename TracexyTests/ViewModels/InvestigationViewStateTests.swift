@@ -16,7 +16,7 @@ struct InvestigationViewStateTests {
     func storeRules() throws {
         let suite = "investigation-view-states-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let store = InvestigationViewStates()
         store.bind(to: defaults)
         let scope = InvestigationNoteScope(rawValue: "capture:abc:10")

@@ -42,7 +42,7 @@ struct FrameColumnsTests {
     func columnsToggleAreBoundedAndPersistPerProject() throws {
         let suite = "frame-columns-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let options = PacketDetailOptions()
         options.bind(to: defaults)
         let keys = ["Source Port", "Destination Port", "Window", "Seq", "Ack"].map { FieldKey(proto: .tcp, name: $0) }

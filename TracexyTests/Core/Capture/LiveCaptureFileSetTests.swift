@@ -86,7 +86,7 @@ struct LiveCaptureFileSetTests {
     func settingsResolve() throws {
         let suite = "file-set-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         let captures = URL(fileURLWithPath: "/tmp/Captures")
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(CaptureFileSetSettings.policy(defaults: defaults, capturesDirectory: captures, startedAt: start) == nil)
