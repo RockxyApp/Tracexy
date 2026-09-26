@@ -45,6 +45,31 @@ struct InterfacePreferencesTests {
     }
 
     @Test
+    func bpfOptimizationIsPerInterfaceAndDefaultsOnForOlderSettings() throws {
+        let suite = "interface-preferences-bpf-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { TestPreferences.remove(suite) }
+
+        defaults.set(
+            Data(#"{"hidden":[],"friendlyNames":{},"comments":{},"pipes":[]}"#.utf8),
+            forKey: SettingsKeys.interfaceSettings
+        )
+        let preferences = InterfacePreferences(defaults: defaults)
+        #expect(preferences.optimizesBPF(for: "en0"))
+        #expect(preferences.optimizesBPF(for: "en5"))
+
+        preferences.setBPFOptimization(false, for: "en0")
+        #expect(!preferences.optimizesBPF(for: "en0"))
+        #expect(preferences.optimizesBPF(for: "en5"))
+
+        let reloaded = InterfacePreferences(defaults: defaults)
+        #expect(!reloaded.optimizesBPF(for: "en0"))
+        #expect(reloaded.optimizesBPF(for: "en5"))
+        reloaded.setBPFOptimization(true, for: "en0")
+        #expect(InterfacePreferences(defaults: defaults).optimizesBPF(for: "en0"))
+    }
+
+    @Test
     func unreadableStoredSettingsStartEmpty() throws {
         let suite = "interface-preferences-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))

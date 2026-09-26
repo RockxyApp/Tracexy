@@ -12978,6 +12978,56 @@
         }
       }
     },
+    "Enable libpcap’s BPF optimizer for capture filters on this interface. Turn it off only to work around optimizer incompatibilities.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bật bộ tối ưu BPF của libpcap cho bộ lọc bắt gói trên giao diện này. Chỉ tắt khi cần khắc phục vấn đề tương thích của bộ tối ưu."
+          }
+        }
+      }
+    },
+    "Optimize BPF": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tối ưu hóa BPF"
+          }
+        }
+      }
+    },
+    "Optimize BPF for %@": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tối ưu hóa BPF cho %@"
+          }
+        }
+      }
+    },
+    "Update the capture helper in Settings → Helper to use an unoptimized BPF filter.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cập nhật trình trợ giúp bắt gói trong Cài đặt → Trợ giúp để dùng bộ lọc BPF không tối ưu hóa."
+          }
+        }
+      }
+    },
+    "libpcap compiled it to %lld BPF instructions for Ethernet interfaces using optimization. The count can differ if optimization is disabled for the selected interface.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "libpcap đã biên dịch thành %lld lệnh BPF cho giao diện Ethernet khi bật tối ưu hóa. Số lệnh có thể khác nếu tắt tối ưu hóa cho giao diện đã chọn."
+          }
+        }
+      }
+    },
     "Packet": {
       "localizations": {
         "vi": {

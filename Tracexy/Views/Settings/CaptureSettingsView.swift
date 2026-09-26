@@ -265,7 +265,10 @@ struct CaptureSettingsView: View {
             Label("Valid filter", systemImage: "checkmark.circle")
                 .font(Theme.Typography.chrome)
                 .foregroundStyle(.secondary)
-                .help("libpcap compiled it to \(count) BPF instructions for Ethernet interfaces.")
+                .help(
+                    "libpcap compiled it to \(count) BPF instructions for Ethernet interfaces using optimization. "
+                        + "The count can differ if optimization is disabled for the selected interface."
+                )
         case let .invalid(message):
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(Theme.Typography.chrome)

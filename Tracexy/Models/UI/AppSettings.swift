@@ -369,7 +369,13 @@ enum CaptureSettingsResolver {
     /// settings change since the last capture takes effect at the next start.
     /// `defaults` is injectable so the whole mapping is testable without touching
     /// the shared store.
-    static func configuration(interface: String, defaults: UserDefaults = .standard) -> CaptureConfiguration {
+    static func configuration(
+        interface: String,
+        defaults: UserDefaults = .standard,
+        optimizeBPF: Bool = true
+    )
+        -> CaptureConfiguration
+    {
         CaptureConfiguration(
             interface: interface,
             snapLength: resolvedSnapLength(defaults.integer(forKey: SettingsKeys.snapLength)),
@@ -377,7 +383,8 @@ enum CaptureSettingsResolver {
             bpf: resolvedBPF(
                 filterMode: defaults.string(forKey: SettingsKeys.captureFilterMode) ?? CaptureFilterMode.all.rawValue,
                 expression: defaults.string(forKey: SettingsKeys.bpfExpression) ?? ""
-            )
+            ),
+            optimizeBPF: optimizeBPF
         )
     }
 

@@ -2,6 +2,18 @@ import Foundation
 
 @MainActor
 extension MainContentCoordinator {
+    /// Sessions visible in the active workspace, after sidebar + pill + text filtering.
+    var visibleSessions: [SessionSummary] {
+        visibleSessions(in: activeWorkspace)
+    }
+
+    var selectedSession: SessionSummary? {
+        guard let id = activeWorkspace.selectedSessionID else {
+            return nil
+        }
+        return presentedSessions.first { $0.id == id }
+    }
+
     // MARK: Correlation
 
     func select(_ session: SessionSummary) {

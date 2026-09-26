@@ -19,9 +19,10 @@ nonisolated enum CaptureFilterValidation: Equatable, Sendable {
 
 /// Compiles a BPF expression against a *dead* libpcap handle — no interface is
 /// opened and no privilege is needed — so the Capture settings can say whether a
-/// filter is valid while it is typed. It uses the same `pcap_compile` (optimized,
-/// netmask unknown) the capture start uses, so a filter accepted here is accepted
-/// there for the same link type.
+/// filter is valid while it is typed. The instruction count describes the
+/// optimized program; capture may compile it without optimization when that
+/// interface's setting is off. Both modes are still validated by libpcap before
+/// capture is reported started.
 nonisolated enum CaptureFilterValidator {
     // MARK: Internal
 

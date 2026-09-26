@@ -29,7 +29,7 @@ struct ManageInterfacesWindow: View {
                 .fixedSize()
             }
         }
-        .frame(minWidth: 620, minHeight: 320)
+        .frame(minWidth: 820, minHeight: 320)
     }
 
     // MARK: Private
@@ -96,6 +96,19 @@ struct ManageInterfacesWindow: View {
                 ) { preferences.setComment($0, for: row.id) }
             }
             .width(min: 100, ideal: 150)
+            TableColumn("Optimize BPF") { row in
+                Toggle("Optimize BPF for \(row.id)", isOn: Binding(
+                    get: { preferences.optimizesBPF(for: row.id) },
+                    set: { preferences.setBPFOptimization($0, for: row.id) }
+                ))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .help(
+                    "Enable libpcap’s BPF optimizer for capture filters on this interface. Turn it off only to work around optimizer incompatibilities."
+                )
+                .accessibilityIdentifier("interfaces.optimizeBPF.\(row.id)")
+            }
+            .width(min: 80, ideal: 90)
             TableColumn("Status") { row in
                 Text(status(row.interface))
                     .foregroundStyle(row.interface.isUp ? .primary : .secondary)

@@ -15,6 +15,9 @@ nonisolated struct InterfaceSettings: Codable, Equatable, Sendable {
     var hidden: Set<String> = []
     var friendlyNames: [String: String] = [:]
     var comments: [String: String] = [:]
+    /// Non-default BPF optimizer choices keyed by this Mac's interface identifier.
+    /// Missing entries retain libpcap's historical optimized behavior.
+    var bpfOptimization: [String: Bool] = [:]
     /// Named pipes listed as capture sources, by absolute path, in the order added.
     var pipes: [String] = []
 
@@ -43,6 +46,7 @@ extension InterfaceSettings {
         case hidden
         case friendlyNames
         case comments
+        case bpfOptimization
         case pipes
     }
 
@@ -52,6 +56,13 @@ extension InterfaceSettings {
         hidden = try container.decodeIfPresent(Set<String>.self, forKey: .hidden) ?? []
         friendlyNames = try container.decodeIfPresent([String: String].self, forKey: .friendlyNames) ?? [:]
         comments = try container.decodeIfPresent([String: String].self, forKey: .comments) ?? [:]
+        var optimizerOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .bpfOptimization) ?? [:]
+        if optimizerOverrides.count > Self.maximumEntries {
+            for key in optimizerOverrides.keys.sorted().dropFirst(Self.maximumEntries) {
+                optimizerOverrides.removeValue(forKey: key)
+            }
+        }
+        bpfOptimization = optimizerOverrides
         pipes = try container.decodeIfPresent([String].self, forKey: .pipes) ?? []
     }
 }
@@ -151,6 +162,24 @@ final class InterfacePreferences {
             id: id,
             value: InterfaceSettings.cleaned(text, limit: InterfaceSettings.maximumCommentLength)
         )
+    }
+
+    func optimizesBPF(for id: String) -> Bool {
+        settings.bpfOptimization[id] ?? true
+    }
+
+    func setBPFOptimization(_ isEnabled: Bool, for id: String) {
+        guard optimizesBPF(for: id) != isEnabled else {
+            return
+        }
+        if isEnabled {
+            settings.bpfOptimization.removeValue(forKey: id)
+        } else if settings.bpfOptimization.count < InterfaceSettings.maximumEntries {
+            settings.bpfOptimization[id] = false
+        } else {
+            return
+        }
+        save()
     }
 
     /// Adds a pipe by path; returns why it was not added, if it was not.

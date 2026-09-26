@@ -63,6 +63,29 @@ private final class LockedCounter: @unchecked Sendable {
 
 @Suite("Helper compatibility classification")
 struct HelperCompatibilityTests {
+    @Test("Unoptimized BPF needs helper protocol v6 only when a filter is present")
+    func optimizerCompatibility() {
+        let config = CaptureConfiguration(
+            interface: "en0",
+            snapLength: 65_536,
+            promiscuous: false,
+            bpf: "tcp port 443",
+            optimizeBPF: false
+        )
+        #expect(!HelperClient.supportsCaptureConfiguration(config, helperProtocolVersion: 5))
+        #expect(HelperClient.supportsCaptureConfiguration(config, helperProtocolVersion: 6))
+
+        let noFilter = CaptureConfiguration(
+            interface: "en0",
+            snapLength: 65_536,
+            promiscuous: false,
+            bpf: nil,
+            optimizeBPF: false
+        )
+        #expect(HelperClient.supportsCaptureConfiguration(noFilter, helperProtocolVersion: 5))
+        #expect(HelperClient.supportsCaptureConfiguration(config, helperProtocolVersion: 5) == false)
+    }
+
     @Test("Same protocol and at-or-above the bundled build is compatible")
     func compatible() {
         let atBuild = HelperClient.classifyCompatibility(
@@ -77,6 +100,19 @@ struct HelperCompatibilityTests {
         )
         #expect(atBuild == .installedCompatible)
         #expect(aboveBuild == .installedCompatible)
+
+        let protocolSix = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "2.3.0", buildNumber: 10, protocolVersion: 6),
+            expectedProtocolVersion: 6,
+            bundledBuild: 10
+        )
+        let priorProtocol = HelperClient.classifyCompatibility(
+            HelperInfo(binaryVersion: "2.2.1", buildNumber: 9, protocolVersion: 5),
+            expectedProtocolVersion: 6,
+            bundledBuild: 10
+        )
+        #expect(protocolSix == .installedCompatible)
+        #expect(priorProtocol == .installedOutdated)
     }
 
     @Test("Same protocol but an older build is outdated")

@@ -28,8 +28,8 @@ nonisolated enum HelperCompatibilityDecision: Equatable {
 nonisolated enum HelperCompatibilityPolicy {
     // MARK: Internal
 
-    /// Protocol v5 added the maintenance selectors without changing the v4
-    /// capture commands, so a v4 helper can still capture while awaiting update.
+    /// Protocol v5 added approval-preserving executable refresh and identity
+    /// reporting; v6 retains those selectors and adds capture configuration data.
     static let executableRefreshProtocolVersion = 5
     static let executableIdentityProtocolVersion = 5
 
@@ -58,11 +58,11 @@ nonisolated enum HelperCompatibilityPolicy {
     }
 
     static func supportsExecutableRefresh(protocolVersion: Int) -> Bool {
-        protocolVersion == executableRefreshProtocolVersion
+        protocolVersion >= executableRefreshProtocolVersion
     }
 
     static func supportsExecutableIdentity(protocolVersion: Int) -> Bool {
-        protocolVersion == executableIdentityProtocolVersion
+        protocolVersion >= executableIdentityProtocolVersion
     }
 
     static func requiresLegacyDestructiveMigration(protocolVersion: Int) -> Bool {
@@ -71,8 +71,8 @@ nonisolated enum HelperCompatibilityPolicy {
 
     // MARK: Private
 
-    private static let knownProtocolVersions: Set<Int> = [4, 5]
-    private static let backwardCompatibleProtocolVersions: Set<Int> = [4]
+    private static let knownProtocolVersions: Set<Int> = [4, 5, 6]
+    private static let backwardCompatibleProtocolVersions: Set<Int> = [4, 5]
     private static let legacyMigrationProtocolVersions: Set<Int> = [4]
 }
 

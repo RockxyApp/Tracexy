@@ -788,18 +788,6 @@ final class MainContentCoordinator {
         workspaces.activeWorkspace
     }
 
-    /// Sessions visible in the active workspace, after sidebar + pill + text filtering.
-    var visibleSessions: [SessionSummary] {
-        visibleSessions(in: activeWorkspace)
-    }
-
-    var selectedSession: SessionSummary? {
-        guard let id = activeWorkspace.selectedSessionID else {
-            return nil
-        }
-        return presentedSessions.first { $0.id == id }
-    }
-
     // MARK: Dashboard rollups
 
     var errorCount: Int {
@@ -1198,7 +1186,8 @@ final class MainContentCoordinator {
         // the *active Project's* suite, never the shared domain.
         let resolvedConfiguration = CaptureSettingsResolver.configuration(
             interface: captureInterface,
-            defaults: activeProjectDefaults
+            defaults: activeProjectDefaults,
+            optimizeBPF: InterfacePreferences.shared.optimizesBPF(for: captureInterface)
         )
         let configuration: CaptureConfiguration
         switch resolvedConfiguration.validated() {
@@ -1585,6 +1574,13 @@ extension MainContentCoordinator {
     private func startViaHelper(token: Int) {
         guard let configuration = activeCaptureConfiguration else {
             handleCaptureError("Capture configuration was unavailable.")
+            return
+        }
+        guard HelperClient.supportsCaptureConfiguration(
+            configuration,
+            helperProtocolVersion: helper.installedInfo?.protocolVersion
+        ) else {
+            handleCaptureError("Update the capture helper in Settings → Helper to use an unoptimized BPF filter.")
             return
         }
         do {
