@@ -70,11 +70,27 @@ struct LocalAssistantProviderTests {
         #expect(discovery.omittedModelCount == 25)
     }
 
-    @Test("An oversized discovery body is refused while it is being read")
-    func oversizedDiscoveryIsRefusedIncrementally() async throws {
+    @Test("A discovery body that declares itself oversized is refused before it is read")
+    func declaredOversizedDiscoveryIsRefused() async throws {
         let giant = String(repeating: "x", count: AssistantLimits.maxDiscoveryBytes + 512)
         let server = LoopbackHTTPServer { path in
             path == "/api/tags" ? .json(giant) : .init(status: 404, chunks: ["{}"])
+        }
+        defer { server.stop() }
+        let provider = try LocalAssistantProvider(endpoint: server.start())
+
+        await #expect(throws: AssistantError.notALocalModelEndpoint) {
+            _ = try await provider.discover()
+        }
+    }
+
+    @Test("An oversized discovery body is refused while it is being read")
+    func oversizedDiscoveryIsRefusedIncrementally() async throws {
+        // Two chunks, so the reply is EOF-framed and declares no length: the limit
+        // can only be found by reading.
+        let half = String(repeating: "x", count: AssistantLimits.maxDiscoveryBytes / 2 + 512)
+        let server = LoopbackHTTPServer { path in
+            path == "/api/tags" ? .init(chunks: [half, half]) : .init(status: 404, chunks: ["{}"])
         }
         defer { server.stop() }
         let provider = try LocalAssistantProvider(endpoint: server.start())
@@ -324,6 +340,7 @@ struct LocalAssistantProviderTests {
         /// site, so the formatter's `count == 0` → `isEmpty` rewrite has a real
         /// member to land on.
         var isEmpty: Bool {
+            // swiftlint:disable:next empty_count
             count == 0
         }
 

@@ -166,6 +166,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The Filter Buttons and Macros editors no longer let a list that is already above its limit take in new entries by removing one and adding another; editing, reordering and removing always work.
 - Filter buttons or macros this version cannot read are kept aside instead of being lost at the next save.
 - A new Project waiting for a capture to finish is checked against the Project limit again before it is created.
+- The Assistant refuses a local model list that declares itself too large before reading it, and reads an undeclared one with less overhead.
 - An imported Project waiting for a capture to finish is checked again for its tabs and filter-rule rows before it is added, as well as for the Project limit.
 - Cleartext HTTP/2 sessions whose connection preface shares a segment with the first frames are recognised as HTTP/2 again (the HTTP/2 filter and Protocol column missed them), and an HTTP/1 request line followed by a binary body in the same segment is no longer dropped.
 - Projects, workspace tabs and advanced filter rules above the current limit (an imported or hand-edited catalog) are kept: a catalog holding more Projects or tabs than the current limit now loads and stays editable instead of failing to open, and saved filter rules and Focus Sets are no longer cut down when they are restored or applied. Only adding past the limit is refused, and the Projects window says so.
