@@ -4,14 +4,12 @@ import SwiftUI
 
 // MARK: - RTPStreamAnalysisSheet
 
-/// Telephony ▸ RTP ▸ Stream Analysis for one stream: each packet's delta, jitter,
-/// skew, bandwidth, marker and status, under the stream's largest delta and jitter,
-/// mean jitter, largest skew and loss — Wireshark's RTP Stream Analysis.
+/// RTP Stream Analysis for one direction, with an optional reversed-endpoint
+/// stream overlaid in the same window for comparison.
 struct RTPStreamAnalysisSheet: View {
     // MARK: Internal
 
-    let stream: RTPStreamRow
-    let analysis: RTPStreamAnalysis
+    let analyses: [RTPStreamAnalysis]
     let onOpenFrame: (UInt64) -> Void
 
     var body: some View {
@@ -26,6 +24,12 @@ struct RTPStreamAnalysisSheet: View {
             .labelsHidden()
             .fixedSize()
             .padding(.bottom, Theme.Metrics.spacingS)
+            if !reverseAnalyses.isEmpty {
+                reversePicker
+                    .padding(.bottom, Theme.Metrics.spacingS)
+                directionPicker
+                    .padding(.bottom, Theme.Metrics.spacingS)
+            }
             Divider()
             if showsGraph {
                 graph
@@ -40,33 +44,133 @@ struct RTPStreamAnalysisSheet: View {
 
     // MARK: Private
 
+    private struct GraphSeries: Identifiable {
+        let name: String
+        let key: String
+        let value: KeyPath<RTPStreamAnalysis.Packet, Double>
+
+        var id: String {
+            key
+        }
+    }
+
     @Environment(\.dismiss) private var dismiss
     @State private var selection: RTPStreamAnalysis.Packet.ID?
     @State private var notice: String?
     @State private var showsGraph = false
+    @State private var selectedDirectionID = ""
+    @State private var selectedReverseID = ""
+    @State private var visibleSeries: Set<String> = []
 
-    /// Jitter, delta and skew over the stream, as Wireshark's analysis graph draws them.
-    private var graph: some View {
-        let series: [(String, KeyPath<RTPStreamAnalysis.Packet, Double>)] = [
-            (String(localized: "Jitter"), \.jitter), (String(localized: "Delta"), \.delta),
-            (String(localized: "Skew"), \.skew),
-        ]
-        return Chart {
-            ForEach(series, id: \.0) { name, value in
-                ForEach(analysis.packets) { packet in
-                    LineMark(x: .value("Time (s)", packet.time / 1_000), y: .value("ms", packet[keyPath: value]))
-                        .foregroundStyle(by: .value("Series", name))
-                }
+    private var forwardAnalysis: RTPStreamAnalysis {
+        analyses[0]
+    }
+
+    private var reverseAnalyses: [RTPStreamAnalysis] {
+        Array(analyses.dropFirst())
+    }
+
+    private var comparedAnalyses: [RTPStreamAnalysis] {
+        guard let reverse = reverseAnalyses.first(where: { $0.stream.id == selectedReverseID }) else {
+            return [forwardAnalysis]
+        }
+        return [forwardAnalysis, reverse]
+    }
+
+    private var selectedAnalysis: RTPStreamAnalysis {
+        comparedAnalyses.first { $0.stream.id == selectedDirectionID } ?? forwardAnalysis
+    }
+
+    private var combinedCSV: String {
+        guard let first = analysesForCSV.first else {
+            return ""
+        }
+        let rows = analysesForCSV.flatMap { analysis in
+            analysis.csv.components(separatedBy: "\r\n").dropFirst().dropLast()
+        }
+        let header = first.csv.components(separatedBy: "\r\n")[0]
+        return ([header] + rows).joined(separator: "\r\n") + "\r\n"
+    }
+
+    private var analysesForCSV: [RTPStreamAnalysis] {
+        comparedAnalyses
+    }
+
+    private var reversePicker: some View {
+        Picker("Reverse stream", selection: $selectedReverseID) {
+            Text("No reverse stream").tag("")
+            ForEach(reverseAnalyses, id: \.stream.id) { analysis in
+                Text(
+                    "\(analysis.stream.source.display) → \(analysis.stream.destination.display), \(analysis.stream.ssrcText)"
+                )
+                .tag(analysis.stream.id)
             }
         }
-        .chartXAxisLabel("Time (s)")
-        .chartYAxisLabel("ms")
-        .padding(Theme.Metrics.spacingL)
-        .frame(maxHeight: .infinity)
+        .labelsHidden()
+        .frame(maxWidth: 520)
+        .onAppear { selectDefaultReverseIfNeeded() }
+        .onChange(of: selectedReverseID) { _, newValue in
+            if selectedDirectionID != forwardAnalysis.stream.id, selectedDirectionID != newValue {
+                selectedDirectionID = forwardAnalysis.stream.id
+            }
+        }
+    }
+
+    private var directionPicker: some View {
+        Picker("Direction", selection: $selectedDirectionID) {
+            ForEach(comparedAnalyses, id: \.stream.id) { analysis in
+                Text(directionName(analysis)).tag(analysis.stream.id)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .onAppear {
+            if selectedDirectionID.isEmpty {
+                selectedDirectionID = forwardAnalysis.stream.id
+            }
+        }
+    }
+
+    /// Jitter, delta and skew may be independently hidden for each selected direction.
+    private var graph: some View {
+        let series = [
+            GraphSeries(name: String(localized: "Jitter"), key: "jitter", value: \.jitter),
+            GraphSeries(name: String(localized: "Delta"), key: "delta", value: \.delta),
+            GraphSeries(name: String(localized: "Skew"), key: "skew", value: \.skew),
+        ]
+        return VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            ScrollView(.horizontal) {
+                seriesControls(series)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.horizontal, Theme.Metrics.spacingL)
+            Chart {
+                ForEach(comparedAnalyses, id: \.stream.id) { analysis in
+                    ForEach(series) { item in
+                        if visibleSeries.contains(seriesID(analysis, key: item.key)) {
+                            ForEach(analysis.packets) { packet in
+                                LineMark(
+                                    x: .value("Time (s)", packet.time / 1_000),
+                                    y: .value("ms", packet[keyPath: item.value])
+                                )
+                                .foregroundStyle(by: .value("Series", "\(directionName(analysis)) · \(item.name)"))
+                            }
+                        }
+                    }
+                }
+            }
+            .chartXAxisLabel("Time (s)")
+            .chartYAxisLabel("ms")
+            .padding(Theme.Metrics.spacingL)
+            .frame(maxHeight: .infinity)
+        }
+        .onAppear { synchronizeVisibleSeries() }
+        .onChange(of: selectedReverseID) { _, _ in synchronizeVisibleSeries() }
     }
 
     private var packetTable: some View {
-        Table(analysis.packets, selection: $selection) {
+        Table(selectedAnalysis.packets, selection: $selection) {
             TableColumn("Packet") { Text($0.frame.formatted()).monospacedDigit() }
                 .width(min: 60, ideal: 70)
             TableColumn("Sequence") { Text(String($0.sequence)).monospacedDigit() }
@@ -105,7 +209,7 @@ struct RTPStreamAnalysisSheet: View {
             Text(notice ?? String(localized: "Double-click a packet to open its frame.")).lineLimit(1)
             Spacer()
             Button("Save as CSV…") {
-                notice = StatisticsExport.saveText(analysis.csv, suggestedName: "RTP Stream Analysis.csv")
+                notice = StatisticsExport.saveText(combinedCSV, suggestedName: "RTP Stream Analysis.csv")
             }
             Button("Done") { dismiss() }
                 .keyboardShortcut(.defaultAction)
@@ -118,42 +222,113 @@ struct RTPStreamAnalysisSheet: View {
     }
 
     private var summary: some View {
-        let items: [(String, String)] = [
-            (
-                String(localized: "Stream"),
-                "\(stream.source.display) → \(stream.destination.display), SSRC \(stream.ssrcText)"
-            ),
-            (String(localized: "Largest delta"), analysis.maxDeltaFrame.map {
-                String(localized: "\(Self.decimal(analysis.maxDelta, 3)) ms at packet \($0.formatted())")
-            } ?? "—"),
-            (String(localized: "Largest jitter"), "\(Self.decimal(analysis.maxJitter, 3)) ms"),
-            (String(localized: "Mean jitter"), "\(Self.decimal(analysis.meanJitter, 3)) ms"),
-            (String(localized: "Largest skew"), "\(Self.decimal(analysis.maxSkew, 3)) ms"),
-            (
-                String(localized: "Packets"),
+        Grid(alignment: .leading, horizontalSpacing: Theme.Metrics.spacingL, verticalSpacing: 4) {
+            GridRow {
+                Text(String(localized: "Stream")).foregroundStyle(.secondary)
+                ForEach(comparedAnalyses, id: \.stream.id) { analysis in
+                    Text(
+                        "\(directionName(analysis)): \(analysis.stream.source.display) → \(analysis.stream.destination.display), SSRC \(analysis.stream.ssrcText)"
+                    )
+                    .monospacedDigit().textSelection(.enabled)
+                }
+            }
+            summaryRow(String(localized: "Packets")) { analysis in
                 String(
                     localized: "\(analysis.packets.count.formatted()) of \(analysis.expected.formatted()) expected, \(analysis.lost.formatted()) lost"
                 )
-            ),
-            (String(localized: "Sequence errors"), analysis.sequenceErrors.formatted()),
-            (String(localized: "Clock drift"), "\(Self.decimal(analysis.clockDrift, 0)) ms"),
-            (String(localized: "Frequency drift"), String(
-                localized: "\(Self.decimal(analysis.frequencyDrift, 0)) Hz (\(Self.decimal(analysis.frequencyDriftPercent, 2)) %)"
-            )),
-        ]
-        return Grid(alignment: .leading, horizontalSpacing: Theme.Metrics.spacingL, verticalSpacing: 4) {
-            ForEach(items, id: \.0) { label, value in
-                GridRow {
-                    Text(label).foregroundStyle(.secondary)
-                    Text(value).monospacedDigit().textSelection(.enabled)
-                }
+            }
+            summaryRow(String(localized: "Largest delta")) { analysis in
+                analysis.maxDeltaFrame.map {
+                    String(localized: "\(Self.decimal(analysis.maxDelta, 3)) ms at packet \($0.formatted())")
+                } ?? "—"
+            }
+            summaryRow(String(localized: "Largest jitter / mean")) { analysis in
+                "\(Self.decimal(analysis.maxJitter, 3)) / \(Self.decimal(analysis.meanJitter, 3)) ms"
+            }
+            summaryRow(String(localized: "Largest skew")) { analysis in
+                "\(Self.decimal(analysis.maxSkew, 3)) ms"
+            }
+            summaryRow(String(localized: "Sequence errors")) { $0.sequenceErrors.formatted() }
+            summaryRow(String(localized: "Clock / frequency drift")) { analysis in
+                "\(Self.decimal(analysis.clockDrift, 0)) ms · \(Self.decimal(analysis.frequencyDrift, 0)) Hz (\(Self.decimal(analysis.frequencyDriftPercent, 2)) %)"
             }
         }
         .font(Theme.Typography.caption)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func seriesControls(
+        _ series: [GraphSeries]
+    )
+        -> some View
+    {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            ForEach(comparedAnalyses, id: \.stream.id) { analysis in
+                ForEach(series) { item in
+                    let id = seriesID(analysis, key: item.key)
+                    Toggle("\(directionName(analysis)) · \(item.name)", isOn: Binding(
+                        get: { visibleSeries.contains(id) },
+                        set: { isVisible in
+                            if isVisible {
+                                visibleSeries.insert(id)
+                            } else {
+                                visibleSeries.remove(id)
+                            }
+                        }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .font(Theme.Typography.caption)
+                    .fixedSize()
+                }
+            }
+        }
+    }
+
+    private func summaryRow(
+        _ title: String,
+        value: @escaping (RTPStreamAnalysis) -> String
+    )
+        -> some View
+    {
+        GridRow {
+            Text(title).foregroundStyle(.secondary)
+            ForEach(comparedAnalyses, id: \.stream.id) { analysis in
+                Text(value(analysis)).monospacedDigit().textSelection(.enabled)
+            }
+        }
+    }
+
     private static func decimal(_ value: Double, _ digits: Int) -> String {
-        String(format: "%.\(digits)f", value)
+        String(format: "%.*f", digits, value)
+    }
+
+    private func synchronizeVisibleSeries() {
+        let validIDs = Set(comparedAnalyses.flatMap { analysis in
+            ["jitter", "delta", "skew"].map { seriesID(analysis, key: $0) }
+        })
+        if visibleSeries.isEmpty {
+            visibleSeries = validIDs
+        } else {
+            visibleSeries.formIntersection(validIDs)
+            visibleSeries.formUnion(validIDs)
+        }
+        if selectedDirectionID.isEmpty {
+            selectedDirectionID = forwardAnalysis.stream.id
+        }
+    }
+
+    private func selectDefaultReverseIfNeeded() {
+        if selectedReverseID.isEmpty, let first = reverseAnalyses.first {
+            selectedReverseID = first.stream.id
+        }
+    }
+
+    private func directionName(_ analysis: RTPStreamAnalysis) -> String {
+        analysis.stream.id == forwardAnalysis.stream.id
+            ? String(localized: "Forward") : String(localized: "Reverse")
+    }
+
+    private func seriesID(_ analysis: RTPStreamAnalysis, key: String) -> String {
+        "\(analysis.stream.id):\(key)"
     }
 }

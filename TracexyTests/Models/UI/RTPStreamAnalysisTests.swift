@@ -84,8 +84,10 @@ struct RTPStreamAnalysisTests {
         #expect(format(analysis.maxJitter) == format(stream.jitter?.max ?? -1))
         #expect(format(analysis.meanJitter) == format(stream.jitter?.mean ?? -1))
         #expect(analysis.maxDeltaFrame == 4)
-        #expect(analysis.csv
-            .hasPrefix("Packet,Sequence,Delta (ms),Jitter (ms),Skew,Bandwidth,Marker,Status\r\n1,1,0.000"))
+        #expect(analysis.csv.hasPrefix(
+            "Source,Destination,Packet,Sequence,Delta (ms),Jitter (ms),Skew,Bandwidth,Marker,Status\r\n"
+                + "192.0.2.10:40000,198.51.100.7:40002,1,1,0.000"
+        ))
     }
 
     /// A sender whose clock runs 1 % slow: 20 ms of timestamp arrives every 20.2 ms, so

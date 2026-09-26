@@ -4215,6 +4215,16 @@
         }
       }
     },
+    "Clock / frequency drift": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Độ trôi đồng hồ / tần số"
+          }
+        }
+      }
+    },
     "Clock drift": {
       "localizations": {
         "vi": {
@@ -7408,6 +7418,16 @@
         }
       }
     },
+    "Forward": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Chiều đi"
+          }
+        }
+      }
+    },
     "Forward to Next Scope": {
       "localizations": {
         "vi": {
@@ -9296,12 +9316,32 @@
         }
       }
     },
+    "Largest delta / skew": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Delta lớn nhất / skew"
+          }
+        }
+      }
+    },
     "Largest jitter": {
       "localizations": {
         "vi": {
           "stringUnit": {
             "state": "needs_review",
             "value": "Jitter lớn nhất"
+          }
+        }
+      }
+    },
+    "Largest jitter / mean": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Jitter lớn nhất / trung bình"
           }
         }
       }
@@ -11921,6 +11961,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Không có kết quả cho “%@”"
+          }
+        }
+      }
+    },
+    "No reverse stream": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Không có luồng chiều ngược"
           }
         }
       }
@@ -14923,6 +14973,26 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Hiện tệp này trong bộ điều hướng Thư viện"
+          }
+        }
+      }
+    },
+    "Reverse": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Chiều về"
+          }
+        }
+      }
+    },
+    "Reverse stream": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Luồng chiều ngược"
           }
         }
       }

@@ -11,6 +11,7 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
     // MARK: Lifecycle
 
     init(stream: RTPStreamRow, rows: [CaptureFrameRow]) {
+        self.stream = stream
         let origin = rows.lazy.compactMap(\.provenance.timestamp).first
         var state = State()
         var packets: [Packet] = []
@@ -71,6 +72,7 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
         }
     }
 
+    let stream: RTPStreamRow
     let packets: [Packet]
     let maxDelta: Double
     let maxDeltaFrame: UInt64?
@@ -94,12 +96,13 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
     var csv: String {
         let lines = packets.map { packet in
             [
+                stream.source.display, stream.destination.display,
                 String(packet.frame), String(packet.sequence), String(format: "%.3f", packet.delta),
                 String(format: "%.3f", packet.jitter), String(format: "%.3f", packet.skew),
                 String(format: "%.1f", packet.bandwidth), packet.isMarker ? "SET" : "", packet.status ?? "OK",
             ].joined(separator: ",")
         }
-        return (["Packet,Sequence,Delta (ms),Jitter (ms),Skew,Bandwidth,Marker,Status"] + lines)
+        return (["Source,Destination,Packet,Sequence,Delta (ms),Jitter (ms),Skew,Bandwidth,Marker,Status"] + lines)
             .joined(separator: "\r\n") + "\r\n"
     }
 

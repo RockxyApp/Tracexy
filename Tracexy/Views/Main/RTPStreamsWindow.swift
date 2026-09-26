@@ -47,7 +47,9 @@ struct RTPStreamsWindow: View {
         .frame(minWidth: 760, minHeight: 320)
         .onAppear { coordinator.loadAllFrames() }
         .sheet(item: $analyzed) { stream in
-            RTPStreamAnalysisSheet(stream: stream, analysis: RTPStreamAnalysis(stream: stream, rows: rows)) { frame in
+            let reverseStreams = RTPStreams.reverseStreams(for: stream, in: streams)
+            let analyses = ([stream] + reverseStreams).map { RTPStreamAnalysis(stream: $0, rows: rows) }
+            RTPStreamAnalysisSheet(analyses: analyses) { frame in
                 if let row = rows.first(where: { $0.ordinal == frame }) {
                     notice = coordinator.revealFrame(row)
                         ? nil : String(localized: "That frame's session is not in the main window's list.")

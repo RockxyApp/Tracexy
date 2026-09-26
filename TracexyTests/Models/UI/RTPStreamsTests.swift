@@ -30,6 +30,10 @@ struct RTPStreamsTests {
         // The frames stay UDP: RTP never relabels a session.
         #expect(rows.allSatisfy { $0.protocolName == "UDP" })
 
+        let reverseCandidates = RTPStreams.reverseStreams(for: lossy, in: streams)
+        #expect(reverseCandidates.map(\.id) == [clean.id])
+        #expect(RTPStreams.reverseStreams(for: clean, in: streams).map(\.id) == [lossy.id])
+
         guard WiresharkOracle.isAvailable, let tshark = WiresharkOracle.tsharkURL else {
             return
         }

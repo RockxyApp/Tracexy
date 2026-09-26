@@ -82,6 +82,15 @@ nonisolated enum RTPStreams {
         return order.compactMap { states[$0]?.row }
     }
 
+    /// Candidate streams sent over the exact reversed endpoint pair. SSRCs are
+    /// independent per sender, so matching uses transport endpoints and leaves
+    /// multiple candidates visible for explicit selection in Stream Analysis.
+    static func reverseStreams(for stream: RTPStreamRow, in streams: [RTPStreamRow]) -> [RTPStreamRow] {
+        streams.filter {
+            $0.source == stream.destination && $0.destination == stream.source && $0.id != stream.id
+        }
+    }
+
     static func csv(_ rows: [RTPStreamRow]) -> String {
         var lines = [
             "Source Address,Source Port,Destination Address,Destination Port,SSRC,Payload,Packets,Lost,Lost %,"

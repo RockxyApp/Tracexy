@@ -1396,7 +1396,10 @@ jitter, the skew between the RTP timestamp's clock and the arrival clock, the ba
 UDP headers included), the marker bit and a status (wrong sequence number, incorrect timestamp, payload change,
 comfort noise, marker missing?), under the stream's largest delta and where, largest and mean jitter, largest skew,
 loss, and the clock drift and frequency drift Wireshark fits by least squares (a sender whose clock runs 1 % slow reads
-about −10 ms per second of stream and −0.99 %). **Graph** plots the stream's jitter, delta and skew in milliseconds against time. Double-click a packet to open its frame; save the table as CSV.
+about −10 ms per second of stream and −0.99 %). **Graph** plots jitter, delta and skew in milliseconds against time;
+each series can be hidden independently. When RTP streams use the reversed endpoint pair, **Stream Analysis** offers
+the reverse candidates in the same window so you can compare both directions and inspect either direction's packets.
+The CSV includes source and destination for each packet. Double-click a packet to open its frame; save the table as CSV.
 
 ### UDP multicast streams
 
