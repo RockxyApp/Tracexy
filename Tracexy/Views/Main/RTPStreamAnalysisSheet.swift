@@ -23,6 +23,7 @@ struct RTPStreamAnalysisSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .accessibilityIdentifier("rtp.analysis.display")
             .padding(.bottom, Theme.Metrics.spacingS)
             if !reverseAnalyses.isEmpty {
                 reversePicker
@@ -108,6 +109,7 @@ struct RTPStreamAnalysisSheet: View {
         }
         .labelsHidden()
         .frame(maxWidth: 520)
+        .accessibilityIdentifier("rtp.analysis.reverse-stream")
         .onAppear { selectDefaultReverseIfNeeded() }
         .onChange(of: selectedReverseID) { _, newValue in
             if selectedDirectionID != forwardAnalysis.stream.id, selectedDirectionID != newValue {
@@ -125,6 +127,7 @@ struct RTPStreamAnalysisSheet: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
+        .accessibilityIdentifier("rtp.analysis.direction")
         .onAppear {
             if selectedDirectionID.isEmpty {
                 selectedDirectionID = forwardAnalysis.stream.id
@@ -196,6 +199,7 @@ struct RTPStreamAnalysisSheet: View {
             }
             .width(min: 120, ideal: 200)
         }
+        .accessibilityIdentifier("rtp.analysis.packets")
         .contextMenu(forSelectionType: RTPStreamAnalysis.Packet.ID.self) { _ in
         } primaryAction: { ids in
             if let frame = ids.first {
@@ -230,6 +234,7 @@ struct RTPStreamAnalysisSheet: View {
                         "\(directionName(analysis)): \(analysis.stream.source.display) → \(analysis.stream.destination.display), SSRC \(analysis.stream.ssrcText)"
                     )
                     .monospacedDigit().textSelection(.enabled)
+                    .accessibilityIdentifier("rtp.analysis.summary.stream.\(seriesDirection(analysis))")
                 }
             }
             summaryRow(String(localized: "Packets")) { analysis in
@@ -279,6 +284,7 @@ struct RTPStreamAnalysisSheet: View {
                     .toggleStyle(.checkbox)
                     .font(Theme.Typography.caption)
                     .fixedSize()
+                    .accessibilityIdentifier("rtp.analysis.series.\(seriesDirection(analysis)).\(item.key)")
                 }
             }
         }
@@ -330,5 +336,9 @@ struct RTPStreamAnalysisSheet: View {
 
     private func seriesID(_ analysis: RTPStreamAnalysis, key: String) -> String {
         "\(analysis.stream.id):\(key)"
+    }
+
+    private func seriesDirection(_ analysis: RTPStreamAnalysis) -> String {
+        analysis.stream.id == forwardAnalysis.stream.id ? "forward" : "reverse"
     }
 }

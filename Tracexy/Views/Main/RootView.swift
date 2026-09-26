@@ -174,6 +174,7 @@ struct RootView: View {
 
     @State private var showHelperInstall = false
     @State private var sidebarVisibilityByProject: [UUID: Bool] = [:]
+    @Environment(\.openWindow) private var openWindow
 
     private var sidebarVisibility: Binding<Bool> {
         let projectID = coordinator.projectStore.activeProjectID
@@ -235,6 +236,21 @@ struct RootView: View {
             // privileged helper or honor a persisted auto-capture preference.
             return
         }
+
+        #if DEBUG
+        // A deterministic capture path used only by the native RTP UI test. The
+        // fixture enters through the same external-open flow as Finder and waits
+        // for the normal capture reader before the statistics window is shown.
+        if CommandLine.arguments.contains("--rtp-analysis-ui-test"),
+           let path = ProcessInfo.processInfo.environment["TRACEXY_RTP_UI_TEST_CAPTURE"],
+           !path.isEmpty
+        {
+            coordinator.importExternalCaptures([URL(fileURLWithPath: path)])
+            await coordinator.waitForExternalCaptureOpen()
+            openWindow(id: TracexyApp.rtpStreamsWindowID)
+            return
+        }
+        #endif
 
         if coordinator.isHistoryDemoMode {
             return
