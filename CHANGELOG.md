@@ -157,6 +157,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Endpoints and the Session Inspector show location columns and layers when they open before the main window has finished loading, instead of staying without them until reopened.
 - Pasting a very long search or filter-rule value no longer stops a Project's tabs from saving: the fields stop at 512 characters, as stored.
 - Saving Projects no longer re-writes and re-checks every Project on each change, so large catalogs save without pausing the window; each Project has room for all of its tabs and rules at their longest, and can always be exported.
 - A save that keeps being refused for lack of room is reported once instead of after every pause in typing.

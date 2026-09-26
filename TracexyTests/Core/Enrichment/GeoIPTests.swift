@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Tracexy
 
@@ -494,6 +495,33 @@ struct GeoIPControllerTests {
         coordinator.applyPolicy(GeoTestPolicy())
         #expect(controller.databaseLimit == 4)
         #expect(controller.canAddDatabases)
+    }
+
+    @Test("A surface that asked before the locator was installed hears about it")
+    func installationIsObserved() {
+        let previous = AddressLocators.installed
+        defer { AddressLocators.installed = previous }
+        AddressLocators.installed = nil
+        let controller = GeoIPController()
+        var told = false
+        withObservationTracking {
+            _ = AddressLocators.installed
+        } onChange: {
+            told = true
+        }
+        AddressLocators.installed = controller
+        #expect(told)
+        #expect(AddressLocators.installed === controller)
+
+        // Installing the same locator again is not a change.
+        told = false
+        withObservationTracking {
+            _ = AddressLocators.installed
+        } onChange: {
+            told = true
+        }
+        AddressLocators.installed = controller
+        #expect(!told)
     }
 
     @Test("The Project's databases locate addresses, fill the seams and filter sessions")

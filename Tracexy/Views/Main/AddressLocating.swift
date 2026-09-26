@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 // MARK: - AddressLocationColumn
@@ -60,7 +61,39 @@ protocol AddressLocating: AnyObject {
 
 /// Where the composition root installs its locator, once, at launch. Held weakly:
 /// the composition root owns it. `nil` adds nothing anywhere.
+///
+/// Reading ``installed`` is observed, so a window drawn before the locator is
+/// installed (Endpoints or an inspector restored ahead of the main window) redraws
+/// when it arrives.
 @MainActor
 enum AddressLocators {
-    static weak var installed: (any AddressLocating)?
+    // MARK: Internal
+
+    static var installed: (any AddressLocating)? {
+        get {
+            _ = slot.installations
+            return slot.locator
+        }
+        set {
+            guard slot.locator !== newValue else {
+                return
+            }
+            slot.locator = newValue
+            slot.installations &+= 1
+        }
+    }
+
+    // MARK: Private
+
+    private static let slot = AddressLocatorSlot()
+}
+
+// MARK: - AddressLocatorSlot
+
+/// Holds the installed instance; its counter makes reading it observable.
+@MainActor
+@Observable
+private final class AddressLocatorSlot {
+    @ObservationIgnored weak var locator: (any AddressLocating)?
+    var installations = 0
 }
