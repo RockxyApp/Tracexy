@@ -9,6 +9,14 @@ import Testing
 /// to the file it was saved as.
 @MainActor
 final class InvestigationNotesTests {
+    // MARK: Lifecycle
+
+    deinit {
+        for suite in suites {
+            TestPreferences.remove(suite)
+        }
+    }
+
     // MARK: Internal
 
     @Test
@@ -149,12 +157,6 @@ final class InvestigationNotesTests {
 
     /// The scratch domains this test made, removed when it ends.
     private var suites: [String] = []
-
-    deinit {
-        for suite in suites {
-            TestPreferences.remove(suite)
-        }
-    }
 
     private func makeStore() -> (InvestigationNotesStore, UserDefaults) {
         let suite = "com.amunx.tracexy.tests.notes.\(UUID().uuidString)"

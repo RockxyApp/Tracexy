@@ -69,7 +69,7 @@ enum TestPreferences {
             at: listDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey]
         )) ?? []
-        let dayAgo = Date(timeIntervalSinceNow: -86400)
+        let dayAgo = Date(timeIntervalSinceNow: -86_400)
         for list in lists where list.pathExtension == "txt" {
             let modified = try? list.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             guard let text = try? String(contentsOf: list, encoding: .utf8), (modified ?? .distantPast) > dayAgo else {

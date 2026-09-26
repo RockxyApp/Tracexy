@@ -4,6 +4,14 @@ import Testing
 
 @Suite("Privacy settings")
 final class PrivacySettingsTests {
+    // MARK: Lifecycle
+
+    deinit {
+        for suite in suites {
+            TestPreferences.remove(suite)
+        }
+    }
+
     // MARK: Internal
 
     @Test("Fresh defaults resolve to protective session export settings")
@@ -70,12 +78,6 @@ final class PrivacySettingsTests {
 
     /// The scratch domains this test made, removed when it ends.
     private var suites: [String] = []
-
-    deinit {
-        for suite in suites {
-            TestPreferences.remove(suite)
-        }
-    }
 
     private func scratchDefaults() throws -> UserDefaults {
         let suiteName = "PrivacySettingsTests.\(UUID().uuidString)"

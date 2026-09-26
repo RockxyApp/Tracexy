@@ -10,5 +10,6 @@ enum DetailsLeadingSection {
     static var installed: (@MainActor (
         SessionEvidenceSelection,
         @escaping (SessionFrameProvenance) -> Void
-    ) -> AnyView)?
+    )
+        -> AnyView)?
 }
