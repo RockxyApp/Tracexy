@@ -15368,6 +15368,46 @@
         }
       }
     },
+    "SMB": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SMB"
+          }
+        }
+      }
+    },
+    "SMB file": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tệp SMB"
+          }
+        }
+      }
+    },
+    "No complete SMB file with verified byte coverage and a final size was observed.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Không quan sát thấy tệp SMB hoàn chỉnh có đủ byte và kích thước cuối cùng đã xác minh."
+          }
+        }
+      }
+    },
+    "Inspect a frame that contributed to this file": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kiểm tra khung đã đóng góp vào tệp này"
+          }
+        }
+      }
+    },
     "Save As": {
       "localizations": {
         "vi": {

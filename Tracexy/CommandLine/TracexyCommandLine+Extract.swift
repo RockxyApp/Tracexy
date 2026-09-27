@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - TracexyCommandLine + objects and follow
 
-/// `objects` lists one kind of object in a capture — HTTP bodies, email messages, FTP
-/// files or certificates (File ▸ Export Objects, tshark's `--export-objects`) — and
+/// `objects` lists one kind of object in a capture — HTTP bodies, SMB files, email
+/// messages, FTP files or certificates (File ▸ Export Objects, tshark's `--export-objects`) — and
 /// `--body` prints one to standard output;
 /// `follow` prints one TCP stream (Follow Stream, tshark's `-z follow,tcp,…`). Still
 /// read-only: bytes go to standard output, and a file exists only if the shell

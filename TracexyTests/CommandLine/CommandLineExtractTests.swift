@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Tracexy
 
-/// `tracexy objects` lists HTTP objects and prints one with `--body` (tshark's
-/// `--export-objects http`); `tracexy follow` prints one TCP stream (tshark's
+/// `tracexy objects` lists HTTP/SMB objects and prints one with `--body` (tshark's
+/// `--export-objects http|smb`); `tracexy follow` prints one TCP stream (tshark's
 /// `-z follow,tcp,raw`). Both stay read-only: bytes go to standard output.
 struct CommandLineExtractTests {
     // MARK: Internal
@@ -40,11 +40,18 @@ struct CommandLineExtractTests {
             errors: { _ in }
         ) == 0)
         #expect(none == "object,frame,host,content_type,bytes,file_name\r\n")
+        var smb = ""
+        #expect(TracexyCommandLine.runIfRequested(
+            ["Tracexy", "objects", url.path, "--type", "smb", "--format", "csv"], output: { smb += $0 },
+            errors: { _ in }
+        ) == 0)
+        #expect(smb == "object,frame,host,content_type,bytes,file_name\r\n")
         message = ""
         #expect(TracexyCommandLine.runIfRequested(
-            ["Tracexy", "objects", url.path, "--type", "smb"], output: { _ in }, errors: { message += $0 }
+            ["Tracexy", "objects", url.path, "--type", "unknown"], output: { _ in },
+            errors: { message += $0 }
         ) == 2)
-        #expect(message.contains("--type takes http, imf, tftp, ftp-data or x509af"))
+        #expect(message.contains("--type takes http, imf, smb, tftp, ftp-data or x509af"))
 
         guard WiresharkOracle.isAvailable, let tshark = WiresharkOracle.tsharkURL else {
             return

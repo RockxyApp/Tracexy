@@ -910,9 +910,10 @@ message body, stay message data. A user name or password is never read out: the 
 finding still says one crossed the wire). Select them with `ssdp`, `ssh`, `ftp`, `smtp`, `pop` and `imap`,
 and use **Capture ▸ Decode As…** for a service on another port.
 
-**SMB** (TCP 445 or 139) is read to its header — for SMB2/3 the command, request or response, message, tree and
-session ids and, on a response, its NT status (`STATUS_LOGON_FAILURE`, `STATUS_ACCESS_DENIED`, …), so a failed
-share connection names its reason; file names and data are not read. **LLMNR** (UDP 5355) is read like DNS and
+**SMB** (TCP 445 or 139) is read to its header in the packet list — for SMB2-family messages the command,
+request or response, message, tree and session ids and, on a response, its NT status (`STATUS_LOGON_FAILURE`,
+`STATUS_ACCESS_DENIED`, …), so a failed share connection names its reason. File names and data are read only
+when you explicitly choose **File → Export Objects → SMB**. **LLMNR** (UDP 5355) is read like DNS and
 its answers name hosts like mDNS answers do. The **NetBIOS Name Service** (UDP 137) names the query or response,
 the name with its suffix (`FILESERVER<20>`, and in an answer the service it stands for) and the address a
 response gives. Select them with `smb` (or `smb2`), `llmnr` and `nbns`.
@@ -1308,6 +1309,13 @@ a host, the content type, the size and the file name it saves under.
 - **FTP Data** — every file a RETR, STOR, STOU or APPE moved: the data connection the PASV or EPSV reply (or the
   PORT or EPRT command) set up, named by the command's argument, from the frame and sender of its first byte.
   Directory listings are not files and are left out, as in Wireshark.
+- **SMB** — complete files reconstructed on demand from clear SMB2-family CREATE, READ/WRITE and CLOSE traffic.
+  The request/reply must match within one unambiguous TCP connection; byte ranges must cover the complete file
+  from offset zero to a capture-observed final size. Files with gaps, conflicting bytes, truncated evidence,
+  unsupported records or no trustworthy end-of-file witness are omitted. The Evidence column lists the exact
+  contributing frames; choose a frame there to inspect it. SMB1, encrypted or compressed transforms, RDMA,
+  compounds, named pipes and partial files are not exported. This is capture-observed coverage, not an atomic
+  snapshot guarantee about later changes on the server.
 - **TFTP** — every file a read or write request moved: the transfer between the requesting client port and the
   server (from whatever port it answers), blocks put in order at the size an option acknowledgement set (512 bytes
   otherwise), a repeated block ignored; a transfer with a missing block, or without its short last block, is left
@@ -1319,7 +1327,8 @@ a host, the content type, the size and the file name it saves under.
 **Save…** writes the selected object, **Save All…** writes every object in view into a folder you choose (a
 repeated name becomes `name(1)`; a character a file name cannot hold, such as `/` or `:`, is written as `%2f`
 or `%3a`, as tshark writes it), and a double-click selects the object's session. The saved files match
-`tshark --export-objects http|imf|tftp|ftp-data|x509af`. Tracexy reads the streams of the open capture (or a stopped
+`tshark --export-objects http|imf|smb|tftp|ftp-data|x509af`. SMB files contain captured file data; save and share
+them only when that disclosure is intended. Tracexy reads the streams of the open capture (or a stopped
 live capture's copy) on demand, at most 200 streams, 2,000 objects and 256 MB; the footer says when a bound was
 reached. Nothing is opened or run.
 

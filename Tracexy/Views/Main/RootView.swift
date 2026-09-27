@@ -250,6 +250,19 @@ struct RootView: View {
             openWindow(id: TracexyApp.rtpStreamsWindowID)
             return
         }
+
+        // A deterministic SMB Export Objects walkthrough uses the real saved-file
+        // import, evidence scan and native window. This hook is compiled only in
+        // Debug and activates only with an explicit UI-test argument.
+        if CommandLine.arguments.contains("--smb-export-objects-ui-test"),
+           let path = ProcessInfo.processInfo.environment["TRACEXY_SMB_UI_TEST_CAPTURE"],
+           !path.isEmpty
+        {
+            coordinator.importExternalCaptures([URL(fileURLWithPath: path)])
+            await coordinator.waitForExternalCaptureOpen()
+            openWindow(id: TracexyApp.exportObjectsWindowID)
+            return
+        }
         #endif
 
         if coordinator.isHistoryDemoMode {

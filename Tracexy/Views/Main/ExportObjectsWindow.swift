@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 // MARK: - ExportObjectsWindow
 
-/// File ▸ Export Objects: the HTTP bodies, FTP files, email messages or certificates
+/// File ▸ Export Objects: the HTTP bodies, FTP/SMB files, email messages or certificates
 /// in the capture, as Wireshark's Export Objects lists them, one kind at a time. Save
 /// the selected object, or all of them into a folder; double-click to open its session.
 struct ExportObjectsWindow: View {
@@ -60,6 +60,7 @@ struct ExportObjectsWindow: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                .accessibilityIdentifier("exportObjects.kind")
                 .help("Which kind of object to list, as Wireshark's Export Objects submenu")
                 Spacer(minLength: 0)
             }
@@ -83,23 +84,41 @@ struct ExportObjectsWindow: View {
             TableColumn("Frame") { object in
                 Text(object.frameOrdinal.map { $0.formatted() } ?? "—").monospacedDigit()
             }
-            .width(min: 50, ideal: 70)
+            .width(min: 45, ideal: 60)
             TableColumn("Host") { object in
                 Text(object.host).lineLimit(1).truncationMode(.middle)
             }
-            .width(min: 120, ideal: 180)
+            .width(min: 90, ideal: 130)
             TableColumn("Content Type") { object in
                 Text(object.contentType).lineLimit(1).foregroundStyle(.secondary)
             }
-            .width(min: 100, ideal: 160)
+            .width(min: 80, ideal: 110)
             TableColumn("Size") { object in
                 Text(ByteUnits.string(Int64(object.body.count))).monospacedDigit()
             }
-            .width(min: 60, ideal: 80)
+            .width(min: 55, ideal: 65)
             TableColumn("File Name") { object in
                 Text(object.fileName).lineLimit(1).truncationMode(.middle)
+                    .accessibilityIdentifier("exportObjects.fileName")
             }
-            .width(min: 120, ideal: 220)
+            .width(min: 100, ideal: 180)
+            TableColumn("Evidence") { object in
+                if object.contributingFrames.isEmpty {
+                    Text("—").foregroundStyle(.secondary)
+                } else {
+                    Menu("\(object.contributingFrames.count) frames") {
+                        ForEach(object.contributingFrames, id: \.ordinal.rawValue) { provenance in
+                            Button("Frame \(provenance.ordinal.rawValue.formatted())") {
+                                inspect(object, provenance: provenance)
+                            }
+                            .accessibilityIdentifier("exportObjects.frame.\(provenance.ordinal.rawValue)")
+                        }
+                    }
+                    .accessibilityIdentifier("exportObjects.evidence")
+                    .help("Inspect a frame that contributed to this file")
+                }
+            }
+            .width(min: 80, ideal: 100)
         }
         .contextMenu(forSelectionType: CaptureObject.ID.self) { ids in
             if let object = objects.first(where: { $0.id == ids.first }) {
@@ -127,9 +146,11 @@ struct ExportObjectsWindow: View {
                     save(selected)
                 }
             }
+            .accessibilityIdentifier("exportObjects.saveSelected")
             .disabled(selected == nil)
             Button("Save All…") { saveAll(objects) }
                 .disabled(objects.isEmpty)
+                .accessibilityIdentifier("exportObjects.saveAll")
             Button("Rescan") { coordinator.loadExportObjects(state.kind, force: true) }
                 .disabled(state.isLoading)
         }
@@ -148,6 +169,8 @@ struct ExportObjectsWindow: View {
             String(localized: "No HTTP/1 response in this capture carried a body that was read to its end.")
         case .imf:
             String(localized: "No SMTP session in this capture sent a message that was read to its end.")
+        case .smb:
+            String(localized: "No complete SMB file with verified byte coverage and a final size was observed.")
         case .tftp:
             String(localized: "No TFTP transfer in this capture reached its last block with every block present.")
         case .x509:
@@ -174,11 +197,27 @@ struct ExportObjectsWindow: View {
             : String(localized: "This object's session is not in view in the main window.")
     }
 
+    private func inspect(_ object: CaptureObject, provenance: SessionFrameProvenance) {
+        guard coordinator.revealExportedObject(object) else {
+            notice = String(localized: "This object's session is not in view in the main window.")
+            return
+        }
+        coordinator.inspectCitedFrame(sessionID: object.sessionID, provenance: provenance)
+        notice = nil
+    }
+
     private func save(_ object: CaptureObject) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = CaptureObjectScanner.savableName(object.fileName)
         panel.canCreateDirectories = true
         panel.message = String(localized: "Saves the object exactly as it was sent; nothing is opened or run.")
+        #if DEBUG
+        if CommandLine.arguments.contains("--smb-export-objects-ui-test"),
+           let directory = ProcessInfo.processInfo.environment["TRACEXY_SMB_UI_TEST_SAVE_DIRECTORY"]
+        {
+            panel.directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        }
+        #endif
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }

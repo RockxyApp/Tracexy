@@ -19,7 +19,7 @@ struct CommandLineGlossaryTests {
         for finding in object["findings"] ?? [] {
             #expect((try? SessionQueryParser().parse("finding == \(finding)")) != nil, "\(finding)")
         }
-        #expect(object["objectTypes"] == ["ftp-data", "http", "imf", "tftp", "x509af"])
+        #expect(object["objectTypes"] == ["ftp-data", "http", "imf", "smb", "tftp", "x509af"])
         #expect(throws: TracexyCommandLine.UsageError.self) {
             try TracexyCommandLine.parse(["glossary", "--format", "csv"])
         }

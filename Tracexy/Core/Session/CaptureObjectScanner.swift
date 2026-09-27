@@ -8,6 +8,7 @@ nonisolated enum CaptureObjectKind: String, CaseIterable, Identifiable, Sendable
     case ftpData = "ftp-data"
     case http
     case imf
+    case smb
     case tftp
     case x509 = "x509af"
 
@@ -22,6 +23,7 @@ nonisolated enum CaptureObjectKind: String, CaseIterable, Identifiable, Sendable
         case .ftpData: String(localized: "FTP Data")
         case .http: String(localized: "HTTP")
         case .imf: String(localized: "Email (IMF)")
+        case .smb: String(localized: "SMB")
         case .tftp: String(localized: "TFTP")
         case .x509: String(localized: "X.509 Certificates")
         }
@@ -33,6 +35,7 @@ nonisolated enum CaptureObjectKind: String, CaseIterable, Identifiable, Sendable
         case .ftpData: .ftp
         case .http: .http
         case .imf: .smtp
+        case .smb: .smb
         case .tftp: .tftp
         case .x509: .tls
         }
@@ -52,6 +55,10 @@ nonisolated struct CaptureObject: Identifiable, Equatable, Sendable {
     let contentType: String
     let fileName: String
     let body: [UInt8]
+    /// Exact frames that contributed SMB protocol data or its name/extent witness.
+    /// Other object readers leave this empty and retain their existing single-frame
+    /// presentation.
+    var contributingFrames: [SessionFrameProvenance] = []
 }
 
 // MARK: - CaptureObjectList
@@ -170,6 +177,35 @@ nonisolated enum CaptureObjectScanner {
                 onProgress(read.count + done, read.count + pairsOn.count)
             }
             found = matched.indices.compactMap { objects[$0] }
+        case .smb:
+            var totalSMBBytes = 0
+            var done = 0
+            let streamsOn = Dictionary(grouping: read) { $0.tuple }
+            try followEach(read.map(\.tuple)) { result in
+                if isCancelled() {
+                    throw CancellationError()
+                }
+                for stream in streamsOn[result.tuple] ?? [] {
+                    let remainingCount = max(0, maximumObjects - found.count)
+                    let remainingBytes = max(0, maximumTotalBytes - totalSMBBytes)
+                    let objects = SMBObjectReader.objects(
+                        of: result, sessionID: stream.sessionID,
+                        maxObjects: remainingCount, maxAggregateBytes: remainingBytes,
+                        isCancelled: isCancelled
+                    )
+                    for object in objects {
+                        guard found.count < maximumObjects,
+                              object.body.count <= maximumTotalBytes - totalSMBBytes else
+                        {
+                            break
+                        }
+                        totalSMBBytes += object.body.count
+                        found.append(object)
+                    }
+                    done += 1
+                }
+                onProgress(done, read.count)
+            }
         case .http,
              .imf,
              .x509:
@@ -183,6 +219,7 @@ nonisolated enum CaptureObjectScanner {
                     objects[index] = switch kind {
                     case .http: HTTPObjectReader.objects(of: result, sessionID: sessionID)
                     case .imf: MailObjectReader.objects(of: result, sessionID: sessionID)
+                    case .smb: SMBObjectReader.objects(of: result, sessionID: sessionID)
                     default: CertificateObjectReader.objects(of: result, sessionID: sessionID)
                     }
                     done += 1

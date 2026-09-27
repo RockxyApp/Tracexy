@@ -117,6 +117,10 @@ nonisolated struct FollowStreamLimitations: OptionSet, Sendable, Equatable {
     /// The source file's tail was cut mid-record/-block; every complete prior frame
     /// was still folded.
     static let sourceTailTruncated = FollowStreamLimitations(rawValue: 1 << 7)
+    /// A direction emitted more than one SYN on this canonical tuple. The reader
+    /// cannot separate tuple reuse from a retransmitted open, so consumers that
+    /// require one TCP incarnation must reject the ambiguous stream.
+    static let connectionIncarnationAmbiguous = FollowStreamLimitations(rawValue: 1 << 8)
 
     let rawValue: UInt16
 }

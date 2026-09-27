@@ -16,7 +16,7 @@ import Foundation
 ///     tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning]
 ///     tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json]
 ///     tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details]
-///     tracexy objects  <capture> [--type http|imf|tftp|ftp-data|x509af] [--expression <text>]
+///     tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>]
 ///                      [--format text|csv|json] [--body <n>]
 ///     tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml]
 ///     tracexy info     <capture> [--format text|json]
@@ -93,7 +93,7 @@ enum TracexyCommandLine {
       tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning]
       tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json]
       tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details] [--column Proto:Field]
-      tracexy objects  <capture> [--type http|imf|tftp|ftp-data|x509af] [--expression <text>]
+      tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>]
                        [--format text|csv|json] [--body <n>]
       tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml]
       tracexy info     <capture> [--format text|json]
@@ -233,7 +233,7 @@ enum TracexyCommandLine {
             case "--type":
                 let text = try value(for: argument)
                 guard command == .objects, let kind = CaptureObjectKind(rawValue: text.lowercased()) else {
-                    throw UsageError(message: "--type takes http, imf, tftp, ftp-data or x509af, for objects.")
+                    throw UsageError(message: "--type takes http, imf, smb, tftp, ftp-data or x509af, for objects.")
                 }
                 invocation.objectKind = kind
             case "--body":

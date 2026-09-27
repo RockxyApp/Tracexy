@@ -378,6 +378,10 @@ private extension FollowStreamReader {
         var bToA: DirectionState
         /// Set when any matched frame's captured length was below its original length.
         var capturedFrameTruncated = false
+        /// A second SYN in either direction may be a retransmission or a reused
+        /// tuple. Keep it ambiguous instead of combining two connection instances.
+        var openingSYNSeen: Set<ConnectionDirection> = []
+        var connectionIncarnationAmbiguous = false
 
         /// Fold one matched segment into its direction state.
         mutating func ingest(
@@ -389,6 +393,11 @@ private extension FollowStreamReader {
             maxRetainedBytes: Int,
             maxRuns: Int
         ) {
+            if facts.flags.contains(.syn) {
+                if !openingSYNSeen.insert(direction).inserted {
+                    connectionIncarnationAmbiguous = true
+                }
+            }
             switch direction {
             case .aToB:
                 aToB.ingest(
@@ -429,6 +438,9 @@ private extension FollowStreamReader {
             }
             if capturedFrameTruncated {
                 flags.insert(.capturedFrameTruncated)
+            }
+            if connectionIncarnationAmbiguous {
+                flags.insert(.connectionIncarnationAmbiguous)
             }
             if case .incompleteTruncatedTail = completeness {
                 flags.insert(.sourceTailTruncated)

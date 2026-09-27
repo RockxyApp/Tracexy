@@ -535,6 +535,22 @@ struct FollowStreamReaderTests {
     }
 
     @Test
+    func repeatedOpeningSYNMarksTupleIncarnationAmbiguous() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 100, payload: [], flags: 0x02),
+            Self.tcpFrame(client: false, seq: 200, payload: [], flags: 0x12),
+            Self.tcpFrame(client: true, seq: 100, payload: [], flags: 0x02),
+            Self.tcpFrame(client: true, seq: 101, payload: Array("second connection".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple
+            ).read()
+            #expect(result.limitations.contains(.connectionIncarnationAmbiguous))
+        }
+    }
+
+    @Test
     func configurationClampsInternalAllocationCeilings() {
         let configuration = FollowStreamReader.Configuration(
             maxCapturedLength: .max,
@@ -574,27 +590,27 @@ struct FollowStreamReaderTests {
 
     // MARK: Frame builders
 
-    private static func tcpFrame(client: Bool, seq: UInt32, payload: [UInt8]) -> [UInt8] {
+    private static func tcpFrame(client: Bool, seq: UInt32, payload: [UInt8], flags: UInt8 = 0x18) -> [UInt8] {
         client
             ? rawTCPFrame(
                 src: "10.0.0.5", dst: "203.0.113.9", srcPort: 50_000, dstPort: 443,
-                seq: seq, payload: payload
+                seq: seq, payload: payload, flags: flags
             )
             : rawTCPFrame(
                 src: "203.0.113.9", dst: "10.0.0.5", srcPort: 443, dstPort: 50_000,
-                seq: seq, payload: payload
+                seq: seq, payload: payload, flags: flags
             )
     }
 
     private static func rawTCPFrame(
-        src: String, dst: String, srcPort: UInt16, dstPort: UInt16, seq: UInt32, payload: [UInt8]
+        src: String, dst: String, srcPort: UInt16, dstPort: UInt16, seq: UInt32, payload: [UInt8], flags: UInt8 = 0x18
     )
         -> [UInt8]
     {
         PacketBuilder.ethernetIPv4(
             proto: 6, src: src, dst: dst,
             payload: PacketBuilder.tcp(
-                srcPort: srcPort, dstPort: dstPort, flags: 0x18, payload: payload, sequence: seq
+                srcPort: srcPort, dstPort: dstPort, flags: flags, payload: payload, sequence: seq
             )
         )
     }
