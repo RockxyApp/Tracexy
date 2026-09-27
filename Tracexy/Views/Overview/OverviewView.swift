@@ -213,10 +213,11 @@ struct OverviewView: View {
     }
 
     private var identitySubtitle: String {
+        let linkLayerType = String(localized: "Link-layer type: \(linkTypeName)")
         if isSaved {
-            return "\(savedFormat) file, \(linkTypeName)"
+            return "\(savedFormat) file • \(linkLayerType)"
         }
-        return "Live capture on \(linkTypeName)"
+        return linkLayerType
     }
 
     private var statusTint: Color {

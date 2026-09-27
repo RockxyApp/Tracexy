@@ -9497,6 +9497,16 @@
         }
       }
     },
+    "Link-layer type: %@": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Loại liên kết tầng 2: %@"
+          }
+        }
+      }
+    },
     "Link types": {
       "localizations": {
         "vi": {
