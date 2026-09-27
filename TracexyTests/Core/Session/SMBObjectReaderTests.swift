@@ -26,6 +26,34 @@ struct SMBObjectReaderTests {
     }
 
     @Test
+    func exportsContiguousBytesAcrossConfirmedShortWrites() throws {
+        let fixture = SMBFixture()
+        fixture.create("short-write.txt")
+        fixture.write(offset: 0, bytes: [1, 2, 3], confirmedCount: 2)
+        fixture.write(offset: 2, bytes: [3])
+        fixture.close(eof: 3)
+
+        #expect(try fixture.scan().objects.map(\.body) == [[1, 2, 3]])
+    }
+
+    @Test
+    func keepsMultipleFilesScopedByTreeAndFileID() throws {
+        let fixture = SMBFixture()
+        let firstFileID = Array(0x20 ... 0x2F).map(UInt8.init)
+        let secondFileID = Array(0x30 ... 0x3F).map(UInt8.init)
+        fixture.create("one.txt", fileID: firstFileID, treeID: 0x200)
+        fixture.create("two.txt", fileID: secondFileID, treeID: 0x201)
+        fixture.write(offset: 0, bytes: [1], fileID: firstFileID, treeID: 0x200)
+        fixture.write(offset: 0, bytes: [2], fileID: secondFileID, treeID: 0x201)
+        fixture.close(eof: 1, fileID: firstFileID, treeID: 0x200)
+        fixture.close(eof: 1, fileID: secondFileID, treeID: 0x201)
+
+        let objects = try fixture.scan().objects
+        #expect(objects.map(\.fileName) == ["one.txt", "two.txt"])
+        #expect(objects.map(\.body) == [[1], [2]])
+    }
+
+    @Test
     func exportsAReadOnlyFileOnlyAfterObservedEOF() throws {
         let fixture = SMBFixture()
         fixture.create("read.txt")
@@ -146,20 +174,24 @@ private final class SMBFixture {
 
     // MARK: Internal
 
-    func create(_ name: String, nextCommand: UInt32 = 0) {
+    func create(_ name: String, nextCommand: UInt32 = 0, fileID: [UInt8]? = nil, treeID: UInt32? = nil) {
+        let selectedFileID = fileID ?? self.fileID
+        let selectedTreeID = treeID ?? self.treeID
         let nameBytes = Array(name.utf16.flatMap { le16($0) })
-        var request = header(command: 5, message: nextMessage(), response: false, nextCommand: nextCommand)
+        var request = header(
+            command: 5, message: nextMessage(), response: false, nextCommand: nextCommand, tree: selectedTreeID
+        )
         request.append(contentsOf: le16(57) + [0, 0])
         request += le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(1) + le32(0) + le32(0)
         request += le16(120) + le16(UInt16(nameBytes.count)) + le32(0) + le32(0) + nameBytes
         let id = messageID - 1
         addClientPDU(request)
 
-        var response = header(command: 5, message: id, response: true)
+        var response = header(command: 5, message: id, response: true, tree: selectedTreeID)
         response += le16(89) + [0, 0] + le32(0) // structure, oplock, flags, action
         response += Array(repeating: 0, count: 40) // four times and allocation size
         response += le64(0) + le32(0) + le32(0) // EOF, attributes, reserved
-        response += fileID
+        response += selectedFileID
         response += le32(0) + le32(0) // no create contexts
         addServerPDU(response)
     }
@@ -169,17 +201,21 @@ private final class SMBFixture {
         bytes: [UInt8],
         confirmedCount: UInt32? = nil,
         status: UInt32 = 0,
-        respond: Bool = true
+        respond: Bool = true,
+        fileID: [UInt8]? = nil,
+        treeID: UInt32? = nil
     ) {
+        let selectedFileID = fileID ?? self.fileID
+        let selectedTreeID = treeID ?? self.treeID
         let id = nextMessage()
-        var request = header(command: 9, message: id, response: false)
-        request += le16(49) + [112, 0] + le32(UInt32(bytes.count)) + le64(offset) + fileID
+        var request = header(command: 9, message: id, response: false, tree: selectedTreeID)
+        request += le16(49) + [112, 0] + le32(UInt32(bytes.count)) + le64(offset) + selectedFileID
         request += le32(0) + le32(0) + le16(0) + le16(0) + le32(0) + bytes
         addClientPDU(request)
         guard respond else {
             return
         }
-        var response = header(command: 9, message: id, response: true, status: status)
+        var response = header(command: 9, message: id, response: true, status: status, tree: selectedTreeID)
         response += le16(17) + le16(0) + le32(confirmedCount ?? UInt32(bytes.count)) + le32(0) + le16(0) + le16(0)
         addServerPDU(response)
     }
@@ -208,12 +244,14 @@ private final class SMBFixture {
         )
     }
 
-    func close(eof: UInt64?) {
+    func close(eof: UInt64?, fileID: [UInt8]? = nil, treeID: UInt32? = nil) {
+        let selectedFileID = fileID ?? self.fileID
+        let selectedTreeID = treeID ?? self.treeID
         let id = nextMessage()
-        var request = header(command: 6, message: id, response: false)
-        request += le16(24) + le16(1) + le32(0) + fileID
+        var request = header(command: 6, message: id, response: false, tree: selectedTreeID)
+        request += le16(24) + le16(1) + le32(0) + selectedFileID
         addClientPDU(request)
-        var response = header(command: 6, message: id, response: true)
+        var response = header(command: 6, message: id, response: true, tree: selectedTreeID)
         response += le16(60) + le16(eof == nil ? 0 : 1) + le32(0)
         response += Array(repeating: 0, count: 40)
         response += le64(eof ?? 0) + le32(0)
@@ -242,12 +280,13 @@ private final class SMBFixture {
 
     func header(
         signature: [UInt8] = [0xFE, 0x53, 0x4D, 0x42], command: UInt16 = 0,
-        message: UInt64 = 1, response: Bool, status: UInt32 = 0, nextCommand: UInt32 = 0
+        message: UInt64 = 1, response: Bool, status: UInt32 = 0, nextCommand: UInt32 = 0,
+        tree: UInt32? = nil
     )
         -> [UInt8]
     {
         var bytes = signature + le16(64) + le16(1) + le32(status) + le16(command) + le16(1)
-        bytes += le32(response ? 1 : 0) + le32(nextCommand) + le64(message) + le32(0) + le32(treeID)
+        bytes += le32(response ? 1 : 0) + le32(nextCommand) + le64(message) + le32(0) + le32(tree ?? treeID)
         bytes += le64(sessionID) + Array(repeating: 0, count: 16)
         return bytes
     }
