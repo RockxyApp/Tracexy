@@ -674,6 +674,23 @@ struct SettingsThemeCard: View {
                 interactive: true,
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.clear,
+                        lineWidth: isSelected ? 2 : 0.5
+                    )
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(metrics.metadataFont(weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(8)
+                        .accessibilityHidden(true)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
