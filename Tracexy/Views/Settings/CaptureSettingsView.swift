@@ -111,7 +111,7 @@ struct CaptureSettingsView: View {
                 SettingsDivider()
 
                 SettingsRow(label: "Stop automatically:") {
-                    HStack(spacing: 8) {
+                    SettingsControlGroup {
                         Picker("Stop after time", selection: $autoStopMinutes) {
                             Text("Never").tag(0)
                             Text("After 1 minute").tag(1)
@@ -144,7 +144,7 @@ struct CaptureSettingsView: View {
                 SettingsDivider()
 
                 SettingsRow(label: "Save as a file set:") {
-                    HStack(spacing: 8) {
+                    SettingsControlGroup {
                         Picker("New file after size", selection: $fileSetMegabytes) {
                             Text("Off").tag(0)
                             Text("Every 10 MB").tag(10)

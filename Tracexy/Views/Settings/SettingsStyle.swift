@@ -194,6 +194,39 @@ struct SettingsRow<Content: View>: View {
     private let content: Content
 }
 
+// MARK: - SettingsControlGroup
+
+/// Several controls for one `SettingsRow`, side by side when the pane is wide
+/// enough and stacked when it is not. Fixed-width menus in one line could
+/// otherwise make the pane wider than the window, which pushes the whole split
+/// view, sidebar included, past the window's edges.
+struct SettingsControlGroup<Content: View>: View {
+    // MARK: Lifecycle
+
+    init(spacing: CGFloat = 8, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    // MARK: Internal
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: spacing) {
+                content
+            }
+            VStack(alignment: .leading, spacing: spacing) {
+                content
+            }
+        }
+    }
+
+    // MARK: Private
+
+    private let spacing: CGFloat
+    private let content: Content
+}
+
 // MARK: - SettingsIndented
 
 /// Places arbitrary content in the control column, aligned with the controls of
