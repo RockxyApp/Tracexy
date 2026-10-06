@@ -157,6 +157,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- RTP Stream Analysis no longer quits the app on a stream whose timestamps run backwards or leap ahead; its frequency is shown as 0 instead.
+- File ▸ Export Objects ▸ SMB lists files from real Windows and macOS sessions: opening the share root, a folder or a pipe, or a create context, no longer empties the list; an end-of-file reply with its ErrorData byte is accepted; a file whose handle number the server reuses after closing it is kept; large transfers no longer slow down with every reply.
+- Save All in Export Objects saves every object it can and reports the ones it could not, instead of stopping at the first; names that differ only in case, or are too long for a file name, are saved under unique names.
+- After switching Projects, Export Objects and the frame-based Statistics windows read the new Project's capture instead of showing the previous one's list.
+- RTP Stream Analysis is computed off the main thread once per stream, its graph keeps the series you hid, and the forward and reverse directions share one time axis.
 - Endpoints and the Session Inspector show location columns and layers when they open before the main window has finished loading, instead of staying without them until reopened.
 - Pasting a very long search or filter-rule value no longer stops a Project's tabs from saving: the fields stop at 512 characters, as stored.
 - Saving Projects no longer re-writes and re-checks every Project on each change, so large catalogs save without pausing the window; each Project has room for all of its tabs and rules at their longest, and can always be exported.

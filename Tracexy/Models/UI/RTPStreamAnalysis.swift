@@ -27,6 +27,7 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
             packets.append(packet)
         }
         self.packets = packets
+        start = packets.isEmpty ? 0 : state.startTime
         maxDelta = state.maxDelta
         maxDeltaFrame = state.maxDeltaFrame
         maxJitter = state.maxJitter
@@ -38,10 +39,14 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
         // Wireshark's least-squares fit of nominal against arrival time (`rtpstream_info_calculate`).
         let count = Double(packets.count)
         let denominator = count * state.sumt2 - state.sumt * state.sumt
-        if count > 0, state.sumt2 > 0, denominator != 0 {
-            let drift = (count * state.sumtTS - state.sumt * state.sumTS) / denominator
+        let drift = denominator != 0 ? (count * state.sumtTS - state.sumt * state.sumTS) / denominator : .nan
+        if count > 0, state.sumt2 > 0, drift.isFinite {
             clockDrift = duration * (drift - 1)
-            frequencyDrift = drift * Double(UInt32(state.clockRate * drift))
+            // Wireshark truncates the fitted rate to an unsigned 32-bit clock rate. A slope
+            // from reordered or crafted timestamps can fall outside that range (negative or
+            // enormous), where there is no clock rate to report.
+            let rate = state.clockRate * drift
+            frequencyDrift = rate >= 0 && rate < 4_294_967_296 ? drift * Double(UInt32(rate)) : 0
             frequencyDriftPercent = 100 * (drift - 1)
         } else {
             clockDrift = 0
@@ -74,6 +79,9 @@ nonisolated struct RTPStreamAnalysis: Equatable, Sendable {
 
     let stream: RTPStreamRow
     let packets: [Packet]
+    /// Milliseconds from the first frame in view to the stream's first packet, so
+    /// streams analysed over the same frames share one time origin.
+    let start: Double
     let maxDelta: Double
     let maxDeltaFrame: UInt64?
     let maxJitter: Double

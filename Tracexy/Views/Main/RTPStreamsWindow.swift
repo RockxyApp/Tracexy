@@ -58,9 +58,7 @@ struct RTPStreamsWindow: View {
             }
         #endif
             .sheet(item: $analyzed) { stream in
-                let reverseStreams = RTPStreams.reverseStreams(for: stream, in: streams)
-                let analyses = ([stream] + reverseStreams).map { RTPStreamAnalysis(stream: $0, rows: rows) }
-                RTPStreamAnalysisSheet(analyses: analyses) { frame in
+                RTPStreamAnalysisLoader(stream: stream, streams: streams, rows: rows) { frame in
                     if let row = rows.first(where: { $0.ordinal == frame }) {
                         notice = coordinator.revealFrame(row)
                             ? nil : String(localized: "That frame's session is not in the main window's list.")
@@ -190,4 +188,47 @@ struct RTPStreamsWindow: View {
     private func milliseconds(_ value: Double) -> String {
         "\(value.formatted(.number.precision(.fractionLength(1)))) ms"
     }
+}
+
+// MARK: - RTPStreamAnalysisLoader
+
+/// Computes a stream's analysis and its reverse candidates once, off the main
+/// actor: each analysis reads every frame, and the window around it redraws as
+/// frames and notices change.
+private struct RTPStreamAnalysisLoader: View {
+    // MARK: Internal
+
+    let stream: RTPStreamRow
+    let streams: [RTPStreamRow]
+    let rows: [CaptureFrameRow]
+    let onOpenFrame: (UInt64) -> Void
+
+    var body: some View {
+        Group {
+            if let analyses {
+                RTPStreamAnalysisSheet(analyses: analyses, onOpenFrame: onOpenFrame)
+            } else {
+                ProgressView("Analyzing stream…")
+                    .controlSize(.small)
+                    .frame(minWidth: 480, minHeight: 240)
+            }
+        }
+        .task(id: stream.id) {
+            let stream = stream
+            let streams = streams
+            let rows = rows
+            let computed = await Task.detached(priority: .userInitiated) {
+                ([stream] + RTPStreams.reverseStreams(for: stream, in: streams))
+                    .map { RTPStreamAnalysis(stream: $0, rows: rows) }
+            }.value
+            guard !Task.isCancelled else {
+                return
+            }
+            analyses = computed
+        }
+    }
+
+    // MARK: Private
+
+    @State private var analyses: [RTPStreamAnalysis]?
 }

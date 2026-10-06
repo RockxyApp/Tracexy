@@ -119,6 +119,39 @@ struct RTPStreamAnalysisTests {
         #expect(String(format: "%.2f", analysis.frequencyDriftPercent) == "-0.99")
     }
 
+    /// Timestamps that run backwards (a reorder) or leap far ahead in a microsecond give a
+    /// slope with no clock rate — negative or past 32 bits. The analysis reports no
+    /// frequency instead of trapping on the conversion.
+    @Test(arguments: [
+        (timestamps: [UInt32(16_000), 0], gap: 0.02),
+        (timestamps: [UInt32(0), 0x7FFFFFFF], gap: 1e-6),
+    ])
+    func driftOutsideAClockRateIsNotFatal(timestamps: [UInt32], gap: Double) throws {
+        let frames = timestamps.enumerated().map { index, timestamp in
+            PacketBuilder.ethernetIPv4(
+                proto: 17, src: "192.0.2.10", dst: "198.51.100.7",
+                payload: PacketBuilder.udp(srcPort: 40_000, dstPort: 40_002, payload: [
+                    0x80, 0x00, 0x00, UInt8(index),
+                ] + Self.be32(timestamp) + Self.be32(0x22222222) + [UInt8](repeating: 0xFF, count: 160))
+            )
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("drift-edge-\(UUID().uuidString).pcap")
+        try PcapWriter.write(linkType: LinkType.ethernet, frames: frames.enumerated().map {
+            CapturedFrame(
+                bytes: $0.element, timestamp: Date(timeIntervalSince1970: 1_800_000_000 + Double($0.offset) * gap),
+                originalLength: $0.element.count
+            )
+        }, to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let identity = try CaptureStreamReader(contentsOf: url).identity
+        let rows = try CaptureFrameListScanner(contentsOf: url, expectedIdentity: identity, sourceToken: UUID()).scan()
+            .rows
+        let analysis = try RTPStreamAnalysis(stream: #require(RTPStreams.streams(rows: rows).first), rows: rows)
+        #expect(analysis.packets.count == 2)
+        #expect(analysis.frequencyDrift == 0)
+        #expect(analysis.clockDrift.isFinite)
+    }
+
     // MARK: Private
 
     private static func be32(_ value: UInt32) -> [UInt8] {

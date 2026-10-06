@@ -62,6 +62,8 @@ struct RTPStreamAnalysisSheet: View {
     @State private var selectedDirectionID = ""
     @State private var selectedReverseID = ""
     @State private var visibleSeries: Set<String> = []
+    /// Every series offered so far, so only new ones are switched on.
+    @State private var knownSeries: Set<String> = []
 
     private var forwardAnalysis: RTPStreamAnalysis {
         analyses[0]
@@ -142,6 +144,9 @@ struct RTPStreamAnalysisSheet: View {
             GraphSeries(name: String(localized: "Delta"), key: "delta", value: \.delta),
             GraphSeries(name: String(localized: "Skew"), key: "skew", value: \.skew),
         ]
+        // One origin for every direction compared, so a reverse stream that began
+        // later is drawn later rather than from zero.
+        let origin = comparedAnalyses.map(\.start).min() ?? 0
         return VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             ScrollView(.horizontal) {
                 seriesControls(series)
@@ -154,7 +159,7 @@ struct RTPStreamAnalysisSheet: View {
                         if visibleSeries.contains(seriesID(analysis, key: item.key)) {
                             ForEach(analysis.packets) { packet in
                                 LineMark(
-                                    x: .value("Time (s)", packet.time / 1_000),
+                                    x: .value("Time (s)", (analysis.start + packet.time - origin) / 1_000),
                                     y: .value("ms", packet[keyPath: item.value])
                                 )
                                 .foregroundStyle(by: .value("Series", "\(directionName(analysis)) · \(item.name)"))
@@ -312,12 +317,10 @@ struct RTPStreamAnalysisSheet: View {
         let validIDs = Set(comparedAnalyses.flatMap { analysis in
             ["jitter", "delta", "skew"].map { seriesID(analysis, key: $0) }
         })
-        if visibleSeries.isEmpty {
-            visibleSeries = validIDs
-        } else {
-            visibleSeries.formIntersection(validIDs)
-            visibleSeries.formUnion(validIDs)
-        }
+        // Series seen for the first time start visible; one the user hid stays
+        // hidden when its direction is chosen again or the Graph is reopened.
+        visibleSeries.formUnion(validIDs.subtracting(knownSeries))
+        knownSeries.formUnion(validIDs)
         if selectedDirectionID.isEmpty {
             selectedDirectionID = forwardAnalysis.stream.id
         }
