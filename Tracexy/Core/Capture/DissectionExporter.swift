@@ -46,6 +46,7 @@ nonisolated enum DissectionExporter {
         }
         var ordinal = 0
         var written = 0
+        var sequential = SequentialFrameDecoder()
         if format == .json {
             try emit("[\n")
         }
@@ -56,9 +57,10 @@ nonisolated enum DissectionExporter {
                 originalLength: event.reference.originalLength, capturedLength: event.reference.capturedLength,
                 linkType: event.reference.linkType
             )
-            let packet = SessionBuilder.decodePacket(
+            let packet = sequential.decode(
                 frame,
-                linkType: reader.defaultLinkType ?? event.reference.linkType
+                linkType: reader.defaultLinkType ?? event.reference.linkType,
+                ordinal: UInt64(ordinal)
             )
             let session = packet.fiveTuple.map(SessionBuilder.sessionID(for:))
             if let sessions {

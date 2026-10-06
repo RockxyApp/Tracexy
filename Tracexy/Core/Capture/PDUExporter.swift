@@ -115,6 +115,7 @@ nonisolated enum PDUExporter {
                 throw FollowStreamError.identityMismatch
             }
             var ordinal: UInt64 = 0
+            var sequential = SequentialFrameDecoder()
             walk: while true {
                 guard case let .frame(event) = try reader.next() else {
                     break walk
@@ -123,25 +124,34 @@ nonisolated enum PDUExporter {
                 if ordinal % 1_024 == 0, isCancelled() {
                     throw CancellationError()
                 }
-                let decoded = SessionBuilder.decodePacket(
+                let decoded = sequential.decode(
                     CapturedFrame(
                         bytes: event.bytes, timestamp: event.reference.timestamp,
                         originalLength: event.reference.originalLength,
                         capturedLength: event.reference.capturedLength, linkType: event.reference.linkType
                     ),
-                    linkType: reader.defaultLinkType ?? event.reference.linkType
+                    linkType: reader.defaultLinkType ?? event.reference.linkType,
+                    ordinal: ordinal
                 )
                 guard let tuple = decoded.fiveTuple, tuple.proto == .udp,
                       datagramSessions.contains(SessionBuilder.sessionID(for: tuple)),
                       let kind = decoded.appProtocol, let name = dissectorName(kind, tcp: false),
-                      let range = decoded.udpPayloadRange, range.upperBound <= event.bytes.count,
                       let source = decoded.sourceEndpoint, let destination = decoded.destinationEndpoint else
                 {
                     continue
                 }
+                // A rebuilt datagram's payload comes with the decode, not this frame.
+                let payload: [UInt8]
+                if let reassembled = decoded.reassembledUDPPayload {
+                    payload = reassembled
+                } else if let range = decoded.udpPayloadRange, range.upperBound <= event.bytes.count {
+                    payload = Array(event.bytes[range])
+                } else {
+                    continue
+                }
                 keep(ordinal, event.reference.timestamp, packet(
                     name: name, source: source, destination: destination, tcp: false,
-                    payload: Array(event.bytes[range])
+                    payload: payload
                 ))
             }
         }

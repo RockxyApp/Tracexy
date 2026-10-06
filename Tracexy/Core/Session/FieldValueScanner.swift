@@ -205,6 +205,7 @@ nonisolated final class FieldValueScanner {
         var nonNumeric = 0
         var ordinal: UInt64 = 0
         var origin: Date?
+        var sequential = SequentialFrameDecoder()
         while case let .frame(event) = try reader.next() {
             ordinal += 1
             if origin == nil {
@@ -215,9 +216,10 @@ nonisolated final class FieldValueScanner {
                 originalLength: event.reference.originalLength, capturedLength: event.reference.capturedLength,
                 linkType: event.reference.linkType
             )
-            let packet = SessionBuilder.decodePacket(
+            let packet = sequential.decode(
                 frame,
-                linkType: reader.defaultLinkType ?? event.reference.linkType
+                linkType: reader.defaultLinkType ?? event.reference.linkType,
+                ordinal: ordinal
             )
             if let sessions {
                 guard let tuple = packet.fiveTuple, sessions.contains(SessionBuilder.sessionID(for: tuple)) else {
@@ -250,15 +252,19 @@ nonisolated final class FieldValueScanner {
         var other = 0
         var framesWithField = 0
         var scanned = 0
+        var sequential = SequentialFrameDecoder()
+        var ordinal: UInt64 = 0
         while case let .frame(event) = try reader.next() {
+            ordinal += 1
             let frame = CapturedFrame(
                 bytes: event.bytes, timestamp: event.reference.timestamp,
                 originalLength: event.reference.originalLength, capturedLength: event.reference.capturedLength,
                 linkType: event.reference.linkType
             )
-            let packet = SessionBuilder.decodePacket(
+            let packet = sequential.decode(
                 frame,
-                linkType: reader.defaultLinkType ?? event.reference.linkType
+                linkType: reader.defaultLinkType ?? event.reference.linkType,
+                ordinal: ordinal
             )
             if let sessions {
                 guard let tuple = packet.fiveTuple, sessions.contains(SessionBuilder.sessionID(for: tuple)) else {

@@ -134,20 +134,25 @@ nonisolated enum FrameContentSearch {
         }
         var ordinal: UInt64 = 0
         var found: [UInt64] = []
+        // A details search reads every frame's decode, so it decodes in capture order
+        // and sees rebuilt datagrams; a bytes search never decodes.
+        var sequential = SequentialFrameDecoder()
         while case let .frame(event) = try reader.next() {
             ordinal += 1
-            let details = {
+            var details = ""
+            if query.target == .details {
                 let frame = CapturedFrame(
                     bytes: event.bytes, timestamp: event.reference.timestamp,
                     originalLength: event.reference.originalLength, linkType: event.reference.linkType
                 )
-                let packet = SessionBuilder.decodePacket(
+                let packet = sequential.decode(
                     frame,
-                    linkType: reader.defaultLinkType ?? event.reference.linkType
+                    linkType: reader.defaultLinkType ?? event.reference.linkType,
+                    ordinal: ordinal
                 )
-                return DissectionExporter.layersText(packet.layers)
+                details = DissectionExporter.layersText(packet.layers)
             }
-            if matcher(event.bytes, details) {
+            if matcher(event.bytes, { details }) {
                 found.append(ordinal)
             }
         }

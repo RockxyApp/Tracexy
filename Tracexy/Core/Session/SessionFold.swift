@@ -19,8 +19,10 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
         linkType: UInt32,
         locator: SessionEvidenceLocator? = nil,
         loss: CaptureLossKnowledge = .unknown,
-        interfaceID: Int? = nil
+        interfaceID: Int? = nil,
+        reassembledFrom: [SessionFrameProvenance] = []
     ) {
+        self.reassembledFrom = reassembledFrom
         self.capturedLength = capturedLength
         self.linkType = linkType
         self.locator = locator
@@ -39,6 +41,9 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
     /// Live-spool and saved-file folds mint locators when their source is available;
     /// batch callers and evidence-source failures legitimately leave this `nil`.
     let locator: SessionEvidenceLocator?
+    /// For a frame that completed a fragmented IP datagram, the frames whose
+    /// fragments made it; carried onto the frame's provenance.
+    let reassembledFrom: [SessionFrameProvenance]
     /// The capture interface (pcapng IDB index within its section) this frame was
     /// recorded on, when the source states one. Batch and live folds leave it `nil`.
     let interfaceID: Int?

@@ -12,7 +12,11 @@ nonisolated struct IPFrameFact: Hashable, Sendable {
     // MARK: Lifecycle
 
     init?(_ packet: DecodedPacket) {
-        let layers = packet.layers.filter { $0.proto == .ipv4 || $0.proto == .ipv6 }
+        // IP headers proper: an IPv6 extension header and a reassembled-datagram
+        // summary are IP layers without addresses of their own.
+        let layers = packet.layers.filter { layer in
+            (layer.proto == .ipv4 || layer.proto == .ipv6) && layer.fields.contains { $0.name == "Source" }
+        }
         guard let layer = layers.last else {
             return nil
         }

@@ -189,6 +189,13 @@ nonisolated enum CaptureFrameExporter {
         if let expectedIdentity, !reader.identity.matches(expectedIdentity) {
             throw FrameExportError.identityMismatch
         }
+        // A session's frames include every fragment of a datagram that completes
+        // into it, and those come before the frame that names the session. One
+        // read first settles the frame set; the write then keeps exactly those.
+        var scope = scope
+        if case let .sessions(ids) = scope {
+            scope = try .frames(sessionOrdinals(ids, in: source, isCancelled: isCancelled))
+        }
         let optionSource = try FileHandle(forReadingFrom: source)
         defer { try? optionSource.close() }
 
@@ -218,11 +225,17 @@ nonisolated enum CaptureFrameExporter {
         var recent: [[UInt8]] = []
         var scanned = 0
         var commentedSessions: Set<UUID> = []
+        // Session notes go on each session's first written frame; which session a
+        // frame belongs to comes from the same in-order decode every reader uses,
+        // so a datagram rebuilt from fragments counts on the frame completing it.
+        var sessionDecoder: SequentialFrameDecoder? = !options.anonymizesAddresses
+            && !options.sessionFrameComments.isEmpty ? SequentialFrameDecoder() : nil
         var completion: CaptureStreamCompletion?
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
                 scanned += 1
+                let frameSessionID = Self.sessionID(of: event, ordinal: UInt64(scanned), decoder: &sessionDecoder)
                 if try matches(event, ordinal: UInt64(scanned), scope: scope) {
                     if options.removesDuplicates {
                         if recent.contains(event.bytes) {
@@ -268,7 +281,7 @@ nonisolated enum CaptureFrameExporter {
                     // the note waits for the session's first timed frame.
                     if !options.anonymizesAddresses, !options.sessionFrameComments.isEmpty,
                        event.reference.timestamp != nil,
-                       let id = sessionID(of: event),
+                       let id = frameSessionID,
                        !commentedSessions.contains(id), let text = options.sessionFrameComments[id]
                     {
                         comment = text
@@ -877,7 +890,18 @@ nonisolated enum CaptureFrameExporter {
     }
 
     /// The session a frame folds into, by its decoded canonical tuple.
-    private static func sessionID(of event: CaptureFrameEvent) -> UUID? {
+    /// The session `event` belongs to, from the in-order decode; `nil` without a
+    /// decoder (no session notes to place).
+    private static func sessionID(
+        of event: CaptureFrameEvent,
+        ordinal: UInt64,
+        decoder: inout SequentialFrameDecoder?
+    )
+        -> UUID?
+    {
+        guard decoder != nil else {
+            return nil
+        }
         let frame = CapturedFrame(
             bytes: event.bytes,
             timestamp: event.reference.timestamp,
@@ -885,8 +909,40 @@ nonisolated enum CaptureFrameExporter {
             capturedLength: event.reference.capturedLength,
             linkType: event.reference.linkType
         )
-        return SessionBuilder.decodePacket(frame, linkType: event.reference.linkType).fiveTuple
-            .map(SessionBuilder.sessionID(for:))
+        return decoder?.decode(frame, linkType: event.reference.linkType, ordinal: ordinal)
+            .fiveTuple.map(SessionBuilder.sessionID(for:))
+    }
+
+    /// The frames of `ids`'s sessions, by capture-order number, with every fragment
+    /// of a datagram that completed into one of them.
+    private static func sessionOrdinals(
+        _ ids: Set<UUID>,
+        in source: URL,
+        isCancelled: @escaping @Sendable () -> Bool
+    )
+        throws -> Set<UInt64>
+    {
+        let reader = try CaptureStreamReader(contentsOf: source, configuration: .init(isCancelled: isCancelled))
+        var sequential = SequentialFrameDecoder()
+        var ordinals = Set<UInt64>()
+        var ordinal: UInt64 = 0
+        while case let .frame(event) = try reader.next() {
+            ordinal += 1
+            let frame = CapturedFrame(
+                bytes: event.bytes,
+                timestamp: event.reference.timestamp,
+                originalLength: event.reference.originalLength,
+                capturedLength: event.reference.capturedLength,
+                linkType: event.reference.linkType
+            )
+            let packet = sequential.decode(frame, linkType: event.reference.linkType, ordinal: ordinal)
+            guard let tuple = packet.fiveTuple, ids.contains(SessionBuilder.sessionID(for: tuple)) else {
+                continue
+            }
+            let sources = sequential.lastReassembledFrom.map(\.ordinal.rawValue)
+            ordinals.formUnion(sources.isEmpty ? [ordinal] : sources)
+        }
+        return ordinals
     }
 
     private static func matches(_ event: CaptureFrameEvent, ordinal: UInt64, scope: FrameExportScope) throws -> Bool {
@@ -900,11 +956,10 @@ nonisolated enum CaptureFrameExporter {
                 return false
             }
             return timestamp >= start && timestamp <= end
-        case let .sessions(ids):
-            guard let id = sessionID(of: event) else {
-                return false
-            }
-            return ids.contains(id)
+        case .sessions:
+            // Resolved to frame numbers before the write, so fragments of a rebuilt
+            // datagram are included; a per-frame decode cannot see them.
+            preconditionFailure("A session scope is resolved to frames before writing.")
         }
     }
 }

@@ -265,6 +265,15 @@ nonisolated final class CaptureFrameListScanner {
         guard let layer = packet.layers.last else {
             return ("—", "")
         }
+        // A fragment that completed nothing reads as Wireshark lists it.
+        if let fragment = packet.ipFragment, packet.reassembly == nil {
+            // "UDP (17)" reads "UDP 17" here, as Wireshark writes it.
+            let proto = PacketDecoder.ipProtoName(fragment.protocolNumber)
+                .replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")
+            let text = "Fragmented IP protocol (proto=\(proto), "
+                + "off=\(fragment.offset), ID=\(PacketDecoder.hex(fragment.identification, digits: 4).dropFirst(2)))"
+            return (layer.proto.label, text)
+        }
         // An application layer above TCP (HTTP, …) speaks for the frame, as in
         // Wireshark's Info; a bare TCP segment gets the flags/sequence line.
         let applicationSummary = layer.proto == .tcp || layer.summary.isEmpty ? nil : layer.summary
@@ -279,13 +288,14 @@ nonisolated final class CaptureFrameListScanner {
     func scan(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> CaptureFrameList {
         var scanned = 0
         var rows: [CaptureFrameRow] = []
+        var sequential = SequentialFrameDecoder()
         let completion: CaptureStreamCompletion
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
                 scanned += 1
                 if rows.count < configuration.maxRetainedFrames {
-                    rows.append(row(event, ordinal: scanned))
+                    rows.append(row(event, ordinal: scanned, sequential: &sequential))
                 }
                 if scanned % configuration.progressStride == 0 {
                     onProgress(event.progress)
@@ -392,7 +402,11 @@ nonisolated final class CaptureFrameListScanner {
     /// The innermost IP header's address when decoding stopped before a transport
     /// endpoint was read (a frame cut short inside its TCP header), as Wireshark shows.
     private static func ipAddress(_ packet: DecodedPacket, field: String) -> String? {
-        packet.layers.last { $0.proto == .ipv4 || $0.proto == .ipv6 }?.fields.first { $0.name == field }?.value
+        // The innermost IP header that states it: an IPv6 extension header (a
+        // Fragment header, say) is an IPv6 layer without addresses of its own.
+        packet.layers.reversed().lazy.compactMap { layer in
+            layer.proto == .ipv4 || layer.proto == .ipv6 ? layer.fields.first { $0.name == field }?.value : nil
+        }.first
     }
 
     /// The Ethernet address when a frame carries no IP endpoint (ARP, LLDP…).
@@ -400,7 +414,13 @@ nonisolated final class CaptureFrameListScanner {
         packet.layers.first { $0.proto == .ethernet }?.fields.first { $0.name == field }?.value
     }
 
-    private func row(_ event: CaptureFrameEvent, ordinal: Int) -> CaptureFrameRow {
+    private func row(
+        _ event: CaptureFrameEvent,
+        ordinal: Int,
+        sequential: inout SequentialFrameDecoder
+    )
+        -> CaptureFrameRow
+    {
         let frame = CapturedFrame(
             bytes: event.bytes,
             timestamp: event.reference.timestamp,
@@ -408,7 +428,13 @@ nonisolated final class CaptureFrameListScanner {
             capturedLength: event.reference.capturedLength,
             linkType: event.reference.linkType
         )
-        let packet = SessionBuilder.decodePacket(frame, linkType: reader.defaultLinkType ?? event.reference.linkType)
+        let locator = SessionEvidenceLocator(sourceToken: sourceToken, offset: event.reference.payloadOffset)
+        let packet = sequential.decode(
+            frame,
+            linkType: reader.defaultLinkType ?? event.reference.linkType,
+            ordinal: UInt64(ordinal),
+            locator: locator
+        )
         var (protocolName, info) = Self.info(of: packet)
         if let stop = packet.decodeStop {
             info = info.isEmpty ? stop.infoSuffix : "\(info) \(stop.infoSuffix)"
@@ -419,7 +445,8 @@ nonisolated final class CaptureFrameListScanner {
             capturedLength: event.reference.capturedLength,
             originalLength: event.reference.originalLength,
             linkType: event.reference.linkType,
-            locator: SessionEvidenceLocator(sourceToken: sourceToken, offset: event.reference.payloadOffset)
+            locator: locator,
+            reassembledFrom: sequential.lastReassembledFrom
         )
         return CaptureFrameRow(
             provenance: provenance,

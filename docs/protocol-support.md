@@ -26,9 +26,19 @@ by the actual IPv4 or IPv6 version.
 The transport payload is bounded by the IP-declared length, so link-layer trailers (the zero
 padding of sub-60-byte Ethernet frames, an FCS) are never read as TCP or UDP payload. A declared
 length of zero (segmentation offload) or one beyond the captured bytes (snapshot truncation)
-keeps the captured bytes. A **non-first IP fragment** (IPv4 fragment offset, or an IPv6 Fragment
-header with a non-zero offset) stops at the IP layer: it carries no transport header, so no
-endpoints or session are invented from its payload. Fragments are not reassembled. The classic
+keeps the captured bytes.
+
+**Fragmented IP datagrams are reassembled**, IPv4 and IPv6, as Wireshark does with reassembly on.
+Every fragment stops at the IP layer (the frame list reads "Fragmented IP protocol (proto=UDP 17,
+off=1480, ID=2001)"); the frame whose fragment completes the datagram carries a "Reassembled IPv4
+Datagram" layer naming the fragment frames, then the transport and application layers decoded from
+the rebuilt bytes. Those layers highlight no bytes, since they span several frames. That frame joins
+its session, its findings cite it, and opening it from a citation reads its fragments again to show
+the datagram. A session export, and Export Frames by session, keep every fragment frame. A datagram
+is rebuilt only when every byte up to the end the last fragment declares is present: a missing or
+snapshot-truncated fragment, overlapping fragments that disagree, a datagram over 65,535 bytes or 64
+fragments, or one still incomplete 30 seconds (capture time) after its first fragment is not rebuilt,
+and its fragments stay plain IP frames. At most 256 datagrams wait at once. The classic
 pcap link-type word is masked to its low 16 bits, so a libpcap FCS-length hint does not hide the
 link type.
 

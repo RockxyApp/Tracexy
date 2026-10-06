@@ -316,6 +316,8 @@ nonisolated final class FollowDatagramReader {
     private let reader: CaptureStreamReader
 
     private var conversations: [FiveTuple: Conversation]
+    /// Rebuilds fragmented IP datagrams across this one pass over the capture.
+    private var sequential = SequentialFrameDecoder()
 
     private static func dnsReading(of packet: DecodedPacket) -> FollowDNSMessage? {
         guard packet.appProtocol == .dns, let facts = packet.dnsFacts else {
@@ -392,8 +394,14 @@ nonisolated final class FollowDatagramReader {
             capturedLength: event.reference.capturedLength,
             linkType: event.reference.linkType
         )
-        let packet = SessionBuilder.decodePacket(
-            frame, linkType: reader.defaultLinkType ?? event.reference.linkType
+        let locator = sourceToken.map {
+            SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
+        }
+        let packet = sequential.decode(
+            frame,
+            linkType: reader.defaultLinkType ?? event.reference.linkType,
+            ordinal: UInt64(ordinal),
+            locator: locator
         )
         guard packet.transport == .udp,
               let tuple = packet.fiveTuple, conversations[tuple] != nil,
@@ -410,24 +418,31 @@ nonisolated final class FollowDatagramReader {
         } else {
             return
         }
-        let range = packet.udpPayloadRange.map { range in
-            range.clamped(to: 0 ..< event.bytes.count)
-        } ?? 0 ..< 0
+        // A reassembled datagram's payload is not in this frame's bytes; it comes
+        // with the decode instead.
+        let payload: ArraySlice<UInt8>
+        if let reassembled = packet.reassembledUDPPayload {
+            payload = reassembled[...]
+        } else {
+            let range = packet.udpPayloadRange.map { range in
+                range.clamped(to: 0 ..< event.bytes.count)
+            } ?? 0 ..< 0
+            payload = event.bytes[range]
+        }
         let provenance = SessionFrameProvenance(
             ordinal: FrameOrdinal(UInt64(ordinal)),
             timestamp: event.reference.timestamp,
             capturedLength: event.reference.capturedLength,
             originalLength: event.reference.originalLength,
             linkType: event.reference.linkType,
-            locator: sourceToken.map {
-                SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
-            }
+            locator: locator,
+            reassembledFrom: sequential.lastReassembledFrom
         )
         // Mutated in place through the dictionary: retained messages are never
         // copied per frame.
         conversations[tuple]?.fold(
             direction: direction,
-            payload: event.bytes[range],
+            payload: payload,
             declaredPayloadLength: packet.udpDeclaredPayloadLength,
             dns: Self.dnsReading(of: packet),
             provenance: provenance,

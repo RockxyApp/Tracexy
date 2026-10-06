@@ -30,9 +30,15 @@ nonisolated enum SessionBuilder {
         -> SessionFoldSnapshot
     {
         var accumulator = SessionAccumulator(connectionConfiguration: connectionConfiguration)
-        for frame in frames {
-            let packet = decodePacket(frame, linkType: linkType)
-            accumulator.add(packet, context: frameContext(for: frame, linkType: linkType))
+        var sequential = SequentialFrameDecoder()
+        for (index, frame) in frames.enumerated() {
+            let packet = sequential.decode(frame, linkType: linkType, ordinal: UInt64(index + 1))
+            accumulator.add(
+                packet,
+                context: frameContext(
+                    for: frame, linkType: linkType, reassembledFrom: sequential.lastReassembledFrom
+                )
+            )
         }
         return accumulator.foldSnapshot()
     }
@@ -42,12 +48,19 @@ nonisolated enum SessionBuilder {
     /// default), no evidence locator — batch and live frames fabricate none — and
     /// unknown loss. Shared by the batch build and the live engine so both supply
     /// identical frame metadata.
-    static func frameContext(for frame: CapturedFrame, linkType: UInt32) -> SessionFrameContext {
+    static func frameContext(
+        for frame: CapturedFrame,
+        linkType: UInt32,
+        reassembledFrom: [SessionFrameProvenance] = []
+    )
+        -> SessionFrameContext
+    {
         SessionFrameContext(
             capturedLength: frame.capturedLength,
             linkType: frame.linkType ?? linkType,
             locator: nil,
-            loss: .unknown
+            loss: .unknown,
+            reassembledFrom: reassembledFrom
         )
     }
 

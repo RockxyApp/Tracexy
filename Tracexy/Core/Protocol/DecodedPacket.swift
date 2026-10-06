@@ -117,6 +117,46 @@ nonisolated enum DecodeStop: Hashable, Sendable {
     }
 }
 
+// MARK: - IPFragmentFacts
+
+/// One IPv4 or IPv6 fragment, read from its own header.
+nonisolated struct IPFragmentFacts: Equatable, Sendable {
+    enum Version: Equatable, Sendable {
+        case v4
+        case v6
+    }
+
+    let version: Version
+    let source: String
+    let destination: String
+    /// The IPv4 Identification or the IPv6 Fragment header's Identification.
+    let identification: UInt32
+    /// The protocol the reassembled datagram carries (IPv4 Protocol, or the IPv6
+    /// Fragment header's Next Header).
+    let protocolNumber: UInt8
+    /// Byte offset of this fragment's payload in the datagram.
+    let offset: Int
+    let moreFragments: Bool
+    /// This fragment's payload within the frame's `rawBytes`, bounded by the
+    /// header's declared length.
+    let payloadRange: Range<Int>
+    /// `false` when the snapshot length cut the payload short, so the datagram can
+    /// never be rebuilt from this capture.
+    let isPayloadComplete: Bool
+}
+
+// MARK: - IPReassemblyFacts
+
+/// What a reassembled datagram was built from, carried on the completing frame.
+nonisolated struct IPReassemblyFacts: Equatable, Sendable {
+    let version: IPFragmentFacts.Version
+    /// Total reassembled length (the transport header and its payload).
+    let length: Int
+    /// The one-based ordinals of the frames whose fragments made the datagram, in
+    /// datagram-offset order; the completing frame is among them.
+    let frames: [UInt64]
+}
+
 // MARK: - DecodedPacket
 
 nonisolated struct DecodedPacket {
@@ -206,6 +246,19 @@ nonisolated struct DecodedPacket {
     var udpDeclaredPayloadLength: Int?
     /// How many tunnels (GRE, VXLAN) this frame was unwrapped through; bounds nesting.
     var tunnelDepth = 0
+    /// Set when this frame is one fragment of a larger IP datagram. Decoding stops
+    /// at the IP layer for every fragment — the first one too, since its transport
+    /// payload is incomplete — and the fragment's payload range is kept for the
+    /// sequential reassembler.
+    var ipFragment: IPFragmentFacts?
+    /// Set on the frame whose fragment completed a datagram: the transport and
+    /// application layers above come from the reassembled bytes (they carry no byte
+    /// ranges, since those bytes span several frames).
+    var reassembly: IPReassemblyFacts?
+    /// The reassembled transport payload of a UDP datagram, when this frame
+    /// completed one. `udpPayloadRange` is `nil` then: the bytes are not in
+    /// `rawBytes`.
+    var reassembledUDPPayload: [UInt8]?
 
     /// Protocol stack outer→inner, e.g. [.tcp, .tls]. Used by the session list.
     ///

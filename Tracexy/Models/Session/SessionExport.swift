@@ -183,13 +183,18 @@ nonisolated enum SessionExporter {
     )
         -> [CapturedFrame]
     {
-        frames.filter { frame in
-            let packet = SessionBuilder.decodePacket(frame, linkType: defaultLinkType)
-            guard let key = packet.fiveTuple else {
-                return false
+        var sequential = SequentialFrameDecoder()
+        var ordinals = Set<UInt64>()
+        for (index, frame) in frames.enumerated() {
+            let ordinal = UInt64(index + 1)
+            let packet = sequential.decode(frame, linkType: defaultLinkType, ordinal: ordinal)
+            if let key = packet.fiveTuple, SessionBuilder.sessionID(for: key) == sessionID {
+                // A datagram rebuilt from fragments takes every fragment's frame.
+                let sources = sequential.lastReassembledFrom.map(\.ordinal.rawValue)
+                ordinals.formUnion(sources.isEmpty ? [ordinal] : sources)
             }
-            return SessionBuilder.sessionID(for: key) == sessionID
         }
+        return frames.enumerated().filter { ordinals.contains(UInt64($0.offset + 1)) }.map(\.element)
     }
 
     /// The frames of one session read straight from a capture file, one record at
@@ -204,7 +209,9 @@ nonisolated enum SessionExporter {
         throws -> (linkType: UInt32, frames: [CapturedFrame])
     {
         let reader = try CaptureStreamReader(contentsOf: url)
-        var matched: [CapturedFrame] = []
+        var matched: [(ordinal: UInt64, frame: CapturedFrame)] = []
+        var sequential = SequentialFrameDecoder(retainsFragmentFrames: true)
+        var ordinal: UInt64 = 0
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
@@ -215,16 +222,23 @@ nonisolated enum SessionExporter {
                     capturedLength: event.reference.capturedLength,
                     linkType: event.reference.linkType
                 )
-                let packet = SessionBuilder.decodePacket(frame, linkType: event.reference.linkType)
+                ordinal += 1
+                let packet = sequential.decode(frame, linkType: event.reference.linkType, ordinal: ordinal)
                 if let key = packet.fiveTuple, SessionBuilder.sessionID(for: key) == sessionID {
-                    matched.append(frame)
+                    // A datagram rebuilt from fragments takes every fragment's frame,
+                    // so the exported file rebuilds it too.
+                    let sources = sequential.lastReassembledFrames
+                    matched += sources.isEmpty ? [(ordinal, frame)] : sources
                 }
             case .end:
                 break walk
             }
         }
-        let linkType = reader.defaultLinkType ?? matched.first?.linkType ?? LinkType.ethernet
-        return (linkType, matched)
+        var seen = Set<UInt64>()
+        let ordered = matched.sorted { $0.ordinal < $1.ordinal }
+            .filter { seen.insert($0.ordinal).inserted }.map(\.frame)
+        let linkType = reader.defaultLinkType ?? ordered.first?.linkType ?? LinkType.ethernet
+        return (linkType, ordered)
     }
 
     static func artifact(

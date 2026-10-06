@@ -217,6 +217,8 @@ nonisolated final class FollowStreamReader {
     private let reader: CaptureStreamReader
 
     private var conversations: [FiveTuple: Conversation]
+    /// Rebuilds fragmented IP datagrams across this one pass over the capture.
+    private var sequential = SequentialFrameDecoder()
 
     /// Scan once and return every requested conversation in `order`.
     private func readAll(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> [FollowStreamResult] {
@@ -289,8 +291,14 @@ nonisolated final class FollowStreamReader {
         )
         // The frame carries its own link type, so `decodePacket` uses it directly;
         // the default is only a fallback and is never reached for a real frame.
-        let packet = SessionBuilder.decodePacket(
-            frame, linkType: reader.defaultLinkType ?? event.reference.linkType
+        let locator = sourceToken.map {
+            SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
+        }
+        let packet = sequential.decode(
+            frame,
+            linkType: reader.defaultLinkType ?? event.reference.linkType,
+            ordinal: UInt64(ordinal),
+            locator: locator
         )
 
         guard packet.transport == .tcp,
@@ -325,9 +333,8 @@ nonisolated final class FollowStreamReader {
             capturedLength: event.reference.capturedLength,
             originalLength: event.reference.originalLength,
             linkType: event.reference.linkType,
-            locator: sourceToken.map {
-                SessionEvidenceLocator(sourceToken: $0, offset: event.reference.payloadOffset)
-            }
+            locator: locator,
+            reassembledFrom: sequential.lastReassembledFrom
         )
         // Mutated in place through the dictionary: a conversation's runs are never
         // copied per frame.

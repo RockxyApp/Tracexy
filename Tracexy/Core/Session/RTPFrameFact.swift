@@ -73,7 +73,11 @@ nonisolated struct SIPFrameFact: Hashable, Sendable {
         self.message = message
         self.source = source
         self.destination = destination
-        let payload: [UInt8] = if let range = packet.udpPayloadRange, range.upperBound <= bytes.count {
+        // A rebuilt datagram's payload comes with the decode (large INVITEs with SDP
+        // are the common fragmented case).
+        let payload: [UInt8] = if let reassembled = packet.reassembledUDPPayload {
+            reassembled
+        } else if let range = packet.udpPayloadRange, range.upperBound <= bytes.count {
             Array(bytes[range])
         } else {
             packet.tcpPayloadBytes
@@ -122,14 +126,20 @@ nonisolated struct MulticastFrameFact: Hashable, Sendable {
 
     init?(_ packet: DecodedPacket, bytes: [UInt8]) {
         guard packet.fiveTuple?.proto == .udp, let source = packet.sourceEndpoint,
-              let destination = packet.destinationEndpoint, let range = packet.udpPayloadRange,
-              range.lowerBound >= 8, range.lowerBound <= bytes.count,
+              let destination = packet.destinationEndpoint,
               let group = IPAddressValue(parsing: destination.ip), Self.isMulticast(group) else
         {
             return nil
         }
-        let header = range.lowerBound - 8
-        udpLength = UInt16(bytes[header + 4]) << 8 | UInt16(bytes[header + 5])
+        if let reassembled = packet.reassembledUDPPayload {
+            // A rebuilt datagram's UDP header is not in this frame's bytes.
+            udpLength = UInt16(min(reassembled.count + 8, Int(UInt16.max)))
+        } else if let range = packet.udpPayloadRange, range.lowerBound >= 8, range.lowerBound <= bytes.count {
+            let header = range.lowerBound - 8
+            udpLength = UInt16(bytes[header + 4]) << 8 | UInt16(bytes[header + 5])
+        } else {
+            return nil
+        }
         self.source = source
         self.destination = destination
     }

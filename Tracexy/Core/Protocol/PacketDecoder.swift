@@ -217,10 +217,16 @@ nonisolated enum PacketDecoder {
         guard ihl >= 20 else {
             throw PacketError.malformed("Invalid IPv4 header length")
         }
-        // A non-first fragment carries no transport header at all: its first bytes
-        // are payload of a segment/datagram whose header travelled in fragment 0.
-        // Stop at the IP layer rather than decoding those bytes as ports.
-        guard fragmentOffset == 0 else {
+        // Every fragment stops at the IP layer, as Wireshark shows it with reassembly
+        // on: a later fragment's first bytes are mid-datagram payload, and a first
+        // fragment's transport payload is incomplete. The fragment's payload is kept
+        // for the sequential reassembler, which decodes the transport and application
+        // layers once on the frame that completes the datagram.
+        if moreFragments || fragmentOffset > 0 {
+            packet.ipFragment = ipv4Fragment(
+                buf, headerLength: ihl, totalLength: totalLength, source: src, destination: dst,
+                identification: identification, protocolNumber: proto, flagsFragment: flagsFragment
+            )
             return
         }
         // Bound the payload by the declared total length so link-layer trailers
@@ -277,17 +283,10 @@ nonisolated enum PacketDecoder {
                 ranged("Next Header", ipProtoName(extNext), in: buf, at: offset, 1),
                 ranged("Length", "\(extLen) bytes", in: buf, at: offset + 1, 1),
             ]
-            var isLaterFragment = false
-            if proto == 44, let fragmentField = try? buf.u16(offset + 2) {
-                // RFC 8200 §4.5: offset in 8-octet units (high 13 bits), M flag bit 0.
-                let fragmentOffset = Int(fragmentField >> 3) * 8
-                let moreFragments = fragmentField & 0x01 != 0
-                fields.append(ranged(
-                    "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
-                    in: buf, at: offset + 2, 2
-                ))
-                isLaterFragment = fragmentOffset > 0
-            }
+            let fragment = proto == 44 ? ipv6FragmentHeader(
+                buf, at: offset, declaredEnd: payloadLength > 0 ? declaredEnd : nil,
+                source: src, destination: dst, nextHeader: extNext, fields: &fields
+            ) : nil
             packet.layers.append(DecodedLayer(
                 proto: .ipv6, title: "IPv6 \(ipv6ExtensionName(proto))",
                 summary: "next \(ipProtoName(extNext))",
@@ -296,9 +295,10 @@ nonisolated enum PacketDecoder {
             ))
             proto = extNext
             offset += extLen
-            // A non-first fragment carries no transport header: stop at the IP
-            // layer rather than reading ports out of mid-datagram payload bytes.
-            if isLaterFragment {
+            // Every fragment stops at the IP layer, the first one too (see IPv4);
+            // the reassembler decodes the datagram on the frame that completes it.
+            if let fragment {
+                packet.ipFragment = fragment
                 return
             }
         }
@@ -507,7 +507,7 @@ nonisolated enum PacketDecoder {
     // MARK: Private
 
     /// IPv6 extension-header protocol numbers (RFC 8200 order).
-    private static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
 
     /// STUN magic cookie (RFC 5389 §6): the fixed value at header offset 4 that
     /// disambiguates STUN from other UDP payloads regardless of port.
@@ -612,7 +612,7 @@ nonisolated enum PacketDecoder {
 
     /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
     /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
-    private static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
+    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
         switch proto {
         case 44: 8 // Fragment header is fixed-size
         case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
@@ -620,7 +620,7 @@ nonisolated enum PacketDecoder {
         }
     }
 
-    private static func ipv6ExtensionName(_ proto: UInt8) -> String {
+    static func ipv6ExtensionName(_ proto: UInt8) -> String {
         switch proto {
         case 0: "Hop-by-Hop Options"
         case 43: "Routing"
@@ -634,7 +634,7 @@ nonisolated enum PacketDecoder {
 
     // MARK: Transport layer
 
-    private static func transport(
+    static func transport(
         _ buf: PacketBuffer,
         proto: UInt8,
         src: String,
@@ -1190,7 +1190,7 @@ nonisolated enum PacketDecoder {
         return false
     }
 
-    private static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
+    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
         DecodedLayer(
             proto: layer.proto,
             title: layer.title,
@@ -1272,7 +1272,7 @@ nonisolated enum PacketDecoder {
         return (labels.joined(separator: "."), next < 0 ? offset : next)
     }
 
-    private static func ipProtoName(_ proto: UInt8) -> String {
+    static func ipProtoName(_ proto: UInt8) -> String {
         switch proto {
         case 6: "TCP (6)"
         case 17: "UDP (17)"

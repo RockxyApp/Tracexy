@@ -94,7 +94,8 @@ nonisolated struct SessionAccumulator {
             capturedLength: context.capturedLength,
             originalLength: packet.originalLength,
             linkType: context.linkType,
-            locator: context.locator
+            locator: context.locator,
+            reassembledFrom: context.reassembledFrom
         )
         // A capture cannot realistically exhaust UInt64 ordinals, but malformed
         // test input or a future long-lived source must still never wrap back to

@@ -63,8 +63,10 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
         capturedLength: Int,
         originalLength: Int,
         linkType: UInt32,
-        locator: SessionEvidenceLocator? = nil
+        locator: SessionEvidenceLocator? = nil,
+        reassembledFrom: [SessionFrameProvenance] = []
     ) {
+        self.reassembledFrom = reassembledFrom
         self.ordinal = ordinal
         self.timestamp = timestamp
         let captured = max(0, capturedLength)
@@ -85,6 +87,26 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
     let originalLength: Int
     let linkType: UInt32
     let locator: SessionEvidenceLocator?
+    /// For a frame that completed a fragmented IP datagram, the frames whose
+    /// fragments made it (this one included), so the datagram can be rebuilt from
+    /// the citation alone. Not part of the frame's identity: two provenances of the
+    /// same frame are equal whether or not one of them carries it.
+    let reassembledFrom: [SessionFrameProvenance]
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.ordinal == rhs.ordinal && lhs.timestamp == rhs.timestamp
+            && lhs.capturedLength == rhs.capturedLength && lhs.originalLength == rhs.originalLength
+            && lhs.linkType == rhs.linkType && lhs.locator == rhs.locator
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ordinal)
+        hasher.combine(timestamp)
+        hasher.combine(capturedLength)
+        hasher.combine(originalLength)
+        hasher.combine(linkType)
+        hasher.combine(locator)
+    }
 
     /// A documented total order over optional capture times, used **only** as a
     /// deterministic tie-break in orderings that already agree on ordinal-level
