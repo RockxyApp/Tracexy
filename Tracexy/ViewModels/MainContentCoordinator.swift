@@ -742,6 +742,10 @@ final class MainContentCoordinator {
     /// consumed by both the direct and helper backends so neither re-reads defaults.
     private(set) var activeCaptureConfiguration: CaptureConfiguration?
 
+    /// Off-main incremental session engine: decodes and groups each captured frame
+    /// exactly once, so the main actor never re-decodes retained history.
+    let sessionEngine = LiveSessionEngine()
+
     /// True while the Project boundary is settling — a transition is running, or a
     /// stopped capture still owes its exact final drain. New capture I/O, Library
     /// mutations, exports and History mutations fail closed here rather than being
@@ -1376,9 +1380,6 @@ final class MainContentCoordinator {
     // MARK: Private
 
     private let live = try? LiveCapture()
-    /// Off-main incremental session engine: decodes and groups each captured frame
-    /// exactly once, so the main actor never re-decodes retained history.
-    private let sessionEngine = LiveSessionEngine()
     private var lastSessionsUpdate = Date.distantPast
 
     private var pollTimer: Timer?
@@ -1964,14 +1965,14 @@ extension MainContentCoordinator {
     /// its saturating eviction count live in ``RetainedFrameBuffer``; this is a
     /// thin hop so the ingest path reads clearly. Independent of session
     /// accumulation — see ``retainedFrameLimit``.
-    private func appendRetainedFrames(_ frames: [CapturedFrame]) {
+    func appendRetainedFrames(_ frames: [CapturedFrame]) {
         retainedFrames.append(contentsOf: frames)
     }
 
     /// Clears the engine and adopts a new capture generation. Enqueued on the
     /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
     /// work carries the previous token and is dropped by the engine's epoch guard.
-    private func resetSessionEngine(token: Int, fileSet: LiveCaptureSpool.FileSetPolicy? = nil) {
+    func resetSessionEngine(token: Int, fileSet: LiveCaptureSpool.FileSetPolicy? = nil) {
         retireCaptureLocalTools()
         let engine = sessionEngine
         let spool = liveCaptureSpool

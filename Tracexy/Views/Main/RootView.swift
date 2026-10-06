@@ -225,6 +225,9 @@ struct RootView: View {
 
         if coordinator.isHistoryDemoMode {
             await coordinator.prepareHistoryDemo()
+            #if DEBUG
+            await DemoLaunchSupport.afterHistoryDemo?(coordinator)
+            #endif
         }
 
         // The Assistant walkthrough publishes one documentation-range snapshot so
