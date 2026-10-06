@@ -9,6 +9,11 @@ extension MainContentCoordinator {
     /// rescans.
     func loadExportObjects(_ kind: CaptureObjectKind, force: Bool = false) {
         let state = exportObjects
+        // The menu starts the scan and the window's appearance asks again: the
+        // scan already running for this kind is the answer to both.
+        if !force, state.kind == kind, state.isLoading {
+            return
+        }
         if state.kind != kind || state.isLoading {
             state.cancel(clearLists: false)
         }
@@ -89,7 +94,15 @@ extension MainContentCoordinator {
         requestID: Int,
         generation: Int
     ) {
-        guard requestID == exportObjects.requestID, generation == startGeneration else {
+        guard requestID == exportObjects.requestID else {
+            return
+        }
+        guard generation == startGeneration else {
+            // A newer capture replaced the one scanned; its result is dropped, and
+            // the window must not keep showing progress for it.
+            exportObjects.isLoading = false
+            exportObjects.progress = nil
+            exportObjects.task = nil
             return
         }
         exportObjects.isLoading = false

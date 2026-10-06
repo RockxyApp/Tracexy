@@ -240,17 +240,27 @@ struct ExportObjectsWindow: View {
             return
         }
         var taken = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
-        do {
-            for object in objects {
-                let name = CaptureObjectScanner.uniqueName(
-                    CaptureObjectScanner.savableName(object.fileName), taken: taken
-                )
-                taken.insert(name)
+        // One object that can't be written does not stop the others.
+        var saved = 0
+        var firstError: Error?
+        for object in objects {
+            let name = CaptureObjectScanner.uniqueName(
+                CaptureObjectScanner.savableName(object.fileName), taken: taken
+            )
+            taken.insert(name)
+            do {
                 try Data(object.body).write(to: folder.appendingPathComponent(name), options: .withoutOverwriting)
+                saved += 1
+            } catch {
+                firstError = firstError ?? error
             }
+        }
+        if let firstError {
+            notice = String(
+                localized: "Saved \(saved.formatted()) of \(objects.count.formatted()) objects. Couldn’t save the rest: \(firstError.localizedDescription)"
+            )
+        } else {
             notice = String(localized: "Saved \(objects.count.formatted()) objects.")
-        } catch {
-            notice = String(localized: "Couldn’t save: \(error.localizedDescription)")
         }
     }
 }

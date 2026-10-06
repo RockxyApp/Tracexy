@@ -25,12 +25,28 @@ nonisolated enum SMBObjectReader {
     )
         -> [CaptureObject]
     {
-        guard maxObjects > 0, maxAggregateBytes > 0,
-              result.completeness == .complete,
+        read(
+            result, sessionID: sessionID, maxObjects: maxObjects, maxAggregateBytes: maxAggregateBytes,
+            isCancelled: isCancelled
+        ).objects
+    }
+
+    /// The complete files of one stream, and how many complete files were left
+    /// out because the object or byte bound was reached.
+    static func read(
+        _ result: FollowStreamResult,
+        sessionID: UUID,
+        maxObjects: Int = 2_000,
+        maxAggregateBytes: Int = maximumAggregateBytes,
+        isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
+    )
+        -> (objects: [CaptureObject], omitted: Int)
+    {
+        guard result.completeness == .complete,
               result.limitations.subtracting(.outOfOrder).isEmpty,
               let clientDirection = clientDirection(for: result.tuple) else
         {
-            return []
+            return ([], 0)
         }
         let clientSnapshot = clientDirection == .aToB ? result.aToB : result.bToA
         let serverSnapshot = clientDirection == .aToB ? result.bToA : result.aToB
@@ -38,7 +54,7 @@ nonisolated enum SMBObjectReader {
               let clientPDUs = pdus(in: clientRun, snapshot: clientSnapshot),
               let serverPDUs = pdus(in: serverRun, snapshot: serverSnapshot) else
         {
-            return []
+            return ([], 0)
         }
 
         let events = (clientPDUs.map { Event(pdu: $0, direction: .client) }
@@ -55,22 +71,23 @@ nonisolated enum SMBObjectReader {
 
         var outstanding: [RequestKey: Request] = [:]
         var files: [FileKey: FileState] = [:]
+        var finished: [FileState] = []
         var totalAllocated = 0
         for event in events {
             if isCancelled() {
-                return []
+                return ([], 0)
             }
             guard let header = Header(event.pdu.bytes) else {
-                return []
+                return ([], 0)
             }
             // Compounds require related-operation FileId/TreeId substitution and
             // compound response semantics. This slice rejects the whole flow.
             guard header.nextCommand == 0 else {
-                return []
+                return ([], 0)
             }
             if header.isResponse {
                 guard event.direction == .server else {
-                    return []
+                    return ([], 0)
                 }
                 if header.status == statusPending || header.isAsync {
                     let pendingKeys = outstanding.keys.filter {
@@ -98,7 +115,7 @@ nonisolated enum SMBObjectReader {
                 }
                 guard apply(
                     response: event.pdu, header: header, to: request,
-                    files: &files, totalAllocated: &totalAllocated,
+                    files: &files, finished: &finished, totalAllocated: &totalAllocated,
                     aggregateLimit: min(maxAggregateBytes, maximumAggregateBytes)
                 ) else {
                     invalidate(request.fileKey, in: &files)
@@ -116,7 +133,7 @@ nonisolated enum SMBObjectReader {
                           isClientDirection: event.direction == .client
                       ) else
                 {
-                    return []
+                    return ([], 0)
                 }
                 let key = RequestKey(
                     messageID: header.messageID, sessionID: header.sessionID,
@@ -128,7 +145,7 @@ nonisolated enum SMBObjectReader {
                 }
                 if request.kind == .create {
                     guard files.count < maximumOpenFiles else {
-                        return []
+                        return ([], 0)
                     }
                 }
                 outstanding[key] = request
@@ -136,16 +153,31 @@ nonisolated enum SMBObjectReader {
         }
 
         var output: [CaptureObject] = []
+        var omitted = 0
         var totalOutput = 0
-        for state in files.values {
-            guard output.count < maxObjects, state.isUsable,
+        // In the order the files first appear, so which ones fit the bounds does
+        // not depend on dictionary order.
+        let states = (finished + files.values).sorted {
+            let first = $0.citations.map(\.ordinal).min()
+            let second = $1.citations.map(\.ordinal).min()
+            if first != second {
+                return (first?.rawValue ?? .max) < (second?.rawValue ?? .max)
+            }
+            return ($0.key.description, $0.instance) < ($1.key.description, $1.instance)
+        }
+        for state in states {
+            guard state.isUsable,
                   let name = state.fileName, let eof = state.finalEOF,
                   eof >= 0, eof <= state.bytes.count,
                   state.coverage.count >= eof,
                   state.coverage[..<eof].allSatisfy({ $0 }),
-                  state.citationsComplete, state.citations.count <= maximumCitationsPerObject,
-                  totalOutput <= maxAggregateBytes - eof else
+                  state.citationsComplete, state.citations.count <= maximumCitationsPerObject else
             {
+                continue
+            }
+            // A complete file past the bound is counted, so the list can say so.
+            guard output.count < maxObjects, totalOutput <= maxAggregateBytes - eof else {
+                omitted += 1
                 continue
             }
             let citations = state.citations.sorted { $0.ordinal < $1.ordinal }
@@ -154,7 +186,8 @@ nonisolated enum SMBObjectReader {
             }
             totalOutput += eof
             output.append(CaptureObject(
-                id: "\(sessionID.uuidString)-smb-\(state.key.description)",
+                id: "\(sessionID.uuidString)-smb-\(state.key.description)"
+                    + (state.instance > 0 ? "-\(state.instance)" : ""),
                 sessionID: sessionID,
                 frameOrdinal: citations.first?.ordinal.rawValue,
                 host: result.tuple.b.port == 445 || result.tuple.b.port == 139
@@ -165,7 +198,7 @@ nonisolated enum SMBObjectReader {
                 contributingFrames: citations
             ))
         }
-        return output.sorted { ($0.frameOrdinal ?? .max, $0.id) < ($1.frameOrdinal ?? .max, $1.id) }
+        return (output.sorted { ($0.frameOrdinal ?? .max, $0.id) < ($1.frameOrdinal ?? .max, $1.id) }, omitted)
     }
 
     // MARK: Private
@@ -269,28 +302,34 @@ nonisolated enum SMBObjectReader {
             citations = pdu.citations
             switch header.command {
             case 5: // CREATE
-                guard body.count >= 112, u16(body, 64) == 57,
+                // A malformed CREATE ends the flow; a well-formed one this reader
+                // does not export (the share root's empty name, a directory, a pipe,
+                // an unsafe name) is only left untracked. Create contexts (MxAc,
+                // QFid and the like ride on most opens) are bounds-checked and skipped.
+                guard body.count >= 120, u16(body, 64) == 57,
+                      let options = u32(body, 104),
                       let nameOffset = u16(body, 108), let nameLength = u16(body, 110),
                       let contextOffset = u32(body, 112), let contextLength = u32(body, 116),
-                      nameLength > 0, nameOffset >= 120, nameOffset % 8 == 0,
-                      nameLength <= maximumFilenameBytes, nameLength % 2 == 0,
-                      contextLength == 0,
                       nameLength == 0 || range(offset: Int(nameOffset), length: Int(nameLength), in: body) != nil,
-                      contextLength == 0, contextOffset == 0 else
+                      contextLength == 0
+                      || (contextOffset >= 120
+                          && range(offset: Int(contextOffset), length: Int(contextLength), in: body) != nil) else
                 {
                     return nil
                 }
-                kind = .create
-                guard let options = u32(body, 104), options & 0x00002000 == 0,
-                      options & 0x00000001 == 0,
+                guard nameLength > 0, nameOffset >= 120, nameOffset % 8 == 0,
+                      nameLength <= maximumFilenameBytes, nameLength % 2 == 0,
+                      options & 0x00002000 == 0, options & 0x00000001 == 0,
                       let range = range(offset: Int(nameOffset), length: Int(nameLength), in: body),
                       let decoded = String(data: Data(body[range]), encoding: .utf16LittleEndian),
                       let safeName = safeRelativeName(decoded),
                       !decoded.split(whereSeparator: { $0 == "/" || $0 == "\\" })
                       .contains(where: { $0.caseInsensitiveCompare("pipe") == .orderedSame }) else
                 {
-                    return nil
+                    kind = .ignored
+                    return
                 }
+                kind = .create
                 name = safeName
             case 8: // READ
                 guard body.count >= 112, u16(body, 64) == 49,
@@ -360,6 +399,8 @@ nonisolated enum SMBObjectReader {
 
     private struct FileState {
         let key: FileKey
+        /// How many earlier opens used the same FileId on this stream.
+        var instance = 0
         var fileName: String?
         var bytes: [UInt8] = []
         var coverage: [Bool] = []
@@ -394,6 +435,7 @@ nonisolated enum SMBObjectReader {
         header: Header,
         to request: Request,
         files: inout [FileKey: FileState],
+        finished: inout [FileState],
         totalAllocated: inout Int,
         aggregateLimit: Int
     )
@@ -407,27 +449,47 @@ nonisolated enum SMBObjectReader {
                   pdu.bytes.count >= 152, u16(pdu.bytes, 64) == 89,
                   let fileID = slice(pdu.bytes, 128, 16),
                   let attributes = u32(pdu.bytes, 120), attributes & 0x10 == 0,
-                  let contextOffset = u32(pdu.bytes, 144), contextOffset == 0,
-                  let contextLength = u32(pdu.bytes, 148), contextLength == 0,
+                  let contextOffset = u32(pdu.bytes, 144), let contextLength = u32(pdu.bytes, 148),
+                  contextLength == 0
+                  || (contextOffset >= 152
+                      && range(offset: Int(contextOffset), length: Int(contextLength), in: pdu.bytes) != nil),
                   let name = request.name,
                   let key = FileKey.make(session: header.sessionID, tree: header.treeID, file: fileID) else
             {
                 return false
             }
-            if files[key] != nil {
-                files[key]?.isUsable = false
-                return false
+            var instance = 0
+            if let existing = files[key] {
+                // A server may hand out a FileId again once the first open is
+                // closed. The closed file is complete as it stands; an open one
+                // being replaced is not.
+                guard existing.closed else {
+                    files[key]?.isUsable = false
+                    return false
+                }
+                if existing.isUsable {
+                    finished.append(existing)
+                }
+                instance = existing.instance + 1
             }
-            var state = FileState(key: key, fileName: name)
+            var state = FileState(key: key, instance: instance, fileName: name)
             state.addCitations(request.citations + pdu.citations)
             files[key] = state
             return true
         case .read:
-            guard let key = request.fileKey, var state = files[key], state.isUsable, !state.closed else {
+            // Taken out of the dictionary while it changes, so appending to its
+            // buffer does not copy the whole file on every response.
+            guard let key = request.fileKey, var state = files.removeValue(forKey: key) else {
+                return false
+            }
+            defer { files[key] = state }
+            guard state.isUsable, !state.closed else {
                 return false
             }
             if header.status == statusEndOfFile {
-                guard pdu.bytes.count == 72, u16(pdu.bytes, 64) == 9,
+                // An error response with no data carries one byte of ErrorData
+                // (MS-SMB2 2.2.2); some servers send none.
+                guard pdu.bytes.count == 72 || pdu.bytes.count == 73, u16(pdu.bytes, 64) == 9,
                       pdu.bytes[66] == 0, pdu.bytes[67] == 0,
                       u32(pdu.bytes, 68) == 0 else
                 {
@@ -435,7 +497,6 @@ nonisolated enum SMBObjectReader {
                 }
                 state.readEOF = request.offset
                 state.addCitations(request.citations + pdu.citations)
-                files[key] = state
                 return true
             }
             guard header.status == statusSuccess, pdu.bytes.count >= 80,
@@ -456,11 +517,13 @@ nonisolated enum SMBObjectReader {
             }
             state.readEOF = nil
             state.addCitations(request.citations + pdu.citations)
-            files[key] = state
             return true
         case .write:
-            guard header.status == statusSuccess, let key = request.fileKey,
-                  var state = files[key], state.isUsable, !state.closed,
+            guard let key = request.fileKey, var state = files.removeValue(forKey: key) else {
+                return false
+            }
+            defer { files[key] = state }
+            guard header.status == statusSuccess, state.isUsable, !state.closed,
                   pdu.bytes.count >= 80, u16(pdu.bytes, 64) == 17,
                   let remaining = u32(pdu.bytes, 72), remaining == 0,
                   let channelOffset = u16(pdu.bytes, 76), channelOffset == 0,
@@ -478,7 +541,6 @@ nonisolated enum SMBObjectReader {
             }
             state.readEOF = nil
             state.addCitations(request.citations + pdu.citations)
-            files[key] = state
             return true
         case .close:
             guard let key = request.fileKey, var state = files[key], state.isUsable,
@@ -562,6 +624,7 @@ nonisolated enum SMBObjectReader {
     }
 
     private static func pdus(in run: FollowStreamRun, snapshot: FollowStreamDirectionSnapshot) -> [PDU]? {
+        let marks = snapshot.segmentMarks.sorted { $0.offset < $1.offset }
         var result: [PDU] = []
         var offset = 0
         while offset < run.bytes.count {
@@ -581,7 +644,7 @@ nonisolated enum SMBObjectReader {
             }
             let pduRange = start ..< end
             guard let citations = citations(
-                for: pduRange, run: run, snapshot: snapshot
+                for: pduRange, run: run, snapshot: snapshot, sortedMarks: marks
             ), let first = citations.first else {
                 return nil
             }
@@ -599,7 +662,10 @@ nonisolated enum SMBObjectReader {
     }
 
     private static func citations(
-        for range: Range<Int>, run: FollowStreamRun, snapshot: FollowStreamDirectionSnapshot
+        for range: Range<Int>,
+        run: FollowStreamRun,
+        snapshot: FollowStreamDirectionSnapshot,
+        sortedMarks marks: [FollowStreamSegmentMark]
     )
         -> [SessionFrameProvenance]?
     {
@@ -618,7 +684,21 @@ nonisolated enum SMBObjectReader {
         var seen = Set<UInt64>()
         var found = [first]
         seen.insert(first.ordinal.rawValue)
-        for mark in snapshot.segmentMarks where mark.offset > start && mark.offset < end {
+        // First mark past `start`, by binary search over the sorted marks.
+        var low = 0
+        var high = marks.count
+        while low < high {
+            let middle = (low + high) / 2
+            if marks[middle].offset > start {
+                high = middle
+            } else {
+                low = middle + 1
+            }
+        }
+        for mark in marks[low...] {
+            guard mark.offset < end else {
+                break
+            }
             guard mark.provenance.locator != nil else {
                 return nil
             }

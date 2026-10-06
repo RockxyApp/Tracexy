@@ -323,6 +323,11 @@ extension MainContentCoordinator {
         mcpAccess.invalidateForProjectBoundary()
 
         cancelFollowStream(clearResult: true)
+        // Object and frame lists describe the outgoing Project's capture. Save All
+        // must never write them while another Project is on screen; the incoming
+        // Project's windows read their own capture again on demand.
+        exportObjects.cancel(clearLists: true)
+        allFrames.cancel(clearList: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         // Cancel evaluation only. A Project boundary is not a capture boundary:
         // clearing here would erase the outgoing Project's structured drafts and

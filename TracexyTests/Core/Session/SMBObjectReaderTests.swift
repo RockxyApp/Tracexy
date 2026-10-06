@@ -66,6 +66,69 @@ struct SMBObjectReaderTests {
         #expect(result.objects.map(\.body) == [Array("read data".utf8)])
     }
 
+    @Test(arguments: [true, false])
+    func acceptsAnEndOfFileErrorWithOrWithoutErrorData(_ errorData: Bool) throws {
+        let fixture = SMBFixture()
+        fixture.create("read.txt")
+        fixture.read(offset: 0, returned: Array("data".utf8))
+        fixture.readEOF(offset: 4, errorData: errorData)
+        fixture.close(eof: nil)
+        #expect(try fixture.scan().objects.map(\.body) == [Array("data".utf8)])
+    }
+
+    /// Finder and Windows open the share root (an empty name) before a file, and
+    /// most opens carry create contexts. Neither keeps the file from exporting.
+    @Test
+    func exportsPastTheShareRootOpenAndCreateContexts() throws {
+        let fixture = SMBFixture()
+        let rootID = Array(0x40 ... 0x4F).map(UInt8.init)
+        fixture.create("", fileID: rootID)
+        fixture.create("doc.txt", contexts: true)
+        fixture.write(offset: 0, bytes: [7, 8])
+        fixture.close(eof: 2)
+        fixture.close(eof: nil, fileID: rootID)
+
+        let objects = try fixture.scan().objects
+        #expect(objects.map(\.fileName) == ["doc.txt"])
+        #expect(objects.map(\.body) == [[7, 8]])
+    }
+
+    /// Complete files past the object bound are counted, and which ones are kept
+    /// follows the order they appear in, not dictionary order.
+    @Test
+    func countsFilesPastTheObjectBoundInAppearanceOrder() throws {
+        let fixture = SMBFixture()
+        let ids = (0 ..< 3).map { index in Array(repeating: UInt8(0x50 + index), count: 16) }
+        for (index, id) in ids.enumerated() {
+            fixture.create("file\(index).txt", fileID: id)
+            fixture.write(offset: 0, bytes: [UInt8(index)], fileID: id)
+            fixture.close(eof: 1, fileID: id)
+        }
+        for _ in 0 ..< 3 {
+            let bounded = try fixture.read(maxObjects: 2)
+            #expect(bounded.objects.map(\.fileName) == ["file0.txt", "file1.txt"])
+            #expect(bounded.omitted == 1)
+        }
+    }
+
+    /// A server may hand out a FileId again after CLOSE: both files export, under
+    /// distinct identities.
+    @Test
+    func keepsAClosedFileWhenItsFileIDIsReused() throws {
+        let fixture = SMBFixture()
+        fixture.create("first.txt")
+        fixture.write(offset: 0, bytes: [1])
+        fixture.close(eof: 1)
+        fixture.create("second.txt")
+        fixture.write(offset: 0, bytes: [2, 2])
+        fixture.close(eof: 2)
+
+        let objects = try fixture.scan().objects
+        #expect(objects.map(\.fileName) == ["first.txt", "second.txt"])
+        #expect(objects.map(\.body) == [[1], [2, 2]])
+        #expect(Set(objects.map(\.id)).count == 2)
+    }
+
     @Test
     func refusesMissingExtentAndSparseCoverage() throws {
         let noWitness = SMBFixture()
@@ -106,10 +169,15 @@ struct SMBObjectReaderTests {
         compound.create("compound.txt", nextCommand: 8)
         #expect(try compound.scan().objects.isEmpty)
 
+        // A file that would export, preceded by a transform header: only the
+        // header check can empty the result.
         let transformed = SMBFixture()
         transformed.addClientPDU(
             transformed.header(signature: [0xFD, 0x53, 0x4D, 0x42], command: 8, response: false)
         )
+        transformed.create("after-transform.txt")
+        transformed.write(offset: 0, bytes: [1])
+        transformed.close(eof: 1)
         #expect(try transformed.scan().objects.isEmpty)
     }
 
@@ -174,7 +242,13 @@ private final class SMBFixture {
 
     // MARK: Internal
 
-    func create(_ name: String, nextCommand: UInt32 = 0, fileID: [UInt8]? = nil, treeID: UInt32? = nil) {
+    func create(
+        _ name: String,
+        nextCommand: UInt32 = 0,
+        fileID: [UInt8]? = nil,
+        treeID: UInt32? = nil,
+        contexts: Bool = false
+    ) {
         let selectedFileID = fileID ?? self.fileID
         let selectedTreeID = treeID ?? self.treeID
         let nameBytes = Array(name.utf16.flatMap { le16($0) })
@@ -183,7 +257,15 @@ private final class SMBFixture {
         )
         request.append(contentsOf: le16(57) + [0, 0])
         request += le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(0) + le32(1) + le32(0) + le32(0)
-        request += le16(120) + le16(UInt16(nameBytes.count)) + le32(0) + le32(0) + nameBytes
+        // A create context (MxAc and QFid ride on most real opens) follows the
+        // name on an 8-byte boundary.
+        let context: [UInt8] = contexts ? Array(repeating: 0xC0, count: 24) : []
+        let contextOffset = contexts ? 120 + (nameBytes.count + 7) / 8 * 8 : 0
+        request += le16(120) + le16(UInt16(nameBytes.count))
+        request += le32(UInt32(contextOffset)) + le32(UInt32(context.count)) + nameBytes
+        if contexts {
+            request += Array(repeating: 0, count: contextOffset - 120 - nameBytes.count) + context
+        }
         let id = messageID - 1
         addClientPDU(request)
 
@@ -192,7 +274,7 @@ private final class SMBFixture {
         response += Array(repeating: 0, count: 40) // four times and allocation size
         response += le64(0) + le32(0) + le32(0) // EOF, attributes, reserved
         response += selectedFileID
-        response += le32(0) + le32(0) // no create contexts
+        response += contexts ? le32(152) + le32(UInt32(context.count)) + context : le32(0) + le32(0)
         addServerPDU(response)
     }
 
@@ -232,7 +314,9 @@ private final class SMBFixture {
         addServerPDU(response)
     }
 
-    func readEOF(offset: UInt64) {
+    /// An error response carries one byte of ErrorData (MS-SMB2 2.2.2); some
+    /// servers send none.
+    func readEOF(offset: UInt64, errorData: Bool = true) {
         let id = nextMessage()
         var request = header(command: 8, message: id, response: false)
         request += le16(49) + [0, 0] + le32(1) + le64(offset) + fileID
@@ -240,7 +324,7 @@ private final class SMBFixture {
         addClientPDU(request)
         addServerPDU(
             header(command: 8, message: id, response: true, status: 0xC0000011)
-                + le16(9) + [0, 0] + le32(0)
+                + le16(9) + [0, 0] + le32(0) + (errorData ? [0] : [])
         )
     }
 
@@ -276,6 +360,27 @@ private final class SMBFixture {
             .smb, contentsOf: url, expectedIdentity: loaded.identity, streams: streams,
             connections: connections, sourceToken: SavedCaptureStreamLoader.sourceToken(for: loaded.identity)
         )
+    }
+
+    /// The reader's own result for the one stream, under the given bounds.
+    func read(maxObjects: Int) throws -> (objects: [CaptureObject], omitted: Int) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("smb-\(UUID().uuidString).pcap")
+        let records = frames.enumerated().map {
+            ReplayCorpus.Frame(bytes: $0.element, offsetSeconds: $0.offset, linkType: LinkType.ethernet)
+        }
+        try Data(ReplayCorpus.classicPcapBytes(records)).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let loaded = try SavedCaptureStreamLoader(contentsOf: url).load()
+        let (streams, _) = CaptureObjectScanner.inputs(.smb, in: loaded.sessions, from: loaded.sessions)
+        let stream = try #require(streams.first)
+        var result: (objects: [CaptureObject], omitted: Int) = ([], 0)
+        try FollowStreamReader.readEach(
+            contentsOf: url, expectedIdentity: loaded.identity, tuples: [stream.tuple],
+            sourceToken: SavedCaptureStreamLoader.sourceToken(for: loaded.identity)
+        ) { followed in
+            result = SMBObjectReader.read(followed, sessionID: stream.sessionID, maxObjects: maxObjects)
+        }
+        return result
     }
 
     func header(

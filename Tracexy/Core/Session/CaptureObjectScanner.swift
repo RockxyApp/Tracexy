@@ -96,6 +96,10 @@ nonisolated enum CaptureObjectScanner {
     static let maximumObjects = 2_000
     static let maximumTotalBytes = 256 << 20
 
+    /// The longest name written, in UTF-8 bytes: a file name holds 255, less room
+    /// for the `(n)` a duplicate is given.
+    static let maximumSavableNameBytes = 240
+
     /// Lists `kind`'s objects. `streams` are the flows carrying the kind's protocol;
     /// `connections` every TCP connection and UDP flow, where FTP data and TFTP
     /// transfers are looked for.
@@ -121,6 +125,8 @@ nonisolated enum CaptureObjectScanner {
         }
         let read = Array(streams.prefix(maximumStreams))
         var found: [CaptureObject] = []
+        // SMB files the bounds left out inside a stream's own read.
+        var smbOmitted = 0
         switch kind {
         case .ftpData:
             var transfers: [FTPDataObjectReader.Transfer] = []
@@ -188,16 +194,18 @@ nonisolated enum CaptureObjectScanner {
                 for stream in streamsOn[result.tuple] ?? [] {
                     let remainingCount = max(0, maximumObjects - found.count)
                     let remainingBytes = max(0, maximumTotalBytes - totalSMBBytes)
-                    let objects = SMBObjectReader.objects(
-                        of: result, sessionID: stream.sessionID,
+                    let smbRead = SMBObjectReader.read(
+                        result, sessionID: stream.sessionID,
                         maxObjects: remainingCount, maxAggregateBytes: remainingBytes,
                         isCancelled: isCancelled
                     )
-                    for object in objects {
+                    smbOmitted += smbRead.omitted
+                    for object in smbRead.objects {
                         guard found.count < maximumObjects,
                               object.body.count <= maximumTotalBytes - totalSMBBytes else
                         {
-                            break
+                            smbOmitted += 1
+                            continue
                         }
                         totalSMBBytes += object.body.count
                         found.append(object)
@@ -230,7 +238,7 @@ nonisolated enum CaptureObjectScanner {
         }
         var objects: [CaptureObject] = []
         var totalBytes = 0
-        var omitted = 0
+        var omitted = smbOmitted
         for object in found {
             guard objects.count < maximumObjects, totalBytes + object.body.count <= maximumTotalBytes else {
                 omitted += 1
@@ -267,11 +275,13 @@ nonisolated enum CaptureObjectScanner {
     /// `name`, or `name(1)`, `name(2)`… — the first not in `taken`, as tshark
     /// names files that share a name.
     static func uniqueName(_ name: String, taken: Set<String>) -> String {
-        guard taken.contains(name) else {
+        // macOS volumes usually ignore case: `A.txt` and `a.txt` are one file.
+        let folded = Set(taken.map { $0.lowercased() })
+        guard folded.contains(name.lowercased()) else {
             return name
         }
         var counter = 1
-        while taken.contains("\(name)(\(counter))") {
+        while folded.contains("\(name)(\(counter))".lowercased()) {
             counter += 1
         }
         return "\(name)(\(counter))"
@@ -286,7 +296,23 @@ nonisolated enum CaptureObjectScanner {
             }
             return String(scalar)
         }.joined()
-        return escaped.isEmpty || escaped == "." || escaped == ".." ? "object" : escaped
+        guard !escaped.isEmpty, escaped != ".", escaped != ".." else {
+            return "object"
+        }
+        guard escaped.utf8.count > maximumSavableNameBytes else {
+            return escaped
+        }
+        // Too long for a file name: shorten the stem and keep a short extension.
+        var stem = escaped
+        var suffix = ""
+        if let dot = escaped.lastIndex(of: "."), escaped[dot...].utf8.count <= 16 {
+            stem = String(escaped[..<dot])
+            suffix = String(escaped[dot...])
+        }
+        while !stem.isEmpty, stem.utf8.count + suffix.utf8.count > maximumSavableNameBytes {
+            stem.removeLast()
+        }
+        return stem + suffix
     }
 
     // MARK: Private

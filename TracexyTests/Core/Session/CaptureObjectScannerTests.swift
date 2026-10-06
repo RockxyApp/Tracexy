@@ -32,6 +32,13 @@ struct CaptureObjectScannerTests {
             == ["hello", "hello from a gzip body"])
         #expect(list.objects.map(\.frameOrdinal) == [2, 4])
         #expect(CaptureObjectScanner.uniqueName("a.txt", taken: ["a.txt", "a.txt(1)"]) == "a.txt(2)")
+        // macOS volumes usually ignore case, so `A.TXT` already takes `a.txt`.
+        #expect(CaptureObjectScanner.uniqueName("a.txt", taken: ["A.TXT"]) == "a.txt(1)")
+        // A name too long for a file keeps its extension and fits with a `(n)` added.
+        let long = CaptureObjectScanner.savableName(String(repeating: "é", count: 300) + ".docx")
+        #expect(long.hasSuffix(".docx"))
+        #expect(long.utf8.count <= CaptureObjectScanner.maximumSavableNameBytes)
+        #expect(CaptureObjectScanner.uniqueName(long, taken: [long]).utf8.count <= 255)
 
         guard WiresharkOracle.isAvailable, let tshark = WiresharkOracle.tsharkURL else {
             return
