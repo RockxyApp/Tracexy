@@ -135,7 +135,7 @@ final class InterfacePreferences {
 
     // MARK: Internal
 
-    static let shared = InterfacePreferences(defaults: .standard)
+    static let shared = InterfacePreferences(defaults: TracexyIdentity.interfaceDefaults)
 
     private(set) var settings = InterfaceSettings()
 

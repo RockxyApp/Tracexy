@@ -41,21 +41,21 @@ final class SettingsLayoutUITests: XCTestCase {
         for index in 0 ..< rows.count {
             let row = rows.element(boundBy: index)
             row.click()
-            // Let the pane settle before measuring.
-            _ = settings.staticTexts.firstMatch.waitForExistence(timeout: 2)
+            waitForStableLayout(settings, rows: rows)
             assertRowsInside(settings, rows: rows, pane: row.identifier)
-            if row.identifier == "settings.tab.capture" {
-                attachScreenshot(of: settings, named: "settings-capture")
-            }
         }
     }
 
+    /// Waits until the window and the sidebar rows keep the same frames over two
+    /// reads, so a pane that is still laying out is not measured.
     @MainActor
-    private func attachScreenshot(of window: XCUIElement, named name: String) {
-        let shot = XCTAttachment(screenshot: window.screenshot())
-        shot.name = name
-        shot.lifetime = .keepAlways
-        add(shot)
+    private func waitForStableLayout(_ window: XCUIElement, rows: XCUIElementQuery) {
+        var previous: [CGRect] = []
+        _ = waitFor(timeout: 5) {
+            let current = [window.frame] + (0 ..< rows.count).map { rows.element(boundBy: $0).frame }
+            defer { previous = current }
+            return current == previous
+        }
     }
 
     /// Every sidebar row, and the leading part of it where the icon is drawn,

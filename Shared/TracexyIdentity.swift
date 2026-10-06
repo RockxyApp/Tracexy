@@ -111,6 +111,22 @@ struct TracexyIdentity {
         return defaults
     }()
 
+    /// Where interface choices (shown, renamed, optimizer off) are kept. Production
+    /// uses the ordinary app domain. An automated run gets a token-scoped suite of
+    /// its own that, unlike ``applicationDefaults``, is not cleared at launch, so a
+    /// run can check that a choice survives a relaunch without ever touching the
+    /// user's interface settings.
+    static let interfaceDefaults: UserDefaults = {
+        guard isRunningTests else {
+            return .standard
+        }
+        let suiteName = "\(current.defaultsPrefix).tests.\(testRunToken).interfaces"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("Automated runs require an isolated UserDefaults suite.")
+        }
+        return defaults
+    }()
+
     /// Whether this process must use throwaway per-run storage instead of the
     /// user's real Application Support directory.
     ///

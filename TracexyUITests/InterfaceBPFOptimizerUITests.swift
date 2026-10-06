@@ -45,7 +45,7 @@ final class InterfaceBPFOptimizerUITests: XCTestCase {
         let identifier = try XCTUnwrap(firstIdentifier)
 
         first.click()
-        XCTAssertEqual(first.value as? Int == 1, !wasEnabled)
+        XCTAssertTrue(waitFor(timeout: 5) { (first.value as? Int == 1) == !wasEnabled })
         XCTAssertEqual(second.value as? Int == 1, secondInitiallyEnabled)
 
         app.terminate()
@@ -54,10 +54,10 @@ final class InterfaceBPFOptimizerUITests: XCTestCase {
         let persisted = app.windows["Manage Interfaces"].descendants(matching: .checkBox)
             .matching(identifier: identifier).firstMatch
         XCTAssertTrue(persisted.waitForExistence(timeout: 10))
-        XCTAssertEqual(persisted.value as? Int == 1, !wasEnabled)
+        XCTAssertTrue(waitFor(timeout: 5) { (persisted.value as? Int == 1) == !wasEnabled })
 
         persisted.click()
-        XCTAssertEqual(persisted.value as? Int == 1, wasEnabled)
+        XCTAssertTrue(waitFor(timeout: 5) { (persisted.value as? Int == 1) == wasEnabled })
     }
 
     // MARK: Private
