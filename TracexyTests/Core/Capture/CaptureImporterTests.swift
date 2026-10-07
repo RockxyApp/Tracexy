@@ -151,10 +151,10 @@ struct CaptureImporterTests {
                 [0x28, 0xB5, 0x2F, 0xFD] as [UInt8],
                 [0x42, 0x5A, 0x68, 0x39],
                 [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00],
-                [0x04, 0x22, 0x4D, 0x18],
                 [0x1F, 0x9D, 0x90, 0x00],
             ],
-            ["Zstandard", "bzip2", "xz", "LZ4", "Unix compress"]
+            // LZ4 is expanded since the 51st slice (see LZ4CaptureImportTests).
+            ["Zstandard", "bzip2", "xz", "Unix compress"]
         )
     )
     func compressedSourceIsRefused(signature: [UInt8], container: String) throws {

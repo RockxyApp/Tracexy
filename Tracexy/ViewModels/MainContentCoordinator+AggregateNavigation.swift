@@ -19,6 +19,28 @@ import Foundation
 /// records the single bounded return point that U2 already provides.
 @MainActor
 extension MainContentCoordinator {
+    // MARK: Aggregate rollups (status bar)
+
+    var totalBytes: Int {
+        presentedSessions.reduce(0) { $0 + $1.totalBytes }
+    }
+
+    var totalBytesUp: Int {
+        presentedSessions.reduce(0) { $0 + $1.bytesUp }
+    }
+
+    var totalBytesDown: Int {
+        presentedSessions.reduce(0) { $0 + $1.bytesDown }
+    }
+
+    /// Sessions carrying a local process name, for the attribution-coverage chip.
+    var attributedSessionCount: Int {
+        presentedSessions.reduce(0) { $0 + ($1.processName == nil ? 0 : 1) }
+    }
+}
+
+@MainActor
+extension MainContentCoordinator {
     /// Overview Top Talkers: narrow to one host without touching anything else.
     ///
     /// A stale click — the workspace is already scoped to a *different* host, so
@@ -118,6 +140,43 @@ extension MainContentCoordinator {
             workspace.sidebarSelection = .sessions
             workspace.aggregateRequiresFindings = true
         }
+    }
+
+    /// Overview Response times: select the session carrying a row's slowest measured
+    /// interval, in the full table.
+    ///
+    /// It *selects* rather than filters. The rollup was computed over the visible
+    /// session set, so the session is already in scope, and narrowing to it would throw
+    /// away the comparison the table had just made. A session that has since left the
+    /// scope — a live refresh, a filter change — is a no-op rather than a selection of
+    /// something the row no longer counted.
+    func selectSessionForResponseTime(_ sessionID: UUID) {
+        guard let session = visibleSessions.first(where: { $0.id == sessionID }) else {
+            return
+        }
+        openSessionsPreservingScope()
+        select(session)
+    }
+
+    /// Statistics ▸ Findings: open one finding where it happened — select its session in
+    /// the full table and inspect its first cited frame in Layers. A session that has
+    /// left the view since the window last drew is a no-op, like Response times.
+    func revealFinding(_ finding: Finding) {
+        guard let session = visibleSessions.first(where: { $0.id == finding.sessionID }) else {
+            return
+        }
+        openSessionsPreservingScope()
+        let frame = finding.citedFrames.first
+        // Open the inspector before selecting, so the reveal scrolls within the
+        // table's final viewport.
+        if frame != nil, activeWorkspace.inspectorLayout == .hidden {
+            toggleInspectorBottom()
+        }
+        select(session)
+        guard let frame else {
+            return
+        }
+        inspectCitedFrame(sessionID: session.id, provenance: frame)
     }
 
     func openFlowPreservingScope() {

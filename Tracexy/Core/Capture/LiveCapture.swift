@@ -73,7 +73,7 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         }
         if let expression = config.bpf {
             do {
-                try applyFilter(expression, handle: handle)
+                try applyFilter(expression, optimizerFlag: config.bpfOptimizerFlag, handle: handle)
             } catch {
                 closeHandle(handle)
                 throw error
@@ -179,7 +179,7 @@ nonisolated final class LiveCapture: @unchecked Sendable {
     /// Compile and install a BPF filter on an open handle, freeing the compiled
     /// program on every path. Throws with libpcap's own error text (via
     /// `pcap_geterr`) so a bad expression surfaces the real reason.
-    private func applyFilter(_ expression: String, handle: OpaquePointer) throws {
+    private func applyFilter(_ expression: String, optimizerFlag: Int32, handle: OpaquePointer) throws {
         guard let compileFilter, let setFilter, let freeCode else {
             throw Failure(message: "BPF filtering is unavailable on this system.")
         }
@@ -191,7 +191,7 @@ nonisolated final class LiveCapture: @unchecked Sendable {
         defer { program.deallocate() }
         let netmaskUnknown: UInt32 = 0xFFFFFFFF
         let compiled = expression.withCString { cstr in
-            compileFilter(handle, program, cstr, 1, netmaskUnknown)
+            compileFilter(handle, program, cstr, optimizerFlag, netmaskUnknown)
         }
         guard compiled == 0 else {
             throw Failure(message: filterErrorMessage(handle: handle, fallback: "invalid BPF filter expression."))

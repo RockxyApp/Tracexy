@@ -173,16 +173,19 @@ struct OverviewScopeTests {
         defer { env.teardown() }
         let coordinator = env.coordinator
 
+        // The sample capture's reset follows observed data, so the termination analysis reports it as the
+        // more specific abort finding and supersedes the generic reset.
         let core = try #require(
-            coordinator.connectionAnalysisSnapshot.findings.first { $0.kind == .resetObserved },
-            "sample capture must retain its observed TCP reset"
+            coordinator.connectionAnalysisSnapshot.findings.first { $0.kind == .abortAfterDataObserved },
+            "sample capture must retain its observed TCP reset after data"
         )
+        #expect(!coordinator.connectionAnalysisSnapshot.findings.contains { $0.kind == .resetObserved })
         let finding = try #require(coordinator.findings.first { $0.id == core.id })
         let sessionID = SessionBuilder.sessionID(for: core.tuple)
 
         #expect(finding.id == core.id)
         #expect(finding.severity == .warning)
-        #expect(finding.title == "TCP reset observed")
+        #expect(finding.title == "Connection aborted after data")
         #expect(finding.sessionID == sessionID)
         #expect(finding.coverage == core.coverage)
         #expect(finding.citedObservationCount == core.citations.count)

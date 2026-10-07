@@ -29,17 +29,22 @@ nonisolated struct SessionAccumulator {
     ///     injectable on the same terms. `reset` rebuilds it with this configuration.
     ///   - tlsConfiguration: bounds for the owned ``TLSEvidenceTable``, injectable on
     ///     the same terms. `reset` rebuilds it with this configuration.
+    ///   - segmentSeriesConfiguration: bounds for the owned ``TCPSegmentSeriesTable``,
+    ///     injectable on the same terms. `reset` rebuilds it with this configuration.
     init(
         connectionConfiguration: ConnectionTable.Configuration = ConnectionTable.Configuration(),
         datagramConfiguration: DatagramEvidenceTable.Configuration = DatagramEvidenceTable.Configuration(),
-        tlsConfiguration: TLSEvidenceTable.Configuration = TLSEvidenceTable.Configuration()
+        tlsConfiguration: TLSEvidenceTable.Configuration = TLSEvidenceTable.Configuration(),
+        segmentSeriesConfiguration: TCPSegmentSeriesTable.Configuration = TCPSegmentSeriesTable.Configuration()
     ) {
         self.connectionConfiguration = connectionConfiguration
         self.datagramConfiguration = datagramConfiguration
         self.tlsConfiguration = tlsConfiguration
+        self.segmentSeriesConfiguration = segmentSeriesConfiguration
         connections = ConnectionTable(configuration: connectionConfiguration)
         datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
         tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+        segmentSeries = TCPSegmentSeriesTable(configuration: segmentSeriesConfiguration)
     }
 
     // MARK: Internal
@@ -89,7 +94,8 @@ nonisolated struct SessionAccumulator {
             capturedLength: context.capturedLength,
             originalLength: packet.originalLength,
             linkType: context.linkType,
-            locator: context.locator
+            locator: context.locator,
+            reassembledFrom: context.reassembledFrom
         )
         // A capture cannot realistically exhaust UInt64 ordinals, but malformed
         // test input or a future long-lived source must still never wrap back to
@@ -122,6 +128,10 @@ nonisolated struct SessionAccumulator {
         // excludes-counts any multi-frame recovered records the handoff carries; the
         // recovered facts are never propagated onto `enriched`/the representative.
         tlsEvidence.offer(packet, application: outcome.application, provenance: provenance, loss: context.loss)
+        // Offer the same original per-frame packet to the per-segment series table. It
+        // retains TCP header fields only, as a complete capture-order prefix per flow,
+        // and derives nothing — the TCP health charts are computed from it one layer up.
+        segmentSeries.offer(packet, provenance: provenance, loss: context.loss)
         let priorClient: IPEndpoint? = enriched.fiveTuple.flatMap { key in
             states[key]?.orientedEndpoints(proto: key.proto).client
         }
@@ -145,10 +155,15 @@ nonisolated struct SessionAccumulator {
         // the session fold so its direction is judged against the client the
         // session knows at this point. A tupleless frame still carries wire bytes
         // and is counted as unattributed rather than dropped.
+        var frameSessionID: UUID?
+        if let key = enriched.fiveTuple {
+            frameSessionID = sessionID(for: key)
+        }
         trafficTimeline.add(
             timestamp: packet.timestamp,
             originalLength: packet.originalLength,
-            direction: trafficDirection(of: enriched)
+            direction: trafficDirection(of: enriched),
+            sessionID: frameSessionID
         )
         return selection
     }
@@ -175,6 +190,7 @@ nonisolated struct SessionAccumulator {
             connections: connections.snapshot(),
             datagramEvidence: datagrams.snapshot(),
             tlsEvidence: tlsEvidence.snapshot(),
+            segmentSeries: segmentSeries.snapshot(),
             trafficTimeline: trafficTimeline.timeline()
         )
     }
@@ -190,7 +206,9 @@ nonisolated struct SessionAccumulator {
         connections = ConnectionTable(configuration: connectionConfiguration)
         datagrams = DatagramEvidenceTable(configuration: datagramConfiguration)
         tlsEvidence = TLSEvidenceTable(configuration: tlsConfiguration)
+        segmentSeries = TCPSegmentSeriesTable(configuration: segmentSeriesConfiguration)
         trafficTimeline.reset()
+        sessionIDs.removeAll(keepingCapacity: false)
         nextOrdinal = 1
     }
 
@@ -215,12 +233,19 @@ nonisolated struct SessionAccumulator {
     /// connection and datagram tables. Rebuilt from `tlsConfiguration` on `reset`.
     private var tlsEvidence: TLSEvidenceTable
     private let tlsConfiguration: TLSEvidenceTable.Configuration
+
+    /// The owned per-segment TCP series table, folded once per accepted frame beside
+    /// the TLS table. Rebuilt from `segmentSeriesConfiguration` on `reset`.
+    private var segmentSeries: TCPSegmentSeriesTable
+    private let segmentSeriesConfiguration: TCPSegmentSeriesTable.Configuration
     /// The one-based capture ordinal handed to the next common-path frame, in
     /// accepted-frame order. Independent of batch chunking and of timestamp order.
     private var nextOrdinal: UInt64 = 1
     /// Bounded capture-wide bytes-over-time, folded once per common-path frame
     /// beside the tables. Reset with them at every capture boundary.
     private var trafficTimeline = TrafficTimelineAccumulator()
+    /// Each five-tuple's session id, derived once per session rather than per frame.
+    private var sessionIDs: [FiveTuple: UUID] = [:]
 
     /// Apply the connection table's bounded first-record application metadata to a
     /// local packet copy. This is the exact enrichment the session-owned reassembler
@@ -246,6 +271,15 @@ nonisolated struct SessionAccumulator {
 
     /// A frame's direction relative to the client of the session it just folded
     /// into — the same client `SessionSummary.bytesUp` is measured against.
+    private mutating func sessionID(for key: FiveTuple) -> UUID {
+        if let id = sessionIDs[key] {
+            return id
+        }
+        let id = SessionBuilder.sessionID(for: key)
+        sessionIDs[key] = id
+        return id
+    }
+
     private func trafficDirection(of packet: DecodedPacket) -> TrafficDirection {
         guard let key = packet.fiveTuple, let state = states[key] else {
             return .unattributed
@@ -377,9 +411,13 @@ private extension SessionAccumulator {
             // to the batch summing `originalLength` where `source == client`.
             let bytesUp = bytesBySource[client] ?? 0
             let bytesDown = totalBytes - bytesUp
+            let packetsUp = packetsBySource[client] ?? 0
 
             let stack = rich.protocolStack.filter { $0 != .ipv4 && $0 != .ipv6 }
-            let protocolStack: [ProtocolKind] = stack.isEmpty ? [rich.transport ?? .other] : stack
+            var protocolStack: [ProtocolKind] = stack.isEmpty ? [rich.transport ?? .other] : stack
+            if let negotiatedApplication, !protocolStack.contains(negotiatedApplication) {
+                protocolStack.append(negotiatedApplication)
+            }
             let id = SessionBuilder.sessionID(for: key)
             // One untimed contributing frame makes the session's own span unknown:
             // a start/duration derived from the timed subset would silently claim
@@ -408,6 +446,10 @@ private extension SessionAccumulator {
                 latencyMilliseconds: latency,
                 bytesUp: bytesUp,
                 bytesDown: bytesDown,
+                packetsUp: packetsUp,
+                packetsDown: totalPackets - packetsUp,
+                tcpCompleteness: tcpCompleteness,
+                frameLengths: frameLengths,
                 decodedLayers: rich.layers,
                 representativeBytes: rich.rawBytes,
                 sni: sni,
@@ -417,7 +459,8 @@ private extension SessionAccumulator {
                 firstCaptureOrdinal: firstOrdinal?.rawValue,
                 untimedFrameCount: untimedFrameCount,
                 captureInterfaceIDs: interfaceIDs.sorted(),
-                captureInterfaceOverflow: interfaceOverflow
+                captureInterfaceOverflow: interfaceOverflow,
+                messageTally: messageTally
             )
         }
 
@@ -483,8 +526,17 @@ private extension SessionAccumulator {
         /// resolved at summary time against the final client endpoint.
         private var bytesBySource: [IPEndpoint?: Int] = [:]
         private var totalBytes = 0
+        private var packetsBySource: [IPEndpoint?: Int] = [:]
+        private var totalPackets = 0
+        private var tcpCompleteness = TCPCompleteness()
+        private var frameLengths = FrameLengthHistogram()
+        /// Who sent the SYN-ACK, so the handshake's ACK is the one its peer sends.
+        private var synAckSource: IPEndpoint?
 
         private var sni: String?
+        /// HTTP/2 or WebSocket, once a frame shows the session switched to it.
+        private var negotiatedApplication: ProtocolKind?
+        private var messageTally = SessionMessageTally()
         private var dnsQuery: String?
         private var processName: String?
         /// Unique published answers in first-seen order, bounded by the publication
@@ -570,12 +622,43 @@ private extension SessionAccumulator {
                 + (packet.dnsQuery == nil ? 0 : 50)
         }
 
+        /// Wireshark's completeness stages, from each segment's flags alone.
+        private mutating func foldCompleteness(_ packet: DecodedPacket) {
+            guard let facts = packet.tcpFacts else {
+                return
+            }
+            let flags = facts.flags
+            if flags.contains(.syn) {
+                if flags.contains(.ack) {
+                    tcpCompleteness.insert(.synAck)
+                    synAckSource = packet.sourceEndpoint
+                } else {
+                    tcpCompleteness.insert(.syn)
+                }
+            } else if flags.contains(.ack), let synAckSource, synAckSource != packet.sourceEndpoint {
+                tcpCompleteness.insert(.ack)
+            }
+            if facts.payloadLength > 0 {
+                tcpCompleteness.insert(.data)
+            }
+            if flags.contains(.fin) {
+                tcpCompleteness.insert(.fin)
+            }
+            if flags.contains(.rst) {
+                tcpCompleteness.insert(.rst)
+            }
+        }
+
         /// Fold the parts of a packet that accumulate the same way for the first
         /// and every subsequent packet: byte tallies, the "firsts", DNS answers
         /// and timing, and the status inputs.
         private mutating func fold(_ packet: DecodedPacket) {
             bytesBySource[packet.sourceEndpoint, default: 0] += packet.originalLength
             totalBytes += packet.originalLength
+            packetsBySource[packet.sourceEndpoint, default: 0] += 1
+            totalPackets += 1
+            frameLengths.record(packet.originalLength)
+            foldCompleteness(packet)
             if packet.timestamp == nil {
                 untimedFrameCount += 1
             }
@@ -583,6 +666,10 @@ private extension SessionAccumulator {
             if sni == nil, let value = packet.sni {
                 sni = value
             }
+            if negotiatedApplication == nil, let value = packet.negotiatedApplication {
+                negotiatedApplication = value
+            }
+            messageTally.record(packet)
             if dnsQuery == nil, let query = packet.dnsQuery, !query.isEmpty {
                 dnsQuery = query
             }

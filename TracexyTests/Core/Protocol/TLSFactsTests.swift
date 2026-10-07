@@ -95,7 +95,7 @@ private extension DecodedPacket {
 
 // MARK: - TLSFactsTests
 
-/// Neutral, typed per-packet TLS record/hello facts (N3C1). These assert wire facts and
+/// Neutral, typed per-packet TLS record/hello facts. These assert wire facts and
 /// completeness only — never a policy verdict, and never a selected version the standard
 /// forbids concluding from partial framing.
 @Suite("TLS neutral facts")

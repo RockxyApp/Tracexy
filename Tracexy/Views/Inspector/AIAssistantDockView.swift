@@ -423,7 +423,11 @@ struct AIAssistantDockView: View {
 
     private func contextSummary(for session: SessionSummary) -> String {
         let protocolLabel = session.primaryProtocol.label
-        return "\(protocolLabel) · \(session.host) · \(session.destinationEndpoint)"
+        let endpoint = session.destinationEndpoint
+        guard !session.host.isEmpty, !endpoint.hasPrefix(session.host) else {
+            return String(localized: "\(protocolLabel) to \(endpoint)")
+        }
+        return String(localized: "\(protocolLabel) to \(session.host) (\(endpoint))")
     }
 
     private func scrollToTranscriptBottom(_ proxy: ScrollViewProxy) {

@@ -173,6 +173,9 @@ extension MainContentCoordinator {
         {
             return
         }
+        sessionTimeDisplay.selectedFrame = frame.provenance.timestamp.map {
+            FrameTimeReference(sessionID: sessionID, ordinal: frame.ordinal, timestamp: $0)
+        }
         inspectCitedFrame(sessionID: sessionID, provenance: frame.provenance)
     }
 

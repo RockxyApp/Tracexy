@@ -178,12 +178,17 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     /// The bounded TLS record evidence folded from the same accepted frames. Additive
     /// evidence alongside `sessions`; not yet surfaced in Views.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// The bounded per-segment TCP series folded from the same accepted frames — one
+    /// complete capture-order prefix per flow, the input to the TCP health charts.
+    let segmentSeries: TCPSegmentSeriesTable.Snapshot
     /// The passive connection analysis assessed exactly once from `connections`.
     /// Additive evidence alongside `sessions`; not yet surfaced in Views.
     let connectionAnalysis: ConnectionAnalysisSnapshot
     /// The passive datagram analysis assessed exactly once from `datagramEvidence`.
     /// Additive evidence alongside `sessions`; not yet surfaced in Views.
     let datagramAnalysis: DatagramAnalysisSnapshot
+    /// The passive TLS analysis assessed exactly once from `tlsEvidence`.
+    let tlsAnalysis: TLSAnalysisSnapshot
     /// Bounded capture-wide bytes over time by session direction, folded from the
     /// same accepted frames.
     let trafficTimeline: TrafficTimeline
@@ -310,6 +315,7 @@ nonisolated final class SavedCaptureStreamLoader {
         var activity = CaptureActivityAccumulator(maxBuckets: configuration.activityBucketCap)
         var metadata = CaptureMetadataAccumulator()
         var totalFrames = 0
+        var sequential = SequentialFrameDecoder()
         // A deterministic, opaque per-file token for evidence locators, derived
         // only from the opened file's identity — computed once, never per frame.
         let sourceToken = Self.sourceToken(for: reader.identity)
@@ -322,6 +328,7 @@ nonisolated final class SavedCaptureStreamLoader {
             tail: &tail,
             activity: &activity,
             metadata: &metadata,
+            sequential: &sequential,
             totalFrames: &totalFrames
         )
         guard let defaultLinkType = reader.defaultLinkType else {
@@ -358,8 +365,10 @@ nonisolated final class SavedCaptureStreamLoader {
             connections: investigation.connections,
             datagramEvidence: fold.datagramEvidence,
             tlsEvidence: fold.tlsEvidence,
+            segmentSeries: fold.segmentSeries,
             connectionAnalysis: investigation.connectionAnalysis,
             datagramAnalysis: investigation.datagramAnalysis,
+            tlsAnalysis: investigation.tlsAnalysis,
             trafficTimeline: fold.trafficTimeline,
             evidence: evidence,
             retainedTail: tail,
@@ -387,6 +396,7 @@ nonisolated final class SavedCaptureStreamLoader {
         tail: inout RetainedFrameBuffer,
         activity: inout CaptureActivityAccumulator,
         metadata: inout CaptureMetadataAccumulator,
+        sequential: inout SequentialFrameDecoder,
         totalFrames: inout Int
     )
         throws -> CaptureStreamCompletion
@@ -401,7 +411,9 @@ nonisolated final class SavedCaptureStreamLoader {
                     evidence: &evidence,
                     tail: &tail,
                     activity: &activity,
-                    metadata: &metadata
+                    metadata: &metadata,
+                    sequential: &sequential,
+                    ordinal: UInt64(totalFrames + 1)
                 )
                 totalFrames += 1
                 if totalFrames % configuration.progressStride == 0 {
@@ -423,7 +435,9 @@ nonisolated final class SavedCaptureStreamLoader {
         evidence: inout [UUID: CaptureEvidenceReference],
         tail: inout RetainedFrameBuffer,
         activity: inout CaptureActivityAccumulator,
-        metadata: inout CaptureMetadataAccumulator
+        metadata: inout CaptureMetadataAccumulator,
+        sequential: inout SequentialFrameDecoder,
+        ordinal: UInt64
     ) {
         let frame = CapturedFrame(
             bytes: event.bytes,
@@ -434,8 +448,12 @@ nonisolated final class SavedCaptureStreamLoader {
         )
         // The frame carries its own link type, so `decodePacket` uses it directly;
         // the default is only a fallback and is never reached here.
-        let packet = SessionBuilder.decodePacket(
-            frame, linkType: reader.defaultLinkType ?? event.reference.linkType
+        let locator = SessionEvidenceLocator(sourceToken: sourceToken, offset: event.reference.payloadOffset)
+        let packet = sequential.decode(
+            frame,
+            linkType: reader.defaultLinkType ?? event.reference.linkType,
+            ordinal: ordinal,
+            locator: locator
         )
 
         // The connection fold's provenance carries an opaque locator: the per-file
@@ -445,11 +463,10 @@ nonisolated final class SavedCaptureStreamLoader {
         let context = SessionFrameContext(
             capturedLength: event.reference.capturedLength,
             linkType: event.reference.linkType,
-            locator: SessionEvidenceLocator(
-                sourceToken: sourceToken, offset: event.reference.payloadOffset
-            ),
+            locator: locator,
             loss: .unknown,
-            interfaceID: event.reference.interfaceID
+            interfaceID: event.reference.interfaceID,
+            reassembledFrom: sequential.lastReassembledFrom
         )
 
         // A returned id means this frame became its session's representative, so

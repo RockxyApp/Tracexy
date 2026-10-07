@@ -30,9 +30,15 @@ nonisolated enum SessionBuilder {
         -> SessionFoldSnapshot
     {
         var accumulator = SessionAccumulator(connectionConfiguration: connectionConfiguration)
-        for frame in frames {
-            let packet = decodePacket(frame, linkType: linkType)
-            accumulator.add(packet, context: frameContext(for: frame, linkType: linkType))
+        var sequential = SequentialFrameDecoder()
+        for (index, frame) in frames.enumerated() {
+            let packet = sequential.decode(frame, linkType: linkType, ordinal: UInt64(index + 1))
+            accumulator.add(
+                packet,
+                context: frameContext(
+                    for: frame, linkType: linkType, reassembledFrom: sequential.lastReassembledFrom
+                )
+            )
         }
         return accumulator.foldSnapshot()
     }
@@ -42,12 +48,19 @@ nonisolated enum SessionBuilder {
     /// default), no evidence locator — batch and live frames fabricate none — and
     /// unknown loss. Shared by the batch build and the live engine so both supply
     /// identical frame metadata.
-    static func frameContext(for frame: CapturedFrame, linkType: UInt32) -> SessionFrameContext {
+    static func frameContext(
+        for frame: CapturedFrame,
+        linkType: UInt32,
+        reassembledFrom: [SessionFrameProvenance] = []
+    )
+        -> SessionFrameContext
+    {
         SessionFrameContext(
             capturedLength: frame.capturedLength,
             linkType: frame.linkType ?? linkType,
             locator: nil,
-            loss: .unknown
+            loss: .unknown,
+            reassembledFrom: reassembledFrom
         )
     }
 
@@ -78,7 +91,11 @@ nonisolated enum SessionBuilder {
     /// order (last write wins), identical whether accumulated incrementally or in
     /// a single batch pass.
     static func learnResolved(from packet: DecodedPacket, into resolved: inout [String: String]) {
-        guard packet.appProtocol == .dns, let name = packet.dnsQuery, !name.isEmpty else {
+        // Multicast DNS answers are how Bonjour devices name themselves on the local
+        // network, so they teach names exactly like unicast DNS answers.
+        guard [.dns, .mdns, .llmnr].contains(packet.appProtocol),
+              let name = packet.dnsQuery, !name.isEmpty else
+        {
             return
         }
         for answer in packet.dnsAnswers where !answer.hasPrefix("CNAME") {
@@ -96,7 +113,7 @@ nonisolated enum SessionBuilder {
     )
         -> String
     {
-        if appProto == .dns, let query = dnsQuery {
+        if appProto == .dns || appProto == .mdns || appProto == .llmnr, let query = dnsQuery {
             return query
         }
         if let sni {

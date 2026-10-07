@@ -60,6 +60,8 @@ actor LiveSessionEngine {
     func reset(epoch: Int) {
         self.epoch = epoch
         accumulator.reset()
+        sequential = SequentialFrameDecoder()
+        nextOrdinal = 1
     }
 
     /// Decode and fold a batch of frames into the accumulator. Frames from a
@@ -96,14 +98,21 @@ actor LiveSessionEngine {
         let aligned = locators?.count == frames.count ? locators : nil
         let matched = locators == nil || aligned != nil
         for (index, frame) in frames.enumerated() {
-            let packet = decode(frame, linkType)
+            var packet = decode(frame, linkType)
+            // Fragmented datagrams are rebuilt on the frame that completes them, with
+            // the same ordinals the accumulator assigns (one per accepted frame).
+            sequential.reassemble(
+                &packet, frame: frame, linkType: linkType, ordinal: nextOrdinal, locator: aligned?[index]
+            )
+            nextOrdinal += 1
             // Per-frame link type stays intrinsic-first (the frame's own DLT wins,
             // else the source default); no bytes, URL or file identity enter state.
             let context = SessionFrameContext(
                 capturedLength: frame.capturedLength,
                 linkType: frame.linkType ?? linkType,
                 locator: aligned?[index],
-                loss: loss
+                loss: loss,
+                reassembledFrom: sequential.lastReassembledFrom
             )
             accumulator.add(packet, context: context)
         }
@@ -148,6 +157,10 @@ actor LiveSessionEngine {
     // MARK: Private
 
     private let decode: Decode
+    /// Rebuilds fragmented IP datagrams across batches; reset with the accumulator.
+    private var sequential = SequentialFrameDecoder()
+    /// The one-based ordinal of the next accepted frame, matching the accumulator's.
+    private var nextOrdinal: UInt64 = 1
     /// The shared incremental accumulator — the same fold `SessionBuilder.build`
     /// runs, so live snapshots and batch rebuilds stay byte-identical. It also owns
     /// the connection table folded in lock-step. Initialized with the injected

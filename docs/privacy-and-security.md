@@ -16,6 +16,9 @@ page states plainly what the app does and does not do today.
   including data you may have forgotten was present. Tracexy does not claim to rewrite or redact these
   evidence-preserving formats. When a Privacy protection is enabled, every raw export requires explicit
   acknowledgement before the save panel opens.
+- **Location lookups are local.** GeoIP/ASN answers come only from database files you choose; Tracexy
+  ships none, downloads none, and never sends an address to a lookup service. Private and special-purpose
+  addresses are never looked up.
 
 ### Project isolation
 
@@ -49,6 +52,12 @@ the free-form decoded summary; IP masking replaces literal IPv4/IPv6 addresses i
 fields with a fixed placeholder. The document records the applied protections as machine-readable
 metadata. A version-1 document with packet bytes is produced only when every protection is disabled.
 
+**Mask IP addresses** also applies to every **File → Export Investigation** file (both CSVs, the JSON
+and the Markdown report): hosts, endpoints, your notes, finding text, the session expression and the
+capture name have each IPv4/IPv6 literal replaced by `[masked-ip]`, and an endpoint keeps its port
+(`[masked-ip]:443`), including an `address:port` written in the middle of a note. The Save panel says
+when addresses will be masked.
+
 These controls do not sanitize raw pcap/pcapng files. Use the warning as a hard trust boundary: export
 those formats only when you intend to handle the result as sensitive evidence. The **Auto-clear**
 choice applies only to bounded summaries in the local History database. Tracexy enforces it at launch,
@@ -64,7 +73,8 @@ JSON-RPC over stdin and stdout to a client you start. **It never opens a network
 your network or on this Mac can connect to it, and there is no listener to secure.
 
 What a client can ask for is deliberately small: the scope description, one page of stored captures,
-and one page of a capture's session summaries. There is no tool for packet bytes, capture files, file
+one page of a capture's session summaries, and one page of a capture's findings (kind, severity, counts
+and the session's ID — never a host, address or note). There is no tool for packet bytes, capture files, file
 paths, raw frames, capture control, arbitrary SQL, or writes of any kind. Filtering is applied to the
 one examined page, and a process or host filter is refused unless you disclosed that field — so a
 filter can never be used to guess a value you kept private.

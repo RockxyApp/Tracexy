@@ -88,6 +88,102 @@ struct SessionEvidencePresentationTests {
         #expect(detail.contains("cipher 0x1301"))
     }
 
+    @Test("A plaintext alert row names its level and description; an encrypted one does not")
+    func tlsAlertCopyNamesTheTwoBytes() {
+        let plaintext = TLSEvidenceObservation(
+            sessionID: SessionBuilder.sessionID(for: tuple),
+            tuple: tuple,
+            direction: .bToA,
+            provenance: provenance(9),
+            recordIndex: 0,
+            fact: TLSRecordFact(
+                contentType: 21,
+                legacyRecordVersion: 0x0303,
+                declaredBodyLength: 2,
+                capturedBodyLength: 2,
+                handshake: nil,
+                alert: TLSAlertFact(level: 2, description: 48)
+            )
+        )
+        let detail = SessionEvidenceCopy.tlsRecordDetail(plaintext)
+        #expect(detail.contains("fatal"))
+        #expect(detail.contains("unknown_ca"))
+
+        // An encrypted alert carries no fact, so the row stays at presence.
+        let encrypted = TLSEvidenceObservation(
+            sessionID: SessionBuilder.sessionID(for: tuple),
+            tuple: tuple,
+            direction: .bToA,
+            provenance: provenance(10),
+            recordIndex: 0,
+            fact: TLSRecordFact(
+                contentType: 21,
+                legacyRecordVersion: 0x0303,
+                declaredBodyLength: 26,
+                capturedBodyLength: 26,
+                handshake: nil
+            )
+        )
+        let opaque = SessionEvidenceCopy.tlsRecordDetail(encrypted)
+        #expect(!opaque.contains("fatal"))
+        #expect(SessionEvidenceCopy.tlsRecordTitle(encrypted.fact) == "TLS Alert record")
+    }
+
+    @Test("Retained DNS and ICMP observations join the same frame timeline")
+    func datagramObservationsJoinTheTimeline() throws {
+        let sessionID = SessionBuilder.sessionID(for: tuple)
+        let datagramTuple = FiveTuple(
+            proto: .udp,
+            source: IPEndpoint(ip: "192.0.2.10", port: 51_000),
+            destination: IPEndpoint(ip: "203.0.113.53", port: 53)
+        )
+        let dns = try DatagramEvidenceObservation(
+            sessionID: sessionID,
+            tuple: datagramTuple,
+            direction: .aToB,
+            provenance: provenance(3),
+            kind: .dns(DNSMessageFacts(dnsHeader: PacketBuffer(
+                [0xAB, 0xCD, 0x81, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            )))
+        )
+        let icmp = DatagramEvidenceObservation(
+            sessionID: sessionID,
+            tuple: datagramTuple,
+            direction: .bToA,
+            provenance: provenance(4),
+            kind: .icmp(ICMPMessageFacts(
+                family: .ipv4,
+                type: 3,
+                code: 3,
+                quotedFlow: ICMPQuotedFlowFacts(
+                    proto: .udp,
+                    source: datagramTuple.a,
+                    destination: datagramTuple.b
+                )
+            ))
+        )
+        let summary = DatagramEvidenceSummary(
+            sessionID: sessionID,
+            tuple: datagramTuple,
+            observations: [dns, icmp],
+            omittedObservationCount: 0,
+            lossKnowledge: .noLossReported,
+            snapLengthTruncationObserved: false
+        )
+
+        let items = SessionEvidenceItem.timeline(connections: [], tls: nil, datagrams: summary)
+
+        #expect(items.map(\.kind) == [.dns, .icmp])
+        #expect(items.map(\.categoryLabel) == ["DNS", "ICMP"])
+        #expect(items[0].title == "DNS response")
+        #expect(items[0].detail.contains("name does not exist"))
+        #expect(items[0].detail.contains("transaction 0xABCD"))
+        #expect(items[1].title == "ICMP destination unreachable")
+        // The quoted flow is the sixth slice's fact; the row must name it, not guess.
+        #expect(items[1].detail.contains("quotes UDP 192.0.2.10:51000 → 203.0.113.53:53"))
+        #expect(items.map(\.provenance.count) == [1, 1])
+    }
+
     @Test("Coverage copy keeps unknown, omission, and overflow caveats neutral")
     func coverageCopyIsNeutral() {
         let labels = SessionEvidenceCopy.limitationLabels([

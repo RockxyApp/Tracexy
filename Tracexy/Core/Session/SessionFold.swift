@@ -19,8 +19,10 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
         linkType: UInt32,
         locator: SessionEvidenceLocator? = nil,
         loss: CaptureLossKnowledge = .unknown,
-        interfaceID: Int? = nil
+        interfaceID: Int? = nil,
+        reassembledFrom: [SessionFrameProvenance] = []
     ) {
+        self.reassembledFrom = reassembledFrom
         self.capturedLength = capturedLength
         self.linkType = linkType
         self.locator = locator
@@ -39,6 +41,9 @@ nonisolated struct SessionFrameContext: Hashable, Sendable {
     /// Live-spool and saved-file folds mint locators when their source is available;
     /// batch callers and evidence-source failures legitimately leave this `nil`.
     let locator: SessionEvidenceLocator?
+    /// For a frame that completed a fragmented IP datagram, the frames whose
+    /// fragments made it; carried onto the frame's provenance.
+    let reassembledFrom: [SessionFrameProvenance]
     /// The capture interface (pcapng IDB index within its section) this frame was
     /// recorded on, when the source states one. Batch and live folds leave it `nil`.
     let interfaceID: Int?
@@ -63,12 +68,14 @@ nonisolated struct SessionFoldSnapshot: Sendable {
         connections: ConnectionTable.Snapshot,
         datagramEvidence: DatagramEvidenceTable.Snapshot,
         tlsEvidence: TLSEvidenceTable.Snapshot,
+        segmentSeries: TCPSegmentSeriesTable.Snapshot,
         trafficTimeline: TrafficTimeline = .empty
     ) {
         self.sessions = sessions
         self.connections = connections
         self.datagramEvidence = datagramEvidence
         self.tlsEvidence = tlsEvidence
+        self.segmentSeries = segmentSeries
         self.trafficTimeline = trafficTimeline
     }
 
@@ -84,6 +91,11 @@ nonisolated struct SessionFoldSnapshot: Sendable {
     /// per-frame records are retained with exact provenance; multi-frame recovered
     /// records are excluded-counted, never cited.
     let tlsEvidence: TLSEvidenceTable.Snapshot
+    /// Bounded, cross-path-equal per-segment TCP series for the same ordered frames.
+    /// Additive alongside `tlsEvidence`; keyed by tuple-derived session id. Each flow
+    /// holds a complete capture-order *prefix* of its segments, so every series the
+    /// analysis derives from it is exact over the run it covers.
+    let segmentSeries: TCPSegmentSeriesTable.Snapshot
     /// Bounded capture-wide bytes over time, split by session direction, for the
     /// same accepted frames. Additive; callers that assemble a snapshot from parts
     /// without a timeline get an empty one.

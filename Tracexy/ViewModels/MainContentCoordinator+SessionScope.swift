@@ -69,6 +69,7 @@ extension MainContentCoordinator {
         // to: keeping the drill-in history would offer a return that re-narrows
         // the list the user just cleared.
         workspace.sessionScopeReturnStack = []
+        workspace.sessionScopeForwardStack = []
         // Retires the accepted query, cancels any in-flight evaluation and bumps
         // the workspace's request ID, so a late result cannot re-narrow the list
         // the user just widened. The editable draft is capture-local user state
@@ -115,6 +116,8 @@ extension MainContentCoordinator {
             stack.removeFirst(stack.count - SessionScopeReturnPoint.maximumDepth)
         }
         workspace.sessionScopeReturnStack = stack
+        // A new drill-in starts a new branch, as in a browser.
+        workspace.sessionScopeForwardStack = []
     }
 
     /// Back to Previous Scope: restores the newest still-valid recorded scope and
@@ -133,7 +136,67 @@ extension MainContentCoordinator {
             }
             return false
         }
+        let leaving = SessionScopeReturnPoint(workspace: workspace, startGeneration: startGeneration)
         workspace.sessionScopeReturnStack = Array(valid.dropLast())
+        applySessionScope(point, in: workspace)
+        var forward = workspace.sessionScopeForwardStack.filter { $0.target.startGeneration == startGeneration }
+        forward.append(SessionScopeForwardEntry(
+            target: leaving,
+            departure: SessionScopeReturnPoint(workspace: workspace, startGeneration: startGeneration)
+        ))
+        if forward.count > SessionScopeReturnPoint.maximumDepth {
+            forward.removeFirst(forward.count - SessionScopeReturnPoint.maximumDepth)
+        }
+        workspace.sessionScopeForwardStack = forward
+        return true
+    }
+
+    // MARK: Bounded forward
+
+    /// Whether Forward to Next Scope can redo a Back right now: an entry exists
+    /// for this capture generation and the workspace still stands in the scope
+    /// that Back restored.
+    var canGoForwardToNextSessionScope: Bool {
+        nextSessionScopeForwardEntry() != nil
+    }
+
+    /// Pure, like ``previousSessionScopeReturnPoint(in:)``: safe to read while drawing.
+    func nextSessionScopeForwardEntry(in workspace: WorkspaceState? = nil) -> SessionScopeForwardEntry? {
+        let workspace = workspace ?? activeWorkspace
+        guard let entry = workspace.sessionScopeForwardStack.last,
+              entry.target.startGeneration == startGeneration,
+              entry.departure.matchesScope(workspace) else
+        {
+            return nil
+        }
+        return entry
+    }
+
+    /// Forward to Next Scope: reapplies the scope the newest Back undid and records
+    /// the current one so Back returns here again. When the user has since moved
+    /// to another scope, the forward history is dropped and nothing changes.
+    @discardableResult
+    func goForwardToNextSessionScope(in workspace: WorkspaceState? = nil) -> Bool {
+        let workspace = workspace ?? activeWorkspace
+        guard let entry = nextSessionScopeForwardEntry(in: workspace) else {
+            workspace.sessionScopeForwardStack = []
+            return false
+        }
+        let remaining = Array(workspace.sessionScopeForwardStack.dropLast())
+        var back = workspace.sessionScopeReturnStack.filter { $0.startGeneration == startGeneration }
+        back.append(SessionScopeReturnPoint(workspace: workspace, startGeneration: startGeneration))
+        if back.count > SessionScopeReturnPoint.maximumDepth {
+            back.removeFirst(back.count - SessionScopeReturnPoint.maximumDepth)
+        }
+        workspace.sessionScopeReturnStack = back
+        applySessionScope(entry.target, in: workspace)
+        workspace.sessionScopeForwardStack = remaining
+        return true
+    }
+
+    // MARK: Private
+
+    private func applySessionScope(_ point: SessionScopeReturnPoint, in workspace: WorkspaceState) {
         workspace.sidebarSelection = point.sidebarSelection
         workspace.hostFilter = point.hostFilter
         workspace.processFilter = point.processFilter
@@ -145,10 +208,7 @@ extension MainContentCoordinator {
         workspace.isFilterBarVisible = point.isFilterBarVisible
         workspace.isSearchEnabled = point.isSearchEnabled
         restoreSessionScopeSelection(point.selectedSessionID, in: workspace)
-        return true
     }
-
-    // MARK: Private
 
     /// Re-establishes a recorded selection through the existing selection and
     /// evidence hooks, so the projection, cited frame and Follow Stream are

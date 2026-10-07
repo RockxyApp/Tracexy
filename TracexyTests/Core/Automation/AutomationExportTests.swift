@@ -237,14 +237,20 @@ struct AutomationExportTests {
             "dnsAnswers",
             "dnsQuery",
             "infoSummary",
-            "Finding",
+            "ConnectionAnalysis",
+            "DatagramAnalysis",
+            "TLSAnalysis",
         ]
+        // Findings reach automation only as neutral History records; the UI/analysis
+        // `Finding` type itself never does.
+        let uiFinding = try Regex("\\bFinding\\b")
         for name in ["AutomationValues", "HistoryAutomationService", "AutomationExport"] {
             let url = directory.appendingPathComponent("\(name).swift")
             let source = try String(contentsOf: url, encoding: .utf8)
             for literal in forbiddenLiterals {
                 #expect(!source.contains(literal), "\(name).swift must not contain \(literal)")
             }
+            #expect(source.firstMatch(of: uiFinding) == nil, "\(name).swift must not name the UI Finding type")
         }
     }
 

@@ -3,7 +3,8 @@ import SwiftUI
 
 // MARK: - TracexyApp
 
-@main
+/// Started from `main.swift`, which first gives the built-in command line a chance
+/// to handle the invocation.
 struct TracexyApp: App {
     // MARK: Internal
 
@@ -11,6 +12,35 @@ struct TracexyApp: App {
     static let noiseControlWindowID = "noise-control"
     static let sessionInspectorWindowID = "session-inspector"
     static let captureInfoWindowID = "capture-info"
+    static let keyboardShortcutsWindowID = "keyboard-shortcuts"
+    static let resolvedAddressesWindowID = "resolved-addresses"
+    static let protocolHierarchyWindowID = "protocol-hierarchy"
+    static let dnsLookupsWindowID = "dns-lookups"
+    static let messageCountsWindowID = "message-counts"
+    static let findingsWindowID = "findings"
+    static let conversationsWindowID = "conversations"
+    static let endpointsWindowID = "endpoints"
+    static let packetLengthsWindowID = "packet-lengths"
+    static let packetBytesWindowID = "packet-bytes"
+    static let allFramesWindowID = "all-frames"
+    static let flowGraphWindowID = "flow-graph"
+    static let httpStatisticsWindowID = "http-statistics"
+    static let firewallRulesWindowID = "firewall-rules"
+    static let manageInterfacesWindowID = "manage-interfaces"
+    static let exportObjectsWindowID = "export-objects"
+    static let dnsStatisticsWindowID = "dns-statistics"
+    static let rtpStreamsWindowID = "rtp-streams"
+    static let multicastStreamsWindowID = "multicast-streams"
+    static let valueDistributionWindowID = "value-distribution"
+    static let fieldPlotWindowID = "field-plot"
+    static let ioGraphWindowID = "io-graph"
+    static let fileStructureWindowID = "file-structure"
+    static let supportedProtocolsWindowID = "supported-protocols"
+    static let ipStatisticsWindowID = "ip-statistics"
+    static let sipStatisticsWindowID = "sip-statistics"
+    static let serviceResponseTimeWindowID = "service-response-time"
+    static let voipCallsWindowID = "voip-calls"
+    static let decodeAsWindowID = "decode-as"
 
     var body: some Scene {
         mainWindowScene
@@ -33,6 +63,34 @@ struct TracexyApp: App {
         CaptureInfoWindowScene(coordinator: coordinator, colorScheme: colorScheme)
 
         settingsScene
+
+        keyboardShortcutsScene
+
+        resolvedAddressesScene
+
+        dnsLookupsScene
+
+        messageCountsScene
+
+        packetBytesScene
+
+        allFramesScene
+
+        firewallRulesScene
+
+        manageInterfacesScene
+
+        exportObjectsScene
+
+        fileStructureScene
+
+        supportedProtocolsScene
+
+        // Statistics ▸ …: the capture-wide statistics windows, each remounted on
+        // the Project identity like every auxiliary window.
+        StatisticsWindowScenes(coordinator: coordinator, colorScheme: colorScheme)
+
+        decodeAsScene
     }
 
     // MARK: Private
@@ -65,6 +123,8 @@ struct TracexyApp: App {
     /// is running in.
     @State private var coordinator = TracexyApp.composeCoordinator()
     @StateObject private var updater = AppUpdater.shared
+    /// The active Project's GeoIP/ASN databases and the locations they give.
+    @State private var geoIP = GeoIPController()
 
     /// The user's General → Appearance preference, applied app-wide. `nil` follows
     /// the system.
@@ -72,6 +132,229 @@ struct TracexyApp: App {
     /// explicitly and is unaffected by the per-Project settings suites.
     @AppStorage(SettingsKeys.appearance, store: TracexyApp.applicationDefaults)
     private var appearance = AppAppearance.system.rawValue
+
+    /// Help ▸ Keyboard Shortcuts: a reference window, never restored.
+    private var keyboardShortcutsScene: some Scene {
+        let base = Window("Keyboard Shortcuts", id: Self.keyboardShortcutsWindowID) {
+            KeyboardShortcutsView()
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 420, height: 520)
+        .windowResizability(.contentMinSize)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Statistics ▸ Resolved Addresses: a transient reference window on the same terms as
+    /// Noise Control, remounted with the Project.
+    private var resolvedAddressesScene: some Scene {
+        let base = Window("Resolved Addresses", id: Self.resolvedAddressesWindowID) {
+            ResolvedAddressesWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 660, height: 480)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Statistics ▸ DNS Lookups, on the same terms as Resolved Addresses.
+    private var dnsLookupsScene: some Scene {
+        let base = Window("DNS Lookups", id: Self.dnsLookupsWindowID) {
+            DNSLookupsWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 720, height: 440)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Statistics ▸ Message Counts, on the same terms as Resolved Addresses.
+    private var messageCountsScene: some Scene {
+        let base = Window("Message Counts", id: Self.messageCountsWindowID) {
+            MessageCountsWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 460, height: 440)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Show Packet Bytes, opened from the Layers facet or an HTTP exchange.
+    private var packetBytesScene: some Scene {
+        let base = Window("Show Packet Bytes", id: Self.packetBytesWindowID) {
+            PacketBytesWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 760, height: 560)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// View ▸ All Frames: the whole capture's frame list.
+    private var allFramesScene: some Scene {
+        let base = Window("All Frames", id: Self.allFramesWindowID) {
+            AllFramesWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 1_000, height: 600)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Help ▸ Supported Protocols, what Tracexy recognizes and how to find it.
+    private var supportedProtocolsScene: some Scene {
+        let base = Window("Supported Protocols", id: Self.supportedProtocolsWindowID) {
+            SupportedProtocolsWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 900, height: 560)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// File ▸ Show File Structure, the capture file's own blocks.
+    private var fileStructureScene: some Scene {
+        let base = Window("File Structure", id: Self.fileStructureWindowID) {
+            FileStructureWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 860, height: 480)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// File ▸ Export Objects, on the same terms as All Frames.
+    private var exportObjectsScene: some Scene {
+        let base = Window("Export Objects", id: Self.exportObjectsWindowID) {
+            ExportObjectsWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 820, height: 480)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Tools ▸ Firewall Rules, for the session selected in the main window.
+    private var firewallRulesScene: some Scene {
+        let base = Window("Firewall Rules", id: Self.firewallRulesWindowID) {
+            FirewallRulesWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 560, height: 380)
+        .windowResizability(.contentMinSize)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Capture ▸ Manage Interfaces: app-wide, like the interfaces it lists.
+    private var manageInterfacesScene: some Scene {
+        let base = Window("Manage Interfaces", id: Self.manageInterfacesWindowID) {
+            ManageInterfacesWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 760, height: 420)
+        .windowResizability(.contentMinSize)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
+
+    /// Capture ▸ Decode As…: the Project's port → protocol rules.
+    private var decodeAsScene: some Scene {
+        let base = Window("Decode As", id: Self.decodeAsWindowID) {
+            DecodeAsWindow(coordinator: coordinator)
+                .id(coordinator.projectStore.activeProjectID)
+                .disabled(!coordinator.hasHydratedProjects || coordinator.projectTransitionStatus.isPending)
+                .preferredColorScheme(colorScheme)
+        }
+        .defaultSize(width: 620, height: 340)
+        .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
+        .handlesExternalEvents(matching: [])
+        if #available(macOS 15.0, *) {
+            return base.restorationBehavior(.disabled)
+        } else {
+            return base
+        }
+    }
 
     /// The Focus Set editor is a transient editing window: like the auxiliary
     /// inspector it is excluded from state restoration so it cannot reopen empty
@@ -167,6 +450,13 @@ struct TracexyApp: App {
         let base = WindowGroup {
             RootView(coordinator: coordinator)
                 .frame(minWidth: 1_000, minHeight: 640)
+                .expressionLibrarySupport(coordinator: coordinator)
+                .workspaceTabsSupport(coordinator: coordinator)
+                .geoIPSupport(
+                    coordinator: coordinator,
+                    controller: geoIP,
+                    applicationDefaults: Self.applicationDefaults
+                )
                 .preferredColorScheme(colorScheme)
                 .onChange(of: appearance, initial: true) { _, newValue in
                     // Force the preference app-wide at the AppKit level (menus,
@@ -195,7 +485,7 @@ struct TracexyApp: App {
         // second, empty main window for the same external event.
         .handlesExternalEvents(matching: [])
         .commands {
-            TracexySettingsCommands()
+            TracexySettingsCommands(coordinator: coordinator)
             TracexyProjectCommands(coordinator: coordinator)
 
             // File menu, in the HIG's order: Open… ⌘O (in place), Open Recent ▸,
@@ -203,7 +493,8 @@ struct TracexyApp: App {
             // Get Info ⌘I. Every item is always listed and disabled when it does
             // not apply, and each routes through the same coordinator action the
             // sidebar and toolbar use, so the routes cannot drift apart.
-            TracexyCaptureFileCommands(coordinator: coordinator)
+            WorkspaceTabCommands(coordinator: coordinator)
+            TracexyCaptureFileCommands(coordinator: coordinator, geoIP: geoIP)
 
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
@@ -219,6 +510,40 @@ struct TracexyApp: App {
                     coordinator.beginSessionSearch()
                 }
                 .keyboardShortcut("f", modifiers: .command)
+                // Edit ▸ Pin Session: keeps the selected session above the table
+                // whatever the filter shows, as Wireshark pins a packet.
+                let selectedID = coordinator.activeWorkspace.selectedSessionID
+                Button(selectedID.map(coordinator.isSessionPinned) == true ? "Unpin Session" : "Pin Session") {
+                    if let selectedID {
+                        coordinator.togglePinSession(selectedID)
+                    }
+                }
+                .disabled(selectedID == nil)
+            }
+
+            // View ▸ Investigate Sessions… (⌥⌘I). The Session Expression editor was
+            // reachable only from the toolbar's overflow menu, which leaves a primary
+            // analysis command off the keyboard and off the menu bar. This is the same
+            // single route the overflow item uses — both set the workspace's own flag.
+            CommandGroup(after: .sidebar) {
+                Button("Investigate Sessions…") {
+                    coordinator.activeWorkspace.isInvestigationEditorPresented = true
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(coordinator.sessions.isEmpty)
+
+                // Step between flagged sessions from anywhere in the window, in
+                // capture order over what the list currently shows.
+                Button("Next Session With a Finding") {
+                    coordinator.selectSessionWithFinding(.next)
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(!coordinator.hasAnyFinding)
+                Button("Previous Session With a Finding") {
+                    coordinator.selectSessionWithFinding(.previous)
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(!coordinator.hasAnyFinding)
             }
 
             // View ▸ Back to Previous Scope (⌘[). The same single route the shared
@@ -232,8 +557,17 @@ struct TracexyApp: App {
                 }
                 .keyboardShortcut("[", modifiers: .command)
                 .disabled(!coordinator.canReturnToPreviousSessionScope)
+                Button(SessionScopeForwardAction.title) {
+                    coordinator.goForwardToNextSessionScope()
+                }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(!coordinator.canGoForwardToNextSessionScope)
+                .help(SessionScopeForwardAction.help)
                 Divider()
             }
+
+            // View ▸ Expression Library: filter buttons and macros.
+            ExpressionLibraryCommands(controller: coordinator.filterLibrary)
 
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
@@ -420,6 +754,7 @@ private struct TracexyCaptureFileCommands: Commands {
     // MARK: Internal
 
     let coordinator: MainContentCoordinator
+    let geoIP: GeoIPController
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -455,6 +790,21 @@ private struct TracexyCaptureFileCommands: Commands {
                 coordinator.presentCaptureImportPanel()
             }
             .keyboardShortcut("o", modifiers: [.command, .option])
+
+            Button("Merge Captures…") {
+                coordinator.presentMergeCapturesPanel()
+            }
+            .disabled(!coordinator.canMergeCaptures)
+
+            Button("Split Capture…") {
+                coordinator.presentSplitCapture()
+            }
+            .disabled(!coordinator.canSplitCapture)
+
+            Button("Show File Set in Finder") {
+                coordinator.revealLastFileSet()
+            }
+            .disabled(coordinator.lastFileSet == nil)
         }
 
         // After the system Close items, in HIG order: Close Capture (⇧⌘W, the
@@ -478,6 +828,13 @@ private struct TracexyCaptureFileCommands: Commands {
                 openWindow(id: TracexyApp.captureInfoWindowID)
             }
             .keyboardShortcut("i", modifiers: .command)
+            .disabled(!coordinator.canShowCaptureInfo)
+
+            // Wireshark's Reload as File Format/Capture (⇧⌘F): the file's own blocks.
+            Button("Show File Structure") {
+                openWindow(id: TracexyApp.fileStructureWindowID)
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
             .disabled(!coordinator.canShowCaptureInfo)
 
             // Ring-buffer sets (dumpcap/tcpdump rotation): step through the
@@ -507,6 +864,218 @@ private struct TracexyCaptureFileCommands: Commands {
                 coordinator.presentFrameExportPanel()
             }
             .disabled(!coordinator.canExportFrames)
+            // The sessions in view, as a table or a report — what the list shows now,
+            // including its filters, findings and notes.
+            Menu("Export Investigation") {
+                ForEach(InvestigationExportKind.allCases) { kind in
+                    Button(kind.menuTitle) {
+                        coordinator.exportInvestigation(kind)
+                    }
+                }
+            }
+            .disabled(!coordinator.canExportInvestigation)
+            // Wireshark's File ▸ Export Objects: the files and messages the capture carried.
+            Menu("Export Objects") {
+                ForEach(CaptureObjectKind.allCases) { kind in
+                    Button("\(kind.title)…") {
+                        coordinator.loadExportObjects(kind)
+                        openWindow(id: TracexyApp.exportObjectsWindowID)
+                    }
+                }
+            }
+            .disabled(coordinator.allFramesUnavailableReason != nil)
+            // Wireshark's File ▸ Export PDUs to File, at the application layer.
+            Button("Export PDUs…") {
+                PDUExportController.shared.export(from: coordinator)
+            }
+            .disabled(!coordinator.canExportFrames || PDUExportController.shared.isExporting)
+            // Wireshark's File ▸ Export Packet Dissections: every frame's layers as text or JSON.
+            Button("Export Packet Dissections…") {
+                DissectionExportController.shared.export(from: coordinator)
+            }
+            .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
+        }
+
+        // View ▸ Session Time: how the Sessions table shows start times.
+        CommandGroup(after: .sidebar) {
+            // View ▸ All Frames: Wireshark's packet list for the whole capture.
+            Button("All Frames") {
+                openWindow(id: TracexyApp.allFramesWindowID)
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+            Picker("Session Time", selection: Binding(
+                get: { coordinator.sessionTimeDisplay.format },
+                set: { coordinator.sessionTimeDisplay.format = $0 }
+            )) {
+                ForEach(SessionTimeFormat.allCases) { format in
+                    Text(format.menuTitle).tag(format)
+                }
+            }
+            // View ▸ Frame Time: Wireshark's time display formats for frame lists, and
+            // its ⌘T time reference on the frame last chosen in one.
+            Picker("Frame Time", selection: Binding(
+                get: { coordinator.sessionTimeDisplay.frameFormat },
+                set: { coordinator.sessionTimeDisplay.frameFormat = $0 }
+            )) {
+                ForEach(FrameTimeFormat.allCases) { format in
+                    Text(format.menuTitle).tag(format)
+                }
+            }
+            // View ▸ Validate Checksums: Wireshark's per-protocol checksum checks,
+            // off by default because frames sent from this Mac are often offloaded.
+            Toggle("Validate Checksums", isOn: Binding(
+                get: { coordinator.packetDetailOptions.validateChecksums },
+                set: { coordinator.packetDetailOptions.validateChecksums = $0 }
+            ))
+            // View ▸ Name Resolution: names from this Project and the capture itself only.
+            Menu("Name Resolution") {
+                Toggle("Resolve Network Addresses", isOn: Binding(
+                    get: { coordinator.packetDetailOptions.resolvesNetworkAddresses },
+                    set: { coordinator.packetDetailOptions.resolvesNetworkAddresses = $0 }
+                ))
+            }
+            // View ▸ Show Bytes as Bits: the bytes pane's Show as, from the menu bar too.
+            Toggle("Show Bytes as Bits", isOn: Binding(
+                get: { coordinator.packetDetailOptions.byteDumpStyle == .bits },
+                set: { coordinator.packetDetailOptions.byteDumpStyle = $0 ? .bits : .hex }
+            ))
+            // View ▸ Zoom: packet text (hex, decode tree, streams, frame lists), as
+            // Wireshark's ⌘+ / ⌘− / ⌘0 zoom its packet panes.
+            Button("Zoom In") {
+                coordinator.packetDetailOptions.zoom(by: 1)
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            .disabled(!coordinator.packetDetailOptions.canZoomIn)
+            Button("Zoom Out") {
+                coordinator.packetDetailOptions.zoom(by: -1)
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(!coordinator.packetDetailOptions.canZoomOut)
+            Button("Actual Size") {
+                coordinator.packetDetailOptions.textZoom = 0
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(coordinator.packetDetailOptions.textZoom == 0)
+            if coordinator.sessionTimeDisplay.selectedFrameIsReference {
+                Button("Clear Time Reference") {
+                    coordinator.sessionTimeDisplay.toggleReferenceOnSelectedFrame()
+                }
+                .keyboardShortcut("t", modifiers: .command)
+            } else {
+                Button("Set Time Reference") {
+                    coordinator.sessionTimeDisplay.toggleReferenceOnSelectedFrame()
+                }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(coordinator.sessionTimeDisplay.selectedFrame == nil)
+            }
+        }
+
+        // Statistics: the report windows over the sessions in view, as Wireshark's
+        // Statistics menu. Each is a separate tool window, so they live here rather
+        // than in View, which changes how the main window presents its content.
+        // Capture ▸ Start/Stop (⌘E, as in Wireshark): the toolbar's primary
+        // command also belongs in the menu bar and on the keyboard.
+        CommandMenu("Capture") {
+            Button(coordinator.isCapturing || coordinator.isStarting ? "Stop Capture" : "Start Capture") {
+                coordinator.toggleCapture()
+            }
+            .keyboardShortcut("e", modifiers: .command)
+            Button("Restart Capture") {
+                coordinator.restartCapture()
+            }
+            // ⌘R is File ▸ Reload for saved captures.
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(!coordinator.canRestartCapture)
+            Button("Refresh Interfaces") {
+                coordinator.refreshInterfaces()
+            }
+            Button("Manage Interfaces…") {
+                openWindow(id: TracexyApp.manageInterfacesWindowID)
+            }
+            Divider()
+            Button("Decode As…") {
+                coordinator.decodeAs.showsEnabledProtocols = false
+                openWindow(id: TracexyApp.decodeAsWindowID)
+            }
+            Button("Enabled Protocols…") {
+                coordinator.decodeAs.showsEnabledProtocols = true
+                openWindow(id: TracexyApp.decodeAsWindowID)
+            }
+        }
+
+        CommandMenu("Statistics") {
+            Button("Findings") {
+                openWindow(id: TracexyApp.findingsWindowID)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .option])
+            Divider()
+            Button("Conversations") {
+                openWindow(id: TracexyApp.conversationsWindowID)
+            }
+            Button("Endpoints") {
+                openWindow(id: TracexyApp.endpointsWindowID)
+            }
+            Button("Protocol Hierarchy") {
+                openWindow(id: TracexyApp.protocolHierarchyWindowID)
+            }
+            Button("Packet Lengths") {
+                openWindow(id: TracexyApp.packetLengthsWindowID)
+            }
+            Button("I/O Graph") {
+                openWindow(id: TracexyApp.ioGraphWindowID)
+            }
+            Button("Flow Graph") {
+                coordinator.allFrames.flowCallID = nil
+                openWindow(id: TracexyApp.flowGraphWindowID)
+            }
+            Button("Value Distribution…") {
+                openWindow(id: TracexyApp.valueDistributionWindowID)
+            }
+            Button("Plot…") {
+                openWindow(id: TracexyApp.fieldPlotWindowID)
+            }
+            Divider()
+            Button("HTTP") {
+                openWindow(id: TracexyApp.httpStatisticsWindowID)
+            }
+            Button("IP Statistics") {
+                openWindow(id: TracexyApp.ipStatisticsWindowID)
+            }
+            Button("DNS") {
+                openWindow(id: TracexyApp.dnsStatisticsWindowID)
+            }
+            Button("RTP Streams") {
+                openWindow(id: TracexyApp.rtpStreamsWindowID)
+            }
+            Button("Service Response Time") {
+                openWindow(id: TracexyApp.serviceResponseTimeWindowID)
+            }
+            Button("SIP") {
+                openWindow(id: TracexyApp.sipStatisticsWindowID)
+            }
+            Button("UDP Multicast Streams") {
+                openWindow(id: TracexyApp.multicastStreamsWindowID)
+            }
+            Button("VoIP Calls") {
+                openWindow(id: TracexyApp.voipCallsWindowID)
+            }
+            Button("DNS Lookups") {
+                openWindow(id: TracexyApp.dnsLookupsWindowID)
+            }
+            Button("Message Counts") {
+                openWindow(id: TracexyApp.messageCountsWindowID)
+            }
+            Button("Resolved Addresses") {
+                openWindow(id: TracexyApp.resolvedAddressesWindowID)
+            }
+            GeoIPDatabasesMenuItem(controller: geoIP)
+        }
+
+        // Tools, as in Wireshark: helpers that act on the selection.
+        CommandMenu("Tools") {
+            Button("Firewall Rules…") {
+                openWindow(id: TracexyApp.firewallRulesWindowID)
+            }
         }
     }
 
@@ -550,7 +1119,46 @@ private struct CaptureInfoWindowScene: Scene {
 private struct TracexySettingsCommands: Commands {
     // MARK: Internal
 
+    /// Help ▸ links, as Wireshark's Help menu offers its guide, release notes and
+    /// sample captures. Public pages only; nothing is sent.
+    static let userGuideURL = URL(string: "https://github.com/RockxyApp/Tracexy/blob/main/docs/usage.md")
+    static let releaseNotesURL = URL(string: "https://github.com/RockxyApp/Tracexy/blob/main/CHANGELOG.md")
+    static let issuesURL = URL(string: "https://github.com/RockxyApp/Tracexy/issues")
+    static let sampleCapturesURL = URL(string: "https://wiki.wireshark.org/SampleCaptures")
+
+    let coordinator: MainContentCoordinator
+
     var body: some Commands {
+        // Replaces the system "Tracexy Help" item, which has no Help Book to open.
+        CommandGroup(replacing: .help) {
+            Button("Tracexy User Guide") {
+                open(Self.userGuideURL)
+            }
+            .keyboardShortcut("?", modifiers: .command)
+            Button("Release Notes") {
+                open(Self.releaseNotesURL)
+            }
+            Button("Sample Captures") {
+                open(Self.sampleCapturesURL)
+            }
+            Divider()
+            Button("Supported Protocols") {
+                openWindow(id: TracexyApp.supportedProtocolsWindowID)
+            }
+            Button("Keyboard Shortcuts") {
+                openWindow(id: TracexyApp.keyboardShortcutsWindowID)
+            }
+            Button("Show Captures Folder") {
+                if let folder = coordinator.capturesDirectory() {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                }
+            }
+            .disabled(coordinator.capturesDirectory() == nil)
+            Divider()
+            Button("Report an Issue") {
+                open(Self.issuesURL)
+            }
+        }
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
                 openWindow(id: "settings")
@@ -562,4 +1170,11 @@ private struct TracexySettingsCommands: Commands {
     // MARK: Private
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
+
+    private func open(_ url: URL?) {
+        if let url {
+            openURL(url)
+        }
+    }
 }

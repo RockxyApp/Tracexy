@@ -17,11 +17,53 @@ struct SessionCenterView: View {
         sessionContent(sessions: sessions, workspace: workspace)
             .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .top) {
-                sessionControlShelf(workspace, shownCount: sessions.count)
+                sessionControlShelf(
+                    workspace,
+                    shownCount: sessions.count,
+                    shownIDs: coordinator.pinnedSessionIDs.isEmpty ? [] : Set(sessions.map(\.id))
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: visibilityFingerprint(workspace)) { _, _ in
                 coordinator.reconcileLiveFollowing(in: workspace)
+            }
+            .onAppear(perform: loadColumnCustomization)
+            .alert(
+                "Name \(namingAddress ?? "Address")",
+                isPresented: Binding(get: { namingAddress != nil }, set: {
+                    if !$0 {
+                        namingAddress = nil
+                    }
+                })
+            ) {
+                TextField("Name, for example NAS", text: $addressNameDraft)
+                Button("Save") {
+                    if let address = namingAddress {
+                        coordinator.addressNames.setName(addressNameDraft, for: address)
+                    }
+                    namingAddress = nil
+                }
+                if let address = namingAddress, coordinator.addressNames.name(for: address) != nil {
+                    Button("Remove Name", role: .destructive) {
+                        coordinator.addressNames.setName("", for: address)
+                        namingAddress = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) { namingAddress = nil }
+            } message: {
+                Text("Shown in this Project wherever this address is a session’s only name.")
+            }
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
+                didLoadColumnCustomization = false
+                loadColumnCustomization()
+            }
+            .onChange(of: columnCustomization) { _, customization in
+                guard didLoadColumnCustomization,
+                      let data = try? JSONEncoder().encode(customization) else
+                {
+                    return
+                }
+                coordinator.activeProjectDefaults.set(data, forKey: ProjectScopedSettingsKeys.sessionTableColumns)
             }
     }
 
@@ -42,7 +84,7 @@ struct SessionCenterView: View {
         if metadata.undecodableLinkLayerFrameCount > 0 {
             parts.append("\(metadata.undecodableLinkLayerFrameCount.formatted()) undecoded link layer")
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     // MARK: Private
@@ -66,6 +108,12 @@ struct SessionCenterView: View {
     /// capture order (oldest→newest, rows updating in place), which stays the
     /// default so a live list never reshuffles under the cursor unasked.
     @State private var sortOrder: [KeyPathComparator<SessionSummary>] = []
+    /// Which columns are shown and in what order; kept per Project.
+    @State private var columnCustomization = TableColumnCustomization<SessionSummary>()
+    @State private var didLoadColumnCustomization = false
+    /// The address being named from the context menu, and the name being typed.
+    @State private var namingAddress: String?
+    @State private var addressNameDraft = ""
 
     private var captureImportNotice: some View {
         HStack(spacing: Theme.Metrics.spacingM) {
@@ -195,7 +243,7 @@ struct SessionCenterView: View {
             }
         } else if coordinator.isCapturing {
             ContentUnavailableView {
-                Label("Capturing on \(coordinator.captureInterface)", systemImage: "dot.radiowaves.left.and.right")
+                Label("Capturing on \(coordinator.captureSourceName)", systemImage: "dot.radiowaves.left.and.right")
             } description: {
                 Text("Waiting for packets…")
             }
@@ -261,7 +309,7 @@ struct SessionCenterView: View {
         }
     }
 
-    private func sessionControlShelf(_ workspace: WorkspaceState, shownCount: Int) -> some View {
+    private func sessionControlShelf(_ workspace: WorkspaceState, shownCount: Int, shownIDs: Set<UUID>) -> some View {
         VStack(spacing: Theme.Glass.functionalBarVerticalInset) {
             if workspace.isFilterBarVisible {
                 SessionFilterBar(
@@ -279,6 +327,11 @@ struct SessionCenterView: View {
                     showsResetAction: !workspace.isFilterBarVisible && shownCount > 0
                 )
                 .padding(.horizontal, Theme.Metrics.spacingL)
+            }
+            let pinned = coordinator.pinnedSessions
+            if !pinned.isEmpty {
+                PinnedSessionsStrip(coordinator: coordinator, pinned: pinned, shownIDs: shownIDs)
+                    .padding(.horizontal, Theme.Metrics.spacingL)
             }
             if coordinator.isViewingSavedCapture {
                 savedCaptureSourceNotice
@@ -396,9 +449,11 @@ struct SessionCenterView: View {
     @ViewBuilder
     private func timeCell(_ startTime: Date?) -> some View {
         if let startTime {
-            Text(startTime, format: .dateTime.hour().minute().second())
-                .font(Theme.Typography.monoSmall)
-                .foregroundStyle(.secondary)
+            Text(coordinator.sessionTimeDisplay.format.string(
+                for: startTime, captureStart: coordinator.trafficTimeline.firstTimedFrame
+            ))
+            .font(Theme.Typography.monoSmall)
+            .foregroundStyle(.secondary)
         } else {
             Text("—")
                 .font(Theme.Typography.monoSmall)
@@ -409,6 +464,10 @@ struct SessionCenterView: View {
 
     private func sessionTable(sessions: [SessionSummary], workspace: WorkspaceState) -> some View {
         let ordered = sortOrder.isEmpty ? sessions : sessions.sorted(using: sortOrder)
+        // Computed once per render, and only when the Timeline column is shown.
+        let timelineSpan = columnCustomization[visibility: "timeline"] == .visible
+            ? SessionTimelineBar.span(of: sessions)
+            : nil
         return Table(ordered, selection: Binding(
             get: { workspace.selectedSessionID },
             // Guard the write-back: while a live rebuild replaces the rows,
@@ -423,37 +482,54 @@ struct SessionCenterView: View {
                     workspace.selectedSessionID = newValue
                 }
             }
-        ), sortOrder: $sortOrder) {
-            TableColumn("Time", value: \.sortableStartTime) { session in
+        ), sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+            TableColumn(coordinator.sessionTimeDisplay.format.columnTitle, value: \.sortableStartTime) { session in
                 timeCell(session.startTime)
             }
             .width(72)
+            .customizationID("time")
             TableColumn("Source", value: \.sourceEndpoint) { session in
                 Text(session.sourceEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
+            .customizationID("source")
             TableColumn("Destination", value: \.destinationEndpoint) { session in
                 Text(session.destinationEndpoint).font(Theme.Typography.mono).lineLimit(1)
             }
             .width(min: 110, ideal: 150)
+            .customizationID("destination")
             TableColumn("Host", value: \.host) { session in
-                Text(session.host).font(Theme.Typography.body).lineLimit(1)
+                HStack(spacing: Theme.Metrics.spacingS) {
+                    SessionTagDots(tags: coordinator.investigationNotes.tags(onSession: session.id))
+                    Text(coordinator.addressNames.displayHost(for: session)).font(Theme.Typography.body).lineLimit(1)
+                    if coordinator.investigationNotes.hasNote(onSession: session.id) {
+                        Image(systemName: "note.text")
+                            .font(.system(size: Theme.Icon.small))
+                            .foregroundStyle(.secondary)
+                            .help("You wrote a note about this session")
+                            .accessibilityLabel("Has a note")
+                    }
+                }
             }
             .width(min: 120, ideal: 180)
+            .customizationID("host")
             TableColumn("Client", value: \.sortableProcessName) { session in
                 clientCell(session)
             }
             .width(min: 90, ideal: 130)
+            .customizationID("client")
             TableColumn("Protocol", value: \.primaryProtocolLabel) { session in
                 protocolPill(session.primaryProtocol)
             }
             .width(72)
+            .customizationID("protocol")
             TableColumn("Length", value: \.totalBytes) { session in
                 Text(ByteUnits.string(Int64(session.totalBytes)))
                     .font(Theme.Typography.monoSmall)
                     .foregroundStyle(.secondary)
             }
             .width(72)
+            .customizationID("length")
             TableColumn("", value: \.statusRank) { session in
                 Image(systemName: session.status.systemImage)
                     .font(.system(size: Theme.Icon.small))
@@ -461,6 +537,8 @@ struct SessionCenterView: View {
                     .help(session.status.label)
             }
             .width(20)
+            .customizationID("status")
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Summary", value: \.infoSummary) { session in
                 Text(session.infoSummary)
                     .font(Theme.Typography.body)
@@ -468,12 +546,17 @@ struct SessionCenterView: View {
                     .foregroundStyle(session.status == .error ? Color.red : Color.primary)
             }
             .width(min: 160, ideal: 280)
+            .customizationID("summary")
+            optionalColumns(span: timelineSpan)
         }
         .contextMenu(forSelectionType: SessionSummary.ID.self) { ids in
             rowContextMenu(ids: ids, sessions: sessions)
         }
         .background {
-            SessionHistoryScrollObserver {
+            SessionHistoryScrollObserver(
+                revealToken: workspace.sessionRevealToken,
+                revealRow: ordered.firstIndex { $0.id == workspace.selectedSessionID }
+            ) {
                 coordinator.userDidNavigateSessionHistory()
             }
         }
@@ -508,7 +591,7 @@ struct SessionCenterView: View {
                 }
             }
         )) {
-            TableColumn("Time") { (row: SessionRow) in
+            TableColumn(coordinator.sessionTimeDisplay.format.columnTitle) { (row: SessionRow) in
                 timeCell(row.startTime)
             }
             .width(72)
@@ -571,7 +654,10 @@ struct SessionCenterView: View {
             groupedRowContextMenu(ids: ids, rows: rows)
         }
         .background {
-            SessionHistoryScrollObserver {
+            SessionHistoryScrollObserver(
+                revealToken: workspace.sessionRevealToken,
+                revealRow: rows.firstIndex { $0.id == workspace.selectedSessionID }
+            ) {
                 coordinator.userDidNavigateSessionHistory()
             }
         }
@@ -682,6 +768,44 @@ struct SessionCenterView: View {
         }
     }
 
+    @ViewBuilder
+    private func investigateLikeThisMenu(_ session: SessionSummary) -> some View {
+        let available = likeThisTerms(session)
+        if !available.isEmpty {
+            Menu {
+                ForEach(available, id: \.1) { title, term in
+                    Button(title) {
+                        coordinator.investigateSessions(narrowingWith: term)
+                    }
+                    .help(term)
+                }
+            } label: {
+                Label("Investigate Sessions Like This", systemImage: "scope")
+            }
+        }
+    }
+
+    /// Name either endpoint's address for this Project. Offered only for endpoints
+    /// that are real IP addresses.
+    @ViewBuilder
+    private func nameAddressMenu(_ session: SessionSummary) -> some View {
+        let addresses = [session.sourceEndpointValue?.ip, session.destinationEndpointValue?.ip]
+            .compactMap(\.self)
+            .filter { IPAddressValue(parsing: $0) != nil }
+        if !addresses.isEmpty {
+            Menu {
+                ForEach(Array(Set(addresses)).sorted(), id: \.self) { address in
+                    Button(coordinator.addressNames.name(for: address).map { "\(address) (\($0))…" } ?? "\(address)…") {
+                        addressNameDraft = coordinator.addressNames.name(for: address) ?? ""
+                        namingAddress = address
+                    }
+                }
+            } label: {
+                Label("Name Address", systemImage: "character.cursor.ibeam")
+            }
+        }
+    }
+
     /// The full menu for one session, shared by both tables.
     @ViewBuilder
     private func sessionMenu(_ session: SessionSummary) -> some View {
@@ -718,11 +842,29 @@ struct SessionCenterView: View {
             Button("Source") { copyToPasteboard(session.sourceEndpoint) }
             Button("Destination") { copyToPasteboard(session.destinationEndpoint) }
             Button("Summary") { copyToPasteboard(session.infoSummary) }
+            let terms = likeThisTerms(session)
+            if !terms.isEmpty {
+                Divider()
+                Menu("As Session Expression") {
+                    ForEach(terms, id: \.term) { title, term in
+                        Button(title) { copyToPasteboard(term) }
+                            .help(term)
+                    }
+                }
+            }
         } label: {
             Label("Copy", systemImage: "doc.on.doc")
         }
 
         Divider()
+
+        investigateLikeThisMenu(session)
+        SessionTagMenu(coordinator: coordinator, sessionIDs: [session.id])
+        nameAddressMenu(session)
+        Button(
+            coordinator.isSessionPinned(session.id) ? "Unpin Session" : "Pin Session",
+            systemImage: coordinator.isSessionPinned(session.id) ? "pin.slash" : "pin"
+        ) { coordinator.togglePinSession(session.id) }
 
         if hostValid {
             Button("Show Sessions for \(host)", systemImage: "line.3.horizontal.decrease.circle") {
@@ -836,6 +978,92 @@ struct SessionCenterView: View {
             .foregroundStyle(Theme.color(for: proto))
     }
 
+    /// "Investigate Sessions Like This": each item narrows the session expression by
+    /// one of this session's own facts and applies it. Only facts the session actually
+    /// carries are offered, and each becomes a term the parser accepts.
+    /// The session-expression terms this session's own facts support, with menu titles.
+    private func likeThisTerms(_ session: SessionSummary) -> [(title: String, term: String)] {
+        let terms: [(String, String?)] = [
+            ("Same Host", SessionExpressionTerm.sameHost(session.host)),
+            ("Same Destination Address", SessionExpressionTerm.sameDestinationIP(session.destinationEndpointValue)),
+            ("Same Destination Port", SessionExpressionTerm.sameDestinationPort(session.destinationEndpointValue)),
+            ("Same Process", SessionExpressionTerm.sameProcess(validProcessName(session.processName))),
+            ("Same Protocol", SessionExpressionTerm.sameProtocol(session.primaryProtocol)),
+        ]
+        return terms.compactMap { title, term in term.map { (title, $0) } }
+    }
+
+    /// Columns a user can add from the header's context menu. Each reads a typed
+    /// session fact that is already published; none is shown until chosen.
+    @TableColumnBuilder<SessionSummary, KeyPathComparator<SessionSummary>>
+    private func optionalColumns(span: ClosedRange<Date>?) -> some TableColumnContent<
+        SessionSummary,
+        KeyPathComparator<SessionSummary>
+    > {
+        TableColumn("Timeline", value: \.sortableStartTime) { session in
+            SessionTimelineBar(session: session, span: span)
+        }
+        .width(min: 90, ideal: 140)
+        .customizationID("timeline")
+        .defaultVisibility(.hidden)
+        TableColumn("Server Name", value: \.sortableServerName) { session in
+            Text(session.sni ?? "—").font(Theme.Typography.mono).lineLimit(1)
+                .foregroundStyle(session.sni == nil ? .tertiary : .primary)
+        }
+        .width(min: 120, ideal: 180)
+        .customizationID("serverName")
+        .defaultVisibility(.hidden)
+        TableColumn("Duration", value: \.sortableDuration) { session in
+            Text(session.duration.map { String(format: "%.3f s", $0) } ?? "—")
+                .font(Theme.Typography.monoSmall).foregroundStyle(.secondary)
+        }
+        .width(80)
+        .customizationID("duration")
+        .defaultVisibility(.hidden)
+        TableColumn("Sent", value: \.bytesUp) { session in
+            Text(ByteUnits.string(Int64(session.bytesUp)))
+                .font(Theme.Typography.monoSmall).foregroundStyle(.secondary)
+        }
+        .width(72)
+        .customizationID("bytesUp")
+        .defaultVisibility(.hidden)
+        TableColumn("Received", value: \.bytesDown) { session in
+            Text(ByteUnits.string(Int64(session.bytesDown)))
+                .font(Theme.Typography.monoSmall).foregroundStyle(.secondary)
+        }
+        .width(72)
+        .customizationID("bytesDown")
+        .defaultVisibility(.hidden)
+        TableColumn("Latency", value: \.sortableLatency) { session in
+            Text(session.latencyMilliseconds.map { String(format: "%.1f ms", $0) } ?? "—")
+                .font(Theme.Typography.monoSmall).foregroundStyle(.secondary)
+        }
+        .width(72)
+        .customizationID("latency")
+        .defaultVisibility(.hidden)
+        TableColumn("Protocols") { session in
+            Text(session.protocolStack.map(\.label).joined(separator: " "))
+                .font(Theme.Typography.monoSmall).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .width(min: 90, ideal: 130)
+        .customizationID("protocolStack")
+        .defaultVisibility(.hidden)
+        TableColumn("Completeness", value: \.sortableCompleteness) { session in
+            SessionCompletenessCell(session: session)
+        }
+        .width(min: 90, ideal: 110)
+        .customizationID("tcpCompleteness")
+        .defaultVisibility(.hidden)
+    }
+
+    private func loadColumnCustomization() {
+        let data = coordinator.activeProjectDefaults.data(forKey: ProjectScopedSettingsKeys.sessionTableColumns)
+        let decoder = JSONDecoder()
+        let saved = data.flatMap { try? decoder.decode(TableColumnCustomization<SessionSummary>.self, from: $0) }
+        columnCustomization = saved ?? TableColumnCustomization<SessionSummary>()
+        didLoadColumnCustomization = true
+    }
+
     private func visibilityFingerprint(_ workspace: WorkspaceState) -> VisibilityFingerprint {
         VisibilityFingerprint(
             sidebarSelection: workspace.sidebarSelection,
@@ -903,7 +1131,7 @@ struct SessionCenterView: View {
         if activity.isContested {
             return "Shared address — also claimed by \(activity.competingNames.joined(separator: ", "))"
         }
-        return activity.evidence.map(\.summary).joined(separator: " · ")
+        return activity.evidence.map(\.summary).joined(separator: "; ")
     }
 
     private func liveChartBinding(_ workspace: WorkspaceState) -> Binding<Bool> {

@@ -18,7 +18,7 @@ struct HistoryDemoLaunchModeTests {
         let identity = TracexyIdentity(infoDictionary: ["TracexyDefaultsPrefix": prefix])
         let suiteName = HistoryDemoLaunchMode.settingsSuiteName(identity: identity)
         let existing = try #require(UserDefaults(suiteName: suiteName))
-        defer { existing.removePersistentDomain(forName: suiteName) }
+        defer { TestPreferences.remove(suiteName) }
         existing.set(AutoClear.hours24.rawValue, forKey: SettingsKeys.autoClear)
         existing.set(SettingsTab.general.rawValue, forKey: SettingsKeys.selectedSettingsTab)
 

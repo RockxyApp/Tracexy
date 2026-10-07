@@ -80,6 +80,8 @@ extension MainContentCoordinator {
     /// the previously cited frame and rebuilds the off-main projection for the newly
     /// selected session. Existing `select(_:)` routes through it too.
     func evidenceNavigationDidChangeSelection() {
+        // ⌘T marks the frame chosen in *this* session's list.
+        sessionTimeDisplay.selectedFrame = nil
         cancelCitedFrame()
         refreshSelectedSessionEvidenceProjection()
     }
@@ -263,7 +265,19 @@ extension MainContentCoordinator {
             do {
                 let bytes = try CaptureEvidenceReader.read(reference, from: url)
                 try Task.checkCancellation()
-                let evidence = Self.decodeCitedFrame(sessionID: sessionID, provenance: provenance, bytes: bytes)
+                // A frame that completed a datagram is shown with it: read the other
+                // fragments the citation names. Any that cannot be read leaves the
+                // frame shown on its own.
+                let fragments = Self.fragmentSources(of: provenance, citedBytes: bytes) { source in
+                    let reference = try SavedCaptureStreamLoader.citedEvidenceReference(
+                        for: source, matching: identity
+                    )
+                    return try CaptureEvidenceReader.read(reference, from: url)
+                }
+                try Task.checkCancellation()
+                let evidence = Self.decodeCitedFrame(
+                    sessionID: sessionID, provenance: provenance, bytes: bytes, fragments: fragments
+                )
                 await self?.finishCitedFrame(
                     evidence, sessionID: sessionID, workspaceID: workspaceID,
                     requestID: requestID, expectedGeneration: expectedGeneration,
@@ -306,7 +320,28 @@ extension MainContentCoordinator {
                 // publication still uses the stopped/current generation guards.
                 let bytes = try await spool.readCurrentSource(locator, capturedLength: capturedLength)
                 try Task.checkCancellation()
-                let evidence = Self.decodeCitedFrame(sessionID: sessionID, provenance: provenance, bytes: bytes)
+                var fragments: [(SessionFrameProvenance, [UInt8])] = []
+                if provenance.reassembledFrom.count > 1 {
+                    for source in provenance.reassembledFrom {
+                        if source.ordinal == provenance.ordinal {
+                            fragments.append((source, bytes))
+                            continue
+                        }
+                        guard let sourceLocator = source.locator,
+                              let sourceBytes = try? await spool.readCurrentSource(
+                                  sourceLocator, capturedLength: source.capturedLength
+                              ) else
+                        {
+                            fragments = []
+                            break
+                        }
+                        fragments.append((source, sourceBytes))
+                    }
+                }
+                try Task.checkCancellation()
+                let evidence = Self.decodeCitedFrame(
+                    sessionID: sessionID, provenance: provenance, bytes: bytes, fragments: fragments
+                )
                 await self?.finishCitedFrame(
                     evidence, sessionID: sessionID, workspaceID: workspaceID,
                     requestID: requestID, expectedGeneration: expectedGeneration,
@@ -384,10 +419,40 @@ extension MainContentCoordinator {
         }
     }
 
-    nonisolated private static func decodeCitedFrame(
+    /// Every fragment frame a citation names, read with `read`, the cited frame's
+    /// own bytes included; empty when it names none or any cannot be read.
+    nonisolated private static func fragmentSources(
+        of provenance: SessionFrameProvenance,
+        citedBytes: [UInt8],
+        read: (SessionFrameProvenance) throws -> [UInt8]
+    )
+        -> [(SessionFrameProvenance, [UInt8])]
+    {
+        guard provenance.reassembledFrom.count > 1 else {
+            return []
+        }
+        var sources: [(SessionFrameProvenance, [UInt8])] = []
+        for source in provenance.reassembledFrom {
+            if source.ordinal == provenance.ordinal {
+                sources.append((source, citedBytes))
+                continue
+            }
+            guard let bytes = try? read(source) else {
+                return []
+            }
+            sources.append((source, bytes))
+        }
+        return sources
+    }
+
+    /// The cited frame's decode. With its fragment frames, those are decoded in
+    /// capture order so the datagram completes on the cited frame exactly as it did
+    /// when the capture was read.
+    nonisolated static func decodeCitedFrame(
         sessionID: UUID,
         provenance: SessionFrameProvenance,
-        bytes: [UInt8]
+        bytes: [UInt8],
+        fragments: [(SessionFrameProvenance, [UInt8])] = []
     )
         -> SelectedFrameEvidence
     {
@@ -398,7 +463,26 @@ extension MainContentCoordinator {
             capturedLength: provenance.capturedLength,
             linkType: provenance.linkType
         )
-        let packet = SessionBuilder.decodePacket(frame, linkType: provenance.linkType)
+        var packet = SessionBuilder.decodePacket(frame, linkType: provenance.linkType)
+        if !fragments.isEmpty {
+            var sequential = SequentialFrameDecoder()
+            for (source, sourceBytes) in fragments.sorted(by: { $0.0.ordinal < $1.0.ordinal }) {
+                let decoded = sequential.decode(
+                    CapturedFrame(
+                        bytes: sourceBytes,
+                        timestamp: source.timestamp,
+                        originalLength: source.originalLength,
+                        capturedLength: source.capturedLength,
+                        linkType: source.linkType
+                    ),
+                    linkType: source.linkType,
+                    ordinal: source.ordinal.rawValue
+                )
+                if source.ordinal == provenance.ordinal, decoded.reassembly != nil {
+                    packet = decoded
+                }
+            }
+        }
         return SelectedFrameEvidence(
             sessionID: sessionID, provenance: provenance, bytes: bytes, layers: packet.layers
         )

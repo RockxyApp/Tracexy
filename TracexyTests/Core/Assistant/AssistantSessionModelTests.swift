@@ -676,7 +676,8 @@ struct AssistantSessionModelTests {
                 script: script
             )
             provider = stub
-            defaults = UserDefaults(suiteName: "com.amunx.tracexy.tests.assistant.\(UUID().uuidString)")
+            defaultsSuiteName = "com.amunx.tracexy.tests.assistant.\(UUID().uuidString)"
+            defaults = UserDefaults(suiteName: defaultsSuiteName)
             model = AssistantSessionModel(
                 defaults: defaults ?? .standard,
                 providerFactory: { _ in stub }
@@ -744,9 +745,7 @@ struct AssistantSessionModelTests {
 
         func tearDown() {
             model.invalidateForBoundary()
-            if let name = defaults?.description, name.isEmpty {
-                // No-op: the suite name is removed below.
-            }
+            TestPreferences.remove(defaultsSuiteName)
             isolation.tearDown()
         }
 
@@ -754,5 +753,6 @@ struct AssistantSessionModelTests {
 
         private let isolation: ProjectIsolationEnvironment
         private let defaults: UserDefaults?
+        private let defaultsSuiteName: String
     }
 }

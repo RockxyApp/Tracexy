@@ -52,9 +52,9 @@ private struct FocusSetEditorForm: View {
                 }
                 .tracexyGlassButtonStyle()
                 .controlSize(.small)
-                .disabled(draft.rules.count >= coordinator.policy.maxSessionFilterRules)
-                .help(draft.rules.count >= coordinator.policy.maxSessionFilterRules
-                    ? "Filter limit reached — this build allows \(coordinator.policy.maxSessionFilterRules) rules"
+                .disabled(draft.rules.count >= coordinator.sessionFilterRuleLimit)
+                .help(draft.rules.count >= coordinator.sessionFilterRuleLimit
+                    ? "Filter limit reached — up to \(coordinator.sessionFilterRuleLimit) rules per workspace"
                     : "Add a filter rule")
                 .padding(.top, 2)
             }

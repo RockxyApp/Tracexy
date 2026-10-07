@@ -103,10 +103,10 @@ enum SessionRow: Identifiable, Hashable {
         switch self {
         case let .action(activity):
             let path = activity.protocolPath.map(\.label).joined(separator: " → ")
-            return "\(activity.sessions.count) sessions · \(path)"
+            return "\(activity.sessions.count) sessions, \(path)"
         case let .group(group):
-            let path = group.protocolPath.map(\.label).joined(separator: " · ")
-            return "\(group.sessions.count) sessions · \(path)"
+            let path = group.protocolPath.map(\.label).joined(separator: " › ")
+            return "\(group.sessions.count) sessions, \(path)"
         case let .session(session):
             return session.infoSummary
         }

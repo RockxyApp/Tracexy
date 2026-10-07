@@ -42,6 +42,9 @@ nonisolated final class ZlibInflateStream {
         /// A raw deflate stream, as stored inside a ZIP entry — no header, no
         /// trailer; the ZIP central directory supplies the checksum and size.
         case rawDeflate
+        /// A zlib-wrapped deflate stream (RFC 1950), as HTTP `Content-Encoding:
+        /// deflate` carries it; zlib checks the header and the Adler-32 trailer.
+        case zlib
 
         // MARK: Internal
 
@@ -49,6 +52,7 @@ nonisolated final class ZlibInflateStream {
             switch self {
             case .gzip: 15 + 16
             case .rawDeflate: -15
+            case .zlib: 15
             }
         }
     }

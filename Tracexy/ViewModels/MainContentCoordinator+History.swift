@@ -150,6 +150,9 @@ extension MainContentCoordinator {
     /// Mint one durable History identity for a confirmed live start. Any prior
     /// live/frozen identity is retired first so only the current attempt persists.
     func beginLiveHistoryLifetime(captureGeneration: Int) {
+        // A new live run is a new capture for notes, whether or not History records it.
+        investigationNotes.scope = .liveRun()
+        armAutoStop(captureGeneration: captureGeneration)
         guard sessionStore != nil else {
             return
         }
@@ -229,6 +232,12 @@ extension MainContentCoordinator {
             // not an open event.
             timeBasis: .captured,
             sessions: sessions,
+            // The terminal publication adopted these snapshots just before this call.
+            findings: HistoryFindingRecord.records(
+                connection: connectionAnalysisSnapshot,
+                datagram: datagramAnalysisSnapshot,
+                tls: tlsAnalysisSnapshot
+            ),
             maskIPAddresses: PrivacySettingsResolver
                 .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
         )
@@ -271,6 +280,11 @@ extension MainContentCoordinator {
             completeness: completeness,
             timeBasis: lifetime.timeBasis,
             sessions: result.sessions,
+            findings: HistoryFindingRecord.records(
+                connection: result.connectionAnalysis,
+                datagram: result.datagramAnalysis,
+                tls: result.tlsAnalysis
+            ),
             maskIPAddresses: PrivacySettingsResolver
                 .exportPolicy(defaults: activeProjectDefaults).maskIPAddresses
         )
@@ -313,7 +327,7 @@ extension MainContentCoordinator {
             await previous?.value
             let output = HistoryRecordProjection.project(input)
             do {
-                try await store.replaceCapture(output.capture, sessions: output.sessions)
+                try await store.replaceCapture(output.capture, sessions: output.sessions, findings: output.findings)
             } catch is CancellationError {
                 await self?.finishHistoryMutation(requestID: requestID, refreshesHistory: true)
                 return

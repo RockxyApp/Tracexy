@@ -120,10 +120,10 @@ struct SessionStoreTests {
         let url = Self.temporaryURL()
         defer { Self.removeDatabaseFiles(url) }
         let raw = try SQLiteDatabase(path: url.path, readOnly: false)
-        try raw.execute("PRAGMA user_version = 3;")
+        try raw.execute("PRAGMA user_version = 4;")
         raw.close()
 
-        #expect(throws: HistoryStoreError.unsupportedSchema(version: 3)) {
+        #expect(throws: HistoryStoreError.unsupportedSchema(version: 4)) {
             _ = try SessionStore(configuration: .init(location: .file(url)))
         }
     }

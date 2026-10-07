@@ -31,7 +31,6 @@ struct AggregateScopePersistenceTests {
         #expect(snapshot.aggregateDestinationFilter == "93.184.16.34")
 
         let restored = snapshot.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: false
         )
         #expect(restored.aggregateProtocolFilters == [.tls, .http2])
@@ -77,7 +76,6 @@ struct AggregateScopePersistenceTests {
         #expect(decoded.aggregateProtocolFilters == nil)
         #expect(decoded.aggregateDestinationFilter == nil)
         let restored = decoded.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: nil
         )
         #expect(restored.aggregateProtocolFilters.isEmpty)
@@ -94,7 +92,6 @@ struct AggregateScopePersistenceTests {
             aggregateProtocolFilters: ["tls", "future-protocol", "udp"]
         )
         let restored = snapshot.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: nil
         )
         // A name this build cannot recognize contributes nothing rather than a
@@ -109,7 +106,6 @@ struct AggregateScopePersistenceTests {
             )
         )
         let clamped = oversized.hydrateWorkspaceState(
-            maxFilterRules: 64,
             allowsAutomaticInspectorReveal: nil
         )
         #expect(clamped.aggregateProtocolFilters == [.tls])

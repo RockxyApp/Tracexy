@@ -10,12 +10,26 @@ nonisolated enum ProjectLimits {
     static let maximumNameLength = 80
     static let maximumStringLength = 512
     static let maximumFilterRules = 64
+    /// Storage ceilings for a Project's filter buttons and expression macros. How
+    /// many may be *added* is the injected policy; these only bound what a stored
+    /// or hand-edited list can hold.
+    static let maximumFilterButtons = 1_000
+    static let maximumExpressionMacros = 1_000
+    /// Storage ceiling for the GeoIP/ASN database files a Project refers to.
+    static let maximumGeoIPDatabases = 32
     /// Upper bound on a persisted aggregate protocol intersection. The live set is
     /// a finite enum, so this only has to stop a hand-edited or hostile catalog
     /// from carrying an unbounded array through validation.
     static let maximumAggregateProtocolFilters = 32
-    static let maximumCatalogBytes = 2 * 1_024 * 1_024
-    static let maximumPortableProjectBytes = 1 * 1_024 * 1_024
+    /// Room for one Project at its most tabs, each with its most filter rules and
+    /// every value at its longest. A change that would take a Project past it is
+    /// refused before it is made, so every stored Project can also be exported.
+    static let maximumProjectBytes = 8 * 1_024 * 1_024
+    /// Room for every Project at its most tabs and filter rules with long values.
+    /// Growth past it is refused before it is made.
+    static let maximumCatalogBytes = 256 * 1_024 * 1_024
+    /// A `.tracexyproject` document: one Project and a small envelope.
+    static let maximumPortableProjectBytes = maximumProjectBytes + 64 * 1_024
 }
 
 // MARK: - ProjectNameNormalizationError
@@ -316,6 +330,19 @@ extension ProjectCatalog {
     )
         throws -> ProjectCatalog
     {
+        try normalizedValidated(maxProjects: maxProjects) { project in
+            try project.normalizedValidated(maxWorkspaces: maxWorkspacesPerProject)
+        }
+    }
+
+    /// The catalog-wide checks, with each Project validated by `validateProject`
+    /// — which may reuse an earlier result for a Project that has not changed.
+    nonisolated func normalizedValidated(
+        maxProjects: Int,
+        validateProject: (Project) throws -> Project
+    )
+        throws -> ProjectCatalog
+    {
         guard schemaVersion == Self.currentSchemaVersion else {
             throw ProjectCatalogValidationError.unsupportedSchema(schemaVersion)
         }
@@ -333,82 +360,120 @@ extension ProjectCatalog {
         var workspaceIDs = Set<UUID>()
 
         for projectIndex in result.projects.indices {
-            var project = result.projects[projectIndex]
-            guard projectIDs.insert(project.id).inserted else {
-                throw ProjectCatalogValidationError.duplicateProjectID(project.id)
-            }
-            guard project.createdAt.timeIntervalSinceReferenceDate.isFinite,
-                  project.updatedAt.timeIntervalSinceReferenceDate.isFinite else
-            {
-                throw ProjectCatalogValidationError.invalidDate(projectID: project.id)
-            }
-            do {
-                project.name = try ProjectNameNormalization.normalize(project.name)
-            } catch let error as ProjectNameNormalizationError {
-                throw ProjectCatalogValidationError.invalidProjectName(projectID: project.id, error)
-            }
-            let projectKey = ProjectNameNormalization.uniquenessKey(project.name)
-            guard projectNames.insert(projectKey).inserted else {
-                throw ProjectCatalogValidationError.duplicateProjectName(project.name)
-            }
-
-            let workspaceLimit = min(max(1, maxWorkspacesPerProject), ProjectLimits.maximumWorkspacesPerProject)
-            guard project.workspaces.count >= ProjectLimits.minimumWorkspaces,
-                  project.workspaces.count <= workspaceLimit else
-            {
-                throw ProjectCatalogValidationError.workspaceCountOutOfBounds(
-                    projectID: project.id,
-                    count: project.workspaces.count,
-                    limit: workspaceLimit
-                )
-            }
-
-            var workspaceNames = Set<String>()
-            for workspaceIndex in project.workspaces.indices {
-                var workspace = project.workspaces[workspaceIndex]
-                guard workspaceIDs.insert(workspace.id).inserted else {
-                    throw ProjectCatalogValidationError.duplicateWorkspaceID(workspace.id)
-                }
-                do {
-                    workspace.title = try ProjectNameNormalization.normalize(workspace.title)
-                } catch let error as ProjectNameNormalizationError {
-                    throw ProjectCatalogValidationError.invalidWorkspaceName(workspaceID: workspace.id, error)
-                }
-                let workspaceKey = ProjectNameNormalization.uniquenessKey(workspace.title)
-                guard workspaceNames.insert(workspaceKey).inserted else {
-                    throw ProjectCatalogValidationError.duplicateWorkspaceName(
-                        projectID: project.id,
-                        name: workspace.title
-                    )
-                }
-                guard workspace.filterRules.count <= ProjectLimits.maximumFilterRules else {
-                    throw ProjectCatalogValidationError.tooManyFilterRules(
-                        workspaceID: workspace.id,
-                        count: workspace.filterRules.count
-                    )
-                }
-                let aggregateProtocolCount = workspace.aggregateProtocolFilters?.count ?? 0
-                guard aggregateProtocolCount <= ProjectLimits.maximumAggregateProtocolFilters else {
-                    throw ProjectCatalogValidationError.tooManyAggregateProtocolFilters(
-                        workspaceID: workspace.id,
-                        count: aggregateProtocolCount
-                    )
-                }
-                try workspace.validateStrings()
-                project.workspaces[workspaceIndex] = workspace
-            }
-            guard project.workspaces.contains(where: { $0.id == project.activeWorkspaceID }) else {
-                throw ProjectCatalogValidationError.activeWorkspaceMissing(
-                    projectID: project.id,
-                    workspaceID: project.activeWorkspaceID
-                )
-            }
+            let project = try validateProject(result.projects[projectIndex])
+            try Self.checkUnique(
+                project,
+                projectIDs: &projectIDs,
+                projectNames: &projectNames,
+                workspaceIDs: &workspaceIDs
+            )
             result.projects[projectIndex] = project
         }
         guard result.projects.contains(where: { $0.id == result.activeProjectID }) else {
             throw ProjectCatalogValidationError.activeProjectMissing(result.activeProjectID)
         }
         return result
+    }
+}
+
+extension ProjectCatalog {
+    /// The checks that span Projects: identities and names unique across the
+    /// catalog. Everything else is validated per Project.
+    nonisolated static func checkUnique(
+        _ project: Project,
+        projectIDs: inout Set<UUID>,
+        projectNames: inout Set<String>,
+        workspaceIDs: inout Set<UUID>
+    )
+        throws
+    {
+        guard projectIDs.insert(project.id).inserted else {
+            throw ProjectCatalogValidationError.duplicateProjectID(project.id)
+        }
+        guard projectNames.insert(ProjectNameNormalization.uniquenessKey(project.name)).inserted else {
+            throw ProjectCatalogValidationError.duplicateProjectName(project.name)
+        }
+        for workspace in project.workspaces {
+            guard workspaceIDs.insert(workspace.id).inserted else {
+                throw ProjectCatalogValidationError.duplicateWorkspaceID(workspace.id)
+            }
+        }
+    }
+}
+
+extension Project {
+    /// This Project normalized and checked on its own; a pure function of the
+    /// Project, so a caller may reuse the result while the Project is unchanged.
+    nonisolated func normalizedValidated(
+        maxWorkspaces: Int = ProjectLimits.maximumWorkspacesPerProject
+    )
+        throws -> Project
+    {
+        var project = self
+        guard project.createdAt.timeIntervalSinceReferenceDate.isFinite,
+              project.updatedAt.timeIntervalSinceReferenceDate.isFinite else
+        {
+            throw ProjectCatalogValidationError.invalidDate(projectID: project.id)
+        }
+        do {
+            project.name = try ProjectNameNormalization.normalize(project.name)
+        } catch let error as ProjectNameNormalizationError {
+            throw ProjectCatalogValidationError.invalidProjectName(projectID: project.id, error)
+        }
+
+        let workspaceLimit = min(max(1, maxWorkspaces), ProjectLimits.maximumWorkspacesPerProject)
+        guard project.workspaces.count >= ProjectLimits.minimumWorkspaces,
+              project.workspaces.count <= workspaceLimit else
+        {
+            throw ProjectCatalogValidationError.workspaceCountOutOfBounds(
+                projectID: project.id,
+                count: project.workspaces.count,
+                limit: workspaceLimit
+            )
+        }
+
+        var workspaceIDs = Set<UUID>()
+        var workspaceNames = Set<String>()
+        for workspaceIndex in project.workspaces.indices {
+            var workspace = project.workspaces[workspaceIndex]
+            guard workspaceIDs.insert(workspace.id).inserted else {
+                throw ProjectCatalogValidationError.duplicateWorkspaceID(workspace.id)
+            }
+            do {
+                workspace.title = try ProjectNameNormalization.normalize(workspace.title)
+            } catch let error as ProjectNameNormalizationError {
+                throw ProjectCatalogValidationError.invalidWorkspaceName(workspaceID: workspace.id, error)
+            }
+            let workspaceKey = ProjectNameNormalization.uniquenessKey(workspace.title)
+            guard workspaceNames.insert(workspaceKey).inserted else {
+                throw ProjectCatalogValidationError.duplicateWorkspaceName(
+                    projectID: project.id,
+                    name: workspace.title
+                )
+            }
+            guard workspace.filterRules.count <= ProjectLimits.maximumFilterRules else {
+                throw ProjectCatalogValidationError.tooManyFilterRules(
+                    workspaceID: workspace.id,
+                    count: workspace.filterRules.count
+                )
+            }
+            let aggregateProtocolCount = workspace.aggregateProtocolFilters?.count ?? 0
+            guard aggregateProtocolCount <= ProjectLimits.maximumAggregateProtocolFilters else {
+                throw ProjectCatalogValidationError.tooManyAggregateProtocolFilters(
+                    workspaceID: workspace.id,
+                    count: aggregateProtocolCount
+                )
+            }
+            try workspace.validateStrings()
+            project.workspaces[workspaceIndex] = workspace
+        }
+        guard project.workspaces.contains(where: { $0.id == project.activeWorkspaceID }) else {
+            throw ProjectCatalogValidationError.activeWorkspaceMissing(
+                projectID: project.id,
+                workspaceID: project.activeWorkspaceID
+            )
+        }
+        return project
     }
 }
 

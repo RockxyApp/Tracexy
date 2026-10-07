@@ -233,6 +233,17 @@ enum Theme {
         static let metricRounded = Font.system(size: 26, weight: .semibold, design: .rounded)
         /// Legacy alias — table rows are plain body text.
         static let rowTitle = body
+
+        /// Packet text (hex, decode tree, stream transcripts, frame lists) at a
+        /// View ▸ Zoom step: the text style's size plus `zoom` points, so step 0 is
+        /// exactly the style's own size.
+        static func zoomed(_ style: NSFont.TextStyle, zoom: Int, monospaced: Bool = false) -> Font {
+            .system(size: zoomedSize(style, zoom: zoom), design: monospaced ? .monospaced : .default)
+        }
+
+        static func zoomedSize(_ style: NSFont.TextStyle, zoom: Int) -> CGFloat {
+            NSFont.preferredFont(forTextStyle: style).pointSize + CGFloat(zoom)
+        }
     }
 
     // MARK: Icon sizes
@@ -323,6 +334,24 @@ enum Theme {
         case .quic: .orange
         case .websocket: .pink
         case .stun: .yellow
+        case .mdns: .teal
+        case .dhcp: .brown
+        case .ntp: .gray
+        case .tftp: .brown
+        case .ssh: .indigo
+        case .ftp,
+             .smtp,
+             .pop3,
+             .imap: .brown
+        case .ssdp: .teal
+        case .sip: .pink
+        case .smb: .brown
+        case .llmnr,
+             .nbns: .teal
+        case .kerberos,
+             .ldap: .indigo
+        case .gre,
+             .vxlan: .secondary
         }
     }
 

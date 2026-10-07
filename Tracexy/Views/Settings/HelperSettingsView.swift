@@ -31,7 +31,7 @@ struct HelperSettingsView: View {
                     SettingsDivider()
                     SettingsRow(label: "Installed:") {
                         versionText(
-                            "v\(info.binaryVersion) · build \(info.buildNumber) · protocol \(info.protocolVersion)"
+                            "\(info.binaryVersion) (\(info.buildNumber)), protocol \(info.protocolVersion)"
                         )
                     }
                 }
@@ -40,7 +40,7 @@ struct HelperSettingsView: View {
 
                 SettingsRow(label: "Bundled:") {
                     versionText(
-                        "v\(helper.bundledHelperVersion) · build \(helper.bundledHelperBuild) · protocol \(helper.expectedProtocolVersion)"
+                        "\(helper.bundledHelperVersion) (\(helper.bundledHelperBuild)), protocol \(helper.expectedProtocolVersion)"
                     )
                 }
             }

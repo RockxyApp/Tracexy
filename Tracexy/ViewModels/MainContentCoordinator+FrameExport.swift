@@ -33,12 +33,14 @@ extension MainContentCoordinator {
 
     /// Present the panel. `preselectedSessions` (a row's Export preset) selects the
     /// "Selected session" scope; otherwise the whole capture is preselected.
-    func presentFrameExportPanel(preselectedSessions: Set<UUID>? = nil) {
+    func presentFrameExportPanel(preselectedSessions: Set<UUID>? = nil, prefersMarkedFrames: Bool = false) {
         guard canExportFrames else {
             captureError = captureSourceHoldMessage ?? "Open a saved capture or stop the live capture before exporting frames."
             return
         }
-        let context = frameExportContext(preselectedSessions: preselectedSessions)
+        let context = frameExportContext(
+            preselectedSessions: preselectedSessions, prefersMarkedFrames: prefersMarkedFrames
+        )
         let originProjectID = activeRuntime.projectID
         let originGeneration = startGeneration
         setSessionExporting(true)
@@ -61,14 +63,19 @@ extension MainContentCoordinator {
 
     /// The panel-free route (tests and automation): export with an explicit
     /// destination, scope and options. Holds the source exactly as the panel does.
-    func exportFrames(to url: URL, scope: FrameExportScope, options: FrameExportOptions) {
+    func exportFrames(
+        to url: URL,
+        scope: FrameExportScope,
+        options: FrameExportOptions,
+        includesNotes: Bool = false
+    ) {
         guard canExportFrames else {
             captureError = captureSourceHoldMessage ?? "Open a saved capture or stop the live capture before exporting frames."
             return
         }
         setSessionExporting(true)
         runFrameExport(
-            FrameExportPanel.Choice(url: url, scope: scope, options: options),
+            FrameExportPanel.Choice(url: url, scope: scope, options: options, includesNotes: includesNotes),
             originProjectID: activeRuntime.projectID,
             originGeneration: startGeneration
         )
@@ -90,7 +97,12 @@ extension MainContentCoordinator {
 
     /// The panel's inputs, derived once from coordinator state: scope choices with
     /// best-effort estimates, whether PCAP is representable, and the time bounds.
-    func frameExportContext(preselectedSessions: Set<UUID>?) -> FrameExportPanel.Context {
+    func frameExportContext(
+        preselectedSessions: Set<UUID>?,
+        prefersMarkedFrames: Bool = false
+    )
+        -> FrameExportPanel.Context
+    {
         let properties = savedCaptureProperties
         var scopes: [FrameExportPanel.Context.ScopeChoice] = []
         scopes.append(.init(
@@ -116,6 +128,14 @@ extension MainContentCoordinator {
                 frameEstimate: nil
             ))
         }
+        // Frames marked in View ▸ All Frames, Wireshark's "Marked packets only".
+        if !allFrames.marked.isEmpty {
+            scopes.append(.init(
+                scope: .frames(allFrames.marked),
+                title: String(localized: "Marked frames (\(allFrames.marked.count.formatted()))"),
+                frameEstimate: allFrames.marked.count
+            ))
+        }
         var bounds: ClosedRange<Date>?
         if let first = properties?.firstTimestamp, let last = properties?.lastTimestamp, first <= last {
             bounds = first ... last
@@ -125,8 +145,11 @@ extension MainContentCoordinator {
                 frameEstimate: nil
             ))
         }
-        let initialIndex = preselectedSessions != nil ? scopes.firstIndex { choice in
+        let initialIndex = preselectedSessions != nil || prefersMarkedFrames ? scopes.firstIndex { choice in
             if case let .sessions(ids) = choice.scope, ids == preselectedSessions {
+                return true
+            }
+            if prefersMarkedFrames, case .frames = choice.scope {
                 return true
             }
             return false
@@ -151,7 +174,7 @@ extension MainContentCoordinator {
             !isViewingSavedCapture
         }
         let stem = activeSavedCapture?.name ?? String(localized: "Capture on \(captureInterface)")
-        return FrameExportPanel.Context(
+        var context = FrameExportPanel.Context(
             baseName: preselectedSessions != nil ? "\(stem) – session" : stem,
             scopes: scopes,
             initialScopeIndex: initialIndex,
@@ -160,6 +183,72 @@ extension MainContentCoordinator {
             pcapUnavailableReason: pcapReason,
             averageFrameBytes: averageBytes
         )
+        // Session notes and frame comments both travel under the notes checkbox.
+        context.noteCount = investigationNotes.annotatedSessionIDs.count + allFrames.frameComments.count
+        context.nameCount = frameExportNameRecords().count
+        return context
+    }
+
+    /// Each noted session's notes as one packet comment for its first exported
+    /// frame: the session note, then finding notes, one per line.
+    func frameExportSessionFrameComments() -> [UUID: String] {
+        let titles = Dictionary(findings.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        var comments: [UUID: String] = [:]
+        for sessionID in investigationNotes.annotatedSessionIDs {
+            let lines = investigationNotes.notes(onSession: sessionID).map { note in
+                switch note.target {
+                case .session:
+                    "Tracexy note: \(note.text)"
+                case let .finding(id, _):
+                    "Tracexy note on \u{201C}\(titles[id] ?? "finding")\u{201D}: \(note.text)"
+                }
+            }
+            if !lines.isEmpty {
+                comments[sessionID] = lines.joined(separator: "\n")
+            }
+        }
+        return comments
+    }
+
+    /// The notes on the sessions `scope` exports, as capture comments: each names
+    /// the session (and the finding, for a finding note) so it reads on its own in
+    /// another tool. A time range takes the sessions whose known span meets it.
+    func frameExportNoteComments(for scope: FrameExportScope) -> [String] {
+        let annotated = investigationNotes.annotatedSessionIDs
+        guard !annotated.isEmpty else {
+            return []
+        }
+        let included = presentedSessions.filter { session in
+            guard annotated.contains(session.id) else {
+                return false
+            }
+            switch scope {
+            case .wholeCapture:
+                return true
+            case let .sessions(ids):
+                return ids.contains(session.id)
+            case let .timeRange(start, end):
+                guard let begin = session.startTime else {
+                    return false
+                }
+                return begin <= end && begin.addingTimeInterval(session.duration ?? 0) >= start
+            case let .frames(ordinals):
+                return allFrames.list?.rows
+                    .contains { ordinals.contains($0.ordinal) && $0.sessionID == session.id } == true
+            }
+        }
+        let titles = Dictionary(findings.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        return included.flatMap { session in
+            let subject = "\(session.host) (\(session.sourceEndpoint) to \(session.destinationEndpoint))"
+            return investigationNotes.notes(onSession: session.id).map { note in
+                switch note.target {
+                case .session:
+                    "Tracexy note on \(subject): \(note.text)"
+                case let .finding(id, _):
+                    "Tracexy note on the finding \u{201C}\(titles[id] ?? "finding")\u{201D} in \(subject): \(note.text)"
+                }
+            }
+        }
     }
 
     // MARK: Private
@@ -179,6 +268,18 @@ extension MainContentCoordinator {
         let savedSource = isViewingSavedCapture ? savedCaptureEvidenceURL : nil
         let identity = adoptedSavedCaptureIdentity
         let spool = liveCaptureSpool
+        var options = choice.options
+        if choice.includesNotes, options.format == .pcapng {
+            options.captureComments = frameExportNoteComments(for: choice.scope)
+            options.sessionFrameComments = frameExportSessionFrameComments()
+            // Comments written on frames in View ▸ All Frames, as Wireshark saves its
+            // packet comments into the file.
+            options.frameComments = allFrames.frameComments
+        }
+        if choice.includesNames, options.format == .pcapng {
+            options.nameRecords = frameExportNameRecords()
+        }
+        let exportOptions = options
 
         frameExportTask = Task { @MainActor [weak self] in
             var failure: String?
@@ -189,15 +290,15 @@ extension MainContentCoordinator {
                     if let savedSource {
                         return try CaptureFrameExporter.export(
                             from: savedSource, expectedIdentity: identity, scope: choice.scope,
-                            options: choice.options, to: choice.url, onProgress: relay.submit
+                            options: exportOptions, to: choice.url, onProgress: relay.submit
                         )
                     }
                     let temporaryURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent("tracexy-frame-export-\(UUID().uuidString).pcapng")
                     defer { try? FileManager.default.removeItem(at: temporaryURL) }
-                    try await spool.copy(to: temporaryURL)
+                    try await spool.copyWholeCapture(to: temporaryURL)
                     return try CaptureFrameExporter.export(
-                        from: temporaryURL, scope: choice.scope, options: choice.options,
+                        from: temporaryURL, scope: choice.scope, options: exportOptions,
                         to: choice.url, onProgress: relay.submit
                     )
                 }.value
@@ -223,6 +324,18 @@ extension MainContentCoordinator {
         }
     }
 
+    /// Each address with each name the capture's DNS/mDNS answers or the Project
+    /// gave it, once, for the exported file's Name Resolution Block.
+    func frameExportNameRecords() -> [FrameExportNameRecord] {
+        var seen: Set<String> = []
+        return resolvedAddressRows.compactMap { row in
+            guard seen.insert("\(row.address)|\(row.name)").inserted else {
+                return nil
+            }
+            return FrameExportNameRecord(address: row.address, name: row.name)
+        }
+    }
+
     nonisolated static func frameExportWarning(_ summary: FrameExportSummary) -> String? {
         var notes: [String] = []
         if summary.omittedFrameOptionCount > 0 {
@@ -233,6 +346,30 @@ extension MainContentCoordinator {
         }
         if case .incompleteTruncatedTail = summary.completeness {
             notes.append("the source ends mid-record, so the export holds every complete frame")
+        }
+        if summary.unanonymizedFrameCount > 0 {
+            notes.append(
+                "\(summary.unanonymizedFrameCount.formatted()) frame(s) were left out because their addresses "
+                    + "could not be replaced safely"
+            )
+        }
+        if summary.unstrippedFrameCount > 0 {
+            notes.append(
+                "\(summary.unstrippedFrameCount.formatted()) frame(s) were left out because they carry no inner "
+                    + "packet of the kind chosen under Headers"
+            )
+        }
+        if summary.removedDuplicateCount > 0 {
+            notes.append("\(summary.removedDuplicateCount.formatted()) duplicate frame(s) were left out")
+        }
+        if summary.truncatedFrameCount > 0 {
+            notes.append("\(summary.truncatedFrameCount.formatted()) frame(s) were cut to the byte limit")
+        }
+        if summary.replacedAddressCount > 0 {
+            notes.append(
+                "\(summary.replacedAddressCount.formatted()) addresses were replaced in packet headers; payloads such as "
+                    + "DNS answers and HTTP headers were not changed"
+            )
         }
         guard !notes.isEmpty else {
             return nil

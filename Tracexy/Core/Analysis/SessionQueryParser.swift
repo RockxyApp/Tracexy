@@ -44,7 +44,8 @@ nonisolated struct SessionQueryParseError: Error, Hashable, Sendable {
         /// A name that is not a protocol keyword, session field, or finding value.
         case unknownName(String)
         /// An operator this grammar deliberately does not support (`!=`, regular
-        /// expressions, arithmetic, bare `=`/`<`/`>`).
+        /// expressions, arithmetic, bare `=`/`<`/`>`). `matches` is a wildcard, not a
+        /// regular expression.
         case unsupportedOperator(String)
         /// A supported operator that this particular field does not accept.
         case operatorNotSupportedForField(field: String, operatorText: String)
@@ -64,6 +65,13 @@ nonisolated struct SessionQueryParseError: Error, Hashable, Sendable {
         case invalidPort
         /// A `bytes` operand was not a non-negative decimal `Int`.
         case invalidByteCount
+        /// A numeric comparison's value held something other than a whole number,
+        /// a numeric field or an operator, or a constant that overflows.
+        case invalidNumber
+        /// A value set held more than the enforced number of values.
+        case setTooLarge(limit: Int)
+        /// A closing brace was expected at this position.
+        case unbalancedBrace
     }
 
     /// 1-based Unicode-scalar offset the diagnostic points at. End-of-input errors
@@ -87,12 +95,33 @@ nonisolated struct SessionQueryParseError: Error, Hashable, Sendable {
 /// unary       := ("not" | "!") unary | primary
 /// primary     := "(" expression ")" | term
 /// term        := protocolKeyword | comparison
-/// comparison  := ("ip" | "source.ip" | "destination.ip") ("==" address | "in" cidr)
-///              | ("port" | "source.port" | "destination.port") "==" number
-///              | ("host" | "process") "contains" string
-///              | "bytes" ("==" | ">=" | "<=") number
-///              | "finding" "==" findingName
+/// comparison  := ("ip" | "source.ip" | "destination.ip")
+///                    ("==" address | "in" cidr | "in" "{" (address | cidr) ("," …)* "}")
+///              | ("port" | "source.port" | "destination.port")
+///                    ("==" number | "in" portRange | "in" "{" (number | portRange) ("," …)* "}")
+///              | ("host" | "process") ("contains" | "matches") string
+///              | numericField ("==" | ">=" | "<=") arithmetic
+///              | "finding" ("==" findingName | "in" "{" findingName ("," findingName)* "}")
+///              | "http.method" ("==" method | "in" "{" method ("," method)* "}")
+///              | "http.status" ("==" number | "in" statusRange | "in" "{" (number | statusRange) ("," …)* "}")
+///              | "dhcp.message" ("==" name | "in" "{" name ("," name)* "}")
+///              | ("mac" | "source.mac" | "destination.mac") ("==" mac | "in" "{" mac ("," mac)* "}")
+///              | "finding" | "process" | "latency" | "sni" | "dns.query" | "dns.answer"   (presence)
+///              | "tcp.completeness" ("==" (0...63 | "complete" | "incomplete") | "in" "{" … "}")
+///              | ("duration" | "latency") (">=" | "<=") interval | "in" interval ".." interval
+///              | "start" (">=" | "<=") "\"ISO 8601 date-time\""
+///              | "tag" ("==" color | "in" "{" color ("," color)* "}")
+/// numericField := "bytes" | "bytes.sent" | "bytes.received" | "frames" | "frames.sent" | "frames.received"
+/// arithmetic  := product (("+" | "-") product)*
+/// product     := factor (("*" | "/" | "%") factor)*
+/// factor      := number | numericField | "{" arithmetic "}"
+/// portRange   := number ".." number
+/// statusRange := number ".." number
 /// ```
+///
+/// A value set is sugar for an `or` of the same comparison, so it adds no semantics
+/// the engine does not already have. `matches` is a whole-value wildcard (`*`, `?`),
+/// never a regular expression — see ``WildcardPattern``.
 nonisolated struct SessionQueryParser: Hashable, Sendable {
     // MARK: Lifecycle
 
@@ -129,69 +158,9 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         let maxDepth: Int
     }
 
-    /// The protocol keywords this grammar accepts, deliberately lower-case and
-    /// deliberately excluding outer framing (`ethernet`, `linuxCooked`) and `other`.
-    static let protocolKeywords: [String: ProtocolKind] = [
-        "ipv4": .ipv4,
-        "ipv6": .ipv6,
-        "arp": .arp,
-        "icmp": .icmp,
-        "icmpv6": .icmpv6,
-        "tcp": .tcp,
-        "udp": .udp,
-        "dns": .dns,
-        "tls": .tls,
-        "http": .http,
-        "http2": .http2,
-        "quic": .quic,
-        "websocket": .websocket,
-        "stun": .stun,
-    ]
+    // MARK: Tokens (internal for the arithmetic extension)
 
-    /// The accepted finding value names, mapped to the existing typed projection.
-    static let findingNames: [String: QueryFindingKind] = [
-        "reset": .reset,
-        "retransmission": .retransmission,
-        "overlap": .overlap,
-        "outOfOrder": .outOfOrder,
-        "dnsTruncation": .dnsTruncation,
-    ]
-
-    let configuration: Configuration
-
-    /// Parse one complete session expression. Throws the first
-    /// ``SessionQueryParseError`` encountered; partial input is never accepted, and
-    /// the returned query is still subject to ``InvestigationQueryEngine/compile(_:)``.
-    func parse(_ text: String) throws -> InvestigationQuery {
-        // Guard the byte ceiling by bounded iteration, before any whole-input
-        // allocation, so a pathological paste is rejected without being materialized.
-        guard !exceedsUTF8Limit(text) else {
-            throw SessionQueryParseError(
-                position: 1,
-                reason: .inputTooLong(limit: configuration.maxUTF8Bytes)
-            )
-        }
-        let scalars = Array(text.unicodeScalars)
-        let tokens = try tokenize(scalars)
-        guard !tokens.isEmpty else {
-            throw SessionQueryParseError(position: 1, reason: .emptyExpression)
-        }
-        var cursor = Cursor(tokens: tokens, endPosition: scalars.count + 1)
-        let query = try parseOr(&cursor, depth: 1)
-        // Complete consumption is required: a trailing term is an error, never a
-        // silently dropped conjunct.
-        guard cursor.index == tokens.count else {
-            throw SessionQueryParseError(
-                position: cursor.position,
-                reason: .unexpectedTrailingInput
-            )
-        }
-        return query
-    }
-
-    // MARK: Private
-
-    private enum TokenKind: Hashable {
+    enum TokenKind: Hashable {
         /// An identifier, number, or address-like run of word scalars.
         case word(String)
         /// The already-unescaped contents of a quoted string.
@@ -204,16 +173,22 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         case not
         case leftParen
         case rightParen
+        case leftBrace
+        case rightBrace
+        case comma
+        /// `+`, `-`, `*` or `%`; legal only in a numeric comparison's value (a
+        /// spaced `/` stays a word, since `/` also spells a CIDR prefix).
+        case arithmetic(QueryArithmeticOperator)
     }
 
-    private struct Token: Hashable {
+    struct Token: Hashable {
         let kind: TokenKind
         /// 1-based Unicode-scalar offset of the token's first scalar.
         let position: Int
     }
 
     /// A bounded read cursor over the already-tokenized input.
-    private struct Cursor {
+    struct Cursor {
         let tokens: [Token]
         /// Position reported for an end-of-input diagnostic.
         let endPosition: Int
@@ -241,10 +216,178 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         }
     }
 
+    /// The protocol keywords this grammar accepts, deliberately lower-case and
+    /// deliberately excluding outer framing (`ethernet`, `linuxCooked`) and `other`.
+    static let protocolKeywords: [String: ProtocolKind] = [
+        "ipv4": .ipv4,
+        "ipv6": .ipv6,
+        "arp": .arp,
+        "icmp": .icmp,
+        "icmpv6": .icmpv6,
+        "tcp": .tcp,
+        "udp": .udp,
+        "dns": .dns,
+        "tls": .tls,
+        "http": .http,
+        "http2": .http2,
+        "quic": .quic,
+        "websocket": .websocket,
+        "stun": .stun,
+        "mdns": .mdns,
+        "dhcp": .dhcp,
+        "ntp": .ntp,
+        "tftp": .tftp,
+        "ssh": .ssh,
+        "ftp": .ftp,
+        "smtp": .smtp,
+        "pop": .pop3,
+        "imap": .imap,
+        "ssdp": .ssdp,
+        "sip": .sip,
+        "smb": .smb,
+        "smb2": .smb,
+        "llmnr": .llmnr,
+        "nbns": .nbns,
+        "kerberos": .kerberos,
+        "ldap": .ldap,
+        "gre": .gre,
+        "vxlan": .vxlan,
+    ]
+
+    /// The accepted finding value names, mapped to the existing typed projection.
+    static let findingNames: [String: QueryFindingKind] = [
+        "connectionRefused": .connectionRefused,
+        "handshakeUnanswered": .handshakeUnanswered,
+        "abortAfterData": .abortAfterData,
+        "halfClose": .halfClose,
+        "tupleReuse": .tupleReuse,
+        "reset": .reset,
+        "retransmission": .retransmission,
+        "overlap": .overlap,
+        "outOfOrder": .outOfOrder,
+        "zeroWindow": .zeroWindow,
+        "windowFull": .windowFull,
+        "duplicateAck": .duplicateAck,
+        "keepAlive": .keepAlive,
+        "fastRetransmission": .fastRetransmission,
+        "spuriousRetransmission": .spuriousRetransmission,
+        "ackedUnseen": .ackedUnseen,
+        "cleartextCredentials": .cleartextCredentials,
+        "dnsTruncation": .dnsTruncation,
+        "dnsNameError": .dnsNameError,
+        "dnsServerFailure": .dnsServerFailure,
+        "dnsUnanswered": .dnsUnanswered,
+        "icmpUnreachable": .icmpUnreachable,
+        "icmpPacketTooBig": .icmpPacketTooBig,
+        "icmpTimeExceeded": .icmpTimeExceeded,
+        "icmpReportedUnreachable": .icmpReportedUnreachable,
+        "icmpReportedPacketTooBig": .icmpReportedPacketTooBig,
+        "icmpReportedTimeExceeded": .icmpReportedTimeExceeded,
+        "tlsFatalAlert": .tlsFatalAlert,
+        "tlsWarningAlert": .tlsWarningAlert,
+        "tlsDeprecatedVersion": .tlsDeprecatedVersion,
+        "tlsRepeatedRetryRequest": .tlsRepeatedRetryRequest,
+        "tlsHandshakeUnanswered": .tlsHandshakeUnanswered,
+    ]
+
+    /// The most values one set may name. The engine's own child ceiling still applies
+    /// to the `or` a set becomes.
+    static let maximumSetValues = 32
+
+    let configuration: Configuration
+
+    /// The expression name of a finding kind — the inverse of ``findingNames``.
+    static func findingName(_ kind: QueryFindingKind) -> String {
+        findingNamesByKind[kind] ?? String(describing: kind)
+    }
+
+    /// A short, bounded rendering of a token for a diagnostic. Quoted text is never
+    /// echoed back.
+    static func describe(_ kind: TokenKind) -> String {
+        switch kind {
+        case let .word(text): truncated(text)
+        case .text: "text"
+        case .equal: "=="
+        case .greaterOrEqual: ">="
+        case .lessOrEqual: "<="
+        case .and: "and"
+        case .or: "or"
+        case .not: "not"
+        case .leftParen: "("
+        case .rightParen: ")"
+        case .leftBrace: "{"
+        case .rightBrace: "}"
+        case .comma: ","
+        case let .arithmetic(operation): operation.rawValue
+        }
+    }
+
+    static func isASCIIDecimal(_ text: String) -> Bool {
+        !text.isEmpty && text.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
+    }
+
+    static func operatorError(field: String, token: Token) -> SessionQueryParseError {
+        SessionQueryParseError(
+            position: token.position,
+            reason: .operatorNotSupportedForField(
+                field: field,
+                operatorText: describe(token.kind)
+            )
+        )
+    }
+
+    /// Parse one complete session expression. Throws the first
+    /// ``SessionQueryParseError`` encountered; partial input is never accepted, and
+    /// the returned query is still subject to ``InvestigationQueryEngine/compile(_:)``.
+    func parse(_ text: String) throws -> InvestigationQuery {
+        // Guard the byte ceiling by bounded iteration, before any whole-input
+        // allocation, so a pathological paste is rejected without being materialized.
+        guard !exceedsUTF8Limit(text) else {
+            throw SessionQueryParseError(
+                position: 1,
+                reason: .inputTooLong(limit: configuration.maxUTF8Bytes)
+            )
+        }
+        let scalars = Array(text.unicodeScalars)
+        let tokens = try tokenize(scalars)
+        try Self.rejectStrayArithmetic(in: tokens)
+        guard !tokens.isEmpty else {
+            throw SessionQueryParseError(position: 1, reason: .emptyExpression)
+        }
+        var cursor = Cursor(tokens: tokens, endPosition: scalars.count + 1)
+        let query = try parseOr(&cursor, depth: 1)
+        // Complete consumption is required: a trailing term is an error, never a
+        // silently dropped conjunct.
+        guard cursor.index == tokens.count else {
+            throw SessionQueryParseError(
+                position: cursor.position,
+                reason: .unexpectedTrailingInput
+            )
+        }
+        return query
+    }
+
+    // MARK: Private
+
+    /// Fields whose bare name tests presence (see ``parseTerm``).
+    private static let presenceFields: [String: QueryEvidenceField] = [
+        "finding": .anyFinding,
+        "process": .processAttribution,
+        "latency": .latency,
+        "sni": .serverNameIndication,
+        "dns.query": .dnsQuery,
+        "dns.answer": .dnsAnswer,
+    ]
+
+    private static let findingNamesByKind: [QueryFindingKind: String] = Dictionary(
+        findingNames.map { ($1, $0) }, uniquingKeysWith: min
+    )
+
     /// Scalars this grammar rejects as an operator it deliberately does not offer
-    /// (arithmetic, regular-expression, and shell-ish punctuation).
+    /// (bitwise, regular-expression, and shell-ish punctuation). Arithmetic is
+    /// tokenized, then rejected outside a numeric comparison's value.
     private static let unsupportedOperatorScalars: Set<Unicode.Scalar> = [
-        "+", "-", "*", "%", "^", "~", "?", "$", "#",
+        "^", "~", "?", "$", "#",
     ]
 
     /// Address/port fields and the endpoint scope each reads.
@@ -260,20 +403,19 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         "destination.port": .destination,
     ]
 
-    /// A short, bounded rendering of a token for a diagnostic. Quoted text is never
-    /// echoed back.
-    private static func describe(_ kind: TokenKind) -> String {
-        switch kind {
-        case let .word(text): truncated(text)
-        case .text: "text"
-        case .equal: "=="
-        case .greaterOrEqual: ">="
-        case .lessOrEqual: "<="
-        case .and: "and"
-        case .or: "or"
-        case .not: "not"
-        case .leftParen: "("
-        case .rightParen: ")"
+    /// Whether `token` ends a term: the input's end, a boolean operator, a closing
+    /// parenthesis or a set separator.
+    private static func endsTerm(_ token: Token?) -> Bool {
+        guard let token else {
+            return true
+        }
+        switch token.kind {
+        case .and,
+             .or,
+             .rightParen:
+            return true
+        default:
+            return false
         }
     }
 
@@ -306,10 +448,6 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         return scalar == "_" || scalar == "." || scalar == ":" || scalar == "/"
     }
 
-    private static func isASCIIDecimal(_ text: String) -> Bool {
-        !text.isEmpty && text.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
-    }
-
     private static func wordKind(_ text: String) -> TokenKind {
         switch text {
         case "and": .and
@@ -319,14 +457,65 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         }
     }
 
-    private static func operatorError(field: String, token: Token) -> SessionQueryParseError {
-        SessionQueryParseError(
-            position: token.position,
-            reason: .operatorNotSupportedForField(
-                field: field,
-                operatorText: describe(token.kind)
-            )
-        )
+    /// `80`, or — where a range is allowed — `8000..8080`. The engine rejects a
+    /// reversed range as a typed validation error, so it is not second-guessed here.
+    private static func portRange(
+        _ operand: (text: String, position: Int),
+        allowsRange: Bool
+    )
+        throws -> (lower: UInt16, upper: UInt16)
+    {
+        let parts = operand.text.components(separatedBy: "..")
+        func port(_ text: String) throws -> UInt16 {
+            guard isASCIIDecimal(text), let value = UInt16(text) else {
+                throw SessionQueryParseError(position: operand.position, reason: .invalidPort)
+            }
+            return value
+        }
+        switch parts.count {
+        case 1:
+            let value = try port(parts[0])
+            return (value, value)
+        case 2 where allowsRange:
+            return try (port(parts[0]), port(parts[1]))
+        default:
+            throw SessionQueryParseError(position: operand.position, reason: .invalidPort)
+        }
+    }
+
+    private static func dateTime(_ text: String) -> Date? {
+        let zoned = ISO8601DateFormatter()
+        zoned.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = zoned.date(from: text) {
+            return date
+        }
+        zoned.formatOptions = [.withInternetDateTime]
+        if let date = zoned.date(from: text) {
+            return date
+        }
+        let local = DateFormatter()
+        local.locale = Locale(identifier: "en_US_POSIX")
+        local.timeZone = .current
+        for format in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd"] {
+            local.dateFormat = format
+            if let date = local.date(from: text) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    /// `404` or `400..499`, within 100…599.
+    private static func statusRange(_ operand: (text: String, position: Int)) throws -> ClosedRange<Int> {
+        let parts = operand.text.components(separatedBy: "..")
+        let values = parts.compactMap { isASCIIDecimal($0) ? Int($0) : nil }
+        guard (1 ... 2).contains(parts.count), values.count == parts.count,
+              let lower = values.first, let upper = values.last,
+              lower <= upper, (100 ... 599).contains(lower), (100 ... 599).contains(upper) else
+        {
+            throw SessionQueryParseError(position: operand.position, reason: .expectedValue)
+        }
+        return lower ... upper
     }
 
     /// Count UTF-8 bytes with an early exit, so an oversized input is rejected without
@@ -360,6 +549,15 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
                 index += 1
             } else if scalar == ")" {
                 token = Token(kind: .rightParen, position: position)
+                index += 1
+            } else if scalar == "{" {
+                token = Token(kind: .leftBrace, position: position)
+                index += 1
+            } else if scalar == "}" {
+                token = Token(kind: .rightBrace, position: position)
+                index += 1
+            } else if scalar == "," {
+                token = Token(kind: .comma, position: position)
                 index += 1
             } else if scalar == "\"" {
                 let scanned = try scanText(scalars, from: index)
@@ -431,6 +629,10 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
                 throw SessionQueryParseError(position: position, reason: .unsupportedOperator("!="))
             }
             return (.not, 1)
+        case "+": return (.arithmetic(.add), 1)
+        case "-": return (.arithmetic(.subtract), 1)
+        case "*": return (.arithmetic(.multiply), 1)
+        case "%": return (.arithmetic(.remainder), 1)
         default:
             if Self.unsupportedOperatorScalars.contains(scalar) {
                 throw SessionQueryParseError(
@@ -545,8 +747,7 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
             return inner
         case let .word(name):
             cursor.advance()
-            let predicate = try parseTerm(name, at: token.position, cursor: &cursor)
-            return .leaf(predicate)
+            return try parseTerm(name, at: token.position, cursor: &cursor)
         default:
             throw SessionQueryParseError(position: token.position, reason: .expectedExpression)
         }
@@ -560,10 +761,15 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         at position: Int,
         cursor: inout Cursor
     )
-        throws -> QueryPredicate
+        throws -> InvestigationQuery
     {
         if let kind = Self.protocolKeywords[name] {
-            return .protocolStackContains(kind)
+            return .leaf(.protocolStackContains(kind))
+        }
+        // A field named on its own asks whether the session has it, as a bare field
+        // does in a Wireshark display filter: `finding`, `sni`, `process`, `latency`.
+        if let field = Self.presenceFields[name], Self.endsTerm(cursor.current) {
+            return .leaf(.hasEvidence(field))
         }
         if let scope = Self.addressFields[name] {
             return try parseAddress(name, scope: scope, cursor: &cursor)
@@ -571,15 +777,67 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         if let scope = Self.portFields[name] {
             return try parsePort(name, scope: scope, cursor: &cursor)
         }
+        if let field = QueryNumericField(rawValue: name) {
+            return try .leaf(parseNumericComparison(field, cursor: &cursor, depth: 1))
+        }
         switch name {
         case "host":
-            return try .hostContains(parseContainsText(name, cursor: &cursor))
+            let (isPattern, text) = try parseTextComparison(name, cursor: &cursor)
+            return .leaf(isPattern ? .hostMatches(text) : .hostContains(text))
         case "process":
-            return try .processContains(parseContainsText(name, cursor: &cursor))
-        case "bytes":
-            return try parseBytes(cursor: &cursor)
+            let (isPattern, text) = try parseTextComparison(name, cursor: &cursor)
+            return .leaf(isPattern ? .processMatches(text) : .processContains(text))
         case "finding":
             return try parseFinding(cursor: &cursor)
+        case "http.method":
+            return try parseNamed(name, cursor: &cursor) { .httpMethodEquals($0.text) }
+        case "dhcp.message":
+            return try parseNamed(name, cursor: &cursor) { .dhcpMessageEquals($0.text) }
+        case "mac",
+             "source.mac",
+             "destination.mac":
+            let scope: EndpointScope = name == "mac" ? .either : name == "source.mac" ? .source : .destination
+            return try parseNamed(name, cursor: &cursor) { operand in
+                guard SessionSummary.normalizedMAC(operand.text) != nil else {
+                    throw SessionQueryParseError(
+                        position: operand.position, reason: .unknownName(Self.truncated(operand.text))
+                    )
+                }
+                return .macEquals(operand.text, scope: scope)
+            }
+        case "tcp.completeness":
+            return try parseNamed(name, cursor: &cursor) { operand in
+                switch operand.text.lowercased() {
+                case "complete": return .tcpCompleteness(.complete)
+                case "incomplete": return .tcpCompleteness(.incomplete)
+                default:
+                    guard let raw = UInt8(operand.text), raw <= 63 else {
+                        throw SessionQueryParseError(
+                            position: operand.position, reason: .unknownName(Self.truncated(operand.text))
+                        )
+                    }
+                    return .tcpCompleteness(.value(raw))
+                }
+            }
+        case "tag":
+            return try parseNamed(name, cursor: &cursor) { operand in
+                guard SessionTag(rawValue: operand.text.lowercased()) != nil else {
+                    throw SessionQueryParseError(
+                        position: operand.position, reason: .unknownName(Self.truncated(operand.text))
+                    )
+                }
+                return .tagEquals(operand.text.lowercased())
+            }
+        case "duration",
+             "latency":
+            return try .leaf(parseInterval(name, cursor: &cursor))
+        case "start":
+            return try .leaf(parseStart(cursor: &cursor))
+        case "http.status":
+            return try parseNamed(name, allowsBareRange: true, cursor: &cursor) { operand in
+                let range = try Self.statusRange(operand)
+                return .httpStatusInRange(lower: range.lowerBound, upper: range.upperBound)
+            }
         default:
             throw SessionQueryParseError(position: position, reason: .unknownName(Self.truncated(name)))
         }
@@ -590,7 +848,7 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         scope: EndpointScope,
         cursor: inout Cursor
     )
-        throws -> QueryPredicate
+        throws -> InvestigationQuery
     {
         guard let token = cursor.current else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
@@ -602,14 +860,26 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
             guard let address = IPAddressValue(parsing: operand.text) else {
                 throw SessionQueryParseError(position: operand.position, reason: .invalidIPAddress)
             }
-            return .ipEquals(address, scope: scope)
+            return .leaf(.ipEquals(address, scope: scope))
         case .word("in"):
             cursor.advance()
+            if cursor.current?.kind == .leftBrace {
+                // A set may mix single addresses and CIDR blocks.
+                return try parseSet(&cursor) { operand in
+                    if let address = IPAddressValue(parsing: operand.text) {
+                        return .ipEquals(address, scope: scope)
+                    }
+                    guard let cidr = CIDRValue(parsing: operand.text) else {
+                        throw SessionQueryParseError(position: operand.position, reason: .invalidCIDR)
+                    }
+                    return .cidrContains(cidr, scope: scope)
+                }
+            }
             let operand = try consumeWord(&cursor)
             guard let cidr = CIDRValue(parsing: operand.text) else {
                 throw SessionQueryParseError(position: operand.position, reason: .invalidCIDR)
             }
-            return .cidrContains(cidr, scope: scope)
+            return .leaf(.cidrContains(cidr, scope: scope))
         default:
             throw Self.operatorError(field: field, token: token)
         }
@@ -620,79 +890,210 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         scope: EndpointScope,
         cursor: inout Cursor
     )
-        throws -> QueryPredicate
+        throws -> InvestigationQuery
     {
         guard let token = cursor.current else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
-        guard token.kind == .equal else {
+        switch token.kind {
+        case .equal:
+            cursor.advance()
+            let operand = try consumeWord(&cursor)
+            let range = try Self.portRange(operand, allowsRange: false)
+            return .leaf(.portInRange(lower: range.lower, upper: range.upper, scope: scope))
+        case .word("in"):
+            cursor.advance()
+            if cursor.current?.kind == .leftBrace {
+                return try parseSet(&cursor) { operand in
+                    let range = try Self.portRange(operand, allowsRange: true)
+                    return .portInRange(lower: range.lower, upper: range.upper, scope: scope)
+                }
+            }
+            let operand = try consumeWord(&cursor)
+            let range = try Self.portRange(operand, allowsRange: true)
+            return .leaf(.portInRange(lower: range.lower, upper: range.upper, scope: scope))
+        default:
             throw Self.operatorError(field: field, token: token)
         }
-        cursor.advance()
-        let operand = try consumeWord(&cursor)
-        guard Self.isASCIIDecimal(operand.text), let port = UInt16(operand.text) else {
-            throw SessionQueryParseError(position: operand.position, reason: .invalidPort)
-        }
-        return .portInRange(lower: port, upper: port, scope: scope)
     }
 
-    /// `bytes` maps to the engine's closed total-byte range: `==` is a point range,
-    /// `>=` is open to `Int.max`, `<=` is anchored at zero.
-    private func parseBytes(cursor: inout Cursor) throws -> QueryPredicate {
+    /// `{ value, value, … }` → an `or` of one predicate per value. Empty sets, a
+    /// trailing comma and more than ``maximumSetValues`` values are rejected.
+    private func parseSet(
+        _ cursor: inout Cursor,
+        predicate: ((text: String, position: Int)) throws -> QueryPredicate
+    )
+        throws -> InvestigationQuery
+    {
+        guard cursor.match(.leftBrace) else {
+            throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
+        }
+        var members: [InvestigationQuery] = []
+        repeat {
+            guard members.count < Self.maximumSetValues else {
+                throw SessionQueryParseError(
+                    position: cursor.position,
+                    reason: .setTooLarge(limit: Self.maximumSetValues)
+                )
+            }
+            let operand = try consumeWord(&cursor)
+            try members.append(.leaf(predicate(operand)))
+        } while cursor.match(.comma)
+        guard cursor.match(.rightBrace) else {
+            throw SessionQueryParseError(position: cursor.position, reason: .unbalancedBrace)
+        }
+        return members.count == 1 ? members[0] : .any(members)
+    }
+
+    private func parseFinding(cursor: inout Cursor) throws -> InvestigationQuery {
+        guard let token = cursor.current else {
+            throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
+        }
+        func kind(_ operand: (text: String, position: Int)) throws -> QueryFindingKind {
+            guard let kind = Self.findingNames[operand.text] else {
+                throw SessionQueryParseError(
+                    position: operand.position,
+                    reason: .unknownName(Self.truncated(operand.text))
+                )
+            }
+            return kind
+        }
+        switch token.kind {
+        case .equal:
+            cursor.advance()
+            return try .leaf(.findingKind(kind(consumeWord(&cursor))))
+        case .word("in"):
+            cursor.advance()
+            return try parseSet(&cursor) { try .findingKind(kind($0)) }
+        default:
+            throw Self.operatorError(field: "finding", token: token)
+        }
+    }
+
+    /// `field == value`, `field in {value, …}`, and — for a numeric range field —
+    /// `field in lower..upper`, each value mapped by `predicate`.
+    private func parseNamed(
+        _ field: String,
+        allowsBareRange: Bool = false,
+        cursor: inout Cursor,
+        predicate: ((text: String, position: Int)) throws -> QueryPredicate
+    )
+        throws -> InvestigationQuery
+    {
+        guard let token = cursor.current else {
+            throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
+        }
+        switch token.kind {
+        case .equal:
+            cursor.advance()
+            let operand = try consumeWord(&cursor)
+            if allowsBareRange, operand.text.contains("..") {
+                throw SessionQueryParseError(position: operand.position, reason: .expectedValue)
+            }
+            return try .leaf(predicate(operand))
+        case .word("in"):
+            cursor.advance()
+            if cursor.current?.kind == .leftBrace {
+                return try parseSet(&cursor, predicate: predicate)
+            }
+            guard allowsBareRange else {
+                throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
+            }
+            return try .leaf(predicate(consumeWord(&cursor)))
+        default:
+            throw Self.operatorError(field: field, token: token)
+        }
+    }
+
+    /// `duration`/`latency` with `>=`, `<=` or `in a..b`, each value carrying a unit
+    /// (`ms`, `s`, `m`, `h`). Duration is kept in seconds, latency in milliseconds.
+    private func parseInterval(_ field: String, cursor: inout Cursor) throws -> QueryPredicate {
         guard let token = cursor.current else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
         let comparison = token.kind
         switch comparison {
-        case .equal,
-             .greaterOrEqual,
-             .lessOrEqual:
+        case .greaterOrEqual,
+             .lessOrEqual,
+             .word("in"):
             cursor.advance()
         default:
-            throw Self.operatorError(field: "bytes", token: token)
+            throw Self.operatorError(field: field, token: token)
         }
         let operand = try consumeWord(&cursor)
-        guard Self.isASCIIDecimal(operand.text), let value = Int(operand.text) else {
-            throw SessionQueryParseError(position: operand.position, reason: .invalidByteCount)
+        let scale: Double = field == "latency" ? 1_000 : 1
+        func seconds(_ text: Substring) throws -> Double {
+            let units: [(suffix: String, factor: Double)] = [("ms", 0.001), ("s", 1), ("m", 60), ("h", 3_600)]
+            for unit in units where text.hasSuffix(unit.suffix) {
+                let number = text.dropLast(unit.suffix.count)
+                if let value = Double(number), value.isFinite, value >= 0,
+                   number.allSatisfy({ $0.isNumber || $0 == "." })
+                {
+                    return value * unit.factor
+                }
+            }
+            throw SessionQueryParseError(position: operand.position, reason: .expectedValue)
         }
-        switch comparison {
-        case .greaterOrEqual: return .totalBytesInRange(lower: value, upper: Int.max)
-        case .lessOrEqual: return .totalBytesInRange(lower: 0, upper: value)
-        default: return .totalBytesInRange(lower: value, upper: value)
+        if comparison == .word("in") {
+            let parts = operand.text.components(separatedBy: "..")
+            guard parts.count == 2 else {
+                throw SessionQueryParseError(position: operand.position, reason: .expectedValue)
+            }
+            let lower = try seconds(Substring(parts[0])) * scale
+            let upper = try seconds(Substring(parts[1])) * scale
+            return field == "latency" ? .latencyInRange(lower: lower, upper: upper)
+                : .durationInRange(lower: lower, upper: upper)
         }
+        let value = try seconds(Substring(operand.text)) * scale
+        let (lower, upper) = comparison == .greaterOrEqual ? (value, Double.greatestFiniteMagnitude) : (0, value)
+        return field == "latency" ? .latencyInRange(lower: lower, upper: upper)
+            : .durationInRange(lower: lower, upper: upper)
     }
 
-    private func parseFinding(cursor: inout Cursor) throws -> QueryPredicate {
+    /// `start >= "2027-01-15T08:00:00Z"` / `start <= "…"`; a date-time without a
+    /// zone is local time.
+    private func parseStart(cursor: inout Cursor) throws -> QueryPredicate {
         guard let token = cursor.current else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
-        guard token.kind == .equal else {
-            throw Self.operatorError(field: "finding", token: token)
+        let comparison = token.kind
+        guard comparison == .greaterOrEqual || comparison == .lessOrEqual else {
+            throw Self.operatorError(field: "start", token: token)
         }
         cursor.advance()
-        let operand = try consumeWord(&cursor)
-        guard let kind = Self.findingNames[operand.text] else {
-            throw SessionQueryParseError(
-                position: operand.position,
-                reason: .unknownName(Self.truncated(operand.text))
-            )
+        guard let valueToken = cursor.current, case let .text(text) = valueToken.kind,
+              let date = Self.dateTime(text) else
+        {
+            throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
-        return .findingKind(kind)
+        cursor.advance()
+        return comparison == .greaterOrEqual
+            ? .startDateInRange(lower: date, upper: .distantFuture)
+            : .startDateInRange(lower: .distantPast, upper: date)
     }
 
-    private func parseContainsText(_ field: String, cursor: inout Cursor) throws -> String {
+    /// `contains "text"` (substring) or `matches "pattern"` (whole-value wildcard).
+    private func parseTextComparison(
+        _ field: String,
+        cursor: inout Cursor
+    )
+        throws -> (isPattern: Bool, text: String)
+    {
         guard let token = cursor.current else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
-        guard token.kind == .word("contains") else {
-            throw Self.operatorError(field: field, token: token)
+        let isPattern: Bool
+        switch token.kind {
+        case .word("contains"): isPattern = false
+        case .word("matches"): isPattern = true
+        default: throw Self.operatorError(field: field, token: token)
         }
         cursor.advance()
         guard let valueToken = cursor.current, case let .text(value) = valueToken.kind else {
             throw SessionQueryParseError(position: cursor.position, reason: .expectedValue)
         }
         cursor.advance()
-        return value
+        return (isPattern, value)
     }
 
     private func consumeWord(_ cursor: inout Cursor) throws -> (text: String, position: Int) {

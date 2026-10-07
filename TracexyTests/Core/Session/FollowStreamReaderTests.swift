@@ -48,6 +48,61 @@ struct FollowStreamReaderTests {
         }
     }
 
+    // MARK: - Turns and export formats (Wireshark's Show as / Save as)
+
+    @Test
+    func turnsInterleaveInCaptureOrderAndExportLikeWireshark() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 1_000, payload: Array("GET /a\r\n".utf8)),
+            Self.tcpFrame(client: false, seq: 5_000, payload: Array("200A".utf8)),
+            Self.tcpFrame(client: true, seq: 1_008, payload: Array("GET /b\r\n".utf8)),
+            Self.tcpFrame(client: false, seq: 5_004, payload: Array("200B".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: Self.tuple).read()
+            let turns = FollowStreamExport.turns(of: result)
+            #expect(turns.map(\.direction) == [.aToB, .bToA, .aToB, .bToA])
+            #expect(turns.map(\.firstOrdinal) == [1, 2, 3, 4])
+            #expect(turns.map { String(bytes: $0.bytes, encoding: .utf8) } == [
+                "GET /a\r\n",
+                "200A",
+                "GET /b\r\n",
+                "200B"
+            ])
+
+            let raw = FollowStreamExport.data(turns, format: .raw, side: .both, tuple: result.tuple)
+            #expect(raw == Data("GET /a\r\n200AGET /b\r\n200B".utf8))
+            let client = FollowStreamExport.data(turns, format: .raw, side: .aToB, tuple: result.tuple)
+            #expect(client == Data("GET /a\r\nGET /b\r\n".utf8))
+            let arrays = try #require(String(
+                bytes: FollowStreamExport.data(turns, format: .cArrays, side: .both, tuple: result.tuple),
+                encoding: .utf8
+            ))
+            #expect(arrays.contains("char peer0_0[] = { /* Frame 1 */"))
+            #expect(arrays.contains("char peer1_1[] = { /* Frame 4 */"))
+            let yaml = try #require(String(
+                bytes: FollowStreamExport.data(turns, format: .yaml, side: .both, tuple: result.tuple),
+                encoding: .utf8
+            ))
+            #expect(yaml.hasPrefix("peers:\n  - peer: 0\n    host: 10.0.0.5\n    port: 50000\n"))
+            #expect(yaml.contains("    data: !!binary |\n      \(Data("200B".utf8).base64EncodedString())"))
+
+            if WiresharkOracle.isAvailable {
+                // tshark's raw follow prints each turn as hex, server turns indented by a tab.
+                let output = try WiresharkOracle.tsharkFields(
+                    url, fields: ["frame.number"], extraArguments: ["-q", "-z", "follow,tcp,raw,0"]
+                ).map { $0.joined(separator: "\t") }
+                let hexTurns = output.filter { line in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    return !trimmed.isEmpty && trimmed.allSatisfy(\.isHexDigit)
+                }
+                let ours = turns.map { $0.bytes.map { String(format: "%02x", $0) }.joined() }
+                // The field column (frame numbers) precedes the follow output; keep the turns.
+                #expect(Array(hexTurns.suffix(ours.count)).map { $0.trimmingCharacters(in: .whitespaces) } == ours)
+            }
+        }
+    }
+
     // MARK: - PCAPNG
 
     @Test
@@ -93,6 +148,74 @@ struct FollowStreamReaderTests {
             #expect(result.matchedFrameCount == 1)
             #expect(result.aToB.runs.map(\.bytes) == [mine])
             #expect(result.bToA.runs.isEmpty)
+        }
+    }
+
+    // MARK: - Many conversations in one pass
+
+    @Test
+    func groupedReadsEqualSingleReads() throws {
+        func frame(_ port: UInt16, client: Bool, seq: UInt32, _ text: String) -> [UInt8] {
+            client
+                ? Self.rawTCPFrame(
+                    src: "10.0.0.5", dst: "203.0.113.9", srcPort: 50_000, dstPort: port,
+                    seq: seq, payload: Array(text.utf8)
+                )
+                : Self.rawTCPFrame(
+                    src: "203.0.113.9", dst: "10.0.0.5", srcPort: port, dstPort: 50_000,
+                    seq: seq, payload: Array(text.utf8)
+                )
+        }
+        let ports: [UInt16] = [443, 8_443, 9_443]
+        // Interleaved, with a retransmission on one and a gap on another.
+        let frames = [
+            frame(443, client: true, seq: 1_000, "GET /a"),
+            frame(8_443, client: true, seq: 7_000, "HELLO"),
+            frame(443, client: false, seq: 5_000, "200 A"),
+            frame(8_443, client: true, seq: 7_000, "HELLO"),
+            frame(9_443, client: true, seq: 3_000, "one"),
+            frame(9_443, client: true, seq: 3_010, "after a hole"),
+            frame(8_443, client: false, seq: 9_000, "WORLD"),
+        ]
+        let tuples = ports.map {
+            FiveTuple(
+                proto: .tcp,
+                source: IPEndpoint(ip: "10.0.0.5", port: 50_000),
+                destination: IPEndpoint(ip: "203.0.113.9", port: $0)
+            )
+        }
+        let token = UUID()
+        try Self.withCapture(.pcapng(frames)) { url, identity in
+            let singles = try tuples.map {
+                try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: $0, sourceToken: token)
+                    .read()
+            }
+            for perPass in [1, 2, 64] {
+                var grouped: [FollowStreamResult] = []
+                // A repeated tuple is read once, in first-asked order.
+                try FollowStreamReader.readEach(
+                    contentsOf: url, expectedIdentity: identity, tuples: tuples + [tuples[0]],
+                    sourceToken: token, tuplesPerPass: perPass
+                ) { grouped.append($0) }
+                #expect(grouped == singles)
+            }
+            #expect(singles[1].aToB.runs.map(\.bytes) == [Array("HELLO".utf8)])
+            #expect(singles[2].limitations.contains(.sequenceGap))
+            #expect(!singles[0].limitations.contains(.sequenceGap))
+        }
+    }
+
+    @Test
+    func groupedReadRefusesANonTCPTupleBeforeScanning() throws {
+        let udp = FiveTuple(proto: .udp, source: Self.tuple.a, destination: Self.tuple.b)
+        try Self.withCapture(.pcap([Self.tcpFrame(client: true, seq: 1, payload: [1])])) { url, identity in
+            var handed = 0
+            #expect(throws: FollowStreamError.tupleNotTCP) {
+                try FollowStreamReader.readEach(
+                    contentsOf: url, expectedIdentity: identity, tuples: [Self.tuple, udp]
+                ) { _ in handed += 1 }
+            }
+            #expect(handed == 0)
         }
     }
 
@@ -412,6 +535,22 @@ struct FollowStreamReaderTests {
     }
 
     @Test
+    func repeatedOpeningSYNMarksTupleIncarnationAmbiguous() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 100, payload: [], flags: 0x02),
+            Self.tcpFrame(client: false, seq: 200, payload: [], flags: 0x12),
+            Self.tcpFrame(client: true, seq: 100, payload: [], flags: 0x02),
+            Self.tcpFrame(client: true, seq: 101, payload: Array("second connection".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple
+            ).read()
+            #expect(result.limitations.contains(.connectionIncarnationAmbiguous))
+        }
+    }
+
+    @Test
     func configurationClampsInternalAllocationCeilings() {
         let configuration = FollowStreamReader.Configuration(
             maxCapturedLength: .max,
@@ -451,27 +590,27 @@ struct FollowStreamReaderTests {
 
     // MARK: Frame builders
 
-    private static func tcpFrame(client: Bool, seq: UInt32, payload: [UInt8]) -> [UInt8] {
+    private static func tcpFrame(client: Bool, seq: UInt32, payload: [UInt8], flags: UInt8 = 0x18) -> [UInt8] {
         client
             ? rawTCPFrame(
                 src: "10.0.0.5", dst: "203.0.113.9", srcPort: 50_000, dstPort: 443,
-                seq: seq, payload: payload
+                seq: seq, payload: payload, flags: flags
             )
             : rawTCPFrame(
                 src: "203.0.113.9", dst: "10.0.0.5", srcPort: 443, dstPort: 50_000,
-                seq: seq, payload: payload
+                seq: seq, payload: payload, flags: flags
             )
     }
 
     private static func rawTCPFrame(
-        src: String, dst: String, srcPort: UInt16, dstPort: UInt16, seq: UInt32, payload: [UInt8]
+        src: String, dst: String, srcPort: UInt16, dstPort: UInt16, seq: UInt32, payload: [UInt8], flags: UInt8 = 0x18
     )
         -> [UInt8]
     {
         PacketBuilder.ethernetIPv4(
             proto: 6, src: src, dst: dst,
             payload: PacketBuilder.tcp(
-                srcPort: srcPort, dstPort: dstPort, flags: 0x18, payload: payload, sequence: seq
+                srcPort: srcPort, dstPort: dstPort, flags: flags, payload: payload, sequence: seq
             )
         )
     }

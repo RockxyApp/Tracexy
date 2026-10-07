@@ -15,24 +15,24 @@ struct WorkspaceFooterModelTests {
         #expect(status(total: 0, visible: 0, selected: false) == "No sessions")
         #expect(status(total: 5, visible: 5, selected: false) == "5 sessions")
         #expect(status(total: 5, visible: 3, selected: false) == "3 of 5 sessions")
-        #expect(status(total: 5, visible: 5, selected: true) == "1 selected · 5 sessions")
+        #expect(status(total: 5, visible: 5, selected: true) == "1 of 5 selected")
         // Selected + filtered retains selected, visible and total.
-        #expect(status(total: 5, visible: 3, selected: true) == "1 selected · 3 of 5 shown")
+        #expect(status(total: 5, visible: 3, selected: true) == "1 selected, 3 of 5 shown")
     }
 
     @Test("Intelligence surfaces keep their own quiet summaries")
     func statusTextIntelligenceSurfaces() {
         #expect(SessionStatusBarModel.statusText(
             surface: .overview, totalSessions: 0, visibleCount: 0, hasSelection: false
-        ) == "Capture overview · No sessions")
+        ) == "No sessions")
 
         #expect(SessionStatusBarModel.statusText(
             surface: .overview, totalSessions: 4, visibleCount: 4, hasSelection: false
-        ) == "Capture overview · 4 sessions")
+        ) == "4 sessions")
 
         #expect(SessionStatusBarModel.statusText(
             surface: .flow, totalSessions: 2, visibleCount: 2, hasSelection: false
-        ) == "Flow map · 2 sessions")
+        ) == "2 sessions")
     }
 
     // MARK: - Telemetry chips
@@ -201,11 +201,11 @@ struct WorkspaceFooterModelTests {
         ) == "No selection")
     }
 
-    @Test("A single selection reads count · protocol · bytes")
+    @Test("A single selection reads its count, protocol and bytes")
     func detailsFooterSingleSession() {
         #expect(ContextDockDetailsFooter.summary(
             hasSelection: true, sessionCount: 1, primaryProtocol: "TLS", formattedBytes: "36 KB"
-        ) == "1 session · TLS · 36 KB")
+        ) == "1 TLS session, 36 KB")
     }
 
     @Test("The summary omits figures it does not have")
@@ -214,6 +214,37 @@ struct WorkspaceFooterModelTests {
         #expect(ContextDockDetailsFooter.summary(
             hasSelection: true, sessionCount: 1, primaryProtocol: "", formattedBytes: ""
         ) == "1 session")
+    }
+
+    @Test("Attribution coverage says how many sessions have a known process")
+    func attributionCoverage() {
+        func chip(capturing: Bool, known: Int, total: Int) -> FooterTelemetry? {
+            SessionStatusBarModel.telemetry(
+                isCapturing: capturing,
+                loss: CaptureLoss(
+                    hasStatistics: false, totalDropped: 0, isMaterialLoss: false,
+                    helperDropCount: 0, retentionEvictionCount: 0
+                ),
+                errorCount: 0,
+                hasCaptureDuration: false,
+                liveBytesPerSecond: nil,
+                totalBytes: 0,
+                bytesUp: 0,
+                bytesDown: 0,
+                attribution: (known, total)
+            )
+            .first { $0.kind == .attribution }
+        }
+        #expect(chip(capturing: true, known: 12, total: 40)?.text == "Process 12 of 40")
+        #expect(chip(capturing: false, known: 3, total: 3)?.text == "Process 3 of 3")
+        // Live capture with no attribution is itself worth seeing.
+        #expect(chip(capturing: true, known: 0, total: 5)?.text == "Process 0 of 5")
+        #expect(chip(capturing: true, known: 0, total: 5)?.role == .neutral)
+        // A capture file without process metadata, or no sessions at all, stays quiet.
+        #expect(chip(capturing: false, known: 0, total: 5) == nil)
+        #expect(chip(capturing: true, known: 0, total: 0) == nil)
+        // Omitting the figure keeps every existing caller unchanged.
+        #expect(!makeTelemetry(isCapturing: true).contains { $0.kind == .attribution })
     }
 
     // MARK: Private

@@ -27,24 +27,41 @@ struct OverviewTrafficTimelineChart: View {
     /// The rendered columns, computed once by the caller and shared with the
     /// sibling charts on the same axis.
     let points: [TrafficTimelinePoint]
+    /// The sessions in view on the same columns as `points`, when the scope is
+    /// narrowed. The capture-wide series is then drawn as one quiet total.
+    var scopedPoints: [TrafficTimelinePoint]?
     var findingMarkers: [OverviewFindingMarker] = []
+    /// What the y axis plots: bytes, packets or an average bit rate per column.
+    var measure: TrafficMeasure = .bytes
 
     var body: some View {
-        let directional = timeline.hasStableDirectionalBytes
-        let peak = Double(points.map(\.totals.bytes).max() ?? 0)
+        let directional = timeline.hasStableDirectionalBytes && scopedPoints == nil
+        let scopedPeak = scopedPoints?.map { value($0.totals) }.max() ?? 0
+        // A narrowed scope is drawn at its own scale: the capture-wide line is context
+        // and may run past the top, while the readout still gives its exact value.
+        let scopedDomain: ClosedRange<Double>? = scopedPeak > 0 ? 0 ... scopedPeak * 1.15 : nil
+        let peak = scopedDomain != nil ? scopedPeak : points.map { value($0.totals) }.max() ?? 0
         Chart {
-            ForEach(points) { point in
+            if let scopedPoints {
+                ForEach(points) { point in
+                    seriesMarks(at: point.date, value: value(point.totals), series: Self.allSeries)
+                }
+                ForEach(scopedPoints) { point in
+                    seriesMarks(at: point.date, value: value(point.totals), series: Self.inViewSeries)
+                }
+            }
+            ForEach(scopedPoints == nil ? points : []) { point in
                 if directional {
-                    seriesMarks(at: point.date, bytes: point.totals.sentBytes, series: Self.sentSeries)
-                    seriesMarks(at: point.date, bytes: point.totals.receivedBytes, series: Self.receivedSeries)
+                    seriesMarks(at: point.date, value: value(point.totals, .sent), series: Self.sentSeries)
+                    seriesMarks(at: point.date, value: value(point.totals, .received), series: Self.receivedSeries)
                 } else {
-                    seriesMarks(at: point.date, bytes: point.totals.bytes, series: Self.totalSeries)
+                    seriesMarks(at: point.date, value: value(point.totals), series: Self.totalSeries)
                 }
             }
             // Findings ride just above the traffic so they read as events on the
             // same clock; the y position is presentational, not a byte value.
             ForEach(findingMarkers) { marker in
-                PointMark(x: .value("Finding time", marker.date), y: .value("Bytes", peak * 1.08))
+                PointMark(x: .value("Finding time", marker.date), y: .value(measure.title, peak * 1.08))
                     .symbol(.diamond)
                     .symbolSize(34)
                     .foregroundStyle(marker.severity.tint)
@@ -64,7 +81,7 @@ struct OverviewTrafficTimelineChart: View {
                         )
                     }
                 ForEach(calloutRows(for: hovered, directional: directional)) { row in
-                    PointMark(x: .value("Hovered time", hovered.date), y: .value("Hovered bytes", row.rawValue))
+                    PointMark(x: .value("Hovered time", hovered.date), y: .value("Hovered value", row.rawValue))
                         .foregroundStyle(row.color)
                         .symbolSize(44)
                 }
@@ -74,6 +91,8 @@ struct OverviewTrafficTimelineChart: View {
             Self.sentSeries: Theme.Traffic.sent,
             Self.receivedSeries: Theme.Traffic.received,
             Self.totalSeries: Color.accentColor,
+            Self.allSeries: Color.secondary.opacity(0.55),
+            Self.inViewSeries: Color.accentColor,
         ])
         .chartLegend(.hidden)
         .chartXAxis {
@@ -92,16 +111,17 @@ struct OverviewTrafficTimelineChart: View {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                 AxisGridLine().foregroundStyle(.quaternary)
                 AxisValueLabel {
-                    if let bytes = value.as(Double.self) {
-                        Text(Self.byteString(bytes)).font(Theme.Typography.micro)
+                    if let amount = value.as(Double.self) {
+                        Text(measure.format(amount)).font(Theme.Typography.micro)
                     }
                 }
                 .foregroundStyle(.tertiary)
             }
         }
         .chartPlotStyle { plot in
-            plot.background(.primary.opacity(0.02))
+            plot.background(.primary.opacity(0.02)).clipped()
         }
+        .scopedYDomain(scopedDomain)
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Rectangle()
@@ -128,7 +148,12 @@ struct OverviewTrafficTimelineChart: View {
                     }
             }
         }
-        .accessibilityLabel(directional ? "Sent and received bytes over capture time" : "Bytes over capture time")
+        .accessibilityLabel(
+            scopedPoints != nil
+                ? "\(measure.title) in view and in all traffic over capture time"
+                : directional ? "Sent and received \(measure.title.lowercased()) over capture time"
+                : "\(measure.title) over capture time"
+        )
         .accessibilityValue(accessibilitySummary(points: points))
     }
 
@@ -169,6 +194,8 @@ struct OverviewTrafficTimelineChart: View {
     private static let sentSeries = "Sent"
     private static let receivedSeries = "Received"
     private static let totalSeries = "Total"
+    private static let allSeries = "All"
+    private static let inViewSeries = "In view"
 
     @State private var hoveredDate: Date?
 
@@ -179,17 +206,17 @@ struct OverviewTrafficTimelineChart: View {
         return date.formatted(.dateTime.hour().minute().second())
     }
 
-    private static func byteString(_ bytes: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(max(0, bytes)), countStyle: .binary)
+    private func value(_ totals: TrafficTotals, _ part: TrafficMeasure.Part = .total) -> Double {
+        measure.value(of: totals, part: part, columnWidth: renderedWidth(points))
     }
 
     @ChartContentBuilder
-    private func seriesMarks(at date: Date, bytes: Int, series: String) -> some ChartContent {
-        AreaMark(x: .value("Time", date), y: .value("Bytes", bytes), stacking: .unstacked)
+    private func seriesMarks(at date: Date, value: Double, series: String) -> some ChartContent {
+        AreaMark(x: .value("Time", date), y: .value(measure.title, value), stacking: .unstacked)
             .foregroundStyle(by: .value("Direction", series))
             .interpolationMethod(.monotone)
             .opacity(0.12)
-        LineMark(x: .value("Time", date), y: .value("Bytes", bytes))
+        LineMark(x: .value("Time", date), y: .value(measure.title, value))
             .foregroundStyle(by: .value("Direction", series))
             .interpolationMethod(.monotone)
             .lineStyle(StrokeStyle(lineWidth: 2.25, lineCap: .round, lineJoin: .round))
@@ -203,27 +230,22 @@ struct OverviewTrafficTimelineChart: View {
     }
 
     private func calloutRows(for point: TrafficTimelinePoint, directional: Bool) -> [OverviewChartCalloutRow] {
-        if directional {
+        func row(_ id: String, _ amount: Double, _ color: Color) -> OverviewChartCalloutRow {
+            OverviewChartCalloutRow(id: id, title: id, value: measure.format(amount), rawValue: amount, color: color)
+        }
+        if let scoped = scopedPoints?.first(where: { $0.date == point.date }) {
             return [
-                OverviewChartCalloutRow(
-                    id: Self.sentSeries, title: Self.sentSeries,
-                    value: Self.byteString(Double(point.totals.sentBytes)),
-                    rawValue: point.totals.sentBytes, color: Theme.Traffic.sent
-                ),
-                OverviewChartCalloutRow(
-                    id: Self.receivedSeries, title: Self.receivedSeries,
-                    value: Self.byteString(Double(point.totals.receivedBytes)),
-                    rawValue: point.totals.receivedBytes, color: Theme.Traffic.received
-                ),
+                row(Self.inViewSeries, value(scoped.totals), .accentColor),
+                row(Self.allSeries, value(point.totals), .secondary),
             ]
         }
-        return [
-            OverviewChartCalloutRow(
-                id: Self.totalSeries, title: Self.totalSeries,
-                value: Self.byteString(Double(point.totals.bytes)),
-                rawValue: point.totals.bytes, color: .accentColor
-            ),
-        ]
+        if directional {
+            return [
+                row(Self.sentSeries, value(point.totals, .sent), Theme.Traffic.sent),
+                row(Self.receivedSeries, value(point.totals, .received), Theme.Traffic.received),
+            ]
+        }
+        return [row(Self.totalSeries, value(point.totals), .accentColor)]
     }
 
     private func findingCalloutRows(at start: Date, width: TimeInterval) -> [OverviewChartCalloutRow] {
@@ -244,10 +266,10 @@ struct OverviewTrafficTimelineChart: View {
     }
 
     private func accessibilitySummary(points: [TrafficTimelinePoint]) -> String {
-        guard let peak = points.max(by: { $0.totals.bytes < $1.totals.bytes }) else {
+        guard let peak = points.max(by: { value($0.totals) < value($1.totals) }) else {
             return "No timed traffic"
         }
-        let peakText = "\(Self.byteString(Double(peak.totals.bytes))) at "
+        let peakText = "\(measure.format(value(peak.totals))) at "
             + Self.timeFormat(peak.date, width: renderedWidth(points))
         let findings = findingMarkers.isEmpty ? "" : ", \(findingMarkers.count) findings marked"
         return "\(points.count) columns, peak \(peakText)\(findings)"
@@ -311,7 +333,7 @@ struct OverviewChartCalloutRow: Identifiable {
     let id: String
     let title: String
     let value: String
-    let rawValue: Int
+    let rawValue: Double
     let color: Color
 }
 
@@ -348,5 +370,17 @@ struct OverviewChartCallout: View {
         .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
         .fixedSize()
         .accessibilityHidden(true)
+    }
+}
+
+private extension View {
+    /// Fixes the y-axis to `domain` when given; otherwise leaves Swift Charts' own.
+    @ViewBuilder
+    func scopedYDomain(_ domain: ClosedRange<Double>?) -> some View {
+        if let domain {
+            chartYScale(domain: domain)
+        } else {
+            self
+        }
     }
 }

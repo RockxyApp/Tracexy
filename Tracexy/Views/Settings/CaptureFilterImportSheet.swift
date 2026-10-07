@@ -173,8 +173,9 @@ struct CaptureFilterImportSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Theme.Metrics.spacingM)
-                    .accessibilityLabel("Selected capture expression")
-                    .accessibilityValue(selectedExpression ?? String(localized: "None"))
+                // No label/value override: a selectable Text is AppKit-backed, and an
+                // override makes accessibility resolve its label through itself until the
+                // stack runs out. The heading above names it; the text reads as itself.
             }
             .frame(height: 66)
             .background(Color(nsColor: .textBackgroundColor))

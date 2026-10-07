@@ -183,9 +183,9 @@ final class ProjectIsolationEnvironment {
     /// Remove every defaults suite and temporary file this environment created.
     func tearDown() {
         for name in provider.issuedSuiteNames {
-            UserDefaults.standard.removePersistentDomain(forName: name)
+            TestPreferences.remove(name)
         }
-        UserDefaults.standard.removePersistentDomain(forName: bootSuiteName)
+        TestPreferences.remove(bootSuiteName)
         try? FileManager.default.removeItem(at: root)
     }
 

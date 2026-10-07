@@ -113,8 +113,8 @@ nonisolated enum AssistantBriefBuilder {
     // MARK: Private
 
     /// The session's findings in a fixed order — connection findings in the
-    /// assessor's own deterministic order, then the datagram findings — bounded by
-    /// ``AssistantBriefLimits/maxFindings``.
+    /// assessor's own deterministic order, then the datagram findings, then the TLS
+    /// findings — bounded by ``AssistantBriefLimits/maxFindings``.
     private static func findings(
         snapshot: InvestigationSnapshot,
         sessionID: UUID,
@@ -146,6 +146,24 @@ nonisolated enum AssistantBriefBuilder {
         }
 
         for finding in snapshot.datagramAnalysis.findings where finding.sessionID == sessionID {
+            guard results.count < AssistantBriefLimits.maxFindings else {
+                omitted += 1
+                continue
+            }
+            let frames = finding.citations.map(\.provenance)
+            let (ids, dropped) = citationIDs(for: frames, register: register)
+            results.append(AssistantFinding(
+                id: finding.id.uuidString,
+                kind: finding.kind.stableDiscriminator,
+                severity: name(for: finding.severity),
+                coverage: name(for: finding.coverage),
+                citationIDs: ids,
+                omittedCitationCount: finding.omittedCitationCount,
+                briefOmittedCitationCount: dropped
+            ))
+        }
+
+        for finding in snapshot.tlsAnalysis.findings where finding.sessionID == sessionID {
             guard results.count < AssistantBriefLimits.maxFindings else {
                 omitted += 1
                 continue

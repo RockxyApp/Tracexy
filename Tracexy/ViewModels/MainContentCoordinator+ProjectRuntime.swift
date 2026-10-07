@@ -172,6 +172,7 @@ extension MainContentCoordinator {
         runtime.helperBufferDropCount = helperBufferDropCount
         runtime.currentLinkType = currentLinkType
         runtime.removedSessionIDs = removedSessionIDs
+        runtime.pinnedSessionIDs = pinnedSessionIDs
         // The token itself is generation-scoped and never travels; only the fact
         // that this Project's stopped spool had reached its exact final boundary.
         runtime.isStoppedCaptureReady = stoppedCaptureReadyGeneration == startGeneration
@@ -192,6 +193,7 @@ extension MainContentCoordinator {
 
         runtime.pinnedHosts = pinnedHosts
         runtime.focusSets = focusSets
+        runtime.investigationNoteScope = investigationNotes.scope
         runtime.mutedHosts = mutedHosts
         runtime.mutedProtocols = mutedProtocols
         runtime.hiddenSourceApps = hiddenSourceApps
@@ -239,6 +241,7 @@ extension MainContentCoordinator {
         throughputSamples = runtime.throughputSamples
         pendingChartBytes = runtime.pendingChartBytes
         removedSessionIDs = runtime.removedSessionIDs
+        pinnedSessionIDs = runtime.pinnedSessionIDs
         isCapturing = false
         isStarting = false
         captureStartedAt = nil
@@ -261,6 +264,16 @@ extension MainContentCoordinator {
 
         pinnedHosts = runtime.pinnedHosts
         focusSets = runtime.focusSets
+        investigationNotes.bind(to: runtime.settingsDefaults)
+        expressionLibrary.bind(to: runtime.settingsDefaults)
+        addressNames.bind(to: runtime.settingsDefaults)
+        investigationViewStates.bind(to: runtime.settingsDefaults)
+        bindViewPreferences(to: runtime.settingsDefaults)
+        investigationNotes.scope = runtime.investigationNoteScope
+        if investigationNotes.scope == nil {
+            // A saved file whose identity was still being read when parked.
+            refreshInvestigationNoteScope()
+        }
         mutedHosts = runtime.mutedHosts
         mutedProtocols = runtime.mutedProtocols
         hiddenSourceApps = runtime.hiddenSourceApps
@@ -310,6 +323,11 @@ extension MainContentCoordinator {
         mcpAccess.invalidateForProjectBoundary()
 
         cancelFollowStream(clearResult: true)
+        // Object and frame lists describe the outgoing Project's capture. Save All
+        // must never write them while another Project is on screen; the incoming
+        // Project's windows read their own capture again on demand.
+        exportObjects.cancel(clearLists: true)
+        allFrames.cancel(clearList: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         // Cancel evaluation only. A Project boundary is not a capture boundary:
         // clearing here would erase the outgoing Project's structured drafts and
@@ -584,6 +602,9 @@ extension MainContentCoordinator {
             assistant.discardConversations(forProject: deletedProjectID)
         }
         if let runtime, runtime !== activeRuntime {
+            // A runtime built while the limits changed carries the limit it was
+            // built with; it takes the one in force now.
+            runtime.workspaces.updateLimit(policy.maxWorkspaceTabs)
             if isFreshRuntime {
                 // A Project is hydrated from its durable configuration exactly once,
                 // when its bucket is first built. A Project that has been open in
@@ -676,5 +697,17 @@ extension MainContentCoordinator {
         case let .importProject(project): .adopt(project)
         case let .deleteProject(id): .delete(id)
         }
+    }
+}
+
+// MARK: - View preferences
+
+extension MainContentCoordinator {
+    /// View ▸ Session/Frame Time, View ▸ Validate Checksums and Capture ▸ Decode As
+    /// for a Project: read from its suite, then written back to it.
+    func bindViewPreferences(to defaults: UserDefaults) {
+        sessionTimeDisplay.bind(to: defaults)
+        packetDetailOptions.bind(to: defaults)
+        decodeAs.bind(to: defaults)
     }
 }

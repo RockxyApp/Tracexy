@@ -55,7 +55,13 @@ struct MCPTestEnvironment {
     /// `sessionCount` documentation-range sessions, then close it so the MCP path
     /// can open it read-only.
     @discardableResult
-    func seedHistory(captureID: UUID = UUID(), sessionCount: Int = 3) async throws -> UUID {
+    func seedHistory(
+        captureID: UUID = UUID(),
+        sessionCount: Int = 3,
+        findingKinds: [String] = []
+    )
+        async throws -> UUID
+    {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -89,7 +95,20 @@ struct MCPTestEnvironment {
                 bytesDown: bytesDown
             ))
         }
-        try await store.replaceCapture(capture, sessions: sessions)
+        // Findings on the first session, one per kind, alternating severity.
+        let findings = findingKinds.enumerated().map { index, kind in
+            HistoryFindingRecord(
+                findingID: UUID(),
+                sessionID: sessions[0].sessionID,
+                kind: kind,
+                severity: index.isMultiple(of: 2) ? .warning : .note,
+                coverage: "boundedNoKnownOmission",
+                citedObservationCount: index + 1,
+                omittedCitationCount: 0,
+                firstCitedAt: 1_760_000_000 + Double(index)
+            )
+        }
+        try await store.replaceCapture(capture, sessions: sessions, findings: findings)
         return captureID
     }
 }

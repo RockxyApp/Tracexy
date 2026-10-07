@@ -63,8 +63,10 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
         capturedLength: Int,
         originalLength: Int,
         linkType: UInt32,
-        locator: SessionEvidenceLocator? = nil
+        locator: SessionEvidenceLocator? = nil,
+        reassembledFrom: [SessionFrameProvenance] = []
     ) {
+        self.reassembledFrom = reassembledFrom
         self.ordinal = ordinal
         self.timestamp = timestamp
         let captured = max(0, capturedLength)
@@ -85,6 +87,26 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
     let originalLength: Int
     let linkType: UInt32
     let locator: SessionEvidenceLocator?
+    /// For a frame that completed a fragmented IP datagram, the frames whose
+    /// fragments made it (this one included), so the datagram can be rebuilt from
+    /// the citation alone. Not part of the frame's identity: two provenances of the
+    /// same frame are equal whether or not one of them carries it.
+    let reassembledFrom: [SessionFrameProvenance]
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.ordinal == rhs.ordinal && lhs.timestamp == rhs.timestamp
+            && lhs.capturedLength == rhs.capturedLength && lhs.originalLength == rhs.originalLength
+            && lhs.linkType == rhs.linkType && lhs.locator == rhs.locator
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ordinal)
+        hasher.combine(timestamp)
+        hasher.combine(capturedLength)
+        hasher.combine(originalLength)
+        hasher.combine(linkType)
+        hasher.combine(locator)
+    }
 
     /// A documented total order over optional capture times, used **only** as a
     /// deterministic tie-break in orderings that already agree on ordinal-level
@@ -220,7 +242,7 @@ nonisolated enum CaptureLossKnowledge: Hashable, Sendable {
 
 /// Caveats about how faithfully this connection could be reconstructed from the
 /// frames we saw. Bits 0–6 are the passive-lifecycle limitations. Bits 8+ carry
-/// the sequence-analysis limitations (N2B2) and are numbered disjointly so those
+/// the sequence-analysis limitations and are numbered disjointly so those
 /// additions never renumber the lifecycle bits.
 nonisolated struct ConnectionLimitations: OptionSet, Hashable, Sendable {
     /// The connection's opening was not observed (capture began midstream, or a
@@ -240,7 +262,7 @@ nonisolated struct ConnectionLimitations: OptionSet, Hashable, Sendable {
     /// An integer total saturated at its maximum.
     static let counterOverflow = ConnectionLimitations(rawValue: 1 << 6)
 
-    // Bits 1 << 8 and above are the N2B2 sequence-analysis limitations. They are
+    // Bits 1 << 8 and above are the sequence-analysis limitations. They are
     // observation-only and sticky: each records that an ordered discontinuity was
     // *seen*, never why it happened, and once set is never cleared by later frames.
 
@@ -287,7 +309,7 @@ nonisolated enum ConnectionEventKind: Hashable, Sendable {
     case ambiguousTupleReuse
     case stateEvicted
 
-    // Sequence-observation kinds (N2B2). Each is the direction tracker's verdict
+    // Sequence-observation kinds. Each is the direction tracker's verdict
     // on one segment's sequence space; a pure ACK / zero-sequence-space segment
     // emits none of these.
 
@@ -312,8 +334,42 @@ nonisolated enum ConnectionEventKind: Hashable, Sendable {
     /// The segment's serial distance was irreducible and its ordering was left
     /// unchanged (tracker `serialAmbiguous`).
     case serialAmbiguous
+    /// A one-byte keep-alive probe one behind the direction's expected sequence
+    /// (tracker `keepAlive`). Not a retransmission; ordering was left unchanged.
+    case keepAlive
 
-    // Application-probe kinds (N2D2). These are the only additive evidence the
+    // Flow-control kinds. Each is the connection's `TCPFlowControlTracker`
+    // verdict on one segment's acknowledgement/window shape; an ordinary segment
+    // emits none of these. They cite the single segment that matched and carry no
+    // window value, byte, or claim about either socket.
+
+    /// A pure ACK repeated this direction's previous acknowledgement number,
+    /// window and sequence number (a duplicate acknowledgement).
+    case duplicateAcknowledgement
+    /// The segment advertised a receive window of zero.
+    case zeroWindow
+    /// A one-byte segment sent at this direction's edge while the peer's last
+    /// advertised window was zero (a zero-window probe).
+    case zeroWindowProbe
+    /// A data segment ended exactly at the peer's acknowledged edge plus its
+    /// scaled advertised window (the receive window is full).
+    case windowFull
+    /// A data segment began exactly at the acknowledgement number the peer had
+    /// repeated in at least two duplicate acknowledgements (RFC 5681 fast
+    /// retransmit). Emitted beside whatever sequence verdict the segment had.
+    case fastRetransmission
+    /// A retransmitted segment whose whole range the peer had already
+    /// acknowledged before it was sent again.
+    case spuriousRetransmission
+    /// The segment acknowledged sequence space beyond the farthest the peer was
+    /// seen to send: bytes the capture missed (Wireshark's "ACKed segment that
+    /// wasn't captured"). A capture-coverage signal, not a network one.
+    case ackedUnseenSegment
+    /// The segment carried a login secret unencrypted (see
+    /// ``CleartextCredentialDetector``); the event names the kind, never the value.
+    case cleartextCredential
+
+    // Application-probe kinds. These are the only additive evidence the
     // bounded first-record probe contributes to a connection; neither carries raw
     // bytes, SNI, DNS names/answers or decoded layers.
 
@@ -347,7 +403,8 @@ nonisolated struct ConnectionEvent: Hashable, Sendable {
         direction: ConnectionDirection? = nil,
         facts: TCPSegmentFacts? = nil,
         applicationKind: ProtocolKind? = nil,
-        applicationComplete: Bool? = nil
+        applicationComplete: Bool? = nil,
+        credentialKind: CleartextCredentialKind? = nil
     ) {
         self.connectionID = connectionID
         self.kind = kind
@@ -359,12 +416,15 @@ nonisolated struct ConnectionEvent: Hashable, Sendable {
         payloadLength = facts?.payloadLength ?? 0
         self.applicationKind = applicationKind
         self.applicationComplete = applicationComplete
+        self.credentialKind = credentialKind
     }
 
     // MARK: Internal
 
     let connectionID: ConnectionID
     let kind: ConnectionEventKind
+    /// For `.cleartextCredential`: which login shape was seen. Never the secret.
+    let credentialKind: CleartextCredentialKind?
     /// The capture time of the frame that completed this observation, or `nil` when
     /// that frame carried none. Never substituted with an epoch or a wall clock.
     let timestamp: Date?

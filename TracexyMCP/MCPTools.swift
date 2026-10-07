@@ -1,6 +1,6 @@
 import Foundation
 
-// This file declares the three read-only tools the bundled MCP executable
+// This file declares the four read-only tools the bundled MCP executable
 // advertises, their exact input schemas, and the bounded decoding from a client's
 // `arguments` object onto the existing N5A automation request values.
 //
@@ -16,6 +16,7 @@ nonisolated enum MCPToolName: String, CaseIterable, Sendable {
     case describeScope = "describe_scope"
     case listCaptures = "list_captures"
     case listSessions = "list_sessions"
+    case listFindings = "list_findings"
 }
 
 // MARK: - MCPFilterFieldName
@@ -131,6 +132,38 @@ nonisolated enum MCPToolCatalog {
                         ],
                         "cursor": sessionCursorSchema,
                         "filter": filterSchema,
+                    ],
+                ],
+            ]
+        case .listFindings:
+            [
+                "name": tool.rawValue,
+                "description": """
+                List one ordinal-ascending page of a capture's evidence-linked findings: the finding's kind (the \
+                name Tracexy's Session Expression uses, e.g. retransmission or dnsNameError), severity, coverage, \
+                how many observations it cites and when its first cited frame was captured. A finding names its \
+                session only by ID; read that session with list_sessions.
+                """,
+                "inputSchema": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["captureID"],
+                    "properties": [
+                        "captureID": ["type": "string", "description": "The capture to read, as a UUID string."],
+                        "sessionID": ["type": "string", "description": "Only this session's findings (UUID)."],
+                        "kind": [
+                            "type": "string",
+                            "maxLength": HistoryLimits.maxFindingTokenUTF8Bytes,
+                            "description": "Only findings of this exact kind name.",
+                        ],
+                        "severity": ["type": "string", "enum": ["note", "warning", "error"]],
+                        "pageSize": [
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": maxPageSize,
+                            "description": "Rows to examine on this one page, before the kind/severity filter.",
+                        ],
+                        "cursor": sessionCursorSchema,
                     ],
                 ],
             ]
@@ -281,6 +314,66 @@ nonisolated enum MCPToolArguments {
             cursor: cursor,
             filter: filter(arguments),
             disclosure: disclosure
+        )
+    }
+
+    /// Decode a `list_findings` request under the grant's page ceiling.
+    static func findingPageRequest(
+        _ arguments: [String: Any],
+        maxPageSize: Int
+    )
+        throws -> AutomationFindingPageRequest
+    {
+        try rejectUnknownKeys(
+            in: arguments,
+            allowed: ["captureID", "sessionID", "kind", "severity", "pageSize", "cursor"],
+            object: "arguments"
+        )
+        guard let rawCapture = arguments["captureID"] else {
+            throw MCPToolFailure.missingArgument("captureID")
+        }
+        guard let text = rawCapture as? String, let captureID = UUID(uuidString: text) else {
+            throw MCPToolFailure.invalidArgument("captureID")
+        }
+        var sessionID: UUID?
+        if let raw = arguments["sessionID"] {
+            guard let text = raw as? String, let value = UUID(uuidString: text) else {
+                throw MCPToolFailure.invalidArgument("sessionID")
+            }
+            sessionID = value
+        }
+        var kind: String?
+        if let raw = arguments["kind"] {
+            guard let value = raw as? String else {
+                throw MCPToolFailure.invalidArgument("kind")
+            }
+            kind = value
+        }
+        var severity: String?
+        if let raw = arguments["severity"] {
+            guard let value = raw as? String else {
+                throw MCPToolFailure.invalidArgument("severity")
+            }
+            severity = value
+        }
+        var cursor: AutomationFindingCursor?
+        if let raw = arguments["cursor"] {
+            guard let object = raw as? [String: Any] else {
+                throw MCPToolFailure.invalidArgument("cursor")
+            }
+            try rejectUnknownKeys(in: object, allowed: ["ordinal"], object: "cursor")
+            guard let ordinal = integer(object["ordinal"]), ordinal >= 0, ordinal <= Int(Int32.max) else {
+                throw MCPToolFailure.invalidArgument("cursor.ordinal")
+            }
+            cursor = AutomationFindingCursor(ordinal: ordinal)
+        }
+        return try AutomationFindingPageRequest(
+            captureID: captureID,
+            pageSize: pageSize(arguments, maxPageSize: maxPageSize),
+            cursor: cursor,
+            sessionID: sessionID,
+            kind: kind,
+            severity: severity
         )
     }
 

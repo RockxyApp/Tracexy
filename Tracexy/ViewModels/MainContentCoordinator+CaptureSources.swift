@@ -12,7 +12,7 @@ extension MainContentCoordinator {
     // MARK: Preferences
 
     /// Whether the Open panel's "Copy into Library" starts checked. Stored per
-    /// Project, default off: opening in place is the primary action (D1).
+    /// Project, default off: opening in place is the primary action.
     var copiesOpenedCapturesIntoLibrary: Bool {
         get { activeRuntime.settingsDefaults.bool(forKey: ProjectScopedSettingsKeys.copiesOpenedCapturesIntoLibrary) }
         set { activeRuntime.settingsDefaults.set(
@@ -39,6 +39,7 @@ extension MainContentCoordinator {
             return
         }
         copiesOpenedCapturesIntoLibrary = choice.copiesIntoLibrary
+        pendingOpenExpression = choice.expression
         openExternalCapture(choice.url, copiesIntoLibrary: choice.copiesIntoLibrary)
     }
 
@@ -135,6 +136,22 @@ extension MainContentCoordinator {
             return
         }
         openSavedCapture(current)
+    }
+
+    /// Whether the open capture file can be read again as it is (Decode As's
+    /// Redecode): a saved capture, not already opening, its source not held.
+    var canRedecodeActiveSavedCapture: Bool {
+        isViewingSavedCapture && activeSavedCapture != nil && !isOpeningSavedCapture
+            && !isProjectBoundaryBusy && !isCaptureSourceHeld
+    }
+
+    /// Read the open capture file again through the decoder — Wireshark's Redissect,
+    /// used after Decode As rules change. The file itself is unchanged.
+    func redecodeActiveSavedCapture() {
+        guard canRedecodeActiveSavedCapture, let capture = activeSavedCapture else {
+            return
+        }
+        openSavedCapture(capture)
     }
 
     /// Re-snapshot a changed reference from the file now at its path and open it.

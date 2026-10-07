@@ -648,7 +648,8 @@ struct InvestigationQueryTests {
             sessions: sessions,
             connections: connections ?? connectionSnapshot([]),
             datagramEvidence: datagram ?? .empty,
-            tlsEvidence: .empty
+            tlsEvidence: .empty,
+            segmentSeries: .empty
         )
         return InvestigationSnapshot(
             fold: fold, connectionAssessor: connectionAssessor, datagramAssessor: datagramAssessor

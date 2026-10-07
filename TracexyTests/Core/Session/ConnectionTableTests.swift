@@ -951,6 +951,47 @@ struct ConnectionTableTests {
         #expect(reopened.id == ConnectionID(tuple: reopened.tuple, firstOrdinal: FrameOrdinal(5)))
     }
 
+    /// A capture of many one-frame connections pushes every bound at once — active
+    /// eviction, the evicted-tuple memory, the global event bound and the published
+    /// summary bound — and must stay fast: each victim is found through a heap or an
+    /// index, not a scan (40,000 SYNs took 7.5 minutes before, about 6 s after; 80,000
+    /// took 10 minutes, about 13 s after).
+    @Test
+    func manyLoneConnectionsStayBoundedAndFast() {
+        var table = ConnectionTable(configuration: .init(
+            maxActiveConnections: 256, maxTotalEvents: 1_024, maxPublishedSummaries: 5_000
+        ))
+        let server = IPEndpoint(ip: "192.0.2.1", port: 443)
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            for index in 0 ..< 20_000 {
+                let client = IPEndpoint(ip: "10.0.\(index / 250).\(index % 250)", port: UInt16(20_000 + index % 40_000))
+                ingest(
+                    &table,
+                    from: client,
+                    to: server,
+                    flags: [.syn],
+                    seq: 1_000,
+                    ordinal: UInt64(index + 1),
+                    at: Double(index)
+                )
+            }
+        }
+        let snapshot = table.snapshot()
+        #expect(snapshot.activeConnectionCount == 256)
+        #expect(snapshot.retainedEventCount <= 1_024)
+        #expect(snapshot.publishedSummaryCount == 5_000)
+        #expect(snapshot.omittedSummaryCount == UInt64(20_000 - 256 - 5_000))
+        // The oldest were evicted first; of those, the oldest summaries were dropped and
+        // the oldest kept ones lost their events first.
+        let evicted = snapshot.summaries.filter { $0.closeReason == .stateEviction }
+        #expect(evicted.count == 5_000)
+        #expect(evicted.first?.firstProvenance.ordinal.rawValue == UInt64(20_000 - 256 - 5_000 + 1))
+        let earliestTrimmed = evicted.prefix(100).allSatisfy(\.events.isEmpty)
+        #expect(earliestTrimmed)
+        #expect(elapsed < .seconds(20))
+    }
+
     // MARK: Private
 
     // Documentation-only endpoints (RFC 5737). The lower-valued IP in each pair
@@ -985,7 +1026,7 @@ struct ConnectionTableTests {
             sequenceNumber: seq,
             acknowledgementNumber: ack,
             flags: flags,
-            windowSize: 0,
+            windowSize: 65_535,
             headerLength: 20,
             payloadSequence: seq,
             payloadLength: payload,

@@ -76,6 +76,7 @@ final class AssistantAndMCPUITests: XCTestCase {
 
         let host = app.checkBoxes["mcp.disclosure.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 10))
+        scrollIntoView(host, in: app)
         XCTAssertEqual(host.value as? Int, 0, "Disclosure is off by default")
         host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(host.value as? Int, 1)
@@ -137,6 +138,7 @@ final class AssistantAndMCPUITests: XCTestCase {
         openMCPSettings(app)
         let host = app.checkBoxes["assistant.settings.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 10))
+        scrollIntoView(host, in: app)
         if host.value as? Int == 0 {
             host.click()
         }
@@ -168,6 +170,7 @@ final class AssistantAndMCPUITests: XCTestCase {
         // Settings field, and check it.
         let field = app.textFields["assistant.endpointField"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))
+        scrollIntoView(field, in: app)
         field.click()
         app.typeKey("a", modifierFlags: .command)
         field.typeText("http://127.0.0.1:1")
@@ -391,6 +394,28 @@ final class AssistantAndMCPUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10), "The MCP & Assistant pane must be listed")
         row.click()
         XCTAssertTrue(mcpStatus.waitForExistence(timeout: 10), "The MCP & Assistant pane must open")
+    }
+
+    /// Settings panes are taller than the default window on some desktop sizes.
+    /// Scroll the real pane until the target control is on-screen before clicking;
+    /// existence alone does not make an off-screen accessibility frame hittable.
+    @MainActor
+    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication) {
+        guard !element.isHittable else {
+            return
+        }
+
+        let settings = app.windows["settings"]
+        settings.click()
+        let scrollViews = settings.scrollViews.allElementsBoundByIndex
+        let pane = scrollViews.max {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }
+        XCTAssertNotNil(pane, "Settings window must expose its scrollable detail pane")
+        for _ in 0 ..< 8 where !element.isHittable {
+            pane?.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable, "Settings control must be reachable after scrolling")
     }
 
     /// The readable string of a static text. SwiftUI maps a `Text` to AXValue on

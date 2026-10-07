@@ -225,14 +225,33 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         head += "Connection: close\r\n\r\n"
         connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
 
-        Task { [chunks = reply.chunks, delay = reply.chunkDelay] in
-            for chunk in chunks {
-                connection.send(content: Data(chunk.utf8), completion: .contentProcessed { _ in })
-                try? await Task.sleep(for: delay)
-            }
+        // The body is written on the server's own dispatch queue, never from a
+        // `Task`. A `Task` runs on the Swift concurrency cooperative pool, which
+        // is the same pool Swift Testing runs the whole suite on: when enough
+        // CPU-bound tests run in parallel the reply can be starved past the
+        // adapter's 10 s discovery timeout, and the test then sees `.unreachable`
+        // from a server that really was listening. This is the same class of flake
+        // the readiness probe in `start()` was added for.
+        send(reply.chunks, to: connection, delay: reply.chunkDelay)
+    }
+
+    /// Write the scripted chunks in order, spacing them with the reply's delay so
+    /// a test can still prove incremental parsing.
+    private func send(_ chunks: [String], to connection: NWConnection, delay: Duration) {
+        guard let chunk = chunks.first else {
             connection.send(content: nil, isComplete: true, completion: .contentProcessed { _ in
                 connection.cancel()
             })
+            return
+        }
+        connection.send(content: Data(chunk.utf8), completion: .contentProcessed { _ in })
+        let remaining = Array(chunks.dropFirst())
+        let milliseconds = max(
+            0,
+            Int(delay.components.seconds * 1_000 + delay.components.attoseconds / 1_000_000_000_000_000)
+        )
+        queue.asyncAfter(deadline: .now() + .milliseconds(milliseconds)) { [weak self] in
+            self?.send(remaining, to: connection, delay: delay)
         }
     }
 }

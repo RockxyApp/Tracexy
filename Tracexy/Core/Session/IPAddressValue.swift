@@ -206,3 +206,19 @@ nonisolated struct CIDRValue: Hashable, Sendable {
         return Int(text)
     }
 }
+
+extension IPAddressValue {
+    /// RFC 5952 text for display — `2001:db8::10`, the form Wireshark and `inet_ntop`
+    /// print. Display only: session identity keeps the decoder's own spelling.
+    var compressedText: String {
+        var storage = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        let family = family == .v4 ? AF_INET : AF_INET6
+        let written = bytes.withUnsafeBytes { raw in
+            inet_ntop(family, raw.baseAddress, &storage, socklen_t(storage.count))
+        }
+        guard written != nil else {
+            return bytes.map(String.init).joined(separator: ".")
+        }
+        return String(cString: storage)
+    }
+}

@@ -64,16 +64,16 @@ struct HistoryViewModelTests {
             captureCount: 0,
             sessionCount: 0,
             hasMore: false
-        ) == "Local History · No captures")
+        ) == "No saved captures")
         #expect(HistoryFooterModel.statusText(
             captureCount: 1,
             sessionCount: 1,
             hasMore: false
-        ) == "1 capture · 1 persisted session")
+        ) == "1 capture, 1 session")
         #expect(HistoryFooterModel.statusText(
             captureCount: 100,
             sessionCount: 900,
             hasMore: true
-        ) == "100+ captures · 900+ persisted sessions")
+        ) == "100+ captures, 900+ sessions")
     }
 }

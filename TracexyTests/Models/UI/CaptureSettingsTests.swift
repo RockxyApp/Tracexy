@@ -56,23 +56,65 @@ struct CaptureSettingsTests {
         #expect(decoded.snapLength == original.snapLength)
         #expect(decoded.promiscuous == original.promiscuous)
         #expect(decoded.bpf == original.bpf)
+        #expect(decoded.optimizeBPF)
+        #expect(decoded.bpfOptimizerFlag == 1)
+
+        let unoptimized = CaptureConfiguration(
+            interface: "en0",
+            snapLength: 65_536,
+            promiscuous: false,
+            bpf: "tcp port 443",
+            optimizeBPF: false
+        )
+        let unoptimizedData = try NSKeyedArchiver.archivedData(
+            withRootObject: unoptimized,
+            requiringSecureCoding: true
+        )
+        let unoptimizedDecoded = try NSKeyedUnarchiver.unarchivedObject(
+            ofClass: CaptureConfiguration.self,
+            from: unoptimizedData
+        )
+        #expect(try #require(unoptimizedDecoded).optimizeBPF == false)
+        #expect(try #require(unoptimizedDecoded).bpfOptimizerFlag == 0)
+    }
+
+    @Test("Legacy secure-coded capture configurations retain optimized BPF behavior")
+    func legacyConfigurationDefaultsOptimizerOn() throws {
+        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+        archiver.encode("en0" as NSString, forKey: "if")
+        archiver.encode(Int64(65_536), forKey: "sl")
+        archiver.encode(false, forKey: "pr")
+        archiver.encode("tcp port 443" as NSString, forKey: "bpf")
+        archiver.finishEncoding()
+
+        let decoder = try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData)
+        decoder.requiresSecureCoding = true
+        let decoded = try #require(CaptureConfiguration(coder: decoder))
+        decoder.finishDecoding()
+        #expect(decoded.optimizeBPF)
+        #expect(decoded.bpfOptimizerFlag == 1)
     }
 
     @Test("Persisted settings resolve to bounded capture inputs")
     func settingsResolution() throws {
         let suiteName = "CaptureSettingsTests.\(UUID().uuidString)"
         let suite = try #require(UserDefaults(suiteName: suiteName))
-        defer { suite.removePersistentDomain(forName: suiteName) }
+        defer { TestPreferences.remove(suiteName) }
         suite.set(-1, forKey: SettingsKeys.snapLength)
         suite.set(true, forKey: SettingsKeys.promiscuous)
         suite.set(CaptureFilterMode.custom.rawValue, forKey: SettingsKeys.captureFilterMode)
         suite.set("  host 1.1.1.1  ", forKey: SettingsKeys.bpfExpression)
         suite.set(50_000, forKey: SettingsKeys.retainPackets)
 
-        let configuration = CaptureSettingsResolver.configuration(interface: "en0", defaults: suite)
+        let configuration = CaptureSettingsResolver.configuration(
+            interface: "en0",
+            defaults: suite,
+            optimizeBPF: false
+        )
         #expect(configuration.snapLength == CaptureConfiguration.defaultSnapLength)
         #expect(configuration.promiscuous)
         #expect(configuration.bpf == "host 1.1.1.1")
+        #expect(!configuration.optimizeBPF)
         #expect(CaptureSettingsResolver.retainCapacity(defaults: suite) == 50_000)
         #expect(CaptureSettingsResolver.resolvedRetainPackets(1_000_000) == 8_000)
     }
