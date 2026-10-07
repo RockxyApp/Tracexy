@@ -40,7 +40,7 @@ struct MCPServerTests {
         #expect(result["serverInfo"] != nil)
     }
 
-    @Test("tools/list advertises exactly the three read-only tools with bounded schemas")
+    @Test("tools/list advertises exactly the four read-only tools with bounded schemas")
     func toolsListIsClosed() async throws {
         let environment = MCPTestEnvironment()
         defer { environment.remove() }
@@ -55,10 +55,11 @@ struct MCPServerTests {
             "describe_scope",
             "list_captures",
             "list_sessions",
+            "list_findings",
         ])
 
         // The advertised ceiling is the grant's, not the service's hard bound.
-        let sessions = try #require(tools.last)
+        let sessions = try #require(tools.first { $0["name"] as? String == "list_sessions" })
         let schema = try #require(sessions["inputSchema"] as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
         let pageSize = try #require(properties["pageSize"] as? [String: Any])
@@ -78,6 +79,13 @@ struct MCPServerTests {
             "totalBytesAtLeast",
             "totalBytesAtMost",
         ])
+
+        // list_findings takes no free-text search and names a session only by ID.
+        let findings = try #require(tools.first { $0["name"] as? String == "list_findings" })
+        let findingSchema = try #require(findings["inputSchema"] as? [String: Any])
+        let findingProperties = try #require(findingSchema["properties"] as? [String: Any])
+        #expect(Set(findingProperties.keys) == ["captureID", "sessionID", "kind", "severity", "pageSize", "cursor"])
+        #expect(findingSchema["additionalProperties"] as? Bool == false)
     }
 
     @Test("describe_scope states the boundary without touching the database")
@@ -102,6 +110,8 @@ struct MCPServerTests {
         #expect(object["maxPageSize"] as? Int == 20)
         let exposes = try #require(object["exposes"] as? [String: Any])
         #expect(exposes["rawFrames"] as? Bool == false)
+        #expect(exposes["findings"] as? Bool == true)
+        #expect(exposes["notes"] as? Bool == false)
         #expect(exposes["captureControls"] as? Bool == false)
         #expect(exposes["filePaths"] as? Bool == false)
     }
@@ -444,6 +454,49 @@ struct MCPServerTests {
         ])
         #expect(errorCode(failed) == MCPErrorCode.internalError.rawValue)
         #expect(environment.issuer.recentAudit().last?.result == .unavailable)
+    }
+
+    @Test("list_findings pages a capture's findings with kind, severity and session filters")
+    func listFindings() async throws {
+        let environment = MCPTestEnvironment()
+        defer { environment.remove() }
+        let captureID = try await environment.seedHistory(findingKinds: ["retransmission", "dnsNameError", "reset"])
+        _ = try environment.issuer.issue(scope: environment.scope, disclosure: .minimum, maxPageSize: 50)
+        let server = environment.makeServer()
+        _ = try await response(server, "initialize", id: 1)
+
+        let all = try await toolObject(server, name: "list_findings", id: 2, arguments: [
+            "captureID": captureID.uuidString,
+        ])
+        let findings = try #require(all["findings"] as? [[String: Any]])
+        #expect(findings.compactMap { $0["kind"] as? String } == ["retransmission", "dnsNameError", "reset"])
+        #expect(findings.first?["severity"] as? String == "warning")
+        #expect(findings.first?["citedObservationCount"] as? Int == 1)
+        // A finding names its session only by ID: no host, process or endpoint.
+        #expect(findings.first?["host"] == nil)
+        let sessionID = try #require(findings.first?["sessionID"] as? String)
+
+        let warnings = try await toolObject(server, name: "list_findings", id: 3, arguments: [
+            "captureID": captureID.uuidString, "severity": "warning",
+        ])
+        #expect((warnings["findings"] as? [[String: Any]])?.count == 2)
+        let dns = try await toolObject(server, name: "list_findings", id: 4, arguments: [
+            "captureID": captureID.uuidString, "kind": "dnsNameError", "sessionID": sessionID, "pageSize": 1,
+        ])
+        #expect((dns["findings"] as? [[String: Any]])?.isEmpty == true)
+        #expect(dns["examinedCount"] as? Int == 1)
+        #expect(dns["nextCursor"] != nil)
+
+        let refused = try await response(server, "tools/call", id: 5, params: [
+            "name": "list_findings",
+            "arguments": ["captureID": captureID.uuidString, "severity": "loud"],
+        ])
+        #expect(errorCode(refused) == MCPErrorCode.invalidParams.rawValue)
+        let extra = try await response(server, "tools/call", id: 6, params: [
+            "name": "list_findings",
+            "arguments": ["captureID": captureID.uuidString, "filter": [:]],
+        ])
+        #expect(errorCode(extra) == MCPErrorCode.invalidParams.rawValue)
     }
 
     // MARK: Private

@@ -163,8 +163,7 @@ struct InvestigationQueryActivationTests {
         coordinator.applyInvestigationQuery(initiatingDraft, in: initiatingWorkspace)
         coordinator.workspaces.applyProjectWorkspaces(
             snapshots,
-            activeWorkspaceID: initiatingWorkspace.id,
-            maxFilterRules: coordinator.policy.maxSessionFilterRules
+            activeWorkspaceID: initiatingWorkspace.id
         )
         let replacement = coordinator.activeWorkspace
         #expect(replacement !== initiatingWorkspace)
@@ -197,8 +196,7 @@ struct InvestigationQueryActivationTests {
         coordinator.applyInvestigationQuery(draft, in: initiatingWorkspace)
         coordinator.workspaces.applyProjectWorkspaces(
             snapshots,
-            activeWorkspaceID: initiatingWorkspace.id,
-            maxFilterRules: coordinator.policy.maxSessionFilterRules
+            activeWorkspaceID: initiatingWorkspace.id
         )
         let replacement = coordinator.activeWorkspace
         #expect(replacement !== initiatingWorkspace)

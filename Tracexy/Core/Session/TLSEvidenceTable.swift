@@ -4,7 +4,7 @@ import Foundation
 // Like `DatagramEvidenceTable`, everything here is observation-only: it records what
 // accepted frames prove, never a finding, severity, policy, TLS-version judgement or
 // UI state. No type stores raw bytes, SNI, host, DNS, path, URL, certificate
-// material, a rendered label or a negotiation verdict — only the neutral N3C1
+// material, a rendered label or a negotiation verdict — only the neutral
 // `TLSRecordFact` the decoder already produced, plus the per-frame provenance the
 // fold was already allowed to know. Nothing here reads a wall clock; the sole source
 // of state is the ordered `offer` fold in `SessionAccumulator`.

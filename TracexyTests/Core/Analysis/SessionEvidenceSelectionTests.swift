@@ -208,8 +208,10 @@ struct SessionEvidenceSelectionTests {
             connections: connections,
             datagramEvidence: .empty,
             tlsEvidence: tls,
+            segmentSeries: .empty,
             connectionAnalysis: .empty,
-            datagramAnalysis: .empty
+            datagramAnalysis: .empty,
+            tlsAnalysis: .empty
         )
     }
 }

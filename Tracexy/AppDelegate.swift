@@ -32,8 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.messageText = String(localized: "Quit while capturing?")
             alert.informativeText = String(
                 localized: """
-                A live capture is still running. Quitting stops it and discards the sessions that have not \
-                been saved. Stop the capture and use Save Capture first if you need them.
+                A live capture is still running. Quitting stops it and keeps its sessions in History, but \
+                the captured packets are discarded. Stop the capture and use Save Capture first if you need them.
                 """
             )
             alert.addButton(withTitle: String(localized: "Quit"))
@@ -53,6 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
+    }
+
+    /// The workspace has its own tabs (File ▸ New Tab). AppKit's automatic window
+    /// tabbing would add a second tab bar and a second "Show Next Tab" / "Show
+    /// Previous Tab" pair to the Window menu competing for ⌃Tab, so it is off.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     /// No Tracexy scene takes part in AppKit state restoration any more, so a
@@ -76,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingOpenURLs = urls
             return
         }
+        applyLaunchOptions(to: coordinator)
         coordinator.importExternalCaptures(urls)
     }
 
@@ -97,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let urls = pendingOpenURLs
         pendingOpenURLs = []
         if !urls.isEmpty {
+            applyLaunchOptions(to: coordinator)
             coordinator.importExternalCaptures(urls)
         }
     }
@@ -104,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Private
 
     private var isFlushingProjectState = false
+    private var launchOptionsApplied = false
     private var pendingOpenURLs: [URL] = []
     private var applicationDefaults: UserDefaults = .standard
 
@@ -124,5 +134,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transactionID: AETransactionID(kAnyTransactionID)
         )
         _ = try? event.sendEvent(options: [.noReply], timeout: 1)
+    }
+
+    /// `-Y` and `-g` apply to the first capture opened after launch only, whether
+    /// the file arrived before or after the coordinator was attached.
+    private func applyLaunchOptions(to coordinator: MainContentCoordinator) {
+        guard !launchOptionsApplied else {
+            return
+        }
+        launchOptionsApplied = true
+        let options = LaunchOpenOptions.parse(CommandLine.arguments)
+        coordinator.pendingOpenExpression = options.expression
+        coordinator.allFrames.pendingReveal = options.frame
     }
 }

@@ -64,9 +64,13 @@ struct ConnectionAnalysisTests {
     @Test("No unmapped event kind produces a finding")
     func unmappedKindsProduceNoFindings() {
         let id = connectionID(clientA, serverA, firstOrdinal: 1)
+        // `payloadObserved` and `fin` feed only the summary-level termination rules,
+        // which need close/FIN state this summary does not carry, so on their own
+        // they are still not findings. `ambiguousTupleReuse` now maps and is
+        // covered by `ConnectionTerminationFindingTests`.
         let unmapped: [ConnectionEventKind] = [
             .firstObserved, .syn, .synAck, .handshakeCompleted, .payloadObserved,
-            .fin, .lateSegmentAfterClose, .ambiguousTupleReuse, .stateEvicted,
+            .fin, .lateSegmentAfterClose, .stateEvicted,
             .sequenceAdvanced, .pendingDrained, .serialAmbiguous,
             .applicationRecord, .applicationProbeTruncated,
         ]

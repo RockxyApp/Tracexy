@@ -56,6 +56,34 @@ nonisolated struct TLSServerHelloFact: Hashable, Sendable {
     let selectedVersion: UInt16?
 }
 
+// MARK: - TLSAlertFact
+
+/// The two neutral wire bytes of a *plaintext* TLS alert record (RFC 8446 §6):
+/// `AlertLevel` and `AlertDescription`, kept as their raw values. It exists only for
+/// a record whose declared body is exactly two bytes and was fully captured — an
+/// encrypted alert is always longer (AEAD tag or CBC MAC), so this can never be a
+/// guess at ciphertext. No level name, description name, severity or verdict lives
+/// here; those are policy and belong to the analysis layer.
+nonisolated struct TLSAlertFact: Hashable, Sendable {
+    /// The `AlertLevel` byte: 1 = warning, 2 = fatal. Any other value is kept
+    /// verbatim and never normalized into one of those two.
+    let level: UInt8
+    /// The `AlertDescription` byte (0 = close_notify, 40 = handshake_failure, …),
+    /// kept verbatim — an unassigned description is not invented into a known one.
+    let description: UInt8
+
+    /// Whether the level byte is the RFC 8446 `fatal` value. Derived, not stored.
+    var isFatal: Bool {
+        level == 2
+    }
+
+    /// Whether this is the orderly-shutdown alert (`close_notify`, description 0),
+    /// which every well-behaved TLS peer sends at the end of a normal session.
+    var isCloseNotify: Bool {
+        description == 0
+    }
+}
+
 // MARK: - TLSRecordFact
 
 /// One TLS record's neutral, decode-derived facts (RFC 8446 §5.1). Carries only numeric
@@ -64,6 +92,26 @@ nonisolated struct TLSServerHelloFact: Hashable, Sendable {
 /// body length and body completeness are kept separate; the optional handshake fact
 /// exists only for a structurally-complete ClientHello/ServerHello.
 nonisolated struct TLSRecordFact: Hashable, Sendable {
+    // MARK: Lifecycle
+
+    init(
+        contentType: UInt8,
+        legacyRecordVersion: UInt16,
+        declaredBodyLength: Int,
+        capturedBodyLength: Int,
+        handshake: TLSHandshakeFact?,
+        alert: TLSAlertFact? = nil
+    ) {
+        self.contentType = contentType
+        self.legacyRecordVersion = legacyRecordVersion
+        self.declaredBodyLength = declaredBodyLength
+        self.capturedBodyLength = capturedBodyLength
+        self.handshake = handshake
+        self.alert = alert
+    }
+
+    // MARK: Internal
+
     /// Raw record content type (20…24: CCS/Alert/Handshake/ApplicationData/Heartbeat).
     /// For an Alert (21) this is presence only — the body is opaque and never decoded.
     let contentType: UInt8
@@ -79,6 +127,11 @@ nonisolated struct TLSRecordFact: Hashable, Sendable {
     /// a ClientHello or ServerHello whose claimed fields were fully present. `nil` for any
     /// other content type, other handshake messages, or a too-truncated handshake.
     let handshake: TLSHandshakeFact?
+    /// The two alert bytes, present only for an Alert (21) record whose declared body
+    /// is exactly two bytes and was fully captured — i.e. a plaintext alert. `nil` for
+    /// every other content type and for an encrypted alert, whose body is opaque and
+    /// is never decoded.
+    let alert: TLSAlertFact?
 
     /// Whether the declared body was fully captured. Derived, not stored.
     var bodyComplete: Bool {

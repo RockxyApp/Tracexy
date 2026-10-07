@@ -20,7 +20,8 @@ protocol TracexyHelperProtocol {
     )
 
     /// Begin capturing with a typed, validated `configuration` (interface, snap
-    /// length, promiscuous mode, optional BPF). Reply: (started, errorMessage).
+    /// length, promiscuous mode, optional BPF and optimizer choice). Reply:
+    /// (started, errorMessage).
     ///
     /// The helper re-validates the configuration and compiles any BPF against
     /// libpcap *before* replying, so an out-of-bounds value or a bad filter

@@ -100,7 +100,7 @@ struct SettingsSectionTitle: View {
     // MARK: Internal
 
     var body: some View {
-        Text(text)
+        Text(localized: text)
             .font(metrics.font(weight: .medium))
     }
 
@@ -178,7 +178,7 @@ struct SettingsRow<Content: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            Text(label)
+            Text(localized: label)
                 .font(metrics.font(weight: .medium))
                 .frame(width: metrics.labelWidth, alignment: .trailing)
                 .padding(.trailing, 16)
@@ -191,6 +191,39 @@ struct SettingsRow<Content: View>: View {
 
     private let label: String
     private let metrics: SettingsDisplayMetrics
+    private let content: Content
+}
+
+// MARK: - SettingsControlGroup
+
+/// Several controls for one `SettingsRow`, side by side when the pane is wide
+/// enough and stacked when it is not. Fixed-width menus in one line could
+/// otherwise make the pane wider than the window, which pushes the whole split
+/// view, sidebar included, past the window's edges.
+struct SettingsControlGroup<Content: View>: View {
+    // MARK: Lifecycle
+
+    init(spacing: CGFloat = 8, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    // MARK: Internal
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: spacing) {
+                content
+            }
+            VStack(alignment: .leading, spacing: spacing) {
+                content
+            }
+        }
+    }
+
+    // MARK: Private
+
+    private let spacing: CGFloat
     private let content: Content
 }
 
@@ -247,7 +280,7 @@ struct SettingsFootnote: View {
     // MARK: Internal
 
     var body: some View {
-        Text(text)
+        Text(localized: text)
             .font(metrics.secondaryFont())
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -304,7 +337,7 @@ struct SettingsStatusBanner<Accessory: View>: View {
                 .background(Color.secondary.opacity(0.10), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(localized: title)
                     .font(metrics.font(weight: .semibold))
                     .accessibilityIdentifier(titleIdentifier ?? "")
                 if let detail {
@@ -405,7 +438,7 @@ struct SettingsBadge: View {
                 Image(systemName: systemName)
                     .font(metrics.metadataFont(weight: .semibold))
             }
-            Text(text)
+            Text(localized: text)
                 .font(metrics.metadataFont(weight: .medium))
         }
         .padding(.horizontal, 9)
@@ -474,7 +507,7 @@ struct SettingsDetailRow: View {
 
     var body: some View {
         GridRow {
-            Text(label)
+            Text(localized: label)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(.secondary)
                 .gridColumnAlignment(.trailing)
@@ -554,7 +587,7 @@ struct SettingsInlineMessage: View {
             Image(systemName: tone.symbol)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(tone.tint)
-            Text(text)
+            Text(localized: text)
                 .font(metrics.secondaryFont())
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -598,7 +631,7 @@ struct SettingsCheckbox: View {
             Toggle(title, isOn: $isOn)
                 .toggleStyle(.checkbox)
             if let description {
-                Text(description)
+                Text(localized: description)
                     .font(metrics.secondaryFont())
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -674,6 +707,23 @@ struct SettingsThemeCard: View {
                 interactive: true,
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.clear,
+                        lineWidth: isSelected ? 2 : 0.5
+                    )
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(metrics.metadataFont(weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(8)
+                        .accessibilityHidden(true)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

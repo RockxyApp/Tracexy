@@ -284,6 +284,7 @@ legacy_personal_mail_commit() {
     case "$1" in
     09d3dd91c755fd853e79b5d49762140263149993 \
         | 1985bb707285fbf25b0e92a6c8b724be3a79b8f6 \
+        | 1ed28f0c656dfb95ab23a39ca3c4f9df53130e55 \
         | 1ab9e42b9d79133359befa73af28cb878fbc9a54 \
         | 1fef708731a6512cb3d63822010f640a7c5c3393 \
         | 2e2d6e4b68d25adb44b9e221d082ef42f1c32e1a \
@@ -300,6 +301,7 @@ legacy_personal_mail_commit() {
         | 81899536fc0634f71cb5117a2ec76286ff1e59c8 \
         | 8c0a368e6914483331eb76cb13b6b0531f6945b1 \
         | a589cbb87fed9704e047f77455e9543b5cce9994 \
+        | a898e3050e75fec89b33044cba0c7cc0349e939e \
         | a3752dea56349fcf5393c1451d8fab58e8da1e03 \
         | ab8987c7c67cb1209c9f12b0083f11f9dcb8779f \
         | ae8849cf6e5b7f3ab634d8619a112248ab0102eb \
@@ -452,42 +454,36 @@ c_out="$(grep -nHIiE -e 'pricing' \
     "${FILES[@]}" 2>/dev/null)"
 emit_locations "Monetization / licensing strategy phrase" "$c_out" 2
 
-# --- Check 7: private-only activation / licensing source basenames -----------
-# These types live behind the private AppPolicy boundary (the public tree ships
-# only AppPolicy / DefaultAppPolicy / AppPolicyProvider). Their presence — or
-# any reference to them — signals a private file leaking into the public repo.
-PRIVATE_BASENAMES="Activation.swift ActivationService.swift ActivationStore.swift ActivationTests.swift ActivationViewModel.swift FullAccessAppPolicy.swift KeychainStore.swift LicenseRuntimeConfiguration.swift LicenseServiceTests.swift LicenseSettingsView.swift LicenseSignatureVerifier.swift MachineIdentity.swift RockxyBELicenseService.swift"
+# --- Check 8: agent/tool working-folder paths in file content ---------------
+# H2 keeps such folders out of the tree; this keeps a source comment, doc or
+# test from pointing into them. `.gitignore` is the one file that names them.
+c_out="$(grep -nHIiE -e '(^|[^A-Za-z0-9_])\.(claude|codex|agents|cursor)/' \
+    -e '(^|[^A-Za-z0-9_./-])(claude|agents|gemini)\.md([^A-Za-z0-9_]|$)' \
+    "${FILES[@]}" 2>/dev/null | grep -v '^\.gitignore:')"
+emit_locations "Agent/tool working-folder path in file content" "$c_out" 2
 
-# 7a: any candidate file that IS one of these private basenames.
+# --- Check 7: files that belong only to the distributed build ---------------
+# The public tree ships AppPolicy / DefaultAppPolicy / AppPolicyProvider; some
+# source files exist only outside it. They are matched by the SHA-256 of their
+# basename, so this public script does not itself list them.
+PRIVATE_BASENAME_HASHES="14ccb8a20107437a6eed5df8244884995e21fce32d43a1e1bacdffa2e80a4459 0164fb4314669733ae96a574e4df88b0fe251a70b00d92f2a21c0d99517b8b32 943ad26fe3370a7ff14aec4df7c179162078a6dc135b4e220a00260747a69da7 bde44a6a23524cd0f3bf5cbbf45978479a2c791914ab7054d3bf0c7805069cd2 ceaf198531fce0206dcae85837f460d875b14bc13c561af372313cce6def0635 39354bbb9313b608e6e7bab9da9218a2df592bf0bea6e64622e07b600ca92d7b f56c1e73fe6db8a6aa2bbd2c60da86545b7c5e9f570eb7807b58a44f72f73cae 55ea2173e43f3a75876ea71391fa9f261f9b36433134b28cd17f21fc3a20ab8c 870c9019fb176cb0d9de44a7c29629d3cbf76fba34fe59f2cd1a8878e55d8aae e1c25225dbf096462071090b4793d74098aa76f2afc20e1bbd11ce965965b6df 2c8aed048a3d1aa52b0fe094eebae29ea47c1210cd7f5c8fa516e62b2ba9f224 d258c10f1cabb829cd73925ed0abbd7f6ea8e3cc580ced743816dba2ea4f5185 8f5758af6f25909e78b3c143fbe60816e366e715f772a1a577e846eadcf5b84f"
+
 present_out=""
 for f in "${FILES[@]}"; do
     base="${f##*/}"
-    for priv in $PRIVATE_BASENAMES; do
-        if [ "$base" = "$priv" ]; then
-            present_out="${present_out}${f}:1: private-only file present in public tree
+    case "$base" in
+        *.swift) ;;
+        *) continue ;;
+    esac
+    digest="$(printf '%s' "$base" | shasum -a 256 | cut -c1-64)"
+    for priv in $PRIVATE_BASENAME_HASHES; do
+        if [ "$digest" = "$priv" ]; then
+            present_out="${present_out}${f}:1: file present that belongs only to the distributed build
 "
         fi
     done
 done
-report "Private-only activation/licensing file present" "$present_out"
-
-# 7b: references to those basenames inside shipped content (docs, project files).
-c_out="$(grep -nHIF \
-    -e 'Activation.swift' \
-    -e 'ActivationService.swift' \
-    -e 'ActivationStore.swift' \
-    -e 'ActivationTests.swift' \
-    -e 'ActivationViewModel.swift' \
-    -e 'FullAccessAppPolicy.swift' \
-    -e 'KeychainStore.swift' \
-    -e 'LicenseRuntimeConfiguration.swift' \
-    -e 'LicenseServiceTests.swift' \
-    -e 'LicenseSettingsView.swift' \
-    -e 'LicenseSignatureVerifier.swift' \
-    -e 'MachineIdentity.swift' \
-    -e 'RockxyBELicenseService.swift' \
-    "${FILES[@]}" 2>/dev/null)"
-emit_locations "Reference to a private-only activation/licensing file" "$c_out" 2
+report "Distribution-only file present" "$present_out"
 
 # --- Verdict -----------------------------------------------------------------
 printf '\n'

@@ -89,6 +89,9 @@ struct RootView: View {
         .sheet(isPresented: $coordinator.isProjectRecoveryPresented) {
             ProjectRecoverySheet(coordinator: coordinator)
         }
+        .sheet(isPresented: $coordinator.isSplitCapturePresented) {
+            SplitCaptureSheet(coordinator: coordinator)
+        }
         // Changing Projects while a capture runs is an explicit, reversible choice.
         // Cancel leaves the outgoing Project untouched; Stop and Switch waits for
         // the helper's final drain, fold and History write before anything moves.
@@ -171,6 +174,7 @@ struct RootView: View {
 
     @State private var showHelperInstall = false
     @State private var sidebarVisibilityByProject: [UUID: Bool] = [:]
+    @Environment(\.openWindow) private var openWindow
 
     private var sidebarVisibility: Binding<Bool> {
         let projectID = coordinator.projectStore.activeProjectID
@@ -221,6 +225,9 @@ struct RootView: View {
 
         if coordinator.isHistoryDemoMode {
             await coordinator.prepareHistoryDemo()
+            #if DEBUG
+            await DemoLaunchSupport.afterHistoryDemo?(coordinator)
+            #endif
         }
 
         // The Assistant walkthrough publishes one documentation-range snapshot so
@@ -233,6 +240,34 @@ struct RootView: View {
             return
         }
 
+        #if DEBUG
+        // A deterministic capture path used only by the native RTP UI test. The
+        // fixture enters through the same external-open flow as Finder and waits
+        // for the normal capture reader before the statistics window is shown.
+        if CommandLine.arguments.contains("--rtp-analysis-ui-test"),
+           let path = ProcessInfo.processInfo.environment["TRACEXY_RTP_UI_TEST_CAPTURE"],
+           !path.isEmpty
+        {
+            coordinator.importExternalCaptures([URL(fileURLWithPath: path)])
+            await coordinator.waitForExternalCaptureOpen()
+            openWindow(id: TracexyApp.rtpStreamsWindowID)
+            return
+        }
+
+        // A deterministic SMB Export Objects walkthrough uses the real saved-file
+        // import, evidence scan and native window. This hook is compiled only in
+        // Debug and activates only with an explicit UI-test argument.
+        if CommandLine.arguments.contains("--smb-export-objects-ui-test"),
+           let path = ProcessInfo.processInfo.environment["TRACEXY_SMB_UI_TEST_CAPTURE"],
+           !path.isEmpty
+        {
+            coordinator.importExternalCaptures([URL(fileURLWithPath: path)])
+            await coordinator.waitForExternalCaptureOpen()
+            openWindow(id: TracexyApp.exportObjectsWindowID)
+            return
+        }
+        #endif
+
         if coordinator.isHistoryDemoMode {
             return
         }
@@ -240,12 +275,21 @@ struct RootView: View {
         // Auto-start is a *launch* preference, resolved once against the Project
         // that was active at launch. Changing Projects later never starts a
         // capture on its own: capture always begins with a deliberate Start.
-        let shouldAutoStart = coordinator.activeProjectDefaults.bool(
+        // Wireshark's `-i` and `-k` at launch choose the interface (or pipe) and start.
+        let launch = LaunchOpenOptions.parse(CommandLine.arguments)
+        if let interface = launch.interface {
+            if PipeCapture.isPipe(interface) {
+                InterfacePreferences.shared.addPipe(interface)
+            }
+            coordinator.captureInterface = InterfaceSettings.pipePath(interface) ?? interface
+        }
+        let shouldAutoStart = launch.startsCapture || coordinator.activeProjectDefaults.bool(
             forKey: SettingsKeys.autoStartCapture
         )
         let launchProjectID = coordinator.projectStore.activeProjectID
         let launchGeneration = coordinator.startGeneration
-        if MainContentCoordinator.forceDirectCapture {
+        // A pipe is read in this process, so it needs no helper either.
+        if MainContentCoordinator.forceDirectCapture || PipeCapture.isPipe(coordinator.captureInterface) {
             if shouldAutoStart {
                 coordinator.startCapture()
             }
@@ -301,12 +345,24 @@ struct MainDetailView: View {
             .onChange(of: workspace.selectedSessionID) { _, newValue in
                 // Raw Follow Stream bytes are explicitly selection-scoped. Table
                 // bindings bypass `coordinator.select(_:)`, so this root observer is
-                // the authoritative retirement boundary for both selection paths.
-                coordinator.cancelFollowStream(clearResult: true)
-                coordinator.evidenceNavigationDidChangeSelection()
+                // the authoritative retirement boundary for both selection paths —
+                // except a selection `select(_:)` already retired, whose cited frame
+                // (a reveal from All Frames, Findings or `-g`) must survive.
+                let alreadyRetired = newValue != nil && newValue == workspace.evidenceRetiredForSelection
+                workspace.evidenceRetiredForSelection = nil
+                if !alreadyRetired {
+                    coordinator.cancelFollowStream(clearResult: true)
+                    coordinator.evidenceNavigationDidChangeSelection()
+                }
                 if newValue != nil {
                     coordinator.revealPanelsForSelection()
                 }
+                coordinator.rememberInvestigationViewState()
+            }
+            // Where a capture file was left (selection, applied session expression)
+            // is remembered per Project and restored when the file is opened again.
+            .onChange(of: workspace.acceptedInvestigationDraft) {
+                coordinator.rememberInvestigationViewState()
             }
             .confirmationDialog(
                 "Clear all capture data?",
@@ -332,7 +388,15 @@ struct MainDetailView: View {
     /// the presentation-only status bar.
     @Environment(\.openWindow) private var openWindow
     @State private var showsClearConfirmation = false
-    @State private var showsInvestigationEditor = false
+
+    /// The Session Expression editor's presentation, owned by the workspace so the
+    /// toolbar's overflow menu and the View menu command drive one editor.
+    private var investigationEditorPresented: Binding<Bool> {
+        Binding(
+            get: { coordinator.activeWorkspace.isInvestigationEditorPresented },
+            set: { coordinator.activeWorkspace.isInvestigationEditorPresented = $0 }
+        )
+    }
 
     /// Bridges the native evidence split's presentation to the workspace's inspector
     /// layout. Routing the setter through `toggleInspectorBottom()` preserves the
@@ -367,7 +431,7 @@ struct MainDetailView: View {
                 // WorkspaceState while this view subtree is still alive.
                 onCommandAction: { performSessionCommand($0, coordinator.activeWorkspace) }
             )
-            .popover(isPresented: $showsInvestigationEditor, arrowEdge: .bottom) {
+            .popover(isPresented: investigationEditorPresented, arrowEdge: .bottom) {
                 InvestigationQueryEditorView(
                     coordinator: coordinator,
                     // The popover closure outlives the body pass that created it.
@@ -454,7 +518,8 @@ struct MainDetailView: View {
             liveBytesPerSecond: liveBytesPerSecond,
             totalBytes: coordinator.totalBytes,
             bytesUp: coordinator.totalBytesUp,
-            bytesDown: coordinator.totalBytesDown
+            bytesDown: coordinator.totalBytesDown,
+            attribution: (coordinator.attributedSessionCount, coordinator.presentedSessions.count)
         )
         return FooterSnapshot(
             summary: summary,
@@ -486,7 +551,7 @@ struct MainDetailView: View {
         case .jumpToLatest:
             coordinator.jumpToLatestVisibleSession()
         case .investigate:
-            showsInvestigationEditor = true
+            coordinator.activeWorkspace.isInvestigationEditorPresented = true
         case .clearCapture:
             showsClearConfirmation = true
         case .saveCapture:
@@ -585,7 +650,24 @@ struct CaptureStatusView: View {
     @State private var showsReadiness = false
 
     private var statusText: String {
-        "\(TracexyIdentity.productName) | \(coordinator.captureInterface) | \(coordinator.captureDisplayState.title)"
+        "\(TracexyIdentity.productName) | \(coordinator.captureSourceName) | \(captureStateTitle)"
+    }
+
+    /// "Stopped after 5 minutes" when Settings → Capture → Stop automatically ended
+    /// the capture, so an unattended stop never looks like a failure or a mystery.
+    private var captureStateTitle: String {
+        guard !coordinator.isCapturing, !coordinator.isStarting else {
+            return coordinator.captureDisplayState.title
+        }
+        let base: String = if let reason = coordinator.autoStop.stoppedReason {
+            reason.prefix(1).uppercased() + reason.dropFirst()
+        } else {
+            coordinator.captureDisplayState.title
+        }
+        guard let fileSet = coordinator.lastFileSetDescription else {
+            return base
+        }
+        return "\(base), \(fileSet)"
     }
 
     private var statusHelp: String {

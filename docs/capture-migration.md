@@ -87,7 +87,9 @@ boundaries; see [Usage](usage.md).
 
 ## Reuse a saved capture filter
 
-In **Settings → Capture → Filter**, choose **Import Capture Filter…**, then choose a capture-filter list such as Wireshark’s `cfilters`. Select a named entry, review its full BPF expression, and choose **Use Filter**. This replaces the active Project’s custom capture expression and selects Custom mode. It applies to the next capture you start; the capture backend checks BPF syntax then.
+In **Settings → Capture → Filter**, choose **Import Capture Filter…**, then choose a capture-filter list such as Wireshark’s `cfilters`. Select a named entry, review its full BPF expression, and choose **Use Filter**. This replaces the active Project’s custom capture expression and selects Custom mode. It applies to the next capture you start.
+
+While the Capture filter is **Custom (BPF)**, Tracexy checks the expression as you type with libpcap's own compiler — without opening an interface or asking for privileges — and shows either **Valid filter** or libpcap's reason for refusing it. The check compiles for Ethernet, the link type of almost every Mac interface; the capture start compiles it again for the interface actually chosen. **Save Filter…** keeps a valid expression under a name in the active Project, and **Saved Filters** puts one back (up to 30 per Project).
 
 Reading, cancelling, or a failed import leaves your existing settings intact. The importer accepts UTF-8 lists up to 256 KiB and 256 entries; names are limited to 128 characters and expressions to 1,024. A malformed row rejects the list with its line number. Duplicate names remain separate choices.
 

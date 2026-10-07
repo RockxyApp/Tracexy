@@ -38,6 +38,11 @@ nonisolated enum AutomationExport {
         try encoder().encode(sessionPage)
     }
 
+    /// Deterministic JSON for a finding page (sorted keys, no escaped slashes).
+    static func json(findingPage: AutomationFindingPage) throws -> Data {
+        try encoder().encode(findingPage)
+    }
+
     /// Deterministic RFC-4180 CSV for a session page: one fixed header row, then
     /// one row per matched session. Records are separated by CRLF and every field
     /// is quoted when it contains a comma, quote, CR or LF. Undisclosed/absent
@@ -69,6 +74,25 @@ nonisolated enum AutomationExport {
         return Data(text.utf8)
     }
 
+    /// One RFC-4180 CSV record (no line terminator).
+    static func encodeRow(_ fields: [String]) -> String {
+        fields.map(escapeField).joined(separator: ",")
+    }
+
+    /// Prevent disclosed capture-derived text from being interpreted as a
+    /// formula when the otherwise-neutral CSV is opened in a spreadsheet.
+    /// Leading whitespace is considered because spreadsheet importers may trim
+    /// it before checking for a formula marker.
+    static func spreadsheetSafe(_ field: String) -> String {
+        let firstMeaningfulCharacter = field.first { !$0.isWhitespace }
+        guard let firstMeaningfulCharacter,
+              ["=", "+", "-", "@"].contains(firstMeaningfulCharacter) else
+        {
+            return field
+        }
+        return "'\(field)"
+    }
+
     // MARK: Private
 
     private static func encoder() -> JSONEncoder {
@@ -84,24 +108,6 @@ nonisolated enum AutomationExport {
     /// byte-stable across environments.
     private static func number(_ value: Double) -> String {
         String(value)
-    }
-
-    private static func encodeRow(_ fields: [String]) -> String {
-        fields.map(escapeField).joined(separator: ",")
-    }
-
-    /// Prevent disclosed capture-derived text from being interpreted as a
-    /// formula when the otherwise-neutral CSV is opened in a spreadsheet.
-    /// Leading whitespace is considered because spreadsheet importers may trim
-    /// it before checking for a formula marker.
-    private static func spreadsheetSafe(_ field: String) -> String {
-        let firstMeaningfulCharacter = field.first { !$0.isWhitespace }
-        guard let firstMeaningfulCharacter,
-              ["=", "+", "-", "@"].contains(firstMeaningfulCharacter) else
-        {
-            return field
-        }
-        return "'\(field)"
     }
 
     /// RFC-4180 field quoting: quote when the field contains a comma, double

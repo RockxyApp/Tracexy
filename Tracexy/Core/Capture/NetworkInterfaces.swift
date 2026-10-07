@@ -11,6 +11,8 @@ enum InterfaceCategory: String, CaseIterable, Identifiable {
     case tunnels
     case loopback
     case other
+    /// Named pipes carrying a pcap or pcapng stream, added in Manage Interfaces.
+    case pipes
 
     // MARK: Internal
 
@@ -26,6 +28,7 @@ enum InterfaceCategory: String, CaseIterable, Identifiable {
         case .tunnels: "Tunnels"
         case .loopback: "Loopback"
         case .other: "Other"
+        case .pipes: "Pipes"
         }
     }
 }
@@ -55,16 +58,30 @@ struct NetworkInterface: Identifiable, Hashable {
         case .tunnels: "lock"
         case .loopback: "arrow.triangle.2.circlepath"
         case .other: "network"
+        case .pipes: "pipe.and.drop"
         }
     }
 
-    var detail: String {
-        var parts: [String] = []
-        if let ipv4 {
-            parts.append(ipv4)
+    /// Label for a picker item: the name, then its IPv4 address or that it is not
+    /// connected, so the right interface can be chosen without leaving the menu.
+    var pickerLabel: String {
+        if category == .pipes {
+            return isUp ? menuLabel : "\(menuLabel) — missing"
         }
-        parts.append(isUp ? "active" : "not connected")
-        return parts.joined(separator: " · ")
+        if let ipv4, isUp {
+            return "\(menuLabel) — \(ipv4)"
+        }
+        return isUp ? menuLabel : "\(menuLabel) — not connected"
+    }
+
+    var detail: String {
+        if category == .pipes {
+            return isUp ? "named pipe" : "missing"
+        }
+        guard isUp else {
+            return "not connected"
+        }
+        return ipv4.map { "active at \($0)" } ?? "active"
     }
 }
 

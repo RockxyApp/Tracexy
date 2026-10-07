@@ -47,6 +47,9 @@ actor LiveCaptureSpool {
         /// validated `pcap_pkthdr`, which always carries one, so this is rejected
         /// rather than written with a substituted instant.
         case untimedFrame
+        /// The frame's file was closed into the capture's file set and later removed
+        /// by its "keep newest" limit.
+        case rotatedOut
 
         // MARK: Internal
 
@@ -57,8 +60,35 @@ actor LiveCaptureSpool {
             case .staleEvidence: "The requested capture evidence is no longer available."
             case let .invalidEvidence(message): "The capture evidence is invalid: \(message)"
             case .untimedFrame: "A live capture frame arrived without a capture time and was not recorded."
+            case .rotatedOut:
+                "This frame’s file was removed by the capture’s file-set limit, so its bytes are no longer available."
             }
         }
+    }
+
+    /// Settings → Capture → Save as a file set: the spool closes its file and starts
+    /// a new one after `maxFileBytes` or `maxFileDuration` (whichever comes first),
+    /// moving each closed file into `directory` under the `CaptureFileSet` naming.
+    /// With `keepFiles > 0` only that many newest files are kept (the open one
+    /// included) — older ones are deleted, which is what the user chose; evidence
+    /// cited from them then fails closed as rotated out.
+    struct FileSetPolicy: Sendable, Equatable {
+        var maxFileBytes: UInt64?
+        var maxFileDuration: TimeInterval?
+        var keepFiles: Int = 0
+        var directory: URL
+        var prefix: String = "capture"
+
+        var isEnabled: Bool {
+            (maxFileBytes ?? 0) > 0 || (maxFileDuration ?? 0) > 0
+        }
+    }
+
+    /// What the file set holds once a capture ends.
+    struct FileSetSummary: Sendable, Equatable {
+        let directory: URL
+        let files: [URL]
+        let removedFileCount: Int
     }
 
     /// The typed outcome of an ``append(_:defaultLinkType:epoch:)``. A stale-epoch
@@ -70,7 +100,13 @@ actor LiveCaptureSpool {
         case appended([SessionEvidenceLocator])
     }
 
-    func reset(epoch: Int) throws {
+    func reset(epoch: Int, fileSet: FileSetPolicy? = nil) throws {
+        self.fileSet = fileSet?.isEnabled == true ? fileSet : nil
+        closedSegments.removeAll()
+        rotatedOutTokens.removeAll()
+        removedFileCount = 0
+        segmentSequence = 0
+        segmentStart = nil
         // Invalidate all prior evidence *before* preparing the new file: no
         // locator minted against the old source token can resolve once reset
         // begins, and a failed preparation leaves no valid token behind.
@@ -107,7 +143,7 @@ actor LiveCaptureSpool {
         guard !frames.isEmpty else {
             return .appended([])
         }
-        guard failure == nil, let handle, let token = sourceToken else {
+        guard failure == nil, handle != nil, sourceToken != nil else {
             throw Failure.unavailable(failure ?? "The local capture spool is unavailable.")
         }
         // The spool writes Enhanced Packet Blocks, whose timestamp field is
@@ -124,6 +160,15 @@ actor LiveCaptureSpool {
         locators.reserveCapacity(frames.count)
         do {
             for (frame, microseconds) in timedFrames {
+                if let timestamp = frame.timestamp, shouldRotate(before: timestamp) {
+                    try rotate()
+                }
+                guard let handle, let token = sourceToken else {
+                    throw Failure.unavailable("The local capture spool is unavailable.")
+                }
+                if segmentStart == nil {
+                    segmentStart = frame.timestamp
+                }
                 let linkType = frame.linkType ?? defaultLinkType
                 let interfaceID: UInt32
                 if let existing = interfaceIDs[linkType] {
@@ -186,6 +231,12 @@ actor LiveCaptureSpool {
     /// A reset mints a new token, so evidence from every superseded spool still
     /// fails as stale before any offset is read.
     func readCurrentSource(_ locator: SessionEvidenceLocator, capturedLength: Int) throws -> [UInt8] {
+        if let closed = closedSegments.first(where: { $0.token == locator.sourceToken }) {
+            return try Self.read(locator, capturedLength: capturedLength, from: closed.url)
+        }
+        if rotatedOutTokens.contains(locator.sourceToken) {
+            throw Failure.rotatedOut
+        }
         guard let token = sourceToken, locator.sourceToken == token else {
             throw Failure.staleEvidence
         }
@@ -228,6 +279,26 @@ actor LiveCaptureSpool {
         return [UInt8](collected)
     }
 
+    /// Close the file set when a capture ends: a copy of the open file becomes the
+    /// set's last member, so the folder holds everything still kept. The spool file
+    /// itself stays for Save, export and evidence. `nil` when no file set is on.
+    func finishFileSet() throws -> FileSetSummary? {
+        guard let fileSet, frameCount > 0 || !closedSegments.isEmpty else {
+            return nil
+        }
+        var files = closedSegments.map(\.url)
+        if frameCount > 0, let url {
+            try handle?.synchronize()
+            let destination = try nextSetMemberURL(in: fileSet)
+            try FileManager.default.copyItem(at: url, to: destination)
+            files.append(destination)
+            segmentSequence += 1
+        }
+        let summary = FileSetSummary(directory: fileSet.directory, files: files, removedFileCount: removedFileCount)
+        self.fileSet = nil
+        return summary
+    }
+
     func capture() throws -> (linkType: UInt32, frames: [CapturedFrame]) {
         guard frameCount > 0, let url else {
             throw Failure.empty
@@ -252,6 +323,33 @@ actor LiveCaptureSpool {
         try FileManager.default.copyItem(at: url, to: destination)
     }
 
+    /// Write every frame this capture still keeps to `destination`: the open file
+    /// alone, or — once a file set has closed files — those files and the open one
+    /// merged in capture order. Save Capture and whole-capture exports use this;
+    /// evidence scans that need byte-identical offsets keep using ``copy(to:)``.
+    func copyWholeCapture(to destination: URL) throws {
+        guard !closedSegments.isEmpty else {
+            try copy(to: destination)
+            return
+        }
+        try handle?.synchronize()
+        var sources = closedSegments.map(\.url)
+        if frameCount > 0, let url {
+            sources.append(url)
+        }
+        if sources.count == 1 {
+            try FileManager.default.copyItem(at: sources[0], to: destination)
+        } else {
+            _ = try CaptureMerger.merge(sources: sources, to: destination)
+        }
+    }
+
+    /// Whether earlier frames of this capture live in file-set files beside the
+    /// open one (so a byte-identical copy of the open file is not the whole capture).
+    func hasClosedFileSetFiles() -> Bool {
+        !closedSegments.isEmpty
+    }
+
     /// Non-nil means the file is a valid recoverable prefix, not a complete
     /// capture. Callers keep this warning visible after an explicit save/export.
     func incompletenessReason() -> String? {
@@ -260,13 +358,31 @@ actor LiveCaptureSpool {
 
     // MARK: Private
 
+    /// One closed file of the current capture's file set: where it now lives and the
+    /// evidence token its locators carry.
+    private struct ClosedSegment: Sendable {
+        let url: URL
+        let token: UUID
+    }
+
     /// Byte length of an enhanced packet block's fixed prefix before the captured
     /// payload: the 8-byte block header (type + total length) plus the 20-byte
     /// fixed record fields (interface id, timestamp high/low, captured length,
     /// original length). The payload bytes begin exactly here.
     private static let enhancedPacketPayloadPrefix = 28
 
+    /// Tokens of set members removed by the keep limit, bounded; reads citing them
+    /// report ``Failure/rotatedOut`` instead of a generic stale answer.
+    private static let maxRememberedRotatedTokens = 4_096
+
     private let directory: URL
+    private var fileSet: FileSetPolicy?
+    private var closedSegments: [ClosedSegment] = []
+    private var rotatedOutTokens: Set<UUID> = []
+    private var removedFileCount = 0
+    private var segmentSequence = 0
+    /// Capture time of the open file's first frame, for the duration limit and its name.
+    private var segmentStart: Date?
     private var epoch = -1
     private var url: URL?
     private var handle: FileHandle?
@@ -345,6 +461,85 @@ actor LiveCaptureSpool {
         let published = name.hasPrefix("capture-") && name.hasSuffix(".pcapng")
         let staging = name.hasPrefix(".capture-") && name.hasSuffix(".pcapng.staging")
         return published || staging
+    }
+
+    private static func read(_ locator: SessionEvidenceLocator, capturedLength: Int, from url: URL) throws -> [UInt8] {
+        guard capturedLength >= 0, capturedLength <= CapturedFrame.maxReasonableLength else {
+            throw Failure.invalidEvidence("captured length \(capturedLength) out of bounds")
+        }
+        let readHandle: FileHandle
+        do {
+            readHandle = try FileHandle(forReadingFrom: url)
+        } catch {
+            throw Failure.rotatedOut
+        }
+        defer { try? readHandle.close() }
+        let size = try readHandle.seekToEnd()
+        let (end, overflow) = locator.offset.addingReportingOverflow(UInt64(capturedLength))
+        guard !overflow, end <= size else {
+            throw Failure.invalidEvidence("evidence overruns its file-set member")
+        }
+        try readHandle.seek(toOffset: locator.offset)
+        let data = try readHandle.read(upToCount: capturedLength) ?? Data()
+        guard data.count == capturedLength else {
+            throw Failure.invalidEvidence("short read of selected evidence")
+        }
+        return [UInt8](data)
+    }
+
+    /// Whether the open file must close before a frame captured at `timestamp` is
+    /// written: only with a file set on, and never while the open file is empty.
+    private func shouldRotate(before timestamp: Date) -> Bool {
+        guard let fileSet, frameCount > 0 else {
+            return false
+        }
+        if let limit = fileSet.maxFileBytes, limit > 0, writeOffset >= limit {
+            return true
+        }
+        if let limit = fileSet.maxFileDuration, limit > 0, let start = segmentStart,
+           timestamp.timeIntervalSince(start) >= limit
+        {
+            return true
+        }
+        return false
+    }
+
+    /// Close the open file into the set and start a new one with a fresh token.
+    private func rotate() throws {
+        guard let fileSet, let url, let token = sourceToken else {
+            return
+        }
+        try handle?.synchronize()
+        try handle?.close()
+        handle = nil
+        let destination = try nextSetMemberURL(in: fileSet)
+        try FileManager.default.moveItem(at: url, to: destination)
+        segmentSequence += 1
+        closedSegments.append(ClosedSegment(url: destination, token: token))
+        // The open file counts as one of the kept files.
+        while fileSet.keepFiles > 0, closedSegments.count >= fileSet.keepFiles {
+            let oldest = closedSegments.removeFirst()
+            try? FileManager.default.removeItem(at: oldest.url)
+            removedFileCount += 1
+            if rotatedOutTokens.count < Self.maxRememberedRotatedTokens {
+                rotatedOutTokens.insert(oldest.token)
+            }
+        }
+        self.url = nil
+        interfaceIDs.removeAll(keepingCapacity: true)
+        frameCount = 0
+        segmentStart = nil
+        sourceToken = nil
+        try prepareFile()
+        sourceToken = UUID()
+    }
+
+    private func nextSetMemberURL(in fileSet: FileSetPolicy) throws -> URL {
+        try FileManager.default.createDirectory(at: fileSet.directory, withIntermediateDirectories: true)
+        let name = CaptureSplitter.fileName(
+            prefix: fileSet.prefix, sequence: segmentSequence + 1, time: segmentStart ?? Date(), timeZone: .current
+        )
+        return fileSet.directory.appendingPathComponent(name)
     }
 
     private func advanceWriteOffset(by byteCount: Int) throws {

@@ -377,6 +377,9 @@ struct ProjectManagerSheet: View {
                 Text("\(coordinator.projectStore.projects.count)/\(coordinator.projectStore.maxProjects)")
                     .font(Theme.Typography.monoMicro)
                     .foregroundStyle(.secondary)
+                    .help(coordinator.projectStore.isOverProjectLimit
+                        ? "More projects than can be added now. All of them stay available."
+                        : "Projects in use and the number that can be added")
                     .accessibilityLabel("Project capacity")
             }
             .padding(.horizontal, Theme.Metrics.spacingL)
@@ -486,7 +489,9 @@ struct ProjectManagerSheet: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .help("New Project")
+            .help(coordinator.projectStore.projects.count < coordinator.projectStore.maxProjects
+                ? "New Project"
+                : "New projects can be added up to \(coordinator.projectStore.maxProjects)")
             .disabled(!coordinator.projectStore.canCreateProject)
 
             Rectangle()

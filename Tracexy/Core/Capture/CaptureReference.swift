@@ -93,6 +93,24 @@ nonisolated struct CaptureReference: Codable, Sendable, Hashable {
         return reference
     }
 
+    /// The file's identity and the SHA-256 of its leading ``headDigestLength`` bytes.
+    static func snapshot(_ source: URL) throws -> (PcapFileIdentity, String) {
+        let handle = try FileHandle(forReadingFrom: source)
+        defer { try? handle.close() }
+        let identity = PcapFileIdentity.snapshot(of: handle)
+        var hasher = SHA256()
+        var remaining = headDigestLength
+        while remaining > 0 {
+            guard let chunk = try handle.read(upToCount: min(remaining, 16_384)), !chunk.isEmpty else {
+                break
+            }
+            hasher.update(data: chunk)
+            remaining -= chunk.count
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return (identity, digest)
+    }
+
     /// Write atomically next to the Project's managed captures.
     func write(to sidecar: URL) throws {
         let encoder = JSONEncoder()
@@ -139,25 +157,6 @@ nonisolated struct CaptureReference: Codable, Sendable, Hashable {
             headDigest: headDigest,
             addedAt: addedAt
         )
-    }
-
-    // MARK: Private
-
-    private static func snapshot(_ source: URL) throws -> (PcapFileIdentity, String) {
-        let handle = try FileHandle(forReadingFrom: source)
-        defer { try? handle.close() }
-        let identity = PcapFileIdentity.snapshot(of: handle)
-        var hasher = SHA256()
-        var remaining = headDigestLength
-        while remaining > 0 {
-            guard let chunk = try handle.read(upToCount: min(remaining, 16_384)), !chunk.isEmpty else {
-                break
-            }
-            hasher.update(data: chunk)
-            remaining -= chunk.count
-        }
-        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        return (identity, digest)
     }
 }
 

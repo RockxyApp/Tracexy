@@ -281,22 +281,28 @@ nonisolated struct LocalAssistantProvider: AssistantProviding {
             return nil
         }
 
+        // A body that declares itself too large is refused before any of it is read.
+        if response.expectedContentLength > AssistantLimits.maxDiscoveryBytes {
+            return nil
+        }
         // Read incrementally so a hostile local endpoint cannot make URLSession
         // materialize an unbounded model list before Tracexy checks its limit.
-        var data = Data()
-        data.reserveCapacity(min(16_384, AssistantLimits.maxDiscoveryBytes))
+        var body: [UInt8] = []
+        body.reserveCapacity(min(16_384, AssistantLimits.maxDiscoveryBytes))
         do {
             for try await byte in bytes {
-                try Task.checkCancellation()
-                guard data.count < AssistantLimits.maxDiscoveryBytes else {
+                guard body.count < AssistantLimits.maxDiscoveryBytes else {
                     return nil
                 }
-                data.append(byte)
+                body.append(byte)
+                if body.count % 4_096 == 0 {
+                    try Task.checkCancellation()
+                }
             }
         } catch let error as URLError where error.code == .timedOut {
             throw AssistantError.timedOut
         }
-        return data
+        return Data(body)
     }
 
     // MARK: Streaming

@@ -32,6 +32,7 @@ nonisolated struct FooterTelemetry: Identifiable, Equatable {
         case totalBytes
         case bytesUp
         case bytesDown
+        case attribution
         case retentionTruncation
     }
 
@@ -100,7 +101,7 @@ nonisolated enum SessionStatusBarModel {
     /// The right-hand telemetry chips, ordered by importance and emitted only when
     /// their data exists: kernel/interface drops → helper-stage drops → session
     /// errors → capture duration → combined live rate → session-attributed total →
-    /// directional totals → retention truncation.
+    /// directional totals → process attribution coverage → retention truncation.
     ///
     /// The three loss figures are deliberately distinct chips for three distinct
     /// stages. Kernel/interface loss (`totalDropped`) and helper-stage loss
@@ -116,7 +117,8 @@ nonisolated enum SessionStatusBarModel {
         liveBytesPerSecond: Double?,
         totalBytes: Int,
         bytesUp: Int,
-        bytesDown: Int
+        bytesDown: Int,
+        attribution: (known: Int, total: Int)? = nil
     )
         -> [FooterTelemetry]
     {
@@ -222,6 +224,22 @@ nonisolated enum SessionStatusBarModel {
             ))
         }
 
+        // Process attribution coverage — how many sessions carry a local process,
+        // so an empty Process cell reads as "not known", never as "no app". Shown
+        // while capturing (where missing attribution is a signal) and whenever any
+        // session is attributed; a capture file without process metadata stays quiet.
+        if let attribution, attribution.total > 0, isCapturing || attribution.known > 0 {
+            let known = min(attribution.known, attribution.total)
+            items.append(FooterTelemetry(
+                kind: .attribution,
+                text: "Process \(known.formatted()) of \(attribution.total.formatted())",
+                help: "Sessions with a known local process. The others were seen on the wire without "
+                    + "process metadata, so their process is unknown rather than absent.",
+                systemImage: "app.dashed",
+                role: .neutral
+            ))
+        }
+
         // Memory-window eviction — the immediate inspection window trimmed its
         // oldest frames to stay bounded. This is emphatically *not* capture loss:
         // sessions remain accounted for and the complete raw stream continues to
@@ -253,11 +271,11 @@ nonisolated enum SessionStatusBarModel {
     {
         switch surface {
         case .overview:
-            return totalSessions == 0 ? "Capture overview · No sessions" : "Capture overview · \(totalSessions) sessions"
+            return totalSessions == 0 ? "No sessions" : "\(totalSessions) sessions"
         case .flow:
-            return totalSessions == 0 ? "Flow map · No sessions" : "Flow map · \(totalSessions) sessions"
+            return totalSessions == 0 ? "No sessions" : "\(totalSessions) sessions"
         case .history:
-            return totalSessions == 0 ? "Local History · No persisted sessions" : "Local History · \(totalSessions) persisted sessions"
+            return totalSessions == 0 ? "No saved sessions" : "\(totalSessions) saved sessions"
         case .sessionList:
             break
         }
@@ -271,8 +289,8 @@ nonisolated enum SessionStatusBarModel {
         let isFiltered = visibleCount != totalSessions
         if selectedCount > 0 {
             return isFiltered
-                ? "\(selectedCount) selected · \(visibleCount) of \(totalSessions) shown"
-                : "\(selectedCount) selected · \(totalSessions) sessions"
+                ? "\(selectedCount) selected, \(visibleCount) of \(totalSessions) shown"
+                : "\(selectedCount) of \(totalSessions) selected"
         }
         if isFiltered {
             return "\(visibleCount) of \(totalSessions) sessions"
@@ -295,12 +313,12 @@ nonisolated enum SessionStatusBarModel {
 nonisolated enum HistoryFooterModel {
     static func statusText(captureCount: Int, sessionCount: Int, hasMore: Bool) -> String {
         guard captureCount > 0 else {
-            return "Local History · No captures"
+            return "No saved captures"
         }
         let suffix = hasMore ? "+" : ""
         let captureLabel = captureCount == 1 && !hasMore ? "capture" : "captures"
-        let sessionLabel = sessionCount == 1 && !hasMore ? "persisted session" : "persisted sessions"
-        return "\(captureCount.formatted())\(suffix) \(captureLabel) · "
+        let sessionLabel = sessionCount == 1 && !hasMore ? "session" : "sessions"
+        return "\(captureCount.formatted())\(suffix) \(captureLabel), "
             + "\(sessionCount.formatted())\(suffix) \(sessionLabel)"
     }
 }
@@ -401,7 +419,8 @@ struct SessionStatusBar: View {
 /// Keeps the read-only session summary on the true horizontal centerline while
 /// telemetry remains trailing. The summary receives a symmetric safe width
 /// based on the telemetry footprint, so the two regions never collide at narrow
-/// window sizes.
+/// window sizes. When the telemetry is too wide for a centered summary to fit,
+/// the summary moves to the leading edge rather than disappearing.
 private struct CenteredStatusFooterLayout: Layout {
     let spacing: CGFloat
 
@@ -433,14 +452,25 @@ private struct CenteredStatusFooterLayout: Layout {
             return
         }
         let telemetry = subviews[1].sizeThatFits(.unspecified)
-        let summaryWidth = max(0, bounds.width - (telemetry.width + spacing) * 2)
-        let summaryProposal = ProposedViewSize(width: summaryWidth, height: bounds.height)
+        let summaryIdeal = subviews[0].sizeThatFits(.unspecified).width
+        let centeredWidth = bounds.width - (telemetry.width + spacing) * 2
 
-        subviews[0].place(
-            at: CGPoint(x: bounds.midX, y: bounds.midY),
-            anchor: .center,
-            proposal: summaryProposal
-        )
+        if centeredWidth >= summaryIdeal {
+            subviews[0].place(
+                at: CGPoint(x: bounds.midX, y: bounds.midY),
+                anchor: .center,
+                proposal: ProposedViewSize(width: centeredWidth, height: bounds.height)
+            )
+        } else {
+            // Too much telemetry to keep the summary centered: give it the space
+            // left of the telemetry instead of squeezing it to nothing.
+            let leadingWidth = max(0, bounds.width - telemetry.width - spacing)
+            subviews[0].place(
+                at: CGPoint(x: bounds.minX, y: bounds.midY),
+                anchor: .leading,
+                proposal: ProposedViewSize(width: min(summaryIdeal, leadingWidth), height: bounds.height)
+            )
+        }
         subviews[1].place(
             at: CGPoint(x: bounds.maxX, y: bounds.midY),
             anchor: .trailing,

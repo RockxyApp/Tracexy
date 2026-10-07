@@ -77,7 +77,7 @@ struct CaptureInterfaceToolbarPicker: View {
                 ForEach(interfaceGroups) { group in
                     Section(group.category.title) {
                         ForEach(group.interfaces) { iface in
-                            Text(iface.menuLabel).tag(iface.id)
+                            Text(iface.pickerLabel).tag(iface.id)
                         }
                     }
                 }
@@ -85,6 +85,10 @@ struct CaptureInterfaceToolbarPicker: View {
                 EmptyView()
             }
             .pickerStyle(.inline)
+            Divider()
+            Button("Manage Interfaces…") {
+                openWindow(id: TracexyApp.manageInterfacesWindowID)
+            }
         } label: {
             HStack(spacing: Theme.Metrics.controlSpacing) {
                 Image(systemName: currentInterface?.symbol ?? "network")
@@ -102,16 +106,30 @@ struct CaptureInterfaceToolbarPicker: View {
         .accessibilityValue(fullInterfaceLabel)
         .fixedSize()
         .onAppear {
-            interfaceGroups = NetworkInterfaces.grouped()
+            interfaceGroups = listedGroups
             if currentInterface == nil, let first = interfaceGroups.flatMap(\.interfaces).first {
                 coordinator.captureInterface = first.id
             }
+        }
+        .onChange(of: coordinator.interfaceListToken) {
+            interfaceGroups = listedGroups
+        }
+        .onChange(of: InterfacePreferences.shared.settings) {
+            interfaceGroups = listedGroups
         }
     }
 
     // MARK: Private
 
     @State private var interfaceGroups: [InterfaceGroup] = []
+    @Environment(\.openWindow) private var openWindow
+
+    /// The interfaces Manage Interfaces leaves listed, by their friendly names.
+    private var listedGroups: [InterfaceGroup] {
+        NetworkInterfaces.grouped(
+            InterfacePreferences.shared.settings, keeping: coordinator.captureInterface, includingPipes: true
+        )
+    }
 
     private var currentInterface: NetworkInterface? {
         interfaceGroups.flatMap(\.interfaces).first { $0.id == coordinator.captureInterface }

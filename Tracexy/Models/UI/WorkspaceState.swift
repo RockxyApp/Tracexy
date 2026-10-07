@@ -58,9 +58,14 @@ final class WorkspaceState: Identifiable {
 
     /// Selection
     var selectedSessionID: UUID?
+    /// Bumped when a route other than a click in the table selects a session (a
+    /// report window, next/previous finding), so the table scrolls the row into view.
+    var sessionRevealToken = 0
+    /// The session `select(_:)` already retired the previous evidence for, so the
+    /// root selection observer does not retire it again — which would cancel the
+    /// frame a reveal cites right after selecting.
+    @ObservationIgnored var evidenceRetiredForSelection: UUID?
 
-    /// Filtering
-    var filterText: String = ""
     /// Which session attribute(s) the search box matches against. Defaults to
     /// spanning everything the list shows.
     var searchField: SessionSearchField = .allFields
@@ -106,6 +111,10 @@ final class WorkspaceState: Identifiable {
     /// Project snapshot and never crosses into another workspace.
     var sessionScopeReturnStack: [SessionScopeReturnPoint] = []
 
+    /// The scopes Back to Previous Scope undid, newest last, for Forward. Cleared
+    /// by any new drill-in and by Reset; capture-local like the return stack.
+    var sessionScopeForwardStack: [SessionScopeForwardEntry] = []
+
     /// Advanced filter builder: the AND/OR rule rows (always at least one row).
     var filterRules: [SessionFilterRule] = [SessionFilterRule()]
     /// Whether the advanced rule builder is revealed below the category tabs.
@@ -122,6 +131,10 @@ final class WorkspaceState: Identifiable {
     var investigationQueryError: InvestigationQueryDraftError?
     var isEvaluatingInvestigationQuery = false
     var investigationQueryRequestID = 0
+    /// Whether the Session Expression editor is presented for this workspace.
+    /// It lives here, not in a view's `@State`, so the toolbar's overflow menu and
+    /// the View menu command open the same one editor.
+    var isInvestigationEditorPresented = false
 
     /// Presentation toggles.
     var isFilterBarVisible: Bool = true
@@ -137,6 +150,16 @@ final class WorkspaceState: Identifiable {
     /// switched between workspaces. `nil` keeps a fresh workspace from stealing
     /// focus unprompted.
     var searchFocusRequest: UUID?
+
+    /// Filtering. Held to the stored string bound as it is typed, so a pasted
+    /// query can never make the Project's tabs unsaveable.
+    var filterText: String = "" {
+        didSet {
+            if filterText.count > ProjectLimits.maximumStringLength {
+                filterText = String(filterText.prefix(ProjectLimits.maximumStringLength))
+            }
+        }
+    }
 
     var hasActiveInvestigationQuery: Bool {
         acceptedInvestigationDraft != nil

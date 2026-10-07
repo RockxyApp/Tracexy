@@ -20,16 +20,19 @@ extension ProjectWorkspaceSnapshot {
             searchField: workspace.searchField.rawValue,
             isSearchEnabled: workspace.isSearchEnabled,
             categoryFilters: workspace.categoryFilters.map(\.rawValue).sorted(),
-            hostFilter: workspace.hostFilter,
-            processFilter: workspace.processFilter,
-            ipFilter: workspace.ipFilter,
+            // A drill-in value comes from captured traffic, which can carry a name
+            // longer than the stored bound; such a scope is not saved rather than
+            // saved as a different (cut) filter.
+            hostFilter: workspace.hostFilter.flatMap(Self.storable),
+            processFilter: workspace.processFilter.flatMap(Self.storable),
+            ipFilter: workspace.ipFilter.flatMap(Self.storable),
             // Written only when something is actually intersecting, so a
             // workspace that never used an aggregate drill-in produces exactly
             // the document an older build would have.
             aggregateProtocolFilters: workspace.aggregateProtocolFilters.isEmpty
                 ? nil
                 : workspace.aggregateProtocolFilters.map(\.rawValue).sorted(),
-            aggregateDestinationFilter: workspace.aggregateDestinationFilter,
+            aggregateDestinationFilter: workspace.aggregateDestinationFilter.flatMap(Self.storable),
             aggregateRequiresFindings: workspace.aggregateRequiresFindings ? true : nil,
             filterRules: workspace.filterRules.map(ProjectFilterRuleSnapshot.init),
             isAdvancedFilterVisible: workspace.isAdvancedFilterVisible,
@@ -38,9 +41,12 @@ extension ProjectWorkspaceSnapshot {
         )
     }
 
+    nonisolated static func storable(_ value: String) -> String? {
+        value.count <= ProjectLimits.maximumStringLength ? value : nil
+    }
+
     @MainActor
     func hydrateWorkspaceState(
-        maxFilterRules: Int,
         allowsAutomaticInspectorReveal defaultAutomaticReveal: Bool?
     )
         -> WorkspaceState
@@ -77,9 +83,12 @@ extension ProjectWorkspaceSnapshot {
         )
         workspace.aggregateDestinationFilter = aggregateDestinationFilter
         workspace.aggregateRequiresFindings = aggregateRequiresFindings ?? false
+        // Bounded by the storage ceiling, never by the growth limit: rows already
+        // above the limit (imported, say) are restored intact, and the filter bar
+        // only refuses *adding* rows past the current limit.
         workspace.filterRules = SessionFilterRule.normalized(
             filterRules.map(SessionFilterRule.init),
-            limit: min(max(1, maxFilterRules), ProjectLimits.maximumFilterRules)
+            limit: ProjectLimits.maximumFilterRules
         )
         workspace.isAdvancedFilterVisible = isAdvancedFilterVisible
         workspace.isFilterBarVisible = isFilterBarVisible

@@ -1,7 +1,8 @@
 import Foundation
 
 // This file declares the frozen, presentation-neutral value for one selected
-// session's retained connection and TLS evidence. Like the tables it reads, it is
+// session's retained connection, TLS and datagram evidence. Like the tables it
+// reads, it is
 // observation-only: it carries the exact retained ``ConnectionSummary`` and
 // ``TLSEvidenceSummary`` values a fold already produced, plus the relevant
 // capture-level coverage counters — never a rendered label, severity, policy, raw
@@ -57,10 +58,33 @@ nonisolated struct TLSSelectionCoverage: Hashable, Sendable {
     let countersOverflowed: Bool
 }
 
+// MARK: - DatagramSelectionCoverage
+
+/// The capture-level datagram-evidence coverage a selected session's presentation
+/// needs, carried verbatim from ``DatagramEvidenceTable/Snapshot``. As with the
+/// connection and TLS coverage these are global capture facts: they never prove
+/// anything about this one session, and absence of a retained summary for it is
+/// unknown coverage, never evidence of absence.
+nonisolated struct DatagramSelectionCoverage: Hashable, Sendable {
+    static let empty = DatagramSelectionCoverage(
+        omittedObservationCount: 0,
+        retainedObservationCount: 0,
+        excludedTCPDNSFactCount: 0,
+        capacityReached: false,
+        countersOverflowed: false
+    )
+
+    let omittedObservationCount: UInt64
+    let retainedObservationCount: Int
+    let excludedTCPDNSFactCount: UInt64
+    let capacityReached: Bool
+    let countersOverflowed: Bool
+}
+
 // MARK: - SessionEvidenceSelection
 
 /// The immutable, presentation-neutral view of one selected session's retained
-/// connection and TLS evidence.
+/// connection, TLS and datagram evidence.
 ///
 /// A session is tuple-derived, so one session can hold multiple sequential TCP
 /// connection incarnations when its tuple is reused. `connections` lists *every*
@@ -73,8 +97,9 @@ nonisolated struct TLSSelectionCoverage: Hashable, Sendable {
 ///
 /// Every per-summary omission, exclusion, truncation, loss, limitation and overflow
 /// fact needed by a presentation layer already lives inside the retained
-/// ``ConnectionSummary``/``TLSEvidenceSummary`` values carried here; the two
-/// coverage members add only the capture-level (global) counters.
+/// ``ConnectionSummary``/``TLSEvidenceSummary``/``DatagramEvidenceSummary`` values
+/// carried here; the three coverage members add only the capture-level (global)
+/// counters.
 nonisolated struct SessionEvidenceSelection: Hashable, Sendable {
     /// The tuple-derived session id this selection was projected for.
     let sessionID: UUID
@@ -84,28 +109,36 @@ nonisolated struct SessionEvidenceSelection: Hashable, Sendable {
     /// The zero-or-one retained tuple/session-scoped TLS summary. Never paired to a
     /// connection incarnation.
     let tls: TLSEvidenceSummary?
+    /// The zero-or-one retained DNS/ICMP datagram summary for this session's flow,
+    /// carried verbatim. A TCP session normally has none; a UDP-DNS or ICMP flow has
+    /// exactly one, because the datagram table keys on the same tuple-derived id.
+    let datagrams: DatagramEvidenceSummary?
     /// Capture-level connection coverage, carried verbatim.
     let connectionCoverage: ConnectionSelectionCoverage
     /// Capture-level TLS coverage, carried verbatim.
     let tlsCoverage: TLSSelectionCoverage
+    /// Capture-level datagram coverage, carried verbatim.
+    let datagramCoverage: DatagramSelectionCoverage
 
     /// Whether nothing was retained for this session. Capture-level coverage is
     /// still carried so a caller can present it as global unknown coverage.
     var isEmpty: Bool {
-        connections.isEmpty && tls == nil
+        connections.isEmpty && tls == nil && datagrams == nil
     }
 }
 
 // MARK: - InvestigationSnapshot selection
 
 extension InvestigationSnapshot {
-    /// Project the retained connection/TLS evidence for one tuple-derived session id.
+    /// Project the retained connection/TLS/datagram evidence for one tuple-derived
+    /// session id.
     ///
     /// Pure and off-main-ready: it filters the wrapped fold's already-produced
-    /// connection and TLS summaries — no decode, no re-assessment, no copy of the
-    /// snapshot arrays beyond the bounded matches. The connection incarnations keep
-    /// the snapshot's deterministic order, and the single tuple-scoped TLS summary is
-    /// matched by session id, never re-attributed to an incarnation.
+    /// connection, TLS and datagram summaries — no decode, no re-assessment, no copy
+    /// of the snapshot arrays beyond the bounded matches. The connection incarnations
+    /// keep the snapshot's deterministic order, and the single tuple-scoped TLS and
+    /// datagram summaries are matched by session id, never re-attributed to an
+    /// incarnation.
     nonisolated func selectingSession(_ sessionID: UUID) -> SessionEvidenceSelection {
         let connectionSnapshot = connections
         let matchedConnections = connectionSnapshot.summaries.filter {
@@ -113,11 +146,14 @@ extension InvestigationSnapshot {
         }
         let tlsSnapshot = tlsEvidence
         let matchedTLS = tlsSnapshot.summaries.first { $0.sessionID == sessionID }
+        let datagramSnapshot = datagramEvidence
+        let matchedDatagrams = datagramSnapshot.summaries.first { $0.sessionID == sessionID }
 
         return SessionEvidenceSelection(
             sessionID: sessionID,
             connections: matchedConnections,
             tls: matchedTLS,
+            datagrams: matchedDatagrams,
             connectionCoverage: ConnectionSelectionCoverage(
                 omittedSummaryCount: connectionSnapshot.omittedSummaryCount,
                 activeConnectionCount: connectionSnapshot.activeConnectionCount,
@@ -133,6 +169,13 @@ extension InvestigationSnapshot {
                 decoderTruncatedFrameCount: tlsSnapshot.decoderTruncatedFrameCount,
                 capacityReached: tlsSnapshot.capacityReached,
                 countersOverflowed: tlsSnapshot.countersOverflowed
+            ),
+            datagramCoverage: DatagramSelectionCoverage(
+                omittedObservationCount: datagramSnapshot.omittedObservationCount,
+                retainedObservationCount: datagramSnapshot.retainedObservationCount,
+                excludedTCPDNSFactCount: datagramSnapshot.excludedTCPDNSFactCount,
+                capacityReached: datagramSnapshot.capacityReached,
+                countersOverflowed: datagramSnapshot.countersOverflowed
             )
         )
     }

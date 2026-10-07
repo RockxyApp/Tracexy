@@ -40,12 +40,22 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
         /// `nil` when PCAP is representable; otherwise the reason it is not.
         let pcapUnavailableReason: String?
         let averageFrameBytes: Int
+        /// Notes written about this capture; the "include notes" option shows only
+        /// when there are some.
+        var noteCount = 0
+        /// Address names known for this capture; "Include address names" shows only
+        /// when there are some.
+        var nameCount = 0
     }
 
     struct Choice {
         let url: URL
         let scope: FrameExportScope
         let options: FrameExportOptions
+        /// Write the notes on the exported sessions as PCAPNG capture comments.
+        var includesNotes = false
+        /// Write the known address names as a PCAPNG Name Resolution Block.
+        var includesNames = false
     }
 
     func run() -> Choice? {
@@ -84,9 +94,17 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
             scope: accessory.selectedScope,
             options: FrameExportOptions(
                 format: format,
-                preservesMetadata: accessory.preservesMetadata && format == .pcapng && context.sourceIsPcapng,
-                compressesWithGzip: accessory.compressesWithGzip
-            )
+                preservesMetadata: accessory.preservesMetadata && format == .pcapng && context.sourceIsPcapng
+                    && !accessory.anonymizesAddresses,
+                compressesWithGzip: accessory.compressesWithGzip,
+                anonymizesAddresses: accessory.anonymizesAddresses,
+                stripsHeaders: accessory.stripsHeaders,
+                removesDuplicates: accessory.removesDuplicates,
+                truncatesTo: accessory.truncatesTo,
+                shiftsTimeBy: accessory.shiftsTimeBy
+            ),
+            includesNotes: accessory.includesNotes && format == .pcapng && !accessory.anonymizesAddresses,
+            includesNames: accessory.includesNames && format == .pcapng && !accessory.anonymizesAddresses
         )
     }
 
@@ -191,7 +209,7 @@ final class FrameExportAccessoryView: NSView {
 
     init(context: FrameExportPanel.Context) {
         self.context = context
-        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 150))
+        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 172))
 
         scopePopUp.addItems(withTitles: context.scopes.map(\.title))
         scopePopUp.selectItem(at: min(max(context.initialScopeIndex, 0), max(context.scopes.count - 1, 0)))
@@ -221,6 +239,70 @@ final class FrameExportAccessoryView: NSView {
         preserveCheckbox.action = #selector(controlChanged)
         gzipCheckbox.target = self
         gzipCheckbox.action = #selector(controlChanged)
+        notesCheckbox.state = context.noteCount > 0 ? .on : .off
+        notesCheckbox.isHidden = context.noteCount == 0
+        notesCheckbox.toolTip = String(
+            localized: """
+            Write your notes on the exported sessions as capture comments (Wireshark: Capture File Properties) \
+            and your frame comments on their frames (Wireshark: packet comments).
+            """
+        )
+        notesCheckbox.target = self
+        notesCheckbox.action = #selector(controlChanged)
+        anonymizeCheckbox.state = .off
+        anonymizeCheckbox.toolTip = String(
+            localized: """
+            Replace MAC, IPv4 and IPv6 addresses in packet headers with consistent stand-ins. \
+            Payloads such as DNS answers, HTTP headers and TLS server names are not changed.
+            """
+        )
+        anonymizeCheckbox.target = self
+        anonymizeCheckbox.action = #selector(controlChanged)
+        headersPopUp.addItems(withTitles: [
+            String(localized: "Keep every header"),
+            String(localized: "Strip to the inner IP packet"),
+            String(localized: "Strip to the inner Ethernet frame"),
+        ])
+        headersPopUp.selectItem(at: 0)
+        headersPopUp.toolTip = String(
+            localized: """
+            As Wireshark's Strip Headers: write each frame from its innermost IP header (as raw IP), or from the \
+            Ethernet frame a VXLAN or GRE tunnel carries. Frames without that inner packet are left out and counted.
+            """
+        )
+        headersPopUp.setAccessibilityLabel(String(localized: "Headers"))
+        headersPopUp.target = self
+        headersPopUp.action = #selector(controlChanged)
+        namesCheckbox.state = context.nameCount > 0 ? .on : .off
+        namesCheckbox.isHidden = context.nameCount == 0
+        namesCheckbox.toolTip = String(
+            localized: """
+            Write the names this capture's DNS answers gave its addresses, and the names you gave them, into the \
+            PCAPNG file (a Name Resolution Block), so Wireshark shows the same names.
+            """
+        )
+        namesCheckbox.target = self
+        namesCheckbox.action = #selector(controlChanged)
+        duplicatesCheckbox.state = .off
+        duplicatesCheckbox.toolTip = String(
+            localized: "As editcap -d: leave out a frame whose bytes match one of the five frames before it exactly."
+        )
+        truncateCheckbox.state = .off
+        truncateCheckbox.toolTip = String(
+            localized: "As editcap -s: keep only the first bytes of each frame; the original length is kept."
+        )
+        truncateCheckbox.target = self
+        truncateCheckbox.action = #selector(controlChanged)
+        truncateField.integerValue = 128
+        truncateField.formatter = {
+            let formatter = NumberFormatter()
+            formatter.minimum = NSNumber(value: FrameExportOptions.truncationRange.lowerBound)
+            formatter.maximum = NSNumber(value: FrameExportOptions.truncationRange.upperBound)
+            formatter.allowsFloats = false
+            return formatter
+        }()
+        truncateField.setAccessibilityLabel(String(localized: "Bytes to keep of each frame"))
+        truncateField.widthAnchor.constraint(equalToConstant: 72).isActive = true
 
         estimateLabel.textColor = .secondaryLabelColor
         estimateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -231,7 +313,18 @@ final class FrameExportAccessoryView: NSView {
         formatLabel.alignment = .right
         let optionsLabel = NSTextField(labelWithString: String(localized: "Options:"))
         optionsLabel.alignment = .right
-        let stack = NSStackView(views: [preserveCheckbox, gzipCheckbox])
+        let headersLabel = NSTextField(labelWithString: String(localized: "Headers:"))
+        headersLabel.alignment = .right
+        let truncateRow = NSStackView(views: [
+            truncateCheckbox, truncateField, NSTextField(labelWithString: String(localized: "bytes per frame")),
+        ])
+        truncateRow.orientation = .horizontal
+        truncateRow.spacing = 6
+        let shiftRow = makeShiftRow()
+        let stack = NSStackView(views: [
+            preserveCheckbox, notesCheckbox, namesCheckbox, anonymizeCheckbox, duplicatesCheckbox, truncateRow,
+            shiftRow, gzipCheckbox,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 4
@@ -263,6 +356,7 @@ final class FrameExportAccessoryView: NSView {
             [scopeLabel, scopePopUp],
             [rangeLabel, rangeStack],
             [formatLabel, formatPopUp],
+            [headersLabel, headersPopUp],
             [optionsLabel, stack],
             [NSGridCell.emptyContentView, estimateLabel],
         ])
@@ -330,17 +424,58 @@ final class FrameExportAccessoryView: NSView {
         gzipCheckbox.state == .on
     }
 
+    var includesNotes: Bool {
+        !notesCheckbox.isHidden && notesCheckbox.state == .on
+    }
+
+    /// The Headers pop-up: `nil` keeps every header.
+    var stripsHeaders: FrameHeaderStrip? {
+        switch headersPopUp.indexOfSelectedItem {
+        case 1: .innerIP
+        case 2: .innerEthernet
+        default: nil
+        }
+    }
+
+    var includesNames: Bool {
+        !namesCheckbox.isHidden && namesCheckbox.state == .on
+    }
+
+    var removesDuplicates: Bool {
+        duplicatesCheckbox.state == .on
+    }
+
+    /// The byte limit when "Keep at most" is on.
+    var truncatesTo: Int? {
+        truncateCheckbox.state == .on ? truncateField.integerValue : nil
+    }
+
+    var anonymizesAddresses: Bool {
+        anonymizeCheckbox.state == .on
+    }
+
+    /// Seconds added to every frame's time when "Shift times by" is on.
+    var shiftsTimeBy: TimeInterval {
+        shiftCheckbox.state == .on && shiftField.doubleValue.isFinite ? shiftField.doubleValue : 0
+    }
+
     func selectFormat(_ format: FrameExportFormat) {
         formatPopUp.selectItem(at: format == .pcap ? 1 : 0)
     }
 
     func refreshEstimate(format: FrameExportFormat) {
-        preserveCheckbox.isEnabled = context.sourceIsPcapng && format == .pcapng
+        // Replacing addresses leaves out copied metadata and notes, which can name
+        // hosts too; the boxes say so by turning off.
+        preserveCheckbox.isEnabled = context.sourceIsPcapng && format == .pcapng && !anonymizesAddresses
+        notesCheckbox.isEnabled = format == .pcapng && !anonymizesAddresses
+        namesCheckbox.isEnabled = format == .pcapng && !anonymizesAddresses
+        truncateField.isEnabled = truncateCheckbox.state == .on
+        shiftField.isEnabled = shiftCheckbox.state == .on
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]
         if let frames = choice.frameEstimate {
             let bytes = Int64(frames) * Int64(context.averageFrameBytes + (format == .pcap ? 16 : 32))
             let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-            estimateLabel.stringValue = String(localized: "≈ \(frames.formatted()) frames · ≈ \(size)")
+            estimateLabel.stringValue = String(localized: "≈ \(frames.formatted()) frames, ≈ \(size)")
         } else {
             estimateLabel.stringValue = String(localized: "Frame count is determined while exporting.")
         }
@@ -351,6 +486,21 @@ final class FrameExportAccessoryView: NSView {
     private let context: FrameExportPanel.Context
     private let scopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let formatPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let headersPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let namesCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Include address names"), target: nil, action: nil
+    )
+    private let duplicatesCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Remove duplicate frames"), target: nil, action: nil
+    )
+    private let truncateCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Keep at most"), target: nil, action: nil
+    )
+    private let truncateField = NSTextField()
+    private let shiftCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Shift times by"), target: nil, action: nil
+    )
+    private let shiftField = NSTextField()
     private let formatLabel = NSTextField(labelWithString: String(localized: "Format:"))
     private let preserveCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Preserve capture metadata"), target: nil, action: nil
@@ -358,10 +508,47 @@ final class FrameExportAccessoryView: NSView {
     private let gzipCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Compress with gzip"), target: nil, action: nil
     )
+    private let notesCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Include my notes and frame comments"), target: nil, action: nil
+    )
+    private let anonymizeCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Replace addresses"), target: nil, action: nil
+    )
     private let estimateLabel = NSTextField(labelWithString: "")
     private let startPicker = NSDatePicker()
     private let endPicker = NSDatePicker()
     private var grid: NSGridView = .init(views: [])
+
+    /// "Shift times by [n] seconds": editcap `-t` and Wireshark's Time Shift.
+    private func makeShiftRow() -> NSStackView {
+        shiftCheckbox.state = .off
+        shiftCheckbox.toolTip = String(
+            localized: "As editcap -t and Wireshark's Time Shift: move every frame's time by this many seconds."
+        )
+        shiftCheckbox.target = self
+        shiftCheckbox.action = #selector(controlChanged)
+        shiftField.doubleValue = 0
+        shiftField.formatter = {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.maximumFractionDigits = 6
+            formatter.minimum = -3_153_600_000
+            formatter.maximum = 3_153_600_000
+            return formatter
+        }()
+        shiftField.setAccessibilityLabel(String(localized: "Seconds to shift each frame's time by"))
+        shiftField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        // Neither checkbox title may be clipped to make room for its field.
+        for checkbox in [truncateCheckbox, shiftCheckbox] {
+            checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let row = NSStackView(views: [
+            shiftCheckbox, shiftField, NSTextField(labelWithString: String(localized: "seconds")),
+        ])
+        row.orientation = .horizontal
+        row.spacing = 6
+        return row
+    }
 
     private func updateTimeRangeVisibility() {
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]

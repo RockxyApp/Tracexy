@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - HistoryLimits
 
-/// The frozen N4a hard bounds. Every limit is checked before any SQL runs and,
+/// The frozen hard bounds. Every limit is checked before any SQL runs and,
 /// where a per-row string binding could still exceed a bound, checked again while
 /// binding. These are storage invariants, not tunables — they never widen at
 /// runtime.
@@ -18,6 +18,10 @@ nonisolated enum HistoryLimits {
     static let cancellationBatchSize = 256
     /// Maximum records returned by any single keyset read page.
     static let maxReadPageSize = 500
+    /// Maximum findings accepted in one capture replacement (schema v3).
+    static let maxFindingsPerCapture = 20_000
+    /// Maximum UTF-8 bytes of a finding's kind or coverage token.
+    static let maxFindingTokenUTF8Bytes = 64
 }
 
 // MARK: - HistorySourceKind
@@ -127,7 +131,8 @@ nonisolated struct HistoryCaptureRecord: Sendable, Equatable {
 /// ``SessionStore/replaceCapture(_:sessions:)`` call, so the record itself carries
 /// only its own `sessionID`. It holds bounded rendered/neutral fields only: it has
 /// no raw bytes, decoded layer trees, dedicated SNI/DNS evidence fields, typed
-/// evidence, locator, finding or file identity. The normalized display `host` can
+/// evidence, locator or file identity; its findings are separate
+/// ``HistoryFindingRecord``s (schema v3). The normalized display `host` can
 /// still be derived from SNI or DNS, exactly like the live Sessions table.
 nonisolated struct HistorySessionRecord: Sendable, Equatable, Identifiable {
     /// The deterministic, tuple-derived session identity within its capture.
@@ -257,10 +262,82 @@ nonisolated struct HistorySessionPage: Sendable, Equatable {
     let nextCursor: HistorySessionCursor?
 }
 
+// MARK: - HistoryFindingSeverity
+
+/// A finding's fixed severity, persisted as a stable `INTEGER`.
+nonisolated enum HistoryFindingSeverity: Int, Sendable, Equatable, CaseIterable {
+    case note = 0
+    case warning = 1
+    case error = 2
+
+    // MARK: Internal
+
+    var token: String {
+        switch self {
+        case .note: "note"
+        case .warning: "warning"
+        case .error: "error"
+        }
+    }
+}
+
+// MARK: - HistoryFindingRecord
+
+/// One evidence-linked finding of a stored capture (schema v3). It carries the
+/// finding's public kind name — the same word the Session Expression language
+/// uses (`finding == retransmission`) — its severity and coverage token, how many
+/// observations it cited and how many were omitted, and when its first cited frame
+/// was captured. It never carries a byte, an address, a host, a note or copy.
+nonisolated struct HistoryFindingRecord: Sendable, Equatable {
+    let findingID: UUID
+    let sessionID: UUID
+    let kind: String
+    let severity: HistoryFindingSeverity
+    let coverage: String
+    let citedObservationCount: Int
+    let omittedCitationCount: Int64
+    /// Seconds since 1970 of the first cited frame, or `nil` when none was timed.
+    let firstCitedAt: Double?
+
+    func validate() throws {
+        for (field, value) in [("finding kind", kind), ("finding coverage", coverage)] {
+            let bytes = value.utf8.count
+            guard bytes <= HistoryLimits.maxFindingTokenUTF8Bytes else {
+                throw HistoryStoreError.stringTooLong(field: field, byteCount: bytes)
+            }
+        }
+        guard citedObservationCount >= 0 else {
+            throw HistoryStoreError.negativeValue(field: "cited observation count")
+        }
+        guard omittedCitationCount >= 0 else {
+            throw HistoryStoreError.negativeValue(field: "omitted citation count")
+        }
+        if let firstCitedAt {
+            guard firstCitedAt.isFinite else {
+                throw HistoryStoreError.nonFiniteValue(field: "first cited at")
+            }
+        }
+    }
+}
+
+// MARK: - HistoryFindingCursor
+
+nonisolated struct HistoryFindingCursor: Sendable, Equatable {
+    /// The zero-based ordinal of the last returned finding.
+    let ordinal: Int
+}
+
+// MARK: - HistoryFindingPage
+
+nonisolated struct HistoryFindingPage: Sendable, Equatable {
+    let findings: [HistoryFindingRecord]
+    let nextCursor: HistoryFindingCursor?
+}
+
 // MARK: - HistoryRetentionPolicy
 
 /// The explicit, caller-supplied retention bounds. Every field is optional; a
-/// `nil` field imposes no condition. N4a never reads settings, starts a timer or
+/// `nil` field imposes no condition. This never reads settings, starts a timer or
 /// schedules retention itself — the caller decides when to apply this.
 nonisolated struct HistoryRetentionPolicy: Sendable, Equatable {
     // MARK: Lifecycle
@@ -353,6 +430,11 @@ nonisolated enum HistoryStoreError: Error, Equatable {
     case unsupportedSchema(version: Int)
     /// A read-only database still at schema version 0 cannot be migrated.
     case cannotMigrateReadOnly
+    /// More findings than the per-capture bound.
+    case tooManyFindings(count: Int)
+    /// The database predates schema v3 and was opened read-only, so it records no
+    /// findings; the app upgrades it the next time it opens the Project.
+    case findingsNotRecorded
     /// A required pragma could not be set/verified before migration.
     case configurationFailed(String)
     /// Any other SQLite result code, preserved for diagnosis.

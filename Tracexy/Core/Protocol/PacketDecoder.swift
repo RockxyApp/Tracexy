@@ -40,10 +40,17 @@ nonisolated enum PacketDecoder {
         -> DecodedPacket
     {
         var packet = DecodedPacket(timestamp: timestamp, originalLength: originalLength)
-        // A partial decode is fine — `try?` keeps whatever layers were parsed,
-        // exactly as the previous surrounding do/catch did. The per-DLT framing
-        // lives in `PacketDecoder+LinkLayer`.
-        try? linkLayer(frame, linkType: linkType, into: &packet)
+        // A partial decode is fine — the layers parsed so far are kept — and why it
+        // stopped is recorded. The per-DLT framing lives in `PacketDecoder+LinkLayer`.
+        do {
+            try linkLayer(frame, linkType: linkType, into: &packet)
+        } catch let PacketError.malformed(reason) {
+            packet.decodeStop = .malformed(reason)
+        } catch {
+            packet.decodeStop = frame.length < originalLength
+                ? .cutShort
+                : .malformed("A header runs past the end of the frame")
+        }
         return packet
     }
 
@@ -124,10 +131,383 @@ nonisolated enum PacketDecoder {
         try (0 ..< 6).map { try String(format: "%02x", buf.u8(offset + $0)) }.joined(separator: ":")
     }
 
+    /// Internal rather than private so the ICMP extension can format a quoted
+    /// header's addresses with exactly the same rendering as the outer header.
+    static func ipv4Address(_ buf: PacketBuffer, _ offset: Int) throws -> String {
+        try "\(buf.u8(offset)).\(buf.u8(offset + 1)).\(buf.u8(offset + 2)).\(buf.u8(offset + 3))"
+    }
+
+    /// Internal rather than private so the ICMP extension can format a quoted
+    /// header's addresses with exactly the same rendering as the outer header.
+    static func ipv6Address(_ buf: PacketBuffer, _ offset: Int) throws -> String {
+        try (0 ..< 8).map { try String(format: "%x", buf.u16(offset + $0 * 2)) }.joined(separator: ":")
+    }
+
+    static func dnsTypeName(_ type: UInt16) -> String {
+        switch type {
+        case 1: "A"
+        case 2: "NS"
+        case 5: "CNAME"
+        case 6: "SOA"
+        case 12: "PTR"
+        case 15: "MX"
+        case 16: "TXT"
+        case 28: "AAAA"
+        case 33: "SRV"
+        case 65: "HTTPS"
+        default: "TYPE\(type)"
+        }
+    }
+
+    // MARK: Field formatting
+
+    static func asciiString(_ bytes: [UInt8]) -> String {
+        String(bytes: bytes, encoding: .utf8) ?? ""
+    }
+
+    static func ipv4(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        let versionIHL = try buf.u8(0)
+        let ihl = Int(versionIHL & 0x0F) * 4
+        let totalLength = try Int(buf.u16(2))
+        let flagsFragment = try buf.u16(6)
+        let moreFragments = flagsFragment & 0x2000 != 0
+        let fragmentOffset = Int(flagsFragment & 0x1FFF) * 8
+        let ttl = try buf.u8(8)
+        let proto = try buf.u8(9)
+        let src = try ipv4Address(buf, 12)
+        let dst = try ipv4Address(buf, 16)
+        let identification = try buf.u16(4)
+        let checksum = try buf.u16(10)
+        var fields: [DecodedField] = try [
+            ranged("Version", "4", in: buf, at: 0, 1),
+            ranged("Header Length", "\(ihl) bytes", in: buf, at: 0, 1),
+            ranged("Differentiated Services", hex(buf.u8(1), digits: 2), in: buf, at: 1, 1),
+            ranged("Total Length", "\(totalLength)", in: buf, at: 2, 2),
+            ranged("Identification", hex(identification, digits: 4), in: buf, at: 4, 2),
+            ranged("Flags", ipv4FlagsText(flagsFragment), in: buf, at: 6, 1),
+        ]
+        if moreFragments || fragmentOffset > 0 {
+            fields.append(ranged(
+                "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
+                in: buf, at: 6, 2
+            ))
+        } else {
+            // Wireshark's ip.frag_offset: the 13 offset bits across bytes 6–7.
+            fields.append(ranged("Fragment Offset", "0", in: buf, at: 6, 2))
+        }
+        fields += [
+            ranged("TTL", "\(ttl)", in: buf, at: 8, 1),
+            ranged("Protocol", ipProtoName(proto), in: buf, at: 9, 1),
+            ranged("Header Checksum", hex(checksum, digits: 4), in: buf, at: 10, 2),
+            ranged("Source", src, in: buf, at: 12, 4),
+            ranged("Destination", dst, in: buf, at: 16, 4),
+        ]
+        // IPv4 options (RFC 791) live between the 20-byte fixed header and IHL.
+        if ihl > 20 {
+            fields += (try? ipv4Options(buf, end: min(ihl, buf.length))) ?? []
+        }
+        packet.layers.append(DecodedLayer(
+            proto: .ipv4, title: "Internet Protocol v4", summary: "\(src) → \(dst)",
+            fields: fields,
+            byteRange: span(buf, ihl)
+        ))
+        // An IHL below the fixed header is not an IPv4 header; reading a transport
+        // header out of the address bytes would invent endpoints. The layer above
+        // keeps the facts actually read.
+        guard ihl >= 20 else {
+            throw PacketError.malformed("Invalid IPv4 header length")
+        }
+        // Every fragment stops at the IP layer, as Wireshark shows it with reassembly
+        // on: a later fragment's first bytes are mid-datagram payload, and a first
+        // fragment's transport payload is incomplete. The fragment's payload is kept
+        // for the sequential reassembler, which decodes the transport and application
+        // layers once on the frame that completes the datagram.
+        if moreFragments || fragmentOffset > 0 {
+            packet.ipFragment = ipv4Fragment(
+                buf, headerLength: ihl, totalLength: totalLength, source: src, destination: dst,
+                identification: identification, protocolNumber: proto, flagsFragment: flagsFragment
+            )
+            return
+        }
+        // Bound the payload by the declared total length so link-layer trailers
+        // (the zero padding every sub-60-byte Ethernet frame carries) are never
+        // counted as transport payload — that would fabricate TCP sequence space.
+        // A declared length of zero is TCP segmentation offload leaving the field
+        // unset; a declared length below the header is bogus. Both keep the
+        // captured bytes rather than guessing a tighter bound.
+        let payload = try ipPayload(buf, headerLength: ihl, declaredEnd: totalLength)
+        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
+    }
+
+    static func ipv6(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        let byte0 = try buf.u8(0)
+        let byte1 = try buf.u8(1)
+        let trafficClass = (byte0 << 4) | (byte1 >> 4)
+        let flowLabel = try (UInt32(byte1 & 0x0F) << 16) | (UInt32(buf.u8(2)) << 8) | UInt32(buf.u8(3))
+        let payloadLength = try Int(buf.u16(4))
+        let nextHeader = try buf.u8(6)
+        let hopLimit = try buf.u8(7)
+        let src = try ipv6Address(buf, 8)
+        let dst = try ipv6Address(buf, 24)
+        packet.layers.append(DecodedLayer(
+            proto: .ipv6, title: "Internet Protocol v6", summary: "\(src) → \(dst)",
+            fields: [
+                ranged("Version", "6", in: buf, at: 0, 1),
+                ranged("Traffic Class", String(format: "0x%02x", trafficClass), in: buf, at: 0, 2),
+                ranged("Flow Label", String(format: "0x%05x", flowLabel), in: buf, at: 1, 3),
+                ranged("Payload Length", "\(payloadLength)", in: buf, at: 4, 2),
+                ranged("Next Header", ipProtoName(nextHeader), in: buf, at: 6, 1),
+                ranged("Hop Limit", "\(hopLimit)", in: buf, at: 7, 1),
+                ranged("Source", src, in: buf, at: 8, 16),
+                ranged("Destination", dst, in: buf, at: 24, 16),
+            ],
+            byteRange: span(buf, 40)
+        ))
+
+        // Walk the IPv6 extension-header chain (HopByHop/Routing/Fragment/DestOpts/
+        // AH/Mobility) before handing off to the transport layer. Ported from
+        // PcapPlusPlus IPv6Extensions; field set cross-checked vs Wireshark's
+        // packet-ipv6.c (concepts only — Wireshark is GPL, never copied).
+        var proto = nextHeader
+        var offset = 40
+        var guardCounter = 0
+        // The declared end of the IPv6 packet: fixed header plus payload length.
+        // Zero means a jumbogram or offload left it unset; then the captured bytes
+        // are the only bound.
+        let declaredEnd = payloadLength > 0 ? 40 + payloadLength : buf.length
+        while Self.ipv6ExtensionHeaders.contains(proto), offset + 2 <= buf.length, guardCounter < 16 {
+            guardCounter += 1
+            let extNext = try buf.u8(offset)
+            let extLen = try ipv6ExtensionLength(proto: proto, buf: buf, at: offset)
+            var fields = [
+                ranged("Next Header", ipProtoName(extNext), in: buf, at: offset, 1),
+                ranged("Length", "\(extLen) bytes", in: buf, at: offset + 1, 1),
+            ]
+            let fragment = proto == 44 ? ipv6FragmentHeader(
+                buf, at: offset, declaredEnd: payloadLength > 0 ? declaredEnd : nil,
+                source: src, destination: dst, nextHeader: extNext, fields: &fields
+            ) : nil
+            packet.layers.append(DecodedLayer(
+                proto: .ipv6, title: "IPv6 \(ipv6ExtensionName(proto))",
+                summary: "next \(ipProtoName(extNext))",
+                fields: fields,
+                byteRange: span(buf, offset + extLen)
+            ))
+            proto = extNext
+            offset += extLen
+            // Every fragment stops at the IP layer, the first one too (see IPv4);
+            // the reassembler decodes the datagram on the frame that completes it.
+            if let fragment {
+                packet.ipFragment = fragment
+                return
+            }
+        }
+
+        guard offset < buf.length else {
+            return
+        }
+        let payload = try ipPayload(buf, headerLength: offset, declaredEnd: min(declaredEnd, buf.length))
+        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
+    }
+
+    // MARK: Application layer
+
+    /// DNS wire format, over UDP/TCP 53 or — as `kind: .mdns` — multicast DNS on
+    /// UDP 5353, which shares the message format but not the query/response pairing.
+    static func dns(
+        _ input: PacketBuffer,
+        into packet: inout DecodedPacket,
+        tcp: Bool,
+        kind: ProtocolKind = .dns
+    )
+        throws
+    {
+        // DNS over TCP is length-prefixed (2 bytes).
+        let buf = tcp ? try input.subset(from: 2) : input
+        // Read the fixed 12-byte header exactly once and retain neutral facts before any
+        // variable-body parsing. A short header throws inside the initializer, so
+        // `dnsFacts` stays nil; an intact header with a malformed/truncated body keeps it.
+        let facts = try DNSMessageFacts(dnsHeader: buf)
+        packet.dnsFacts = facts
+        packet.dnsMessageLength = buf.length
+        let isResponse = facts.isResponse
+        var offset = 12
+        var firstName = ""
+        var firstNameRange: Range<Int>?
+        for index in 0 ..< max(Int(facts.questionCount), 0) {
+            let nameStart = offset
+            let (name, next) = try dnsName(buf, at: offset)
+            if index == 0 {
+                firstName = name
+                firstNameRange = (buf.start + nameStart) ..< (buf.start + next)
+                packet.dnsQueryType = try? buf.u16(next)
+                packet.dnsQueryClass = try? buf.u16(next + 2)
+            }
+            offset = next + 4 // qtype + qclass
+        }
+        var ipAnswers: [String] = [] // bare IPs only (drives the domain→IP sidebar)
+        var displayAnswers: [String] = [] // human-readable per-record values
+        var answerFields: [DecodedField] = []
+        var omittedAnswers = 0
+        for index in 0 ..< max(Int(facts.answerCount), 0) {
+            let (_, afterName) = try dnsName(buf, at: offset)
+            let type = try buf.u16(afterName)
+            if packet.dnsAnswerTypes.count < 64 {
+                packet.dnsAnswerTypes.append(type)
+            }
+            let rdLength = try Int(buf.u16(afterName + 8))
+            let rdataOffset = afterName + 10
+            let rdataRange = (buf.start + rdataOffset) ..< (buf.start + min(rdataOffset + rdLength, buf.length))
+            // Decode into a scratch IP list so the cap bounds every retained
+            // collection identically. Structural validation continues past the cap
+            // — reaching the retention limit never stops bounds-checked parsing.
+            var recordIPs: [String] = []
+            if let value = try dnsResourceValue(
+                type: type,
+                rdLength: rdLength,
+                buf: buf,
+                at: rdataOffset,
+                ip: &recordIPs
+            ) {
+                if displayAnswers.count < dnsAnswerRetentionCap {
+                    ipAnswers.append(contentsOf: recordIPs)
+                    displayAnswers.append(value)
+                    answerFields.append(DecodedField(name: "Answer \(index + 1)", value: value, byteRange: rdataRange))
+                } else {
+                    // A valid record beyond the retained cap — an omission, not a
+                    // duplicate.
+                    omittedAnswers += 1
+                }
+            }
+            offset = rdataOffset + rdLength
+        }
+        packet.appProtocol = kind
+        packet.dnsQuery = firstName
+        packet.dnsAnswers = ipAnswers
+        packet.dnsAnswersOmittedCount = omittedAnswers
+        packet.dnsAnswerRecords = displayAnswers
+        var fields: [DecodedField] = [
+            ranged("Type", isResponse ? "Response" : "Query", in: buf, at: 2, 2),
+            DecodedField(name: "Query", value: firstName, byteRange: firstNameRange),
+            .init(name: "Answers", value: displayAnswers.isEmpty ? "—" : displayAnswers.joined(separator: ", ")),
+        ]
+        fields += answerFields
+        packet.layers.append(DecodedLayer(
+            proto: kind,
+            title: dnsTitle(kind),
+            summary: isResponse ? "response" : "query",
+            fields: fields,
+            byteRange: span(buf, buf.length)
+        ))
+    }
+
+    /// Walk all complete coalesced TLS records in one TCP payload. A final
+    /// truncated record is still emitted once with an honest fragment label.
+    static func tlsRecords(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        var offset = 0
+        var recordCount = 0
+        while offset + 5 <= buf.length {
+            let record = try buf.subset(from: offset)
+            guard isTLS(record) else {
+                break
+            }
+            // A further recognizable record begins past the 32-record cap: record the
+            // explicit truncation and stop before decoding a 33rd record.
+            if recordCount == 32 {
+                packet.tlsRecordsTruncated = true
+                break
+            }
+            let recordLength = try 5 + Int(record.u16(3))
+            let boundedRecord = try record.subset(
+                from: 0, count: min(recordLength, record.length)
+            )
+            // Bound both presentation and typed parsing to this record. A following
+            // coalesced record must never satisfy fields missing from this one.
+            try tls(boundedRecord, into: &packet)
+            if let fact = TLSFactsDecoder.recordFact(boundedRecord) {
+                packet.tlsRecords.append(fact)
+            }
+            recordCount += 1
+            guard recordLength <= record.length else {
+                break
+            }
+            offset += recordLength
+        }
+    }
+
+    /// Surfaces the clear-text QUIC long-header fields (RFC 9000 §17.2): packet
+    /// type, version, and the destination/source connection IDs. The caller's
+    /// `isQUIC` gate proved the long-header form bit; the fixed bit, packet-number
+    /// space, and everything after the source CID are encrypted and never guessed.
+    /// A version of 0 is Version Negotiation (§17.2.1). Any bounds failure — a
+    /// short header slipping the gate, a CID length over the 20-byte cap, or a
+    /// truncated header — falls back to honest identification only.
+    static func quic(_ buf: PacketBuffer, into packet: inout DecodedPacket) {
+        packet.appProtocol = .quic
+        guard let first = try? buf.u8(0),
+              let version = try? buf.u32(1),
+              let dcidLen = try? Int(buf.u8(5)), dcidLen <= 20,
+              let dcid = try? buf.bytes(6, dcidLen),
+              let scidLen = try? Int(buf.u8(6 + dcidLen)), scidLen <= 20,
+              let scid = try? buf.bytes(7 + dcidLen, scidLen) else
+        {
+            packet.layers.append(DecodedLayer(proto: .quic, title: "QUIC", summary: "encrypted transport"))
+            return
+        }
+        let scidLenOffset = 6 + dcidLen
+        let isVersionNegotiation = version == 0
+        let typeName = isVersionNegotiation ? "Version Negotiation" : quicLongPacketType(first, version: version)
+        let versionText = isVersionNegotiation ? "Version Negotiation (0x00000000)" : String(format: "0x%08x", version)
+        let summary = isVersionNegotiation ? "Version Negotiation" : "\(typeName) · encrypted transport"
+        packet.layers.append(DecodedLayer(
+            proto: .quic, title: "QUIC", summary: summary,
+            fields: [
+                ranged("Packet Type", typeName, in: buf, at: 0, 1),
+                ranged("Version", versionText, in: buf, at: 1, 4),
+                ranged(
+                    "Destination CID", dcid.isEmpty ? "(zero-length)" : hexString(dcid),
+                    in: buf, at: 5, 1 + dcidLen
+                ),
+                ranged(
+                    "Source CID", scid.isEmpty ? "(zero-length)" : hexString(scid),
+                    in: buf, at: scidLenOffset, 1 + scidLen
+                ),
+            ],
+            byteRange: span(buf, scidLenOffset + 1 + scidLen)
+        ))
+    }
+
+    /// Decodes the fixed 20-byte STUN header (RFC 5389 §6) and then walks the
+    /// declared attribute TLVs. Metadata only — ICE negotiation state and TURN
+    /// allocation state are deliberately not tracked; attributes are surfaced by
+    /// name, with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS IPv4 reflexive addresses
+    /// decoded when fully present. `isSTUN` already proved the magic cookie and
+    /// that the declared attribute region is 4-byte aligned and fully captured.
+    static func stun(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+        let messageType = try buf.u16(0)
+        let messageLength = try Int(buf.u16(2))
+        let cookie = try buf.u32(4)
+        let transactionID = try buf.bytes(8, 12)
+        let typeName = stunMessageTypeName(messageType)
+        packet.appProtocol = .stun
+        var fields: [DecodedField] = [
+            ranged("Message Type", "\(typeName) (\(String(format: "0x%04x", messageType)))", in: buf, at: 0, 2),
+            ranged("Message Length", "\(messageLength)", in: buf, at: 2, 2),
+            ranged("Magic Cookie", String(format: "0x%08x", cookie), in: buf, at: 4, 4),
+            ranged("Transaction ID", hexString(transactionID), in: buf, at: 8, 12),
+        ]
+        fields += stunAttributes(buf, messageLength: messageLength)
+        packet.layers.append(DecodedLayer(
+            proto: .stun, title: "Session Traversal Utilities for NAT", summary: typeName,
+            fields: fields,
+            byteRange: span(buf, 20 + messageLength)
+        ))
+    }
+
     // MARK: Private
 
     /// IPv6 extension-header protocol numbers (RFC 8200 order).
-    private static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
 
     /// STUN magic cookie (RFC 5389 §6): the fixed value at header offset 4 that
     /// disambiguates STUN from other UDP payloads regardless of port.
@@ -174,65 +554,6 @@ nonisolated enum PacketDecoder {
             ],
             byteRange: span(buf, 28)
         ))
-    }
-
-    private static func ipv4(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        let versionIHL = try buf.u8(0)
-        let ihl = Int(versionIHL & 0x0F) * 4
-        let totalLength = try Int(buf.u16(2))
-        let flagsFragment = try buf.u16(6)
-        let moreFragments = flagsFragment & 0x2000 != 0
-        let fragmentOffset = Int(flagsFragment & 0x1FFF) * 8
-        let ttl = try buf.u8(8)
-        let proto = try buf.u8(9)
-        let src = try ipv4Address(buf, 12)
-        let dst = try ipv4Address(buf, 16)
-        var fields: [DecodedField] = [
-            ranged("Version", "4", in: buf, at: 0, 1),
-            ranged("Header Length", "\(ihl) bytes", in: buf, at: 0, 1),
-            ranged("Total Length", "\(totalLength)", in: buf, at: 2, 2),
-        ]
-        if moreFragments || fragmentOffset > 0 {
-            fields.append(ranged(
-                "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
-                in: buf, at: 6, 2
-            ))
-        }
-        fields += [
-            ranged("TTL", "\(ttl)", in: buf, at: 8, 1),
-            ranged("Protocol", ipProtoName(proto), in: buf, at: 9, 1),
-            ranged("Source", src, in: buf, at: 12, 4),
-            ranged("Destination", dst, in: buf, at: 16, 4),
-        ]
-        // IPv4 options (RFC 791) live between the 20-byte fixed header and IHL.
-        if ihl > 20 {
-            fields += (try? ipv4Options(buf, end: min(ihl, buf.length))) ?? []
-        }
-        packet.layers.append(DecodedLayer(
-            proto: .ipv4, title: "Internet Protocol v4", summary: "\(src) → \(dst)",
-            fields: fields,
-            byteRange: span(buf, ihl)
-        ))
-        // An IHL below the fixed header is not an IPv4 header; reading a transport
-        // header out of the address bytes would invent endpoints. The layer above
-        // keeps the facts actually read.
-        guard ihl >= 20 else {
-            throw PacketError.malformed("Invalid IPv4 header length")
-        }
-        // A non-first fragment carries no transport header at all: its first bytes
-        // are payload of a segment/datagram whose header travelled in fragment 0.
-        // Stop at the IP layer rather than decoding those bytes as ports.
-        guard fragmentOffset == 0 else {
-            return
-        }
-        // Bound the payload by the declared total length so link-layer trailers
-        // (the zero padding every sub-60-byte Ethernet frame carries) are never
-        // counted as transport payload — that would fabricate TCP sequence space.
-        // A declared length of zero is TCP segmentation offload leaving the field
-        // unset; a declared length below the header is bogus. Both keep the
-        // captured bytes rather than guessing a tighter bound.
-        let payload = try ipPayload(buf, headerLength: ihl, declaredEnd: totalLength)
-        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
     }
 
     /// The transport payload after an IP header, clamped to the IP-declared end
@@ -289,86 +610,9 @@ nonisolated enum PacketDecoder {
         }
     }
 
-    private static func ipv6(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        let byte0 = try buf.u8(0)
-        let byte1 = try buf.u8(1)
-        let trafficClass = (byte0 << 4) | (byte1 >> 4)
-        let flowLabel = try (UInt32(byte1 & 0x0F) << 16) | (UInt32(buf.u8(2)) << 8) | UInt32(buf.u8(3))
-        let payloadLength = try Int(buf.u16(4))
-        let nextHeader = try buf.u8(6)
-        let hopLimit = try buf.u8(7)
-        let src = try ipv6Address(buf, 8)
-        let dst = try ipv6Address(buf, 24)
-        packet.layers.append(DecodedLayer(
-            proto: .ipv6, title: "Internet Protocol v6", summary: "\(src) → \(dst)",
-            fields: [
-                ranged("Version", "6", in: buf, at: 0, 1),
-                ranged("Traffic Class", String(format: "0x%02x", trafficClass), in: buf, at: 0, 2),
-                ranged("Flow Label", String(format: "0x%05x", flowLabel), in: buf, at: 1, 3),
-                ranged("Payload Length", "\(payloadLength)", in: buf, at: 4, 2),
-                ranged("Next Header", ipProtoName(nextHeader), in: buf, at: 6, 1),
-                ranged("Hop Limit", "\(hopLimit)", in: buf, at: 7, 1),
-                ranged("Source", src, in: buf, at: 8, 16),
-                ranged("Destination", dst, in: buf, at: 24, 16),
-            ],
-            byteRange: span(buf, 40)
-        ))
-
-        // Walk the IPv6 extension-header chain (HopByHop/Routing/Fragment/DestOpts/
-        // AH/Mobility) before handing off to the transport layer. Ported from
-        // PcapPlusPlus IPv6Extensions; field set cross-checked vs Wireshark's
-        // packet-ipv6.c (concepts only — Wireshark is GPL, never copied).
-        var proto = nextHeader
-        var offset = 40
-        var guardCounter = 0
-        // The declared end of the IPv6 packet: fixed header plus payload length.
-        // Zero means a jumbogram or offload left it unset; then the captured bytes
-        // are the only bound.
-        let declaredEnd = payloadLength > 0 ? 40 + payloadLength : buf.length
-        while Self.ipv6ExtensionHeaders.contains(proto), offset + 2 <= buf.length, guardCounter < 16 {
-            guardCounter += 1
-            let extNext = try buf.u8(offset)
-            let extLen = try ipv6ExtensionLength(proto: proto, buf: buf, at: offset)
-            var fields = [
-                ranged("Next Header", ipProtoName(extNext), in: buf, at: offset, 1),
-                ranged("Length", "\(extLen) bytes", in: buf, at: offset + 1, 1),
-            ]
-            var isLaterFragment = false
-            if proto == 44, let fragmentField = try? buf.u16(offset + 2) {
-                // RFC 8200 §4.5: offset in 8-octet units (high 13 bits), M flag bit 0.
-                let fragmentOffset = Int(fragmentField >> 3) * 8
-                let moreFragments = fragmentField & 0x01 != 0
-                fields.append(ranged(
-                    "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
-                    in: buf, at: offset + 2, 2
-                ))
-                isLaterFragment = fragmentOffset > 0
-            }
-            packet.layers.append(DecodedLayer(
-                proto: .ipv6, title: "IPv6 \(ipv6ExtensionName(proto))",
-                summary: "next \(ipProtoName(extNext))",
-                fields: fields,
-                byteRange: span(buf, offset + extLen)
-            ))
-            proto = extNext
-            offset += extLen
-            // A non-first fragment carries no transport header: stop at the IP
-            // layer rather than reading ports out of mid-datagram payload bytes.
-            if isLaterFragment {
-                return
-            }
-        }
-
-        guard offset < buf.length else {
-            return
-        }
-        let payload = try ipPayload(buf, headerLength: offset, declaredEnd: min(declaredEnd, buf.length))
-        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
-    }
-
     /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
     /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
-    private static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
+    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
         switch proto {
         case 44: 8 // Fragment header is fixed-size
         case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
@@ -376,7 +620,7 @@ nonisolated enum PacketDecoder {
         }
     }
 
-    private static func ipv6ExtensionName(_ proto: UInt8) -> String {
+    static func ipv6ExtensionName(_ proto: UInt8) -> String {
         switch proto {
         case 0: "Hop-by-Hop Options"
         case 43: "Routing"
@@ -390,7 +634,7 @@ nonisolated enum PacketDecoder {
 
     // MARK: Transport layer
 
-    private static func transport(
+    static func transport(
         _ buf: PacketBuffer,
         proto: UInt8,
         src: String,
@@ -404,67 +648,10 @@ nonisolated enum PacketDecoder {
         case 17: try udp(buf, src: src, dst: dst, into: &packet)
         case 1: try icmp(buf, src: src, dst: dst, isV6: false, into: &packet)
         case 58: try icmp(buf, src: src, dst: dst, isV6: true, into: &packet)
+        case 47: try gre(buf, into: &packet)
+        case 4,
+             41: try ipInIP(buf, version: proto == 4 ? 4 : 6, into: &packet)
         default: break
-        }
-    }
-
-    /// ICMP / ICMPv6. Connectionless, so we key a session on the IP pair (port 0)
-    /// to surface ping / unreachable / neighbor-discovery traffic in the list.
-    private static func icmp(
-        _ buf: PacketBuffer, src: String, dst: String, isV6: Bool, into packet: inout DecodedPacket
-    )
-        throws
-    {
-        let type = try buf.u8(0)
-        let code = try buf.u8(1)
-        // Both fixed bytes read — retain neutral family/type/code before building the
-        // layer. Family is the already-known IP protocol, never inferred from the body.
-        packet.icmpFacts = ICMPMessageFacts(family: isV6 ? .ipv6 : .ipv4, type: type, code: code)
-        let kind: ProtocolKind = isV6 ? .icmpv6 : .icmp
-        let typeName = isV6 ? icmpv6TypeName(type) : icmpTypeName(type)
-        packet.transport = kind
-        packet.appProtocol = kind
-        packet.sourceEndpoint = IPEndpoint(ip: src, port: 0)
-        packet.destinationEndpoint = IPEndpoint(ip: dst, port: 0)
-        packet.fiveTuple = FiveTuple(
-            proto: kind,
-            source: IPEndpoint(ip: src, port: 0),
-            destination: IPEndpoint(ip: dst, port: 0)
-        )
-        packet.layers.append(DecodedLayer(
-            proto: kind, title: isV6 ? "Internet Control Message Protocol v6" : "Internet Control Message Protocol",
-            summary: typeName,
-            fields: [
-                ranged("Type", "\(typeName) (\(type))", in: buf, at: 0, 1),
-                ranged("Code", "\(code)", in: buf, at: 1, 1),
-            ],
-            byteRange: span(buf, min(8, buf.length))
-        ))
-    }
-
-    private static func icmpTypeName(_ type: UInt8) -> String {
-        switch type {
-        case 0: "Echo Reply"
-        case 3: "Destination Unreachable"
-        case 5: "Redirect"
-        case 8: "Echo Request"
-        case 11: "Time Exceeded"
-        default: "Type \(type)"
-        }
-    }
-
-    private static func icmpv6TypeName(_ type: UInt8) -> String {
-        switch type {
-        case 1: "Destination Unreachable"
-        case 2: "Packet Too Big"
-        case 3: "Time Exceeded"
-        case 128: "Echo Request"
-        case 129: "Echo Reply"
-        case 133: "Router Solicitation"
-        case 134: "Router Advertisement"
-        case 135: "Neighbor Solicitation"
-        case 136: "Neighbor Advertisement"
-        default: "Type \(type)"
         }
     }
 
@@ -487,11 +674,17 @@ nonisolated enum PacketDecoder {
             source: IPEndpoint(ip: src, port: srcPort),
             destination: IPEndpoint(ip: dst, port: dstPort)
         )
-        var fields: [DecodedField] = [
+        var fields: [DecodedField] = try [
             ranged("Source Port", "\(srcPort)", in: buf, at: 0, 2),
             ranged("Destination Port", "\(dstPort)", in: buf, at: 2, 2),
             ranged("Seq", "\(seq)", in: buf, at: 4, 4),
-            ranged("Flags", tcpFlags(flags), in: buf, at: 13, 1),
+            ranged("Ack", "\(buf.u32(8))", in: buf, at: 8, 4),
+            ranged("Header Length", "\(dataOffset) bytes", in: buf, at: 12, 1),
+            // Wireshark's tcp.flags spans the 12 flag bits across bytes 12–13.
+            ranged("Flags", tcpFlags(flags), in: buf, at: 12, 2),
+            ranged("Window", "\(window)", in: buf, at: 14, 2),
+            ranged("Checksum", hex(buf.u16(16), digits: 4), in: buf, at: 16, 2),
+            ranged("Urgent Pointer", "\(buf.u16(18))", in: buf, at: 18, 2),
         ]
         // Parse TCP options once (between the fixed 20-byte header and dataOffset)
         // for both the rendered fields and the typed option facts.
@@ -530,7 +723,9 @@ nonisolated enum PacketDecoder {
         packet.tcpPayloadSequence = seq &+ ((flags & 0x02) == 0 ? 0 : 1)
         packet.tcpPayloadBytes = try payload.bytes(0, payload.length)
         try decodeFrameApplication(
-            tcpFrameApplicationCandidates,
+            DecodeAs.candidates(
+                tcpFrameApplicationCandidates + textServiceTCPCandidates, transport: .tcp, ports: (srcPort, dstPort)
+            ),
             context: ApplicationMatchContext(payload: payload, sourcePort: srcPort, destinationPort: dstPort),
             into: &packet
         )
@@ -622,93 +817,39 @@ nonisolated enum PacketDecoder {
             source: IPEndpoint(ip: src, port: srcPort),
             destination: IPEndpoint(ip: dst, port: dstPort)
         )
+        var udpFields = [
+            ranged("Source Port", "\(srcPort)", in: buf, at: 0, 2),
+            ranged("Destination Port", "\(dstPort)", in: buf, at: 2, 2),
+        ]
+        // A header cut short by the snapshot length still keeps its ports.
+        if let length = try? buf.u16(4), let checksum = try? buf.u16(6) {
+            udpFields.append(ranged("Length", "\(length)", in: buf, at: 4, 2))
+            udpFields.append(ranged("Checksum", hex(checksum, digits: 4), in: buf, at: 6, 2))
+        }
         packet.layers.append(DecodedLayer(
             proto: .udp, title: "User Datagram Protocol", summary: "\(srcPort) → \(dstPort)",
-            fields: [
-                ranged("Source Port", "\(srcPort)", in: buf, at: 0, 2),
-                ranged("Destination Port", "\(dstPort)", in: buf, at: 2, 2)
-            ],
+            fields: udpFields,
             byteRange: span(buf, 8)
         ))
         let payload = try buf.subset(from: 8)
+        // The declared length bounds the payload when it is plausible; Ethernet
+        // padding after a short datagram is never payload. A missing, zero or
+        // sub-header length keeps whatever was captured.
+        var payloadCount = payload.length
+        if let declared = try? Int(buf.u16(4)), declared >= 8 {
+            packet.udpDeclaredPayloadLength = declared - 8
+            payloadCount = min(payloadCount, declared - 8)
+        }
+        packet.udpPayloadRange = payload.start ..< payload.start + payloadCount
         try decodeFrameApplication(
-            udpFrameApplicationCandidates,
+            DecodeAs.candidates(
+                udpFrameApplicationCandidates + [ssdpCandidate, sipCandidate] + windowsUDPCandidates,
+                transport: .udp,
+                ports: (srcPort, dstPort)
+            ),
             context: ApplicationMatchContext(payload: payload, sourcePort: srcPort, destinationPort: dstPort),
             into: &packet
         )
-    }
-
-    // MARK: Application layer
-
-    private static func dns(_ input: PacketBuffer, into packet: inout DecodedPacket, tcp: Bool) throws {
-        // DNS over TCP is length-prefixed (2 bytes).
-        let buf = tcp ? try input.subset(from: 2) : input
-        // Read the fixed 12-byte header exactly once and retain neutral facts before any
-        // variable-body parsing. A short header throws inside the initializer, so
-        // `dnsFacts` stays nil; an intact header with a malformed/truncated body keeps it.
-        let facts = try DNSMessageFacts(dnsHeader: buf)
-        packet.dnsFacts = facts
-        let isResponse = facts.isResponse
-        var offset = 12
-        var firstName = ""
-        var firstNameRange: Range<Int>?
-        for index in 0 ..< max(Int(facts.questionCount), 0) {
-            let nameStart = offset
-            let (name, next) = try dnsName(buf, at: offset)
-            if index == 0 {
-                firstName = name
-                firstNameRange = (buf.start + nameStart) ..< (buf.start + next)
-            }
-            offset = next + 4 // qtype + qclass
-        }
-        var ipAnswers: [String] = [] // bare IPs only (drives the domain→IP sidebar)
-        var displayAnswers: [String] = [] // human-readable per-record values
-        var answerFields: [DecodedField] = []
-        var omittedAnswers = 0
-        for index in 0 ..< max(Int(facts.answerCount), 0) {
-            let (_, afterName) = try dnsName(buf, at: offset)
-            let type = try buf.u16(afterName)
-            let rdLength = try Int(buf.u16(afterName + 8))
-            let rdataOffset = afterName + 10
-            let rdataRange = (buf.start + rdataOffset) ..< (buf.start + min(rdataOffset + rdLength, buf.length))
-            // Decode into a scratch IP list so the cap bounds every retained
-            // collection identically. Structural validation continues past the cap
-            // — reaching the retention limit never stops bounds-checked parsing.
-            var recordIPs: [String] = []
-            if let value = try dnsResourceValue(
-                type: type,
-                rdLength: rdLength,
-                buf: buf,
-                at: rdataOffset,
-                ip: &recordIPs
-            ) {
-                if displayAnswers.count < dnsAnswerRetentionCap {
-                    ipAnswers.append(contentsOf: recordIPs)
-                    displayAnswers.append(value)
-                    answerFields.append(DecodedField(name: "Answer \(index + 1)", value: value, byteRange: rdataRange))
-                } else {
-                    // A valid record beyond the retained cap — an omission, not a
-                    // duplicate.
-                    omittedAnswers += 1
-                }
-            }
-            offset = rdataOffset + rdLength
-        }
-        packet.appProtocol = .dns
-        packet.dnsQuery = firstName
-        packet.dnsAnswers = ipAnswers
-        packet.dnsAnswersOmittedCount = omittedAnswers
-        var fields: [DecodedField] = [
-            ranged("Type", isResponse ? "Response" : "Query", in: buf, at: 2, 2),
-            DecodedField(name: "Query", value: firstName, byteRange: firstNameRange),
-            .init(name: "Answers", value: displayAnswers.isEmpty ? "—" : displayAnswers.joined(separator: ", ")),
-        ]
-        fields += answerFields
-        packet.layers.append(DecodedLayer(
-            proto: .dns, title: "Domain Name System", summary: isResponse ? "response" : "query",
-            fields: fields,
-            byteRange: span(buf, buf.length)
-        ))
     }
 
     /// Decodes one DNS resource record's RDATA into a display string, appending
@@ -749,56 +890,6 @@ nonisolated enum PacketDecoder {
             return "SOA " + ((try? dnsName(buf, at: rdataOffset).name) ?? "")
         default:
             return "\(dnsTypeName(type)) (\(rdLength) bytes)"
-        }
-    }
-
-    private static func dnsTypeName(_ type: UInt16) -> String {
-        switch type {
-        case 1: "A"
-        case 2: "NS"
-        case 5: "CNAME"
-        case 6: "SOA"
-        case 12: "PTR"
-        case 15: "MX"
-        case 16: "TXT"
-        case 28: "AAAA"
-        case 33: "SRV"
-        case 65: "HTTPS"
-        default: "TYPE\(type)"
-        }
-    }
-
-    /// Walk all complete coalesced TLS records in one TCP payload. A final
-    /// truncated record is still emitted once with an honest fragment label.
-    private static func tlsRecords(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        var offset = 0
-        var recordCount = 0
-        while offset + 5 <= buf.length {
-            let record = try buf.subset(from: offset)
-            guard isTLS(record) else {
-                break
-            }
-            // A further recognizable record begins past the 32-record cap: record the
-            // explicit truncation and stop before decoding a 33rd record.
-            if recordCount == 32 {
-                packet.tlsRecordsTruncated = true
-                break
-            }
-            let recordLength = try 5 + Int(record.u16(3))
-            let boundedRecord = try record.subset(
-                from: 0, count: min(recordLength, record.length)
-            )
-            // Bound both presentation and typed parsing to this record. A following
-            // coalesced record must never satisfy fields missing from this one.
-            try tls(boundedRecord, into: &packet)
-            if let fact = TLSFactsDecoder.recordFact(boundedRecord) {
-                packet.tlsRecords.append(fact)
-            }
-            recordCount += 1
-            guard recordLength <= record.length else {
-                break
-            }
-            offset += recordLength
         }
     }
 
@@ -915,6 +1006,13 @@ nonisolated enum PacketDecoder {
                 name: "Cipher Suite", value: tlsCipherName(cipher),
                 byteRange: (buf.start + offset) ..< (buf.start + offset + 2)
             ))
+            if let alpn = serverHelloALPN(buf, afterCipherAt: offset + 2, recordEnd: min(
+                5 + recordLength,
+                buf.length
+            )) {
+                serverHello.fields.append(DecodedField(name: "ALPN", value: alpn))
+                packet.negotiatedApplication = alpn == "h2" ? .http2 : packet.negotiatedApplication
+            }
             layer.summary = "\(tlsVersionName(serverVersion)) · Server Hello"
             layer.children.append(serverHello)
         }
@@ -950,69 +1048,6 @@ nonisolated enum PacketDecoder {
         }
     }
 
-    private static func http(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        let text = try asciiString(buf.bytes(0, min(buf.length, 512)))
-        let firstLine = text.split(separator: "\r\n", maxSplits: 1, omittingEmptySubsequences: false).first
-            .map(String.init) ?? ""
-        var host = ""
-        for line in text.split(separator: "\r\n") where line.lowercased().hasPrefix("host:") {
-            host = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            break
-        }
-        packet.appProtocol = .http
-        let requestLength = min(firstLine.utf8.count, buf.length)
-        packet.layers.append(DecodedLayer(
-            proto: .http, title: "Hypertext Transfer Protocol", summary: firstLine,
-            fields: [
-                ranged("Request", firstLine, in: buf, at: 0, requestLength),
-                .init(name: "Host", value: host.isEmpty ? "—" : host)
-            ],
-            byteRange: span(buf, buf.length)
-        ))
-    }
-
-    /// Surfaces the clear-text QUIC long-header fields (RFC 9000 §17.2): packet
-    /// type, version, and the destination/source connection IDs. The caller's
-    /// `isQUIC` gate proved the long-header form bit; the fixed bit, packet-number
-    /// space, and everything after the source CID are encrypted and never guessed.
-    /// A version of 0 is Version Negotiation (§17.2.1). Any bounds failure — a
-    /// short header slipping the gate, a CID length over the 20-byte cap, or a
-    /// truncated header — falls back to honest identification only.
-    private static func quic(_ buf: PacketBuffer, into packet: inout DecodedPacket) {
-        packet.appProtocol = .quic
-        guard let first = try? buf.u8(0),
-              let version = try? buf.u32(1),
-              let dcidLen = try? Int(buf.u8(5)), dcidLen <= 20,
-              let dcid = try? buf.bytes(6, dcidLen),
-              let scidLen = try? Int(buf.u8(6 + dcidLen)), scidLen <= 20,
-              let scid = try? buf.bytes(7 + dcidLen, scidLen) else
-        {
-            packet.layers.append(DecodedLayer(proto: .quic, title: "QUIC", summary: "encrypted transport"))
-            return
-        }
-        let scidLenOffset = 6 + dcidLen
-        let isVersionNegotiation = version == 0
-        let typeName = isVersionNegotiation ? "Version Negotiation" : quicLongPacketType(first, version: version)
-        let versionText = isVersionNegotiation ? "Version Negotiation (0x00000000)" : String(format: "0x%08x", version)
-        let summary = isVersionNegotiation ? "Version Negotiation" : "\(typeName) · encrypted transport"
-        packet.layers.append(DecodedLayer(
-            proto: .quic, title: "QUIC", summary: summary,
-            fields: [
-                ranged("Packet Type", typeName, in: buf, at: 0, 1),
-                ranged("Version", versionText, in: buf, at: 1, 4),
-                ranged(
-                    "Destination CID", dcid.isEmpty ? "(zero-length)" : hexString(dcid),
-                    in: buf, at: 5, 1 + dcidLen
-                ),
-                ranged(
-                    "Source CID", scid.isEmpty ? "(zero-length)" : hexString(scid),
-                    in: buf, at: scidLenOffset, 1 + scidLen
-                ),
-            ],
-            byteRange: span(buf, scidLenOffset + 1 + scidLen)
-        ))
-    }
-
     /// Names a QUIC v1 long-header packet type from the two type bits (RFC 9000
     /// §17.2). The type-bit meaning is version-specific, so any non-v1 version
     /// renders the raw type value rather than assuming the v1 mapping.
@@ -1027,33 +1062,6 @@ nonisolated enum PacketDecoder {
         case 0x02: return "Handshake"
         default: return "Retry"
         }
-    }
-
-    /// Decodes the fixed 20-byte STUN header (RFC 5389 §6) and then walks the
-    /// declared attribute TLVs. Metadata only — ICE negotiation state and TURN
-    /// allocation state are deliberately not tracked; attributes are surfaced by
-    /// name, with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS IPv4 reflexive addresses
-    /// decoded when fully present. `isSTUN` already proved the magic cookie and
-    /// that the declared attribute region is 4-byte aligned and fully captured.
-    private static func stun(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
-        let messageType = try buf.u16(0)
-        let messageLength = try Int(buf.u16(2))
-        let cookie = try buf.u32(4)
-        let transactionID = try buf.bytes(8, 12)
-        let typeName = stunMessageTypeName(messageType)
-        packet.appProtocol = .stun
-        var fields: [DecodedField] = [
-            ranged("Message Type", "\(typeName) (\(String(format: "0x%04x", messageType)))", in: buf, at: 0, 2),
-            ranged("Message Length", "\(messageLength)", in: buf, at: 2, 2),
-            ranged("Magic Cookie", String(format: "0x%08x", cookie), in: buf, at: 4, 4),
-            ranged("Transaction ID", hexString(transactionID), in: buf, at: 8, 12),
-        ]
-        fields += stunAttributes(buf, messageLength: messageLength)
-        packet.layers.append(DecodedLayer(
-            proto: .stun, title: "Session Traversal Utilities for NAT", summary: typeName,
-            fields: fields,
-            byteRange: span(buf, 20 + messageLength)
-        ))
     }
 
     /// Walks the STUN attribute TLVs (RFC 5389 §15): 2-byte type, 2-byte value
@@ -1165,7 +1173,8 @@ nonisolated enum PacketDecoder {
             return false
         }
         let prefix = asciiString(bytes)
-        return ["GET ", "POST", "PUT ", "HEAD", "DELE", "PATC", "OPTI", "HTTP"].contains { prefix.hasPrefix($0) }
+        return ["GET ", "POST", "PUT ", "HEAD", "DELE", "PATC", "OPTI", "HTTP", "PRI "]
+            .contains { prefix.hasPrefix($0) }
     }
 
     private static func containsHTTPHeaderTerminator(_ bytes: [UInt8]) -> Bool {
@@ -1181,7 +1190,7 @@ nonisolated enum PacketDecoder {
         return false
     }
 
-    private static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
+    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
         DecodedLayer(
             proto: layer.proto,
             title: layer.title,
@@ -1229,23 +1238,9 @@ nonisolated enum PacketDecoder {
         return true
     }
 
-    // MARK: Field formatting
-
-    private static func asciiString(_ bytes: [UInt8]) -> String {
-        String(bytes: bytes, encoding: .utf8) ?? ""
-    }
-
     /// Lower-case contiguous hex (e.g. a STUN transaction ID), no separators.
     private static func hexString(_ bytes: [UInt8]) -> String {
         bytes.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func ipv4Address(_ buf: PacketBuffer, _ offset: Int) throws -> String {
-        try "\(buf.u8(offset)).\(buf.u8(offset + 1)).\(buf.u8(offset + 2)).\(buf.u8(offset + 3))"
-    }
-
-    private static func ipv6Address(_ buf: PacketBuffer, _ offset: Int) throws -> String {
-        try (0 ..< 8).map { try String(format: "%x", buf.u16(offset + $0 * 2)) }.joined(separator: ":")
     }
 
     private static func dnsName(_ buf: PacketBuffer, at start: Int) throws -> (name: String, next: Int) {
@@ -1277,34 +1272,17 @@ nonisolated enum PacketDecoder {
         return (labels.joined(separator: "."), next < 0 ? offset : next)
     }
 
-    private static func ipProtoName(_ proto: UInt8) -> String {
+    static func ipProtoName(_ proto: UInt8) -> String {
         switch proto {
         case 6: "TCP (6)"
         case 17: "UDP (17)"
         case 1: "ICMP (1)"
         case 58: "ICMPv6 (58)"
+        case 4: "IPIP (4)"
+        case 41: "IPv6 (41)"
+        case 47: "GRE (47)"
         default: "\(proto)"
         }
-    }
-
-    private static func tcpFlags(_ flags: UInt8) -> String {
-        var parts: [String] = []
-        if flags & 0x02 != 0 {
-            parts.append("SYN")
-        }
-        if flags & 0x10 != 0 {
-            parts.append("ACK")
-        }
-        if flags & 0x08 != 0 {
-            parts.append("PSH")
-        }
-        if flags & 0x01 != 0 {
-            parts.append("FIN")
-        }
-        if flags & 0x04 != 0 {
-            parts.append("RST")
-        }
-        return parts.isEmpty ? "·" : parts.joined(separator: ", ")
     }
 
     /// Human-readable TLS record content-type name (RFC 8446 §5.1). Only 20…24 are
@@ -1339,7 +1317,7 @@ nonisolated enum PacketDecoder {
 /// three ordered arrays preserve the exact predicate composition, precedence, thrown-error
 /// behavior and completion rules of the former inline `if`/`else if` chains — this only
 /// centralizes them; it is deliberately *not* a generic decoder architecture.
-private extension PacketDecoder {
+extension PacketDecoder {
     // MARK: Internal
 
     /// The fixed context every application matcher sees: the transport payload — a
@@ -1409,6 +1387,36 @@ private extension PacketDecoder {
             }
         ),
         ApplicationCandidate(
+            matches: { $0.destinationPort == 4_789 && isVXLAN($0.payload) },
+            decode: { context, packet in
+                try vxlan(context.payload, into: &packet)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { $0.sourcePort == 5_353 || $0.destinationPort == 5_353 },
+            decode: { context, packet in
+                try dns(context.payload, into: &packet, tcp: false, kind: .mdns)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { [67, 68].contains($0.sourcePort) && [67, 68].contains($0.destinationPort) && isDHCP($0.payload)
+            },
+            decode: { context, packet in
+                try dhcp(context.payload, into: &packet)
+                return nil
+            }
+        ),
+        ApplicationCandidate(
+            matches: { ($0.sourcePort == 123 || $0.destinationPort == 123) && isNTP($0.payload) },
+            decode: { context, packet in
+                try ntp(context.payload, into: &packet)
+                return nil
+            }
+        ),
+        tftpCandidate,
+        ApplicationCandidate(
             matches: { ($0.sourcePort == 443 || $0.destinationPort == 443) && isQUIC($0.payload) },
             decode: { context, packet in
                 quic(context.payload, into: &packet)
@@ -1474,7 +1482,7 @@ private extension PacketDecoder {
     )
         -> Bool?
     {
-        for candidate in reassembledApplicationCandidates where candidate.matches(context) {
+        for candidate in DecodeAs.enabled(reassembledApplicationCandidates) where candidate.matches(context) {
             // A throwing candidate fails the whole reassembled decode (nil) rather than
             // falling through to a lower-priority gate — `try?` flattens both to nil.
             return try? candidate.decode(context, &packet)

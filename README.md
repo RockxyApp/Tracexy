@@ -32,35 +32,12 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.8.0** — 2026-09-21
-
-### Added
-
-- Ask about a selected session with the local Assistant, review the exact data before sending, and open cited frames in the evidence inspector.
-- Grant an MCP client bounded, read-only capture history for one Project, and revoke access in Settings.
-- Explore capture activity, protocols, sessions, findings, hosts and apps from the Overview.
-- Open captures in place from File, Finder or drag and drop; preview them before opening, keep recent files, and locate or reload moved and changed references. Import into Library remains available when a managed copy is wanted.
-- Inspect capture format, time span, interfaces and recorded metadata in **File → Get Info**; browse the exact frames of a session in the bottom inspector.
-- Export whole captures or selected frames, sessions and time ranges as PCAPNG or compatible PCAP, with optional gzip compression.
-- Preview PCAP and PCAPNG files in Quick Look and find them with Spotlight.
-- Browse rotated capture file sets, decode VLAN-tagged traffic, and sort the Sessions table by column.
+**v0.8.1** — 2026-09-22
 
 ### Fixed
 
-- Keep Assistant review and disclosure in sync, reject stale approval, and label incomplete answers clearly.
-- Enable MCP access once the active Project finishes loading, even if Settings was opened first.
-- Keep local capture paths out of default Library, recovery and Get Info text; Reveal and Copy Path remain explicit actions.
-- Avoid a bottom-inspector layout crash and unwanted extra windows after relaunch.
-- Correct false TCP retransmission findings from packet padding, fragments and keep-alive probes; retain reset evidence when it follows an orderly close.
-- Open classic PCAP files that declare an FCS hint, and calculate DNS response time even when the answer contains no records.
-- Stop live capture with a clear reason when its source disappears, and ask before quitting during capture.
-- Improve VoiceOver navigation, honor byte-unit and workspace-restoration settings, and stream large exports without loading the entire capture into memory.
-
-### Changed
-
-- Replace placeholder MCP and Assistant settings with scoped access and local connection controls.
-- Overview Protocols shows session-byte share by innermost protocol so its bars sum to the scope.
-- Orient sessions captured mid-stream toward the service port when no connection start was captured.
+- Preserve approved helper updates
+- Restore idle exit timer delivery
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
@@ -149,15 +126,16 @@ interfaces, processes, protocols, and session relationships.
 
 | Area | Available now |
 |---|---|
-| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; PCAP/PCAPNG read/write; managed gzip, TCP Viewer archive, and Linux cooked capture import |
-| **Decode** | Ethernet, loopback and tunnel framing; ARP; IPv4/IPv6; ICMP/ICMPv6; TCP/UDP; DNS, TLS, HTTP/1, STUN, and QUIC summaries |
+| **Capture** | Live libpcap capture through a privileged helper; interface discovery; bounded frame buffering; autostop and file-set (rotating) capture; PCAP/PCAPNG read/write; managed gzip, LZ4, TCP Viewer archive, and Linux cooked capture import; merge, split, and address-replacing export |
+| **Decode** | Ethernet (VLAN), loopback, GRE/VXLAN and tunnel framing; ARP; IPv4/IPv6; ICMP/ICMPv6; TCP/UDP; DNS/mDNS, DHCP, NTP, TLS, HTTP/1 requests and responses, STUN, and QUIC summaries |
 | **Sessions** | Direction-normalized five-tuple grouping, byte/timing summaries, bounded TCP lifecycle and sequence evidence, and higher-level activity correlation |
-| **Investigation** | Overview, session table, flow map, scoped search, typed queries, evidence-linked findings, bounded Follow Stream, decoded fields, and hex evidence |
+| **Investigation** | Overview, session table, flow map, scoped search, Session Expressions, evidence-linked findings, ladder and TCP health charts, response times, bounded Follow Stream, Protocol Hierarchy, DNS Lookups (with encrypted-DNS recognition), Message Counts, decoded fields, hex evidence, notes, and tags |
 | **History** | Local SQLite terminal capture/session summaries with bounded reads, explicit refresh, confirmed clear, and no packet-payload persistence |
-| **Automation core** | Read-only one-page History projections with minimum disclosure, deterministic JSON, and spreadsheet-safe RFC-4180 CSV; no executable or network transport |
+| **Automation** | Read-only History projections (captures, sessions, findings) with minimum disclosure; a bundled read-only MCP stdio tool; a read-only `summary` / `sessions` / `findings` command line built into the app binary; no network listener |
 | **Workspace** | Native sidebar, independent workspace tabs, vertical or bottom inspector layouts, status/footer surfaces, Focus Sets, and Noise Control |
 | **Projects** | Isolated investigations with separate workspaces, saved-capture Library, History, capture/privacy settings, and configuration-only import/export |
 | **Attribution** | Best-effort process ownership from `pktap` metadata with a local socket-to-process fallback |
+| **Languages** | English and Vietnamese |
 
 ## Comparison at a glance
 
@@ -187,7 +165,7 @@ stable saved or stopped source without turning the capture path into an unbounde
 | **Transport** | TCP flags/options, lifecycle and bounded sequence evidence; UDP endpoints | No general always-on TCP stream/record analyzer |
 | **DNS** | Questions, compression pointers, and common answer records including A, AAAA, CNAME, MX, TXT, SRV, and SOA | No DNSSEC analysis |
 | **TLS** | Record and handshake metadata, offered/chosen versions, cipher information, SNI, and ALPN | No decryption, certificates, or application data |
-| **HTTP/1** | Request-line recognition and the `Host` header | No full headers, response parsing, bodies, chunking, or decompression |
+| **HTTP/1** | Request line and `Host`; response status and the headers that explain it (credentials only named as present); on-demand request↔response pairing, timing and body saving in Follow Stream | No HTTP/2 or HTTP/3; bodies only on demand from a stable source, never decompressed |
 | **QUIC** | Long-header identification on UDP/443 | No frame or payload decode |
 
 See the [source-grounded protocol matrix](docs/protocol-support.md) for exact field coverage.
@@ -201,7 +179,7 @@ These are deliberate statements of present capability, not hidden roadmap promis
 - No deep HTTP/2, HTTP/3, or WebSocket decoder.
 - History persists terminal capture/session summaries, not a raw-packet capture database.
 - Findings are selected evidence-linked local observations, not a comprehensive durable security engine.
-- A free, read-only MCP stdio executable exposes three bounded History tools for one explicitly granted Project; it opens no listener and exposes no capture control or raw frames.
+- A free, read-only MCP stdio executable exposes four bounded History tools (captures, sessions, findings) for one explicitly granted Project; it opens no listener and exposes no capture control or raw frames.
 - The in-app AI Assistant sends a reviewed, bounded selected-session brief only to a validated local model endpoint. Remote/BYOK providers are not implemented in this Community checkout.
 - Protected `.tracexysession` export enforces payload/metadata protections; raw pcap/pcapng stays byte-preserving. History retention is boundary-triggered rather than a periodic background scheduler.
 

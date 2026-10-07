@@ -74,12 +74,63 @@ nonisolated enum ICMPFamily: Hashable, Sendable {
 // MARK: - ICMPMessageFacts
 
 /// The two leading ICMP/ICMPv6 header bytes as typed facts: the family plus the raw
-/// type and code. Deliberately nothing more — no per-type body parsing, no classification
-/// of whether a type/code pair represents an error.
+/// type and code, and — for the error types that quote the datagram that provoked
+/// them — the typed identity of that quoted flow. Deliberately nothing more: no
+/// per-type body parsing beyond the quotation's own IP/transport headers, no quoted
+/// payload, and no classification of whether a type/code pair represents an error.
 nonisolated struct ICMPMessageFacts: Hashable, Sendable {
+    // MARK: Lifecycle
+
+    init(family: ICMPFamily, type: UInt8, code: UInt8, quotedFlow: ICMPQuotedFlowFacts? = nil) {
+        self.family = family
+        self.type = type
+        self.code = code
+        self.quotedFlow = quotedFlow
+    }
+
+    // MARK: Internal
+
     let family: ICMPFamily
     /// Raw type byte (offset 0).
     let type: UInt8
     /// Raw code byte (offset 1).
     let code: UInt8
+    /// The flow the message quoted back, when this type quotes one and the quotation
+    /// was complete and unambiguous. `nil` for every non-quoting type, and for a
+    /// quotation that was truncated, fragmented, of the wrong IP version or not
+    /// TCP/UDP — the decoder never guesses a flow from a partial quotation.
+    let quotedFlow: ICMPQuotedFlowFacts?
+}
+
+// MARK: - ICMPQuotedFlowFacts
+
+/// The flow identity an ICMP error message quotes back from the datagram that
+/// provoked it (RFC 792 "Internet Header + 64 bits of Data", RFC 4443 §3 "as much
+/// of invoking packet as possible").
+///
+/// Only the typed identity is kept — the quoted IP version's addresses, the quoted
+/// transport protocol and its two ports. No quoted payload, sequence number,
+/// identifier, TTL, length or byte is retained, and nothing here says the quoted
+/// flow was captured, existed, or is the one the user cares about: it is exactly
+/// what the error message claimed it was answering.
+///
+/// Built only when the quotation is unambiguous — the quoted IP version matches the
+/// ICMP family, the quoted datagram is a first fragment, and its transport is TCP or
+/// UDP with both ports readable. Anything else yields no facts at all, so a
+/// truncated or exotic quotation can never invent a flow.
+nonisolated struct ICMPQuotedFlowFacts: Hashable, Sendable {
+    /// The quoted transport protocol: `.tcp` or `.udp` only.
+    let proto: ProtocolKind
+    /// The quoted datagram's source — the endpoint that sent the datagram the error
+    /// answers, which is normally the local side of the affected session.
+    let source: IPEndpoint
+    /// The quoted datagram's destination — the endpoint the datagram was addressed to.
+    let destination: IPEndpoint
+
+    /// The canonical tuple for the quoted flow, identical in form to the tuple the
+    /// session fold derives for that flow's own frames, so the two key the same
+    /// session id without any re-derivation here.
+    var tuple: FiveTuple {
+        FiveTuple(proto: proto, source: source, destination: destination)
+    }
 }

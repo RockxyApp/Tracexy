@@ -12,6 +12,8 @@ struct SessionEvidenceItem: Identifiable, Hashable {
     enum Kind: Hashable {
         case connection
         case tls
+        case dns
+        case icmp
     }
 
     let id: String
@@ -29,6 +31,8 @@ struct SessionEvidenceItem: Identifiable, Hashable {
         switch kind {
         case .connection: "point.3.connected.trianglepath.dotted"
         case .tls: "lock.shield"
+        case .dns: "character.magnify"
+        case .icmp: "exclamationmark.bubble"
         }
     }
 
@@ -36,17 +40,21 @@ struct SessionEvidenceItem: Identifiable, Hashable {
         switch kind {
         case .connection: "TCP"
         case .tls: "TLS"
+        case .dns: "DNS"
+        case .icmp: "ICMP"
         }
     }
 }
 
 extension SessionEvidenceItem {
-    /// Merge retained connection events and direct-frame TLS observations on the
-    /// capture's monotonic frame axis. Stable source-order tie breakers preserve
-    /// deterministic display when several observations cite the same frame.
+    /// Merge retained connection events, direct-frame TLS observations and retained
+    /// DNS/ICMP datagram observations on the capture's monotonic frame axis. Stable
+    /// source-order tie breakers preserve deterministic display when several
+    /// observations cite the same frame.
     static func timeline(
         connections: [ConnectionSummary],
-        tls: TLSEvidenceSummary?
+        tls: TLSEvidenceSummary?,
+        datagrams: DatagramEvidenceSummary? = nil
     )
         -> [SessionEvidenceItem]
     {
@@ -95,6 +103,37 @@ extension SessionEvidenceItem {
             }
         }
 
+        if let datagrams {
+            for (observationIndex, observation) in datagrams.observations.enumerated() {
+                let kind: Kind
+                let title: String
+                let detail: String
+                switch observation.kind {
+                case let .dns(facts):
+                    kind = .dns
+                    title = SessionEvidenceCopy.dnsMessageTitle(facts)
+                    detail = SessionEvidenceCopy.dnsMessageDetail(facts, observation: observation)
+                case let .icmp(facts):
+                    kind = .icmp
+                    title = SessionEvidenceCopy.icmpMessageTitle(facts)
+                    detail = SessionEvidenceCopy.icmpMessageDetail(facts, observation: observation)
+                }
+                indexed.append((
+                    item: SessionEvidenceItem(
+                        id: "datagram-\(observation.provenance.ordinal.rawValue)-\(observationIndex)",
+                        kind: kind,
+                        title: title,
+                        detail: detail,
+                        timestamp: observation.provenance.timestamp,
+                        ordinal: observation.provenance.ordinal,
+                        provenance: [observation.provenance]
+                    ),
+                    sourceRank: 2,
+                    sourceIndex: observationIndex
+                ))
+            }
+        }
+
         return indexed.sorted { lhs, rhs in
             if lhs.item.ordinal != rhs.item.ordinal {
                 return lhs.item.ordinal < rhs.item.ordinal
@@ -132,6 +171,15 @@ nonisolated enum SessionEvidenceCopy {
         case .pendingDrained: "Buffered sequence gap drained"
         case .pendingOverflow: "Pending sequence bound reached"
         case .serialAmbiguous: "Sequence distance ambiguous"
+        case .keepAlive: "Keep-alive probe observed"
+        case .duplicateAcknowledgement: "Duplicate acknowledgement observed"
+        case .fastRetransmission: "Fast retransmission observed"
+        case .spuriousRetransmission: "Spurious retransmission observed"
+        case .zeroWindow: "Zero window advertised"
+        case .zeroWindowProbe: "Zero window probe observed"
+        case .windowFull: "Receive window full"
+        case .ackedUnseenSegment: "Acknowledged bytes the capture did not see"
+        case .cleartextCredential: "Credentials sent without encryption"
         case .applicationRecord: "Application record identified"
         case .applicationProbeTruncated: "Application probe bound reached"
         }
@@ -157,12 +205,12 @@ nonisolated enum SessionEvidenceCopy {
         }
         if let applicationKind = event.applicationKind {
             let completeness = event.applicationComplete == true ? "complete first record" : "partial first record"
-            parts.append("\(applicationKind.label) · \(completeness)")
+            parts.append("\(applicationKind.label) (\(completeness))")
         }
         if event.provenance.count > 1 {
             parts.append("\(event.provenance.count) cited frames")
         }
-        return parts.isEmpty ? "Retained connection observation" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "Retained connection observation" : parts.joined(separator: ", ")
     }
 
     static func directionLabel(_ direction: ConnectionDirection, tuple: FiveTuple) -> String {
@@ -202,7 +250,7 @@ nonisolated enum SessionEvidenceCopy {
         switch reason {
         case .none: nil
         case .orderly: "Bidirectional FIN observed"
-        case let .reset(direction): "Reset observed · \(direction == .aToB ? "A → B" : "B → A")"
+        case let .reset(direction): "Reset observed \(direction == .aToB ? "A → B" : "B → A")"
         case .stateEviction: "State evicted under bound"
         }
     }
@@ -226,6 +274,101 @@ nonisolated enum SessionEvidenceCopy {
             labels.append(label)
         }
         return labels
+    }
+
+    // MARK: Datagram copy
+
+    /// The neutral title for one retained DNS observation. Only the fixed-header
+    /// facts are available, so the title names the message shape and never a name,
+    /// answer or resolver role.
+    static func dnsMessageTitle(_ facts: DNSMessageFacts) -> String {
+        if facts.opcode != 0 {
+            return facts.isResponse ? "DNS opcode \(facts.opcode) response" : "DNS opcode \(facts.opcode) query"
+        }
+        return facts.isResponse ? "DNS response" : "DNS query"
+    }
+
+    static func dnsMessageDetail(
+        _ facts: DNSMessageFacts,
+        observation: DatagramEvidenceObservation
+    )
+        -> String
+    {
+        var parts = [
+            directionLabel(observation.direction, tuple: observation.tuple),
+            String(format: "transaction 0x%04X", facts.transactionID),
+        ]
+        if facts.isResponse {
+            parts.append(dnsResponseCodeLabel(facts.responseCode))
+            parts.append(facts.answerCount == 1 ? "1 answer record" : "\(facts.answerCount.formatted()) answer records")
+            if facts.isAuthoritativeAnswer {
+                parts.append("authoritative")
+            }
+        } else {
+            parts.append(facts.questionCount == 1 ? "1 question" : "\(facts.questionCount.formatted()) questions")
+            if facts.recursionDesired {
+                parts.append("recursion desired")
+            }
+        }
+        if facts.isTruncated {
+            parts.append("truncated on the wire")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    static func dnsResponseCodeLabel(_ responseCode: UInt8) -> String {
+        switch responseCode {
+        case 0: "no error"
+        case 1: "format error"
+        case 2: "server failure"
+        case 3: "name does not exist"
+        case 4: "not implemented"
+        case 5: "refused"
+        default: "response code \(responseCode)"
+        }
+    }
+
+    /// The neutral title for one retained ICMP observation, from the decoder's
+    /// family/type facts only.
+    static func icmpMessageTitle(_ facts: ICMPMessageFacts) -> String {
+        "\(facts.family == .ipv6 ? "ICMPv6" : "ICMP") \(icmpTypeLabel(facts))"
+    }
+
+    static func icmpMessageDetail(
+        _ facts: ICMPMessageFacts,
+        observation: DatagramEvidenceObservation
+    )
+        -> String
+    {
+        var parts = [
+            directionLabel(observation.direction, tuple: observation.tuple),
+            "type \(facts.type) code \(facts.code)",
+        ]
+        if let quoted = facts.quotedFlow {
+            parts.append("quotes \(quoted.proto.label) \(quoted.source.display) → \(quoted.destination.display)")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Type names for the message shapes Tracexy's decoder retains. Anything else
+    /// keeps its raw type number rather than a guessed name.
+    static func icmpTypeLabel(_ facts: ICMPMessageFacts) -> String {
+        switch (facts.family, facts.type) {
+        case (.ipv4, 0): "echo reply"
+        case (.ipv4, 3): facts.code == 4 ? "fragmentation needed" : "destination unreachable"
+        case (.ipv4, 5): "redirect"
+        case (.ipv4, 8): "echo request"
+        case (.ipv4, 11): "time exceeded"
+        case (.ipv6, 1): "destination unreachable"
+        case (.ipv6, 2): "packet too big"
+        case (.ipv6, 3): "time exceeded"
+        case (.ipv6, 4): "parameter problem"
+        case (.ipv6, 128): "echo request"
+        case (.ipv6, 129): "echo reply"
+        case (.ipv6, 135): "neighbor solicitation"
+        case (.ipv6, 136): "neighbor advertisement"
+        default: "type \(facts.type)"
+        }
     }
 
     static func tlsRecordTitle(_ fact: TLSRecordFact) -> String {
@@ -278,9 +421,60 @@ nonisolated enum SessionEvidenceCopy {
                 parts.append("selected version unavailable")
             }
         case .none:
-            break
+            // A plaintext alert's two bytes are named; an encrypted alert has no
+            // fact at all and stays a bare "TLS Alert record" row.
+            if let alert = fact.alert {
+                parts.append(alertLevelLabel(alert))
+                parts.append(alertDescriptionLabel(alert))
+            }
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
+    }
+
+    /// The RFC 8446 §6 `AlertLevel` byte. An unassigned value keeps its raw number
+    /// rather than being normalized into warning or fatal.
+    static func alertLevelLabel(_ alert: TLSAlertFact) -> String {
+        switch alert.level {
+        case 1: "warning"
+        case 2: "fatal"
+        default: "level \(alert.level)"
+        }
+    }
+
+    /// The RFC 8446 §6 `AlertDescription` byte, in its wire spelling. An unassigned
+    /// description keeps its raw number rather than a guessed name.
+    static func alertDescriptionLabel(_ alert: TLSAlertFact) -> String {
+        let name: String? = switch alert.description {
+        case 0: "close_notify"
+        case 10: "unexpected_message"
+        case 20: "bad_record_mac"
+        case 22: "record_overflow"
+        case 40: "handshake_failure"
+        case 42: "bad_certificate"
+        case 43: "unsupported_certificate"
+        case 44: "certificate_revoked"
+        case 45: "certificate_expired"
+        case 46: "certificate_unknown"
+        case 47: "illegal_parameter"
+        case 48: "unknown_ca"
+        case 49: "access_denied"
+        case 50: "decode_error"
+        case 51: "decrypt_error"
+        case 70: "protocol_version"
+        case 71: "insufficient_security"
+        case 80: "internal_error"
+        case 86: "inappropriate_fallback"
+        case 90: "user_canceled"
+        case 109: "missing_extension"
+        case 110: "unsupported_extension"
+        case 112: "unrecognized_name"
+        case 113: "bad_certificate_status_response"
+        case 115: "unknown_psk_identity"
+        case 116: "certificate_required"
+        case 120: "no_application_protocol"
+        default: nil
+        }
+        return name ?? "description \(alert.description)"
     }
 
     static func versionLabel(_ rawValue: UInt16) -> String {

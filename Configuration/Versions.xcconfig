@@ -7,12 +7,12 @@
 // Do NOT duplicate these values in Swift constants. All runtime code reads
 // from Bundle.main.infoDictionary.
 
-TRACEXY_APP_VERSION = 0.8.0
-TRACEXY_APP_BUILD = 13
+TRACEXY_APP_VERSION = 0.8.1
+TRACEXY_APP_BUILD = 14
 
-TRACEXY_HELPER_VERSION = 2.2.0
-TRACEXY_HELPER_BUILD = 8
-// Protocol v5 adds approval-preserving executable refresh and a live executable
-// identity probe. Protocol v4 remains capture-compatible but needs one explicit
-// legacy migration because it cannot ask its running process to exit cleanly.
-TRACEXY_HELPER_PROTOCOL_VERSION = 5
+TRACEXY_HELPER_VERSION = 2.3.0
+TRACEXY_HELPER_BUILD = 10
+// Protocol v5 added approval-preserving executable refresh and live executable
+// identity. Protocol v6 adds an optional capture BPF optimizer choice; v4/v5
+// remain compatible when the historical optimized behavior is requested.
+TRACEXY_HELPER_PROTOCOL_VERSION = 6

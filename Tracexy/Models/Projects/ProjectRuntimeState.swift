@@ -74,6 +74,7 @@ final class ProjectRuntimeState {
     var helperBufferDropCount: UInt64 = 0
     var currentLinkType: UInt32 = LinkType.ethernet
     var removedSessionIDs: Set<UUID> = []
+    var pinnedSessionIDs: [UUID] = []
 
     /// True when this Project's stopped live spool had already completed its exact
     /// final ingest boundary. The generation token itself is never carried across a
@@ -102,6 +103,7 @@ final class ProjectRuntimeState {
 
     var pinnedHosts: [String] = []
     var focusSets: [FocusSet] = []
+    var investigationNoteScope: InvestigationNoteScope?
     var mutedHosts: Set<String> = []
     var mutedProtocols: Set<ProtocolKind> = []
     var hiddenSourceApps: Set<String> = []
@@ -125,10 +127,13 @@ final class ProjectRuntimeState {
     /// Load the preference-backed collections from this Project's own suite.
     func loadPreferenceBackedState() {
         pinnedHosts = settingsDefaults.stringArray(forKey: ProjectScopedSettingsKeys.pinnedHosts) ?? []
-        if let data = settingsDefaults.data(forKey: ProjectScopedSettingsKeys.focusSets),
-           let sets = try? JSONDecoder().decode([FocusSet].self, from: data)
-        {
-            focusSets = sets
+        if let data = settingsDefaults.data(forKey: ProjectScopedSettingsKeys.focusSets) {
+            if let sets = try? JSONDecoder().decode([FocusSet].self, from: data) {
+                focusSets = sets
+            } else {
+                UnreadableStoredValue.preserve(data, key: ProjectScopedSettingsKeys.focusSets, in: settingsDefaults)
+                focusSets = []
+            }
         } else {
             focusSets = []
         }

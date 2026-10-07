@@ -47,7 +47,8 @@ extension PacketDecoder {
     /// IEEE 802.1Q (C-VLAN) and 802.1ad (S-VLAN / QinQ) tag protocol identifiers.
     private static let vlanTagEtherTypes: Set<UInt16> = [0x8100, 0x88A8]
 
-    private static func ethernet(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
+    /// Internal so a tunnel (GRE transparent Ethernet, VXLAN) can decode its inner frame.
+    static func ethernet(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
         let dst = try mac(buf, 0)
         let src = try mac(buf, 6)
         var etherType = try buf.u16(12)

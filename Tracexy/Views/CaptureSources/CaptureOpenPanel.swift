@@ -28,6 +28,9 @@ final class CaptureOpenPanel: NSObject, NSOpenSavePanelDelegate {
     struct Choice {
         let url: URL
         let copiesIntoLibrary: Bool
+        /// Wireshark's read filter, as a Session Expression applied once the capture
+        /// has opened; `nil` when the field was left empty.
+        var expression: String?
     }
 
     /// Run the panel modally. Returns `nil` on Cancel.
@@ -55,10 +58,17 @@ final class CaptureOpenPanel: NSObject, NSOpenSavePanelDelegate {
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
         }
-        return Choice(url: url, copiesIntoLibrary: accessory.copiesIntoLibrary)
+        return Choice(url: url, copiesIntoLibrary: accessory.copiesIntoLibrary, expression: accessory.expression)
     }
 
     // MARK: NSOpenSavePanelDelegate
+
+    /// An expression that does not parse keeps the panel open, with the reason shown.
+    func panel(_ sender: Any, validate url: URL) throws {
+        if let reason = accessory.expressionError {
+            throw NSError(domain: "Tracexy", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
+        }
+    }
 
     func panelSelectionDidChange(_ sender: Any?) {
         guard let panel = sender as? NSOpenPanel else {
@@ -104,11 +114,11 @@ final class CaptureOpenPanel: NSObject, NSOpenSavePanelDelegate {
 /// Format / Size / Records / Start–elapsed rows plus the Library checkbox, laid out
 /// with `NSGridView` so every value is a labelled text field for VoiceOver.
 @MainActor
-final class CaptureOpenAccessoryView: NSView {
+final class CaptureOpenAccessoryView: NSView, NSTextFieldDelegate {
     // MARK: Lifecycle
 
     init(copiesIntoLibrary: Bool) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 128))
+        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 176))
         let rows: [(String, NSTextField)] = [
             (String(localized: "Format:"), formatField),
             (String(localized: "Size:"), sizeField),
@@ -123,6 +133,21 @@ final class CaptureOpenAccessoryView: NSView {
             field.setAccessibilityLabel(String(title.dropLast()))
             gridRows.append([label, field])
         }
+        // Wireshark's read filter, as a Session Expression the opened capture starts with.
+        expressionField.placeholderString = String(localized: "Optional, for example tcp and port == 443")
+        expressionField.setAccessibilityLabel(String(localized: "Session Expression"))
+        expressionField.delegate = self
+        expressionField.toolTip = String(
+            localized: "Open the capture already narrowed to the sessions this expression finds."
+        )
+        expressionErrorField.textColor = .systemRed
+        expressionErrorField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        expressionErrorField.lineBreakMode = .byTruncatingTail
+        let expressionLabel = NSTextField(labelWithString: String(localized: "Session Expression:"))
+        expressionLabel.alignment = .right
+        expressionLabel.textColor = .secondaryLabelColor
+        gridRows.append([expressionLabel, expressionField])
+        gridRows.append([NSGridCell.emptyContentView, expressionErrorField])
         let grid = NSGridView(views: gridRows)
         grid.rowSpacing = 4
         grid.columnSpacing = 8
@@ -158,6 +183,27 @@ final class CaptureOpenAccessoryView: NSView {
 
     var copiesIntoLibrary: Bool {
         checkbox.state == .on
+    }
+
+    /// The typed expression, or `nil` when the field is empty.
+    var expression: String? {
+        let text = expressionField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Why the typed expression does not parse, or `nil`.
+    var expressionError: String? {
+        guard let expression else {
+            return nil
+        }
+        do {
+            _ = try SessionQueryParser().parse(expression)
+            return nil
+        } catch let error as SessionQueryParseError {
+            return error.message
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     nonisolated static func formatText(_ preview: CapturePreview) -> String {
@@ -207,6 +253,10 @@ final class CaptureOpenAccessoryView: NSView {
         return days > 0 ? String(localized: "\(days) day(s) \(clock)") : clock
     }
 
+    func controlTextDidChange(_ notification: Notification) {
+        expressionErrorField.stringValue = expressionError ?? ""
+    }
+
     func showPending() {
         formatField.stringValue = String(localized: "Checking…")
         sizeField.stringValue = "—"
@@ -230,6 +280,8 @@ final class CaptureOpenAccessoryView: NSView {
     private let formatField = NSTextField(labelWithString: "—")
     private let sizeField = NSTextField(labelWithString: "—")
     private let timeField = NSTextField(labelWithString: "—")
+    private let expressionField = NSTextField(string: "")
+    private let expressionErrorField = NSTextField(labelWithString: "")
     private let checkbox = NSButton(
         checkboxWithTitle: String(localized: "Copy into Library"), target: nil, action: nil
     )

@@ -398,6 +398,55 @@ struct ReplayEquivalenceTests {
         #expect(Set(cTuples.map(\.id)).count == 2)
     }
 
+    // MARK: Segment-series cross-path equivalence
+
+    @Test
+    func tcpSegmentSeriesAgreeAcrossPathsAndProjectRealCharts() async throws {
+        let frames = ReplayCorpus.tcpConnectionCapturedFrames()
+        let batchFold = SessionBuilder.buildDetailed(from: frames, linkType: LinkType.ethernet)
+        let batch = SegmentSeriesSnapshot(batchFold.segmentSeries)
+
+        // Live, in varied batch groupings — chunking must not change the prefix.
+        let engine = LiveSessionEngine()
+        await engine.reset(epoch: 1)
+        for chunk in Self.variedChunks(frames) {
+            await engine.ingest(chunk, linkType: LinkType.ethernet, epoch: 1)
+        }
+        let live = try #require(await engine.detailedSnapshot(epoch: 1))
+        #expect(SegmentSeriesSnapshot(live.segmentSeries) == batch)
+
+        // Saved file over the same ordered frames — this is the wiring that carries
+        // the series from the loader through to the Details dock.
+        try ReplayCorpus.withTemporaryFile(ReplayCorpus.classicPcapBytes(ReplayCorpus.tcpConnectionFrames())) { url in
+            let result = try SavedCaptureStreamLoader(contentsOf: url).load()
+            #expect(SegmentSeriesSnapshot(result.segmentSeries) == batch)
+            // And through the snapshot the coordinator actually publishes.
+            let published = InvestigationSnapshot(
+                sessions: result.sessions,
+                connections: result.connections,
+                datagramEvidence: result.datagramEvidence,
+                tlsEvidence: result.tlsEvidence,
+                segmentSeries: result.segmentSeries,
+                connectionAnalysis: result.connectionAnalysis,
+                datagramAnalysis: result.datagramAnalysis,
+                tlsAnalysis: result.tlsAnalysis
+            )
+            #expect(SegmentSeriesSnapshot(published.segmentSeries) == batch)
+            #expect(SegmentSeriesSnapshot(published.replacingSessions(with: result.sessions).segmentSeries) == batch)
+        }
+
+        // Not vacuous: the corpus's first conversation projects a real chart whose
+        // numbers are arithmetic on its own steps (SYN at +1 s, SYN+ACK at +2 s).
+        let summary = try #require(batchFold.segmentSeries.summaries.first)
+        let health = TCPStreamHealth(summary: summary)
+        #expect(!health.isEmpty)
+        #expect(health.coverage.retainedSegmentCount == summary.observations.count)
+        #expect(health.coverage.omittedSegmentCount == 0)
+        let roundTrip = try #require(health.series(for: .roundTrip).first)
+        #expect(roundTrip.points.first?.value == 1)
+        #expect(health.availableKinds.contains(.sequence))
+    }
+
     @Test
     func forcedTinyConnectionBoundsAreDeterministicAcrossPaths() async throws {
         let config = ConnectionTable.Configuration(
@@ -757,7 +806,8 @@ struct ReplayEquivalenceTests {
                 sessions: result.sessions,
                 connections: result.connections,
                 datagramEvidence: result.datagramEvidence,
-                tlsEvidence: result.tlsEvidence
+                tlsEvidence: result.tlsEvidence,
+                segmentSeries: result.segmentSeries
             ))
             #expect(try QueryResultNorm(queryEngine.evaluate(query, over: savedSnapshot)) == batch)
         }

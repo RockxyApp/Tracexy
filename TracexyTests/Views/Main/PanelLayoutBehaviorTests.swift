@@ -193,7 +193,7 @@ struct PanelLayoutBehaviorTests {
         }
         return Environment(
             preferences: WorkspaceLayoutPreferences(defaults: defaults),
-            teardown: { defaults.removePersistentDomain(forName: suiteName) }
+            teardown: { TestPreferences.remove(suiteName) }
         )
     }
 }

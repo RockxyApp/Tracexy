@@ -276,6 +276,108 @@ struct TrafficTimelineTests {
         #expect(accumulator.foldSnapshot().trafficTimeline == .empty)
     }
 
+    @Test("A scoped series lands on the same columns and sums to the scope's session bytes")
+    func scopedSeriesMatchesSessions() throws {
+        func frame(_ src: String, _ dst: String, _ sport: UInt16, _ dport: UInt16, _ size: Int, at seconds: Double)
+            -> CapturedFrame
+        {
+            let bytes = PacketBuilder.ethernetIPv4(
+                proto: 6, src: src, dst: dst,
+                payload: PacketBuilder.tcp(
+                    srcPort: sport, dstPort: dport, flags: 0x18, payload: [UInt8](repeating: 1, count: size)
+                )
+            )
+            return CapturedFrame(bytes: bytes, timestamp: at(seconds), originalLength: bytes.count)
+        }
+        let frames = [
+            frame("10.0.0.5", "192.0.2.1", 50_000, 443, 10, at: 0.1),
+            frame("10.0.0.5", "192.0.2.2", 50_001, 443, 20, at: 0.5),
+            frame("192.0.2.1", "10.0.0.5", 443, 50_000, 30, at: 3.2),
+            frame("10.0.0.5", "192.0.2.2", 50_001, 443, 40, at: 5.9),
+        ]
+        let result = SessionBuilder.buildDetailed(from: frames, linkType: LinkType.ethernet)
+        let first = try #require(result.sessions.first { $0.destinationEndpoint.hasPrefix("192.0.2.1") })
+        let timeline = result.trafficTimeline
+        #expect(timeline.sessionSeriesComplete)
+
+        let all = timeline.points()
+        let scoped = timeline.points(scope: [first.id])
+        #expect(scoped.map(\.date) == all.map(\.date))
+        #expect(scoped.reduce(0) { $0 + $1.totals.bytes } == first.totalBytes)
+        // The scope never exceeds the capture-wide column it sits on.
+        #expect(zip(scoped, all).allSatisfy { $0.totals.bytes <= $1.totals.bytes })
+        // Both sessions together are every attributed byte.
+        let both = timeline.points(scope: Set(result.sessions.map(\.id)))
+        #expect(both.map(\.totals.bytes) == all.map(\.totals.bytes))
+        #expect(timeline.points(scope: []).allSatisfy { $0.totals.bytes == 0 })
+    }
+
+    @Test("Widening the slices merges each session's buckets without losing bytes")
+    func scopedSeriesSurvivesDoubling() {
+        var accumulator = TrafficTimelineAccumulator(maxBuckets: 4)
+        let session = UUID()
+        for second in 0 ..< 20 {
+            accumulator.add(
+                timestamp: at(Double(second)), originalLength: 10, direction: .sent,
+                sessionID: second.isMultiple(of: 2) ? session : nil
+            )
+        }
+        let timeline = accumulator.timeline()
+        #expect(timeline.bucketWidth > 1)
+        #expect(timeline.points(scope: [session]).reduce(0) { $0 + $1.totals.bytes } == 100)
+        #expect(timeline.points().reduce(0) { $0 + $1.totals.bytes } == 200)
+    }
+
+    @Test("The per-session bound is stated, and the capture-wide series stays exact")
+    func scopedSeriesBound() {
+        var accumulator = TrafficTimelineAccumulator(maxSessionEntries: 3)
+        for second in 0 ..< 5 {
+            accumulator.add(timestamp: at(Double(second)), originalLength: 10, direction: .sent, sessionID: UUID())
+        }
+        let timeline = accumulator.timeline()
+        #expect(!timeline.sessionSeriesComplete)
+        #expect(timeline.totals.bytes == 50)
+        accumulator.reset()
+        #expect(accumulator.timeline().sessionSeriesComplete)
+        #expect(accumulator.timeline() == .empty)
+    }
+
+    @Test("Every measure reads the same totals: bytes, packets per direction, and bits per second per column")
+    func measuresReadTheSameTotals() {
+        var accumulator = TrafficTimelineAccumulator()
+        accumulator.add(timestamp: at(0), originalLength: 1_000, direction: .sent)
+        accumulator.add(timestamp: at(0.5), originalLength: 500, direction: .received)
+        accumulator.add(timestamp: at(0.7), originalLength: 250, direction: .received)
+        accumulator.add(timestamp: at(0.8), originalLength: 60, direction: .unattributed)
+        let point = accumulator.timeline().points()[0]
+        #expect(point.totals.sentFrames == 1)
+        #expect(point.totals.receivedFrames == 2)
+        #expect(TrafficMeasure.bytes.value(of: point.totals, columnWidth: 1) == 1_810)
+        #expect(TrafficMeasure.packets.value(of: point.totals, columnWidth: 1) == 4)
+        #expect(TrafficMeasure.packets.value(of: point.totals, part: .received, columnWidth: 1) == 2)
+        #expect(TrafficMeasure.bitsPerSecond.value(of: point.totals, part: .sent, columnWidth: 2) == 4_000)
+        #expect(TrafficMeasure.bitsPerSecond.value(of: point.totals, columnWidth: 0) == 0)
+        // One decimal below 100 in the user's locale (4.0 or 4,0).
+        #expect(TrafficMeasure.bitRate(4_000) == "\(4.0.formatted(.number.precision(.fractionLength(1)))) kb/s")
+        #expect(TrafficMeasure.bitRate(950) == "950 b/s")
+        #expect(TrafficMeasure.bitRate(123_456_789) == "123 Mb/s")
+    }
+
+    @Test("A scoped series carries each session's packets as well as its bytes, through a width doubling")
+    func scopedSeriesCarriesPackets() {
+        var accumulator = TrafficTimelineAccumulator(maxBuckets: 4)
+        let session = UUID()
+        for second in 0 ..< 20 {
+            accumulator.add(
+                timestamp: at(Double(second)), originalLength: 10, direction: .sent,
+                sessionID: second.isMultiple(of: 2) ? session : nil
+            )
+        }
+        let scoped = accumulator.timeline().points(scope: [session])
+        #expect(scoped.reduce(0) { $0 + $1.totals.frames } == 10)
+        #expect(scoped.reduce(0) { $0 + $1.totals.bytes } == 100)
+    }
+
     // MARK: Private
 
     private func at(_ seconds: TimeInterval) -> Date {

@@ -61,6 +61,12 @@ struct SessionScopeReturnPoint: Equatable {
     /// Whether `workspace` already stands in exactly this scope, so a repeated or
     /// no-op drill-in records nothing.
     func matches(_ workspace: WorkspaceState) -> Bool {
+        matchesScope(workspace) && selectedSessionID == workspace.selectedSessionID
+    }
+
+    /// The same comparison without the selection: picking another row inside a
+    /// scope does not leave it.
+    func matchesScope(_ workspace: WorkspaceState) -> Bool {
         sidebarSelection == workspace.sidebarSelection
             && hostFilter == workspace.hostFilter
             && processFilter == workspace.processFilter
@@ -71,8 +77,20 @@ struct SessionScopeReturnPoint: Equatable {
             && categoryFilters == workspace.categoryFilters
             && isFilterBarVisible == workspace.isFilterBarVisible
             && isSearchEnabled == workspace.isSearchEnabled
-            && selectedSessionID == workspace.selectedSessionID
     }
+}
+
+// MARK: - SessionScopeForwardEntry
+
+/// One step Back to Previous Scope undid, kept so Forward can redo it.
+///
+/// `departure` is the scope Back restored. Forward is offered only while the
+/// workspace still stands in that scope (any row may be selected): once the user
+/// narrows or widens the list some other way, redoing an older drill-in would
+/// replace a scope they chose, so the forward history is dropped instead.
+struct SessionScopeForwardEntry: Equatable {
+    let target: SessionScopeReturnPoint
+    let departure: SessionScopeReturnPoint
 }
 
 // MARK: - SessionScopeReturnAction
@@ -90,6 +108,19 @@ enum SessionScopeReturnAction {
         narrowing, category filters and session selection that an explicit drill-in replaced. \
         Search text, advanced rules, the Investigation query, Noise Control and sessions removed \
         from view are not affected.
+        """
+    )
+}
+
+// MARK: - SessionScopeForwardAction
+
+/// Label/help for the redo of Back to Previous Scope.
+enum SessionScopeForwardAction {
+    static let title = String(localized: "Forward to Next Scope")
+    static let help = String(
+        localized: """
+        Reapplies the drill-down that Back to Previous Scope undid, with the session that was \
+        selected there. Available until you change the scope another way.
         """
     )
 }

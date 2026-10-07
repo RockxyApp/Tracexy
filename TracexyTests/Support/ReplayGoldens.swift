@@ -62,17 +62,22 @@ enum ReplayGoldens {
     /// reviewed, intentional decoder/session change and inspect the semantic diff.
     /// N2A adds only `dnsAnswersOmittedCount: 0` to each accepted corpus session.
     /// Removing those fields from the new canonical JSON reproduces the prior
-    /// `28faca25e43b5f55` pin exactly. N2D2 must not change this pin: moving TCP
+    /// `28faca25e43b5f55` pin exactly. The application probe must not change this pin: moving TCP
     /// first-record recovery into the connection table leaves every session summary
-    /// byte-for-byte identical.
-    static let conversationSnapshotDigest = "e387dbd25f5d81e7"
+    /// byte-for-byte identical. Byte-to-field linking adds the remaining fixed-header decode fields
+    /// (IPv4 Differentiated Services, Identification, Flags, Fragment Offset, Header
+    /// Checksum; TCP Ack, Header Length, Window, Checksum, Urgent Pointer; UDP Length,
+    /// Checksum) and widens TCP Flags to bytes 12–13; removing those fields and
+    /// restoring the one-byte Flags span reproduces the prior `e387dbd25f5d81e7` pin.
+    /// Checksum validation adds the ICMP Checksum field; removing it reproduces `63e7161c77a56283`.
+    static let conversationSnapshotDigest = "542f6cad06bb6a4a"
 
     /// FNV-1a-64 of the complete canonical *connection* JSON for the primary
-    /// conversation (N2D2). It is additive to `conversationSnapshotDigest` and
+    /// conversation. It is additive to `conversationSnapshotDigest` and
     /// covers the connection fold's application-event fields (`applicationKind`,
     /// `applicationComplete`) for the split-TLS connection.
     ///
-    /// Reviewed N2D2 baseline: the TLS availability event is intentionally
+    /// Reviewed baseline: the TLS availability event is intentionally
     /// incomplete on first recognition, while the HTTP event is complete.
     static let conversationConnectionDigest = "8a780bcf0a4b7885"
 

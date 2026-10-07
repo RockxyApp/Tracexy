@@ -1,6 +1,6 @@
 import Foundation
 
-// This file declares the frozen, pure value types for N3B3a — the Community-only
+// This file declares the frozen, pure value types for the Community-only
 // passive DNS/ICMP datagram analysis. It is observation-only *policy* over the
 // observation-only *evidence* the `DatagramEvidenceTable` fold already produced
 // (`DatagramEvidenceTable.Snapshot`). It derives nothing from a wall clock, retains
@@ -10,18 +10,52 @@ import Foundation
 // bytes, DNS transaction/name/answer, quoted ICMP body, decoded layer, path, URL,
 // endpoint role, UI copy, colour, symbol or product-policy concept.
 //
-// The only mapped, findable evidence is one neutral signal:
+// The mapped, findable evidence (including the DNS outcome family):
 //   a `.dns` observation whose `DNSMessageFacts.isTruncated` is set
 //        -> dnsTruncationIndicated (note)
-// This is the observed TC bit and nothing more. RFC 6762 uses TC on valid
-// multipacket mDNS queries, so even this one accepted signal is a neutral observed
-// indication — it never states the message, host, resolver or network failed.
+//   a standard-query (opcode 0) *response* whose RCODE is 3 (NXDOMAIN)
+//        -> dnsNameErrorObserved (note)
+//   a standard-query response whose RCODE is 2 (SERVFAIL) or 5 (REFUSED)
+//        -> dnsServerFailureObserved (warning)
+//   a standard, recursion-desired query transaction id seen at least twice in one
+//   flow with no response carrying that id, in a flow that omitted nothing and does
+//   not involve the mDNS/LLMNR ports
+//        -> dnsQueryUnansweredObserved (warning)
+//   an `.icmp` observation whose family/type is a destination-unreachable message
+//   (IPv4 type 3 except code 4, IPv6 type 1)
+//        -> icmpDestinationUnreachableObserved (warning)
+//   IPv4 type 3 code 4 (fragmentation needed) or IPv6 type 2 (packet too big)
+//        -> icmpPacketTooBigObserved (note)
+//   IPv4 type 11 or IPv6 type 3 (time exceeded)
+//        -> icmpTimeExceededObserved (note)
+//   any of the three above whose message quoted a complete TCP/UDP flow
+//        -> the same outcome reported a second time, on the *quoted* session
+//           (icmpUnreachableReportedForFlow / icmpPacketTooBigReportedForFlow /
+//            icmpTimeExceededReportedForFlow), citing the same ICMP frames
+// The three flow-level ICMP findings belong to the ICMP conversation that carried
+// the message. The three paired findings belong to the flow that message named, so
+// an investigator looking at the affected connection sees the error reported
+// against it. Their subjects differ, so neither supersedes the other, and a quoted
+// flow that was never captured simply has no session to present the paired finding
+// on — the flow-level finding still stands. The quoted flow is decoder-produced
+// typed identity (addresses, ports, transport); no quoted payload, sequence number
+// or identifier is retained or cited, and pairing never claims the quoted flow was
+// captured or that the error is its cause.
+// TC is the observed bit and nothing more: RFC 6762 uses TC on valid multipacket
+// mDNS queries, so it is a neutral observed indication. The RCODE findings state
+// only what the response header said; "unanswered" states only that no response was
+// *observed* for a retried id within this flow's retained evidence — never that no
+// answer existed. Findings cite provenance only; transaction ids, names and answers
+// are used for pairing inside `assess` and never leave it.
 //
 // Everything else is deliberately *not* a finding here:
-//   - every other DNS header combination (isResponse, opcode, responseCode/RCODE,
-//     the four section counts, any flag other than TC) maps to nothing;
-//   - every retained `.icmp` observation — for any family, type or code — maps to
-//     nothing, and only increments the snapshot's retained ICMP coverage count.
+//   - every other DNS header combination (other RCODEs, non-standard opcodes,
+//     section counts, any flag other than TC/QR/RD in the rules above) maps to nothing;
+//   - a single unretried query, or a retried one in a flow whose observations were
+//     bounded away, maps to nothing (fail closed);
+//   - every other retained `.icmp` type (echo, redirect, parameter problem, router
+//     and neighbour discovery, …) maps to nothing; every `.icmp` observation,
+//     mapped or not, increments the snapshot's retained ICMP coverage count.
 // TCP-DNS facts never reach this layer as observations at all; the table already
 // excluded and counted them, and that count is propagated as coverage only.
 
@@ -38,14 +72,52 @@ nonisolated enum DatagramAnalysisFindingKind: Hashable, Sendable {
     /// message (`DNSMessageFacts.isTruncated`). A neutral observed indication — never
     /// a claim that the message, host, resolver or network failed.
     case dnsTruncationIndicated
+    /// A standard-query response carried RCODE 3 (NXDOMAIN): the responder said the
+    /// name does not exist. Cites each such response. A note, because a missing name
+    /// is often expected (search-domain probes, negative caching).
+    case dnsNameErrorObserved
+    /// A standard-query response carried RCODE 2 (SERVFAIL) or 5 (REFUSED): the
+    /// responder could not or would not answer. Cites each such response.
+    case dnsServerFailureObserved
+    /// A recursion-desired standard query id was sent at least twice in this flow and
+    /// no response with that id was observed. Cites every retained query for the
+    /// unanswered ids, oldest first. Only emitted for flows that omitted nothing.
+    case dnsQueryUnansweredObserved
+    /// An ICMP destination-unreachable message was observed (IPv4 type 3 other than
+    /// code 4, IPv6 type 1). Cites each such message on the ICMP flow.
+    case icmpDestinationUnreachableObserved
+    /// A path-MTU signal was observed: IPv4 type 3 code 4 (fragmentation needed) or
+    /// IPv6 type 2 (packet too big). Cites each such message.
+    case icmpPacketTooBigObserved
+    /// An ICMP time-exceeded message was observed (IPv4 type 11, IPv6 type 3) — the
+    /// signature of a routing loop or a traceroute probe. Cites each such message.
+    case icmpTimeExceededObserved
+    /// A destination-unreachable message quoted *this* session's flow. Reported on
+    /// the quoted session, citing the ICMP frames that carried the message.
+    case icmpUnreachableReportedForFlow
+    /// A path-MTU message (fragmentation needed / packet too big) quoted this
+    /// session's flow.
+    case icmpPacketTooBigReportedForFlow
+    /// A time-exceeded message quoted this session's flow.
+    case icmpTimeExceededReportedForFlow
 
     // MARK: Internal
 
-    /// The fixed severity for this kind. The one datagram signal is always a `note`:
-    /// a benign-but-notable observation, never a `warning` and never an escalation.
+    /// The fixed severity for this kind. Truncation, a name error, a path-MTU signal
+    /// and time exceeded are `note`s; a server failure, an unanswered retried query
+    /// and destination unreachable are `warning`s.
     var severity: AnalysisSeverity {
         switch self {
-        case .dnsTruncationIndicated: .note
+        case .dnsTruncationIndicated,
+             .dnsNameErrorObserved,
+             .icmpPacketTooBigObserved,
+             .icmpTimeExceededObserved,
+             .icmpPacketTooBigReportedForFlow,
+             .icmpTimeExceededReportedForFlow: .note
+        case .dnsServerFailureObserved,
+             .dnsQueryUnansweredObserved,
+             .icmpDestinationUnreachableObserved,
+             .icmpUnreachableReportedForFlow: .warning
         }
     }
 
@@ -54,6 +126,15 @@ nonisolated enum DatagramAnalysisFindingKind: Hashable, Sendable {
     var rank: Int {
         switch self {
         case .dnsTruncationIndicated: 0
+        case .dnsServerFailureObserved: 1
+        case .dnsQueryUnansweredObserved: 2
+        case .dnsNameErrorObserved: 3
+        case .icmpUnreachableReportedForFlow: 4
+        case .icmpDestinationUnreachableObserved: 5
+        case .icmpPacketTooBigReportedForFlow: 6
+        case .icmpPacketTooBigObserved: 7
+        case .icmpTimeExceededReportedForFlow: 8
+        case .icmpTimeExceededObserved: 9
         }
     }
 
@@ -64,6 +145,15 @@ nonisolated enum DatagramAnalysisFindingKind: Hashable, Sendable {
     var stableDiscriminator: String {
         switch self {
         case .dnsTruncationIndicated: "dnsTruncationIndicated"
+        case .dnsNameErrorObserved: "dnsNameErrorObserved"
+        case .dnsServerFailureObserved: "dnsServerFailureObserved"
+        case .dnsQueryUnansweredObserved: "dnsQueryUnansweredObserved"
+        case .icmpDestinationUnreachableObserved: "icmpDestinationUnreachableObserved"
+        case .icmpPacketTooBigObserved: "icmpPacketTooBigObserved"
+        case .icmpTimeExceededObserved: "icmpTimeExceededObserved"
+        case .icmpUnreachableReportedForFlow: "icmpUnreachableReportedForFlow"
+        case .icmpPacketTooBigReportedForFlow: "icmpPacketTooBigReportedForFlow"
+        case .icmpTimeExceededReportedForFlow: "icmpTimeExceededReportedForFlow"
         }
     }
 }
@@ -71,9 +161,12 @@ nonisolated enum DatagramAnalysisFindingKind: Hashable, Sendable {
 // MARK: - DatagramAnalysisCitation
 
 /// One retained piece of evidence behind a datagram finding. It cites the
-/// tuple-derived session id, the canonical direction the datagram travelled, and the
-/// exactly-one existing `SessionFrameProvenance` the source observation carried —
-/// nothing more. It copies no DNS facts, names, answers, transaction ids or strings;
+/// tuple-derived session id *of the flow the cited frame belongs to*, the canonical
+/// direction the datagram travelled within that flow, and the exactly-one existing
+/// `SessionFrameProvenance` the source observation carried — nothing more. For every
+/// finding except the paired ICMP ones this is the finding's own session; for a
+/// paired finding it is the ICMP conversation that carried the message, which is
+/// where the frame truthfully lives. It copies no DNS facts, names, answers, transaction ids or strings;
 /// the fact that mapped (the TC bit) is fully captured by the finding's kind.
 nonisolated struct DatagramAnalysisCitation: Hashable, Sendable {
     let sessionID: UUID
@@ -227,33 +320,69 @@ nonisolated struct DatagramAssessor: Hashable, Sendable {
         var groups: [GroupKey: GroupState] = [:]
         for summary in snapshot.summaries {
             let coverage = Self.coverage(for: summary)
+            /// Append one observation to the group for `kind` on a named session.
+            /// `sessionID`/`tuple` are the *subject* of the finding, which is the
+            /// observation's own flow for every rule except the paired ICMP ones,
+            /// where the subject is the flow the error message quoted.
+            func append(
+                _ observation: DatagramEvidenceObservation,
+                to kind: DatagramAnalysisFindingKind,
+                subject: (sessionID: UUID, tuple: FiveTuple)? = nil
+            ) {
+                let sessionID = subject?.sessionID ?? observation.sessionID
+                let tuple = subject?.tuple ?? observation.tuple
+                let key = GroupKey(sessionID: sessionID, kind: kind)
+                if groups[key] == nil {
+                    groups[key] = GroupState(
+                        sessionID: sessionID,
+                        tuple: tuple,
+                        kind: kind,
+                        coverage: coverage
+                    )
+                }
+                groups[key]?.observations.append(observation)
+            }
             for observation in summary.observations {
                 switch observation.kind {
                 case let .dns(facts):
-                    // The sole mapping: the TC bit was set. Nothing else about the
-                    // DNS header — response/query, opcode, RCODE, counts, other flags
-                    // — is inspected or mapped.
-                    guard facts.isTruncated else {
-                        continue
+                    // Per-observation header mappings. Each is independent: a truncated
+                    // SERVFAIL response contributes to both findings.
+                    if facts.isTruncated {
+                        append(observation, to: .dnsTruncationIndicated)
                     }
-                    let kind = DatagramAnalysisFindingKind.dnsTruncationIndicated
-                    let key = GroupKey(sessionID: observation.sessionID, kind: kind)
-                    if groups[key] == nil {
-                        groups[key] = GroupState(
-                            sessionID: observation.sessionID,
-                            tuple: observation.tuple,
-                            kind: kind,
-                            coverage: coverage
+                    if let outcome = Self.responseOutcome(facts) {
+                        append(observation, to: outcome)
+                    }
+                case let .icmp(facts):
+                    // Family/type/code. The three error families map onto the ICMP
+                    // flow that carried the message; everything else is coverage only.
+                    if let kind = Self.icmpOutcome(facts) {
+                        append(observation, to: kind)
+                    }
+                    // When the message quoted a complete TCP/UDP flow, the same
+                    // message is *additionally* reported on that quoted session under
+                    // its own paired kind. The two findings have different subjects —
+                    // the conversation that carried the message, and the flow the
+                    // message was about — so neither supersedes the other. A quoted
+                    // flow that was never captured simply has no session to present
+                    // the paired finding on; the flow-level finding still stands.
+                    if let quoted = facts.quotedFlow, let paired = Self.pairedICMPOutcome(facts) {
+                        let tuple = quoted.tuple
+                        append(
+                            observation, to: paired,
+                            subject: (SessionBuilder.sessionID(for: tuple), tuple)
                         )
                     }
-                    groups[key]?.observations.append(observation)
-                case .icmp:
-                    // Family/type/code without quoted inner payload, role or pairing
-                    // is useful evidence but never a fault attribution here.
                     let counted = Self.saturatingAdd(retainedICMP, 1)
                     retainedICMP = counted.value
                     countersOverflowed = countersOverflowed || counted.overflowed
                 }
+            }
+            // Flow-level pairing: retried recursion-desired query ids with no observed
+            // response. Transaction ids are compared here and discarded; only the
+            // queries' provenance reaches the finding.
+            for observation in Self.unansweredQueries(in: summary) {
+                append(observation, to: .dnsQueryUnansweredObserved)
             }
         }
 
@@ -269,7 +398,7 @@ nonisolated struct DatagramAssessor: Hashable, Sendable {
             for (index, observation) in ordered.enumerated() {
                 if index < cap {
                     citations.append(DatagramAnalysisCitation(
-                        sessionID: group.sessionID,
+                        sessionID: observation.sessionID,
                         direction: observation.direction,
                         provenance: observation.provenance
                     ))
@@ -338,6 +467,84 @@ nonisolated struct DatagramAssessor: Hashable, Sendable {
         let kind: DatagramAnalysisFindingKind
         let coverage: AnalysisCoverage
         var observations: [DatagramEvidenceObservation] = []
+    }
+
+    /// Ports whose DNS-shaped traffic is multicast/link-local name resolution
+    /// (mDNS 5353, LLMNR 5355). Responses there arrive on other tuples, so an
+    /// "unanswered" pairing inside one flow would be meaningless.
+    private static let multicastNamePorts: Set<UInt16> = [5_353, 5_355]
+
+    /// The per-response outcome mapping: only a standard-query (opcode 0) *response*
+    /// maps, and only for RCODE 3 (name error) or RCODE 2/5 (server failure or
+    /// refused). Queries, other opcodes and every other RCODE map to nothing.
+    private static func responseOutcome(_ facts: DNSMessageFacts) -> DatagramAnalysisFindingKind? {
+        guard facts.isResponse, facts.opcode == 0 else {
+            return nil
+        }
+        switch facts.responseCode {
+        case 3: return .dnsNameErrorObserved
+        case 2,
+             5: return .dnsServerFailureObserved
+        default: return nil
+        }
+    }
+
+    /// The per-message ICMP mapping by family and type. Only the three error
+    /// families map; codes are not interpreted except to split IPv4 type 3 code 4
+    /// (fragmentation needed) into the path-MTU kind.
+    private static func icmpOutcome(_ facts: ICMPMessageFacts) -> DatagramAnalysisFindingKind? {
+        switch (facts.family, facts.type, facts.code) {
+        case (.ipv4, 3, 4),
+             (.ipv6, 2, _): .icmpPacketTooBigObserved
+        case (.ipv4, 3, _),
+             (.ipv6, 1, _): .icmpDestinationUnreachableObserved
+        case (.ipv4, 11, _),
+             (.ipv6, 3, _): .icmpTimeExceededObserved
+        default: nil
+        }
+    }
+
+    /// The paired mapping for the same message, used only when the message quoted a
+    /// complete TCP/UDP flow. It mirrors ``icmpOutcome(_:)`` exactly — same families,
+    /// same split of IPv4 type 3 code 4 — so a message can never report one thing on
+    /// its own flow and a different thing on the flow it quoted.
+    private static func pairedICMPOutcome(_ facts: ICMPMessageFacts) -> DatagramAnalysisFindingKind? {
+        switch icmpOutcome(facts) {
+        case .icmpDestinationUnreachableObserved: .icmpUnreachableReportedForFlow
+        case .icmpPacketTooBigObserved: .icmpPacketTooBigReportedForFlow
+        case .icmpTimeExceededObserved: .icmpTimeExceededReportedForFlow
+        default: nil
+        }
+    }
+
+    /// The retained standard, recursion-desired queries whose transaction id appears
+    /// at least twice in this flow and never on a response. Fails closed: a flow that
+    /// omitted any observation, or that involves a multicast name-resolution port,
+    /// yields nothing, because the missing answer could be among the omitted frames
+    /// or on another tuple.
+    private static func unansweredQueries(in summary: DatagramEvidenceSummary) -> [DatagramEvidenceObservation] {
+        guard summary.omittedObservationCount == 0,
+              !multicastNamePorts.contains(summary.tuple.a.port),
+              !multicastNamePorts.contains(summary.tuple.b.port) else
+        {
+            return []
+        }
+        var queriesByID: [UInt16: [DatagramEvidenceObservation]] = [:]
+        var answeredIDs: Set<UInt16> = []
+        for observation in summary.observations {
+            guard case let .dns(facts) = observation.kind, facts.opcode == 0 else {
+                continue
+            }
+            if facts.isResponse {
+                answeredIDs.insert(facts.transactionID)
+            } else if facts.recursionDesired {
+                queriesByID[facts.transactionID, default: []].append(observation)
+            }
+        }
+        return queriesByID
+            .filter { id, queries in queries.count >= 2 && !answeredIDs.contains(id) }
+            .values
+            .flatMap { $0 }
     }
 
     /// Session-level coverage with the documented strict precedence: reported loss,

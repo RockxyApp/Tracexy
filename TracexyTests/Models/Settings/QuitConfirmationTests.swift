@@ -11,7 +11,7 @@ struct QuitConfirmationTests {
     func capturingAsksUnlessOptedOut() throws {
         let suite = "tracexy.quit-confirmation.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
 
         #expect(AppDelegate.shouldConfirmQuit(isCapturing: true, defaults: defaults))
         defaults.set(false, forKey: SettingsKeys.confirmQuitWhileCapturing)
@@ -24,7 +24,7 @@ struct QuitConfirmationTests {
     func idleNeverAsks() throws {
         let suite = "tracexy.quit-confirmation.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { TestPreferences.remove(suite) }
         defaults.set(true, forKey: SettingsKeys.confirmQuitWhileCapturing)
         #expect(!AppDelegate.shouldConfirmQuit(isCapturing: false, defaults: defaults))
     }

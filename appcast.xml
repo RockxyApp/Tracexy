@@ -6,6 +6,22 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.8.1</title>
+            <pubDate>Tue, 22 Sep 2026 08:41:06 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.8.1</sparkle:fullReleaseNotesLink>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>0.8.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.8.1 (build 14)
+
+## Fixed
+
+- Preserve approved helper updates
+- Restore idle exit timer delivery
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.8.1/Tracexy-0.8.1-14.dmg" length="11038282" type="application/octet-stream" sparkle:edSignature="R+4TyGwxIDMnQx1/m5uUW/GPZX7aKp8jB0Hdn92gFqjLFYzjxmF6ydmn9l73VWhNC2Ro11/usmWVQN2KpbmIBg=="/>
+        </item>
+        <item>
             <title>0.8.0</title>
             <pubDate>Mon, 21 Sep 2026 08:33:22 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
@@ -66,31 +82,6 @@
 - Reorganize the native toolbar so Project selection, capture source, and Start/Stop controls remain distinct and easier to follow.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.7.0/Tracexy-0.7.0-12.dmg" length="9115968" type="application/octet-stream" sparkle:edSignature="cF2GjosQk+wI+KZMUsc4cCBD4RNFulbztp0RLxG3RO7khvL4UOY+bdCXLx9c9/YF9EshfPmnEjr2irm9bBFdCA=="/>
-        </item>
-        <item>
-            <title>0.6.0</title>
-            <pubDate>Wed, 02 Sep 2026 12:04:26 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.6.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>11</sparkle:version>
-            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.6.0 (build 11)
-
-## Added
-
-- Navigate retained connection and TLS evidence to the exact cited local frame.
-- Open the selected session in an auxiliary Inspector window that follows the workspace selection.
-
-## Changed
-
-- Refine session controls, status, and inspector layout for a clearer native Liquid Glass workspace.
-
-## Fixed
-
-- Enforce the selected automatic History retention at launch, after a capture is stored, and when the setting changes.
-- Remove duplicated workspace chrome and correct session-control and footer alignment.
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.6.0/Tracexy-0.6.0-11.dmg" length="8070542" type="application/octet-stream" sparkle:edSignature="7/+7V7aLiOqJscoxLmj6aSBmBd8QR8EPGM5vqqtJMD3//xSUh+0uveud3UHHLPcb3C8tymatEaRZ7mwEQN7UAQ=="/>
         </item>
     </channel>
 </rss>

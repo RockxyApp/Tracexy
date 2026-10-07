@@ -115,12 +115,42 @@ struct SessionQueryParserTests {
     @Test("Finding values map to the existing typed projection and reject unknown names")
     func findingValues() throws {
         let expected: [String: QueryFindingKind] = [
+            "connectionRefused": .connectionRefused,
+            "handshakeUnanswered": .handshakeUnanswered,
+            "abortAfterData": .abortAfterData,
+            "halfClose": .halfClose,
+            "tupleReuse": .tupleReuse,
             "reset": .reset,
             "retransmission": .retransmission,
             "overlap": .overlap,
             "outOfOrder": .outOfOrder,
+            "zeroWindow": .zeroWindow,
+            "windowFull": .windowFull,
+            "duplicateAck": .duplicateAck,
+            "keepAlive": .keepAlive,
+            "fastRetransmission": .fastRetransmission,
+            "spuriousRetransmission": .spuriousRetransmission,
+            "ackedUnseen": .ackedUnseen,
+            "cleartextCredentials": .cleartextCredentials,
             "dnsTruncation": .dnsTruncation,
+            "dnsNameError": .dnsNameError,
+            "dnsServerFailure": .dnsServerFailure,
+            "dnsUnanswered": .dnsUnanswered,
+            "icmpUnreachable": .icmpUnreachable,
+            "icmpPacketTooBig": .icmpPacketTooBig,
+            "icmpTimeExceeded": .icmpTimeExceeded,
+            "icmpReportedUnreachable": .icmpReportedUnreachable,
+            "icmpReportedPacketTooBig": .icmpReportedPacketTooBig,
+            "icmpReportedTimeExceeded": .icmpReportedTimeExceeded,
+            "tlsFatalAlert": .tlsFatalAlert,
+            "tlsWarningAlert": .tlsWarningAlert,
+            "tlsDeprecatedVersion": .tlsDeprecatedVersion,
+            "tlsRepeatedRetryRequest": .tlsRepeatedRetryRequest,
+            "tlsHandshakeUnanswered": .tlsHandshakeUnanswered,
         ]
+        // Every projected kind must be spellable, or a finding would exist with no
+        // way to query it.
+        #expect(Set(expected.values) == Set(QueryFindingKind.allCases))
         for (name, kind) in expected {
             #expect(try parser.parse("finding == \(name)") == .leaf(.findingKind(kind)))
         }
@@ -158,15 +188,18 @@ struct SessionQueryParserTests {
     }
 
     @Test("Inequality, regular expressions and arithmetic are refused explicitly")
-    func unsupportedOperatorsRejected() {
+    func unsupportedOperatorsRejected() throws {
         expectFailure("port != 443", .unsupportedOperator("!="), at: 6)
+        // `matches` is a whole-value wildcard, not a regular expression: a
+        // regex-looking pattern is only literal text with `*`/`?` wildcards.
+        #expect(try parser.parse("host matches \"a.*\"") == .leaf(.hostMatches("a.*")))
         expectFailure(
-            "host matches \"a.*\"",
-            .operatorNotSupportedForField(field: "host", operatorText: "matches"),
-            at: 6
+            "bytes matches \"1\"",
+            .operatorNotSupportedForField(field: "bytes", operatorText: "matches"),
+            at: 7
         )
         expectFailure("host ~ \"a.*\"", .unsupportedOperator("~"), at: 6)
-        expectFailure("bytes == 1 + 2", .unsupportedOperator("+"), at: 12)
+        expectFailure("port == 1 + 2", .unsupportedOperator("+"), at: 11)
         expectFailure("port = 443", .unsupportedOperator("="), at: 6)
         expectFailure("tcp & udp", .unsupportedOperator("&"), at: 5)
         expectFailure("tcp | udp", .unsupportedOperator("|"), at: 5)
@@ -351,7 +384,8 @@ struct SessionQueryParserTests {
                 sessions: sessions,
                 connections: .empty,
                 datagramEvidence: .empty,
-                tlsEvidence: .empty
+                tlsEvidence: .empty,
+                segmentSeries: .empty
             ),
             connectionAssessor: ConnectionAssessor(),
             datagramAssessor: DatagramAssessor()

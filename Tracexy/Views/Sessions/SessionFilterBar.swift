@@ -72,7 +72,7 @@ struct SessionFilterBar: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     private var maxRules: Int {
-        coordinator.policy.maxSessionFilterRules
+        coordinator.sessionFilterRuleLimit
     }
 
     // MARK: Category pills
@@ -357,7 +357,7 @@ struct SessionFilterBar: View {
         .controlSize(.small)
         .disabled(disabled)
         .help(disabled
-            ? "Filter limit reached — this build allows \(maxRules) rules"
+            ? "Filter limit reached — up to \(maxRules) rules per workspace"
             : "Add a field to the advanced filter")
         .accessibilityLabel("Add field")
     }

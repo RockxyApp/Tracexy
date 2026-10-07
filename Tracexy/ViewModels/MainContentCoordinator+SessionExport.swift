@@ -62,6 +62,7 @@ extension MainContentCoordinator {
         // or another capture generation's source.
         let originProjectID = activeRuntime.projectID
         let originGeneration = startGeneration
+        let notes = format == .session ? exportedNotes(for: session) : []
 
         Task { @MainActor [weak self] in
             guard let self else {
@@ -79,7 +80,8 @@ extension MainContentCoordinator {
                         frames: capture.frames,
                         defaultLinkType: capture.linkType,
                         format: format,
-                        privacy: exportPrivacy
+                        privacy: exportPrivacy,
+                        notes: notes
                     )
                 }.value
                 let panel = NSSavePanel()
@@ -94,6 +96,9 @@ extension MainContentCoordinator {
                 panel.allowedContentTypes = [artifact.contentType]
                 panel.canCreateDirectories = true
                 panel.isExtensionHidden = false
+                if !notes.isEmpty {
+                    panel.message = "Includes your notes on this session, exactly as written."
+                }
                 guard panel.runModal() == .OK, let url = panel.url else {
                     return
                 }

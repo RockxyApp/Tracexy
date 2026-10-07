@@ -44,7 +44,7 @@ struct StructuredFilterBar: View {
     private static let viewportMaxHeight: CGFloat = 240
 
     private var maxRules: Int {
-        coordinator.policy.maxSessionFilterRules
+        coordinator.sessionFilterRuleLimit
     }
 
     /// The rows, wrapped in a bounded scroll viewport once they pass the cap so
@@ -207,7 +207,7 @@ struct StructuredFilterBar: View {
         .controlSize(.small)
         .disabled(atCap)
         .help(atCap
-            ? "Filter limit reached — this build allows \(maxRules) rules"
+            ? "Filter limit reached — up to \(maxRules) rules per workspace"
             : "Add a rule below this one")
         .accessibilityLabel("Add rule")
     }

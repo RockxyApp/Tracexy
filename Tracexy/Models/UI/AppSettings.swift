@@ -17,11 +17,26 @@ enum SettingsKeys {
     static let restoreWorkspace = key("settings.restoreWorkspace")
 
     static let defaultInterface = key("settings.defaultInterface")
+    /// Capture ▸ Manage Interfaces: hidden interfaces, friendly names and comments
+    /// (JSON `InterfaceSettings`). App-wide: an interface belongs to this Mac.
+    static let interfaceSettings = key("settings.interfaces")
     static let autoStartCapture = key("settings.autoStartCapture")
     static let captureFilterMode = key("settings.captureFilterMode")
     static let bpfExpression = key("settings.bpfExpression")
+    /// Named capture filters saved in this Project (JSON `[SavedCaptureFilter]`).
+    static let savedCaptureFilters = key("settings.savedCaptureFilters")
     static let snapLength = key("settings.snapLength")
     static let promiscuous = key("settings.promiscuous")
+    /// Stop a live capture after this many minutes (0 = never).
+    static let autoStopMinutes = key("settings.autoStopMinutes")
+    /// Stop a live capture after this many accepted packets (0 = never).
+    static let autoStopPackets = key("settings.autoStopPackets")
+    /// Save a live capture as a file set: a new file after this many MB (0 = off).
+    static let fileSetMegabytes = key("settings.fileSetMegabytes")
+    /// Save a live capture as a file set: a new file after this many minutes (0 = off).
+    static let fileSetMinutes = key("settings.fileSetMinutes")
+    /// Keep only this many newest file-set files (0 = keep every file).
+    static let fileSetKeep = key("settings.fileSetKeep")
     static let retainPackets = key("settings.retainPackets")
 
     static let redactBodies = key("settings.redactBodies")
@@ -82,6 +97,43 @@ enum ProjectScopedSettingsKeys {
 
     static let pinnedHosts = key("pinnedHosts")
     static let focusSets = key("focusSets")
+    /// Investigation notes on sessions and findings, keyed by capture content.
+    static let investigationNotes = key("investigation.notes")
+    static let sessionTags = key("investigation.sessionTags")
+    static let recentSessionExpressions = key("investigation.recentExpressions")
+    static let savedSessionExpressions = key("investigation.savedExpressions")
+    /// One-click filter buttons shown under the toolbar (JSON `[FilterButton]`).
+    static let filterButtons = key("investigation.filterButtons.v1")
+    /// Named expression macros (JSON `[ExpressionMacro]`).
+    static let expressionMacros = key("investigation.expressionMacros.v1")
+    /// Bookmarks of the GeoIP/ASN database files the Project uses, in lookup order.
+    static let geoIPDatabases = key("enrichment.geoipDatabases.v1")
+    /// The Sessions table's shown/hidden columns and their order (JSON `TableColumnCustomization`).
+    static let sessionTableColumns = key("workspace.sessionTableColumns")
+    /// Names the investigator gave to addresses (JSON `[address: name]`).
+    static let addressNames = key("names.addresses")
+    /// Names the investigator gave to IPv4 blocks (JSON `[cidr: name]`).
+    static let subnetNames = key("names.subnets")
+    /// Where each capture file was left: selection and session expression (JSON).
+    static let investigationViewStates = key("investigation.viewStates")
+    /// View ▸ Session Time: how the Sessions table shows start times.
+    static let sessionTimeFormat = key("workspace.sessionTimeFormat")
+    /// View ▸ Frame Time: how frame lists show each frame's time.
+    static let frameTimeFormat = key("workspace.frameTimeFormat")
+    /// View ▸ Validate Checksums: note each header checksum's status in the decode tree.
+    static let validateChecksums = key("packetDetail.validateChecksums")
+    /// View ▸ Zoom In / Out: points added to packet text (hex, decode tree, streams).
+    static let packetTextZoom = key("packetDetail.textZoom")
+    /// The bytes pane's Show as: `hex` or `bits`.
+    static let byteDumpStyle = key("packetDetail.byteDumpStyle")
+    /// View ▸ Name Resolution ▸ Resolve Network Addresses in frame lists.
+    static let resolveNetworkAddresses = key("packetDetail.resolveNetworkAddresses")
+    /// Apply as Column: the decode-tree fields View ▸ All Frames shows as columns.
+    static let frameColumns = key("packetDetail.frameColumns")
+    /// Capture ▸ Decode As…: port → protocol rules (JSON `[DecodeAsRule]`).
+    static let decodeAsRules = key("decode.asRules")
+    /// Analyze ▸ Enabled Protocols: the protocols switched off (`ProtocolKind` raw values).
+    static let disabledProtocols = key("decode.disabledProtocols")
     static let mutedHosts = key("noise.mutedHosts")
     static let mutedProtocols = key("noise.mutedProtocols")
     static let hiddenSourceApps = key("sources.hiddenApps")
@@ -317,7 +369,13 @@ enum CaptureSettingsResolver {
     /// settings change since the last capture takes effect at the next start.
     /// `defaults` is injectable so the whole mapping is testable without touching
     /// the shared store.
-    static func configuration(interface: String, defaults: UserDefaults = .standard) -> CaptureConfiguration {
+    static func configuration(
+        interface: String,
+        defaults: UserDefaults = .standard,
+        optimizeBPF: Bool = true
+    )
+        -> CaptureConfiguration
+    {
         CaptureConfiguration(
             interface: interface,
             snapLength: resolvedSnapLength(defaults.integer(forKey: SettingsKeys.snapLength)),
@@ -325,7 +383,8 @@ enum CaptureSettingsResolver {
             bpf: resolvedBPF(
                 filterMode: defaults.string(forKey: SettingsKeys.captureFilterMode) ?? CaptureFilterMode.all.rawValue,
                 expression: defaults.string(forKey: SettingsKeys.bpfExpression) ?? ""
-            )
+            ),
+            optimizeBPF: optimizeBPF
         )
     }
 

@@ -93,8 +93,8 @@ struct IPPayloadBoundsTests {
         #expect(!packet.layers.contains { $0.proto == .udp })
     }
 
-    @Test("The first IPv4 fragment still decodes its transport header")
-    func firstIPv4FragmentDecodesTransport() {
+    @Test("The first IPv4 fragment stops at the IP layer; its datagram is decoded once rebuilt")
+    func firstIPv4FragmentStopsAtIP() {
         let datagram = PacketBuilder.udp(srcPort: 53, dstPort: 40_000, payload: [1, 2, 3, 4])
         var frame = PacketBuilder.ethernetIPv4(proto: 17, src: "10.0.0.1", dst: "10.0.0.2", payload: datagram)
         frame[20] = 0x20
@@ -102,8 +102,8 @@ struct IPPayloadBoundsTests {
         let packet = decode(frame)
         let ip = packet.layers.first { $0.proto == .ipv4 }
         #expect(ip?.fields.contains { $0.name == "Fragment" && $0.value == "offset 0, more fragments" } == true)
-        #expect(packet.fiveTuple?.proto == .udp)
-        #expect(packet.sourceEndpoint?.port == 53)
+        #expect(packet.fiveTuple == nil)
+        #expect(packet.ipFragment?.offset == 0 && packet.ipFragment?.moreFragments == true)
     }
 
     @Test("Ethernet padding after an IPv6 TCP segment is not TCP payload")
@@ -134,8 +134,8 @@ struct IPPayloadBoundsTests {
         #expect(packet.fiveTuple == nil)
     }
 
-    @Test("The first IPv6 fragment still decodes its transport header")
-    func firstIPv6FragmentDecodesTransport() {
+    @Test("The first IPv6 fragment stops at the IP layer; its datagram is decoded once rebuilt")
+    func firstIPv6FragmentStopsAtIP() {
         let fragmentHeader: [UInt8] = [17, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01] // offset 0, M=1
         let datagram = PacketBuilder.udp(srcPort: 53, dstPort: 40_000, payload: [1, 2, 3, 4])
         let frame = PacketBuilder.ethernetIPv6(
@@ -143,8 +143,8 @@ struct IPPayloadBoundsTests {
             payload: fragmentHeader + datagram
         )
         let packet = decode(frame)
-        #expect(packet.fiveTuple?.proto == .udp)
-        #expect(packet.sourceEndpoint?.port == 53)
+        #expect(packet.fiveTuple == nil)
+        #expect(packet.ipFragment?.version == .v6 && packet.ipFragment?.identification == 1)
     }
 
     // MARK: Private

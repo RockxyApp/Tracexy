@@ -1,6 +1,6 @@
 import Foundation
 
-// This file declares the frozen, pure value types for N3D1b — the Community-only
+// This file declares the frozen, pure value types for the Community-only
 // bounded typed investigation query engine. It is a new representation over the
 // already-produced, immutable ``InvestigationSnapshot`` (its sessions plus the two
 // passive analyses); it decodes nothing, retains no bytes, touches no `@MainActor`,
@@ -30,11 +30,31 @@ nonisolated enum EndpointScope: Hashable, Sendable {
 
 // MARK: - QueryFindingKind
 
-/// The neutral five-case projection a query matches against: the four accepted TCP
-/// connection observations plus the single accepted DNS truncation indication. It is
-/// deliberately its own vocabulary, disjoint from the analysis layers' internal
-/// finding-kind enums, so a query never depends on their identity or ordering.
+/// The neutral projection a query matches against: the five TCP lifecycle findings
+/// (refused, unanswered, aborted after data, half-close, tuple reuse), the four
+/// accepted TCP sequence observations, the four TCP flow-control observations (zero
+/// window, window full, duplicate ACK, keep-alive), the four UDP-DNS outcome
+/// indications (truncation, name error, server failure, unanswered retried query),
+/// the three ICMP messages on the flow that carried them, the same three reported
+/// against the TCP/UDP flow the message quoted, and the five TLS observations
+/// (fatal alert, warning alert, deprecated selected version, repeated retry request,
+/// unanswered ClientHello). It is deliberately its own
+/// vocabulary, disjoint from the analysis layers' internal finding-kind enums, so a
+/// query never depends on their identity or ordering.
 nonisolated enum QueryFindingKind: Hashable, Sendable, CaseIterable {
+    /// The responder answered the observed SYN with a reset
+    /// (`ConnectionAnalysisFindingKind.connectionRefusedObserved`).
+    case connectionRefused
+    /// A retried SYN never observed a SYN+ACK
+    /// (`ConnectionAnalysisFindingKind.handshakeUnansweredObserved`).
+    case handshakeUnanswered
+    /// Payload was observed and a reset followed it (`.abortAfterDataObserved`).
+    case abortAfterData
+    /// A FIN in one direction was followed by payload from the peer
+    /// (`.halfCloseObserved`).
+    case halfClose
+    /// A conflicting SYN arrived before any terminal (`.tupleReuseObserved`).
+    case tupleReuse
     /// A reset was observed (`ConnectionAnalysisFindingKind.resetObserved`).
     case reset
     /// One or more retransmissions were observed (`.retransmissionObserved`).
@@ -43,9 +63,62 @@ nonisolated enum QueryFindingKind: Hashable, Sendable, CaseIterable {
     case overlap
     /// One or more out-of-order segments were observed (`.outOfOrderObserved`).
     case outOfOrder
+    /// A zero receive window was advertised or probed (`.zeroWindowObserved`).
+    case zeroWindow
+    /// A data segment filled the peer's receive window (`.windowFullObserved`).
+    case windowFull
+    /// One or more duplicate acknowledgements were observed
+    /// (`.duplicateAcknowledgementObserved`).
+    case duplicateAck
+    /// One or more keep-alive probes were observed (`.keepAliveObserved`).
+    case keepAlive
+    /// A segment was re-sent after repeated duplicate acknowledgements
+    /// (`.fastRetransmissionObserved`).
+    case fastRetransmission
+    /// Already-acknowledged bytes were re-sent (`.spuriousRetransmissionObserved`).
+    case spuriousRetransmission
+    /// A side acknowledged bytes the capture never saw (`.ackedUnseenSegmentObserved`).
+    case ackedUnseen
+    /// A login secret was sent unencrypted (`.cleartextCredentialsObserved`).
+    case cleartextCredentials
     /// The DNS TC (truncation) bit was observed set on a UDP-DNS message
     /// (`DatagramAnalysisFindingKind.dnsTruncationIndicated`).
     case dnsTruncation
+    /// A DNS response carried RCODE 3 (`.dnsNameErrorObserved`).
+    case dnsNameError
+    /// A DNS response carried RCODE 2 or 5 (`.dnsServerFailureObserved`).
+    case dnsServerFailure
+    /// A retried DNS query id observed no response (`.dnsQueryUnansweredObserved`).
+    case dnsUnanswered
+    /// An ICMP destination-unreachable message (`.icmpDestinationUnreachableObserved`).
+    case icmpUnreachable
+    /// An ICMP fragmentation-needed / packet-too-big message (`.icmpPacketTooBigObserved`).
+    case icmpPacketTooBig
+    /// An ICMP time-exceeded message (`.icmpTimeExceededObserved`).
+    case icmpTimeExceeded
+    /// A destination-unreachable message quoted this session's flow
+    /// (`.icmpUnreachableReportedForFlow`).
+    case icmpReportedUnreachable
+    /// A packet-too-big message quoted this session's flow
+    /// (`.icmpPacketTooBigReportedForFlow`).
+    case icmpReportedPacketTooBig
+    /// A time-exceeded message quoted this session's flow
+    /// (`.icmpTimeExceededReportedForFlow`).
+    case icmpReportedTimeExceeded
+    /// A plaintext TLS alert carried the fatal level (`.tlsFatalAlertObserved`).
+    case tlsFatalAlert
+    /// A plaintext TLS alert carried the warning level and was not an orderly
+    /// shutdown (`.tlsWarningAlertObserved`).
+    case tlsWarningAlert
+    /// A complete ServerHello selected a version below TLS 1.2
+    /// (`.tlsDeprecatedVersionSelectedObserved`).
+    case tlsDeprecatedVersion
+    /// More than one HelloRetryRequest was observed in one direction
+    /// (`.tlsRepeatedHelloRetryRequestObserved`).
+    case tlsRepeatedRetryRequest
+    /// A ClientHello was observed with no reply of any kind
+    /// (`.tlsHandshakeUnansweredObserved`).
+    case tlsHandshakeUnanswered
 }
 
 // MARK: - QueryEvidenceField
@@ -79,6 +152,10 @@ nonisolated enum QueryPredicate: Hashable, Sendable {
     case processContains(String)
     /// Case-insensitive substring over the resolved display host.
     case hostContains(String)
+    /// Case-insensitive whole-value wildcard (`*`, `?`) over the process name.
+    case processMatches(String)
+    /// Case-insensitive whole-value wildcard (`*`, `?`) over the display host.
+    case hostMatches(String)
     /// Exact binary IP equality within a scope, parsed from `IPEndpoint.ip`.
     case ipEquals(IPAddressValue, scope: EndpointScope)
     /// Binary CIDR containment within a scope, parsed from `IPEndpoint.ip`.
@@ -97,6 +174,28 @@ nonisolated enum QueryPredicate: Hashable, Sendable {
     case totalBytesInRange(lower: Int, upper: Int)
     /// Typed optional session/finding presence (see ``QueryEvidenceField``).
     case hasEvidence(QueryEvidenceField)
+    /// An HTTP/1 request with this method was counted in the session (exact token).
+    case httpMethodEquals(String)
+    /// An HTTP/1 response with a status code in this closed range was counted.
+    case httpStatusInRange(lower: Int, upper: Int)
+    /// A DHCP message of this type (case-insensitive, e.g. `Discover`) was counted.
+    case dhcpMessageEquals(String)
+    /// Closed session-duration range in seconds; an unknown duration is undecidable.
+    case durationInRange(lower: TimeInterval, upper: TimeInterval)
+    /// Closed measured-latency range in milliseconds; an unmeasured latency is
+    /// undecidable.
+    case latencyInRange(lower: Double, upper: Double)
+    /// The investigator put this color tag on the session (see ``SessionTag``).
+    case tagEquals(String)
+    /// The session's client and/or server Ethernet address (from its representative
+    /// frame), as `aa:bb:cc:dd:ee:ff`.
+    case macEquals(String, scope: EndpointScope)
+    /// TCP completeness (Wireshark's `tcp.completeness`): an exact bit value, or
+    /// the complete / incomplete verdict. A session that is not TCP never matches.
+    case tcpCompleteness(TCPCompletenessMatch)
+    /// A session measure against a whole-number expression that may read other
+    /// measures (`bytes.received >= {10 * bytes.sent}`).
+    case numericCompare(QueryNumericComparison)
 }
 
 // MARK: - InvestigationQuery
@@ -111,6 +210,27 @@ nonisolated indirect enum InvestigationQuery: Hashable, Sendable {
     case leaf(QueryPredicate)
 }
 
+// MARK: - TCPCompletenessMatch
+
+/// What a `tcp.completeness` term asks for.
+nonisolated enum TCPCompletenessMatch: Hashable, Sendable {
+    /// Exactly these stages, as Wireshark's number (0...63).
+    case value(UInt8)
+    /// The handshake and a FIN or RST were seen (Wireshark's "Complete").
+    case complete
+    case incomplete
+
+    // MARK: Internal
+
+    func matches(_ completeness: TCPCompleteness) -> Bool {
+        switch self {
+        case let .value(raw): completeness.rawValue == raw
+        case .complete: completeness.isComplete
+        case .incomplete: !completeness.isComplete
+        }
+    }
+}
+
 // MARK: - CompiledPredicate
 
 /// A validated leaf: text operands are normalized once, range operands are closed and
@@ -119,6 +239,8 @@ nonisolated indirect enum InvestigationQuery: Hashable, Sendable {
 nonisolated enum CompiledPredicate: Hashable, Sendable {
     case processContains(String)
     case hostContains(String)
+    case processMatches(WildcardPattern)
+    case hostMatches(WildcardPattern)
     case ipEquals(IPAddressValue, scope: EndpointScope)
     case cidrContains(CIDRValue, scope: EndpointScope)
     case portInRange(ClosedRange<UInt16>, scope: EndpointScope)
@@ -127,6 +249,15 @@ nonisolated enum CompiledPredicate: Hashable, Sendable {
     case findingKind(QueryFindingKind)
     case startDateInRange(ClosedRange<Date>)
     case totalBytesInRange(ClosedRange<Int>)
+    case httpMethodEquals(String)
+    case httpStatusInRange(ClosedRange<Int>)
+    case dhcpMessageEquals(String)
+    case durationInRange(ClosedRange<TimeInterval>)
+    case latencyInRange(ClosedRange<Double>)
+    case tagEquals(String)
+    case macEquals(String, scope: EndpointScope)
+    case tcpCompleteness(TCPCompletenessMatch)
+    case numericCompare(QueryNumericComparison)
     case hasEvidence(QueryEvidenceField)
 
     // MARK: Internal
@@ -145,7 +276,8 @@ nonisolated enum CompiledPredicate: Hashable, Sendable {
     /// disclose unknown-timing coverage. Only the start-date range does.
     var readsCaptureTime: Bool {
         switch self {
-        case .startDateInRange: true
+        case .startDateInRange,
+             .durationInRange: true
         default: false
         }
     }
@@ -207,6 +339,8 @@ nonisolated enum QueryValidationError: Error, Hashable, Sendable {
     case negativeByteBound
     /// A date-range operand carried a non-finite endpoint.
     case nonFiniteDate
+    /// A numeric comparison's arithmetic held more than its node ceiling.
+    case arithmeticTooLarge(limit: Int)
 }
 
 // MARK: - QueryTruth
@@ -236,6 +370,12 @@ nonisolated enum QueryCoverageReason: Hashable, Sendable, CaseIterable {
     case datagramObservationOmission
     /// Datagram findings or their citations were dropped to honor a bound.
     case datagramFindingOmission
+    /// TLS records were omitted to a bound, a reassembled record was excluded from
+    /// retention, a frame's decode hit the record cap, or a TLS-bearing frame was
+    /// captured shorter than its original on-wire length.
+    case tlsObservationOmission
+    /// TLS findings or their citations were dropped to honor a bound.
+    case tlsFindingOmission
     /// TCP-DNS facts were deliberately excluded from datagram retention.
     case excludedTCPDNSInput
     /// A datagram evidence bound rejected at least one fact.
@@ -330,6 +470,10 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         let maxTextUTF8Bytes: Int
     }
 
+    /// The investigator's session tags for the evaluation in progress, by session.
+    /// Bound by the caller around ``evaluate(_:over:isCancelled:)``.
+    @TaskLocal static var sessionTags: [UUID: Set<String>] = [:]
+
     /// The fixed locale used for case-insensitive folding. `en_US_POSIX` makes folding
     /// deterministic and locale-independent. Folding performs no IDN/Punycode
     /// normalization: a host operand is compared as its raw scalars, case-folded only.
@@ -344,6 +488,53 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: .caseInsensitive, locale: foldingLocale)
+    }
+
+    static func projected(_ kind: ConnectionAnalysisFindingKind) -> QueryFindingKind {
+        switch kind {
+        case .connectionRefusedObserved: .connectionRefused
+        case .handshakeUnansweredObserved: .handshakeUnanswered
+        case .abortAfterDataObserved: .abortAfterData
+        case .halfCloseObserved: .halfClose
+        case .tupleReuseObserved: .tupleReuse
+        case .resetObserved: .reset
+        case .retransmissionObserved: .retransmission
+        case .overlapObserved: .overlap
+        case .outOfOrderObserved: .outOfOrder
+        case .zeroWindowObserved: .zeroWindow
+        case .windowFullObserved: .windowFull
+        case .duplicateAcknowledgementObserved: .duplicateAck
+        case .keepAliveObserved: .keepAlive
+        case .fastRetransmissionObserved: .fastRetransmission
+        case .spuriousRetransmissionObserved: .spuriousRetransmission
+        case .ackedUnseenSegmentObserved: .ackedUnseen
+        case .cleartextCredentialsObserved: .cleartextCredentials
+        }
+    }
+
+    static func projected(_ kind: DatagramAnalysisFindingKind) -> QueryFindingKind {
+        switch kind {
+        case .dnsTruncationIndicated: .dnsTruncation
+        case .dnsNameErrorObserved: .dnsNameError
+        case .dnsServerFailureObserved: .dnsServerFailure
+        case .dnsQueryUnansweredObserved: .dnsUnanswered
+        case .icmpDestinationUnreachableObserved: .icmpUnreachable
+        case .icmpPacketTooBigObserved: .icmpPacketTooBig
+        case .icmpTimeExceededObserved: .icmpTimeExceeded
+        case .icmpUnreachableReportedForFlow: .icmpReportedUnreachable
+        case .icmpPacketTooBigReportedForFlow: .icmpReportedPacketTooBig
+        case .icmpTimeExceededReportedForFlow: .icmpReportedTimeExceeded
+        }
+    }
+
+    static func projected(_ kind: TLSAnalysisFindingKind) -> QueryFindingKind {
+        switch kind {
+        case .tlsFatalAlertObserved: .tlsFatalAlert
+        case .tlsWarningAlertObserved: .tlsWarningAlert
+        case .tlsDeprecatedVersionSelectedObserved: .tlsDeprecatedVersion
+        case .tlsRepeatedHelloRetryRequestObserved: .tlsRepeatedRetryRequest
+        case .tlsHandshakeUnansweredObserved: .tlsHandshakeUnanswered
+        }
     }
 
     /// Validate and normalize a preconstructed query. Throws the first
@@ -479,6 +670,10 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             boolean(substringMatch(needle, in: session.processName))
         case let .hostContains(needle):
             boolean(substringMatch(needle, in: session.host))
+        case let .processMatches(pattern):
+            boolean(wildcardMatch(pattern, in: session.processName))
+        case let .hostMatches(pattern):
+            boolean(wildcardMatch(pattern, in: session.host))
         case let .ipEquals(value, scope):
             boolean(endpoints(scope, of: session).contains {
                 IPAddressValue(parsing: $0.ip) == value
@@ -507,7 +702,50 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             evaluateTotalBytes(range, session: session)
         case let .hasEvidence(field):
             evaluateEvidence(field, session: session, membership: membership)
+        case let .httpMethodEquals(method):
+            tallyTruth(session.messageTally.httpRequests[method] != nil, tally: session.messageTally)
+        case let .httpStatusInRange(range):
+            tallyTruth(
+                session.messageTally.httpResponses.keys.contains { range.contains($0) },
+                tally: session.messageTally
+            )
+        case let .durationInRange(range):
+            session.duration.map { boolean(range.contains($0)) } ?? .indeterminate
+        case let .latencyInRange(range):
+            session.latencyMilliseconds.map { boolean(range.contains($0)) } ?? .indeterminate
+        case let .tagEquals(tag):
+            // Tags are the investigator's own labels: known exactly, never undecidable.
+            boolean(Self.sessionTags[session.id]?.contains(tag) == true)
+        case let .tcpCompleteness(match):
+            // The stages are what the fold saw; a stage the capture missed is absent,
+            // which is exactly what the value says, so the answer is never undecided.
+            boolean(session.protocolStack.contains(.tcp) && match.matches(session.tcpCompleteness))
+        case let .macEquals(mac, scope):
+            // A session without an Ethernet header has no MAC to match.
+            boolean(session.macAddresses.map { pair in
+                switch scope {
+                case .source: pair.client == mac
+                case .destination: pair.server == mac
+                case .either: pair.client == mac || pair.server == mac
+                }
+            } ?? false)
+        case let .numericCompare(comparison):
+            comparison.truth(for: session)
+        case let .dhcpMessageEquals(kind):
+            tallyTruth(
+                session.messageTally.dhcpMessages.keys.contains { $0.caseInsensitiveCompare(kind) == .orderedSame },
+                tally: session.messageTally
+            )
         }
+    }
+
+    /// A counted message is a match. A missing one is a known no-match unless the
+    /// session's bounded tally dropped messages, when it may have been among them.
+    private static func tallyTruth(_ found: Bool, tally: SessionMessageTally) -> QueryTruth {
+        if found {
+            return .match
+        }
+        return tally.omitted > 0 ? .indeterminate : .noMatch
     }
 
     /// Three-valued finding-kind test: a retained finding is a match; an absent but
@@ -530,13 +768,47 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
     /// apply only to a TCP stack; DNS truncation applies only to a UDP-DNS stack.
     private static func applies(_ kind: QueryFindingKind, to session: SessionSummary) -> Bool {
         switch kind {
-        case .reset,
+        case .connectionRefused,
+             .handshakeUnanswered,
+             .abortAfterData,
+             .halfClose,
+             .tupleReuse,
+             .reset,
              .retransmission,
              .overlap,
-             .outOfOrder:
+             .outOfOrder,
+             .zeroWindow,
+             .windowFull,
+             .duplicateAck,
+             .keepAlive,
+             .fastRetransmission,
+             .spuriousRetransmission,
+             .ackedUnseen,
+             .cleartextCredentials:
             session.protocolStack.contains(.tcp)
-        case .dnsTruncation:
+        case .dnsTruncation,
+             .dnsNameError,
+             .dnsServerFailure,
+             .dnsUnanswered:
             session.protocolStack.contains(.udp) && session.protocolStack.contains(.dns)
+        case .icmpUnreachable,
+             .icmpPacketTooBig,
+             .icmpTimeExceeded:
+            session.protocolStack.contains(.icmp) || session.protocolStack.contains(.icmpv6)
+        case .icmpReportedUnreachable,
+             .icmpReportedPacketTooBig,
+             .icmpReportedTimeExceeded:
+            // The quoted flow is always TCP or UDP — the decoder retains no other
+            // quotation — so an ICMP or ARP session can never carry these.
+            session.protocolStack.contains(.tcp) || session.protocolStack.contains(.udp)
+        case .tlsFatalAlert,
+             .tlsWarningAlert,
+             .tlsDeprecatedVersion,
+             .tlsRepeatedRetryRequest,
+             .tlsHandshakeUnanswered:
+            // TLS records are only retained for a flow whose stack the fold already
+            // recognized as carrying them.
+            session.protocolStack.contains(.tls)
         }
     }
 
@@ -621,6 +893,14 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         return normalizeText(haystack).contains(needle)
     }
 
+    /// An absent or empty value never matches, exactly as for a substring test.
+    private static func wildcardMatch(_ pattern: WildcardPattern, in value: String?) -> Bool {
+        guard let value, !value.isEmpty else {
+            return false
+        }
+        return pattern.matches(normalizeText(value))
+    }
+
     /// The typed endpoints a scope reads, dropping any absent projection. A missing or
     /// unexpectedly invalid typed endpoint contributes nothing (no rendered fallback).
     private static func endpoints(_ scope: EndpointScope, of session: SessionSummary) -> [IPEndpoint] {
@@ -652,22 +932,10 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         for finding in snapshot.datagramAnalysis.findings {
             membership[finding.sessionID, default: []].insert(projected(finding.kind))
         }
+        for finding in snapshot.tlsAnalysis.findings {
+            membership[finding.sessionID, default: []].insert(projected(finding.kind))
+        }
         return membership
-    }
-
-    private static func projected(_ kind: ConnectionAnalysisFindingKind) -> QueryFindingKind {
-        switch kind {
-        case .resetObserved: .reset
-        case .retransmissionObserved: .retransmission
-        case .overlapObserved: .overlap
-        case .outOfOrderObserved: .outOfOrder
-        }
-    }
-
-    private static func projected(_ kind: DatagramAnalysisFindingKind) -> QueryFindingKind {
-        switch kind {
-        case .dnsTruncationIndicated: .dnsTruncation
-        }
     }
 
     /// Derive the coverage summary from current snapshot facts. Each reason is a real
@@ -678,6 +946,8 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         let connectionAnalysis = snapshot.connectionAnalysis
         let datagramEvidence = snapshot.datagramEvidence
         let datagramAnalysis = snapshot.datagramAnalysis
+        let tlsEvidence = snapshot.tlsEvidence
+        let tlsAnalysis = snapshot.tlsAnalysis
         var reasons: Set<QueryCoverageReason> = []
 
         if connections.omittedSummaryCount > 0 {
@@ -710,13 +980,28 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
         if datagramAnalysis.excludedTCPDNSFactCount > 0 {
             reasons.insert(.excludedTCPDNSInput)
         }
-        if datagramAnalysis.inputCapacityReached || datagramEvidence.capacityReached {
+        if tlsAnalysis.inputOmittedObservationCount > 0
+            || tlsAnalysis.excludedReassembledRecordCount > 0
+            || tlsAnalysis.decoderTruncatedFrameCount > 0
+            || tlsEvidence.summaries.contains(where: \.snapLengthTruncationObserved)
+        {
+            reasons.insert(.tlsObservationOmission)
+        }
+        if tlsAnalysis.omittedFindingCount > 0
+            || tlsAnalysis.findings.contains(where: { $0.omittedCitationCount > 0 })
+        {
+            reasons.insert(.tlsFindingOmission)
+        }
+        if datagramAnalysis.inputCapacityReached
+            || datagramEvidence.capacityReached
+            || tlsEvidence.capacityReached
+        {
             reasons.insert(.capacityReached)
         }
-        if anyLoss(connections, datagramEvidence, is: .lossReported) {
+        if anyLoss(connections, datagramEvidence, tlsEvidence, is: .lossReported) {
             reasons.insert(.captureLossReported)
         }
-        if anyLoss(connections, datagramEvidence, is: .unknown) {
+        if anyLoss(connections, datagramEvidence, tlsEvidence, is: .unknown) {
             reasons.insert(.captureLossUnknown)
         }
         if connections.countersOverflowed
@@ -724,22 +1009,26 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             || connections.summaries.contains(where: { $0.limitations.contains(.counterOverflow) })
             || datagramEvidence.countersOverflowed
             || datagramAnalysis.countersOverflowed
+            || tlsEvidence.countersOverflowed
+            || tlsAnalysis.countersOverflowed
         {
             reasons.insert(.counterOverflow)
         }
         return QueryCoverageSummary(reasons: reasons)
     }
 
-    /// Whether any connection or datagram summary carries a given loss knowledge.
+    /// Whether any connection, datagram or TLS summary carries a given loss knowledge.
     private static func anyLoss(
         _ connections: ConnectionTable.Snapshot,
         _ datagramEvidence: DatagramEvidenceTable.Snapshot,
+        _ tlsEvidence: TLSEvidenceTable.Snapshot,
         is knowledge: CaptureLossKnowledge
     )
         -> Bool
     {
         connections.summaries.contains { $0.lossKnowledge == knowledge }
             || datagramEvidence.summaries.contains { $0.lossKnowledge == knowledge }
+            || tlsEvidence.summaries.contains { $0.lossKnowledge == knowledge }
     }
 
     private func compileNode(
@@ -795,6 +1084,10 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             return try .processContains(normalizedOperand(raw))
         case let .hostContains(raw):
             return try .hostContains(normalizedOperand(raw))
+        case let .processMatches(raw):
+            return try .processMatches(WildcardPattern(normalized: normalizedOperand(raw)))
+        case let .hostMatches(raw):
+            return try .hostMatches(WildcardPattern(normalized: normalizedOperand(raw)))
         case let .ipEquals(value, scope):
             return .ipEquals(value, scope: scope)
         case let .cidrContains(value, scope):
@@ -830,6 +1123,53 @@ nonisolated struct InvestigationQueryEngine: Hashable, Sendable {
             return .totalBytesInRange(lower ... upper)
         case let .hasEvidence(field):
             return .hasEvidence(field)
+        case let .httpMethodEquals(raw):
+            let method = try normalizedOperand(raw).uppercased()
+            guard SessionMessageTally.httpMethod(fromRequestLine: method + " ") != nil else {
+                throw QueryValidationError.emptyText
+            }
+            return .httpMethodEquals(method)
+        case let .httpStatusInRange(lower, upper):
+            guard lower <= upper else {
+                throw QueryValidationError.reversedRange
+            }
+            return .httpStatusInRange(max(100, lower) ... min(599, max(upper, 100)))
+        case let .dhcpMessageEquals(raw):
+            return try .dhcpMessageEquals(normalizedOperand(raw))
+        case let .tcpCompleteness(match):
+            return .tcpCompleteness(match)
+        case let .durationInRange(lower, upper):
+            guard lower.isFinite, upper.isFinite, lower >= 0 else {
+                throw QueryValidationError.nonFiniteDate
+            }
+            guard lower <= upper else {
+                throw QueryValidationError.reversedRange
+            }
+            return .durationInRange(lower ... upper)
+        case let .latencyInRange(lower, upper):
+            guard lower.isFinite, upper.isFinite, lower >= 0 else {
+                throw QueryValidationError.nonFiniteDate
+            }
+            guard lower <= upper else {
+                throw QueryValidationError.reversedRange
+            }
+            return .latencyInRange(lower ... upper)
+        case let .macEquals(raw, scope):
+            guard let mac = try SessionSummary.normalizedMAC(normalizedOperand(raw)) else {
+                throw QueryValidationError.emptyText
+            }
+            return .macEquals(mac, scope: scope)
+        case let .numericCompare(comparison):
+            guard comparison.value.nodeCount <= QueryNumericComparison.maximumNodes else {
+                throw QueryValidationError.arithmeticTooLarge(limit: QueryNumericComparison.maximumNodes)
+            }
+            return .numericCompare(comparison)
+        case let .tagEquals(raw):
+            let tag = try normalizedOperand(raw).lowercased()
+            guard SessionTag(rawValue: tag) != nil else {
+                throw QueryValidationError.emptyText
+            }
+            return .tagEquals(tag)
         }
     }
 

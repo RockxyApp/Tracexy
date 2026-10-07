@@ -91,7 +91,14 @@ struct InspectorView: View {
 
     @State private var fieldQuery = ""
     @State private var selectedRange: Range<Int>?
-    @State private var followStreamDisplayMode: FollowStreamDisplayMode = .text
+    /// Bumped when a click in the bytes picks a field, so the tree scrolls to it
+    /// (a click in the tree itself leaves the tree where it is).
+    @State private var byteRevealToken = 0
+    @State private var hoveredByte: Int?
+    /// Decode-tree layers folded shut, by title, for the whole inspector.
+    @State private var collapsedLayers: Set<String> = []
+    /// The decode tree takes the arrow keys once a row in it is clicked.
+    @FocusState private var isLayerTreeFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     private var selectedEvidence: SessionEvidenceSelection? {
@@ -119,6 +126,14 @@ struct InspectorView: View {
         return true
     }
 
+    /// The bytes panes' Show as, kept per Project.
+    private var dumpStyleBinding: Binding<ByteDumpStyle> {
+        Binding(
+            get: { coordinator.packetDetailOptions.byteDumpStyle },
+            set: { coordinator.packetDetailOptions.byteDumpStyle = $0 }
+        )
+    }
+
     private var citedFrameScopeRow: some View {
         HStack(spacing: Theme.Metrics.spacingS) {
             Image(systemName: "scope")
@@ -136,7 +151,7 @@ struct InspectorView: View {
                 Text("Cited frame \(evidence.provenance.ordinal.rawValue.formatted())")
                     .font(Theme.Typography.captionMedium)
                     .accessibilityIdentifier("evidence.citedFrameLoaded")
-                Text("· \(evidence.bytes.count.formatted()) captured bytes")
+                Text("\(evidence.bytes.count.formatted()) bytes captured")
                     .foregroundStyle(.secondary)
             case let .failed(message):
                 Text(message)
@@ -178,42 +193,6 @@ struct InspectorView: View {
         .padding(.horizontal, 8).padding(.vertical, 5)
         .tracexyContentSurface(in: Capsule(style: .continuous))
         .frame(minWidth: 180, idealWidth: 240, maxWidth: 280)
-    }
-
-    private var followStreamLoading: some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            if let fraction = coordinator.followStreamFraction {
-                ProgressView(value: fraction)
-                    .accessibilityLabel("Following TCP stream")
-                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            HStack {
-                if let progress = coordinator.followStreamProgress {
-                    Text(
-                        "Scanned \(progress.bytesConsumed.formatted()) of "
-                            + "\(progress.totalBytes.formatted()) bytes"
-                    )
-                    .font(Theme.Typography.monoSmall)
-                    .foregroundStyle(.secondary)
-                } else {
-                    Text("Preparing stable local source…")
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel") {
-                    coordinator.cancelFollowStream(clearResult: true)
-                }
-                .controlSize(.small)
-            }
-        }
-        .padding(Theme.Metrics.spacingM)
-        .tracexyContentSurface(
-            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
-        )
     }
 
     private var footerDivider: some View {
@@ -355,7 +334,7 @@ struct InspectorView: View {
                 Text(activeTab.title)
                     .font(Theme.Typography.chromeAction)
                 footerDivider
-                Text(session.protocolStack.map(\.label).joined(separator: " · "))
+                Text(session.protocolStack.map(\.label).joined(separator: " › "))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: Theme.Metrics.spacingL)
@@ -394,7 +373,10 @@ struct InspectorView: View {
     /// the horizontal space deliberately.
     @ViewBuilder
     private func layersInspector(_ session: SessionSummary) -> some View {
-        let sourceLayers = selectedCitedFrame?.layers ?? session.decodedLayers
+        let decoded = inspectedLayers(session)
+        // An installed locator (none by default) adds where the addresses are.
+        let sourceLayers = decoded.isEmpty
+            ? decoded : decoded + (AddressLocators.installed?.inspectorLayers(for: session) ?? [])
         let layers = filterLayers(sourceLayers, query: fieldQuery)
         if case .loading = coordinator.citedFrame.state {
             ProgressView("Loading cited frame…")
@@ -420,16 +402,37 @@ struct InspectorView: View {
                 layerTree(layers)
                 hexPane(session)
             }
+            .environment(\.packetTextZoom, coordinator.packetDetailOptions.textZoom)
+            .environment(\.byteDumpStyle, coordinator.packetDetailOptions.byteDumpStyle)
         }
     }
 
     private func layerTree(_ layers: [DecodedLayer]) -> some View {
-        ScrollView {
-            DecodedLayerTree(layers: layers, selectedRange: selectedRange) { range in
-                selectedRange = (range == selectedRange) ? nil : range
+        ScrollViewReader { proxy in
+            ScrollView {
+                DecodedLayerTree(
+                    layers: layers, selectedRange: selectedRange, collapsed: $collapsedLayers,
+                    onSelect: { range in
+                        isLayerTreeFocused = true
+                        selectedRange = (range == selectedRange) ? nil : range
+                    },
+                    onFilter: { coordinator.filterSessions(with: $0, combination: $1, applying: $2) },
+                    columnOptions: coordinator.packetDetailOptions
+                )
+                .padding(Theme.Metrics.spacingL)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(Theme.Metrics.spacingL)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .focusable()
+            .focused($isLayerTreeFocused)
+            .focusEffectDisabled()
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+                navigate(press, layers: layers)
+            }
+            .onChange(of: byteRevealToken) {
+                if let selectedRange {
+                    proxy.scrollTo(DecodedLayerTree.rowID(selectedRange), anchor: .center)
+                }
+            }
         }
     }
 
@@ -438,9 +441,39 @@ struct InspectorView: View {
         let bytes = evidenceBytes(for: session)
         if !bytes.isEmpty {
             ScrollView {
-                HexDumpView(bytes: bytes, highlight: selectedRange)
-                    .padding(Theme.Metrics.spacingL)
+                PacketBytesPane(
+                    bytes: bytes, highlight: selectedRange, onShowBytes: { showBytes($0, of: session) },
+                    layers: inspectedLayers(session),
+                    onSelectRange: { range in
+                        // Unfold the layers above the picked field so the tree can show it.
+                        if let owner = DecodedByteMap.owner(ofByte: range.lowerBound, in: inspectedLayers(session)) {
+                            collapsedLayers.subtract(owner.path)
+                        }
+                        selectedRange = range
+                        byteRevealToken &+= 1
+                    },
+                    onHoverByte: { hoveredByte = $0 },
+                    dumpStyle: dumpStyleBinding
+                )
+                .padding(Theme.Metrics.spacingL)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .overlay(alignment: .bottom) {
+                // Shown only while the pointer is on a byte, over the dump's bottom
+                // edge, so it takes no room from the rows and stays in view as they scroll.
+                if let hoveredByte {
+                    Text(DecodedByteMap.pointerText(
+                        forByte: hoveredByte, in: inspectedLayers(session)
+                    ))
+                    .font(Theme.Typography.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Theme.Metrics.spacingL)
+                    .padding(.vertical, Theme.Metrics.spacingS)
+                    .background(.bar)
+                    .allowsHitTesting(false)
+                }
             }
             .frame(minWidth: 280)
         } else if coordinator.isLoadingSelectedSessionEvidence {
@@ -463,12 +496,21 @@ struct InspectorView: View {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
         case .evidence: sessionEvidence(session)
+        case .ladder:
+            if let selection = selectedEvidence {
+                SessionLadderView(ladder: SessionLadder.build(selection)) { provenance in
+                    coordinator.inspectCitedFrame(sessionID: session.id, provenance: provenance)
+                    selectedRange = nil
+                }
+            } else {
+                placeholder("No retained evidence to draw for this session.")
+            }
         case .frames: SessionFramesFacetView(
                 coordinator: coordinator,
                 session: session,
                 selectedOrdinal: selectedCitedFrame?.provenance.ordinal.rawValue
             )
-        case .stream: followStream(session)
+        case .stream: FollowConversationView(coordinator: coordinator, session: session)
         case .requests: requests(session)
         case .payload: payload(session)
         case .hex: rawEvidence(session)
@@ -513,174 +555,6 @@ struct InspectorView: View {
         } else {
             placeholder("No retained connection or direct-frame TLS evidence is available for this session.")
         }
-    }
-
-    // MARK: Follow Stream
-
-    /// Explicit, local-only TCP stream reconstruction. Merely selecting the tab
-    /// never scans a capture or retains application bytes; the button is the user
-    /// action that activates the bounded coordinator workflow.
-    private func followStream(_ session: SessionSummary) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            HStack(alignment: .center, spacing: Theme.Metrics.spacingM) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Follow TCP Stream")
-                        .font(Theme.Typography.bodyEmphasis)
-                    Text("Reads this local capture on demand. Nothing is sent or exported.")
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: Theme.Metrics.spacingM)
-                Picker("Display", selection: $followStreamDisplayMode) {
-                    ForEach(FollowStreamDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 132)
-            }
-
-            Label(
-                "Application data can contain credentials or personal information. Review it locally before copying.",
-                systemImage: "hand.raised"
-            )
-            .font(Theme.Typography.caption)
-            .foregroundStyle(.secondary)
-
-            if coordinator.isLoadingFollowStream {
-                followStreamLoading
-            } else if let error = coordinator.followStreamError {
-                followStreamEmptyState(message: error, session: session)
-            } else if let result = coordinator.followStreamResult,
-                      SessionBuilder.sessionID(for: result.tuple) == session.id
-            {
-                followStreamResult(result)
-            } else {
-                followStreamEmptyState(
-                    message: coordinator.followStreamUnavailableReason
-                        ?? "Reconstruct both TCP directions from the stable capture source.",
-                    session: session
-                )
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Follow TCP Stream")
-    }
-
-    private func followStreamEmptyState(message: String, session _: SessionSummary) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-            Text(message)
-                .font(Theme.Typography.body)
-                .foregroundStyle(.secondary)
-            Button("Follow Stream") {
-                coordinator.followSelectedTCPStream()
-            }
-            .controlSize(.small)
-            .disabled(coordinator.followStreamUnavailableReason != nil)
-            .help(coordinator.followStreamUnavailableReason ?? "Reconstruct this TCP stream")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Metrics.spacingM)
-        .tracexyContentSurface(
-            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
-        )
-    }
-
-    private func followStreamResult(_ result: FollowStreamResult) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
-            HStack(spacing: Theme.Metrics.spacingL) {
-                field("Matched Frames", result.matchedFrameCount.formatted())
-                field("Scanned Frames", result.scannedFrameCount.formatted())
-                field("Source", followStreamCompleteness(result.completeness))
-                Spacer(minLength: Theme.Metrics.spacingM)
-                Button("Refresh") {
-                    coordinator.followSelectedTCPStream()
-                }
-                .controlSize(.small)
-                .disabled(coordinator.followStreamUnavailableReason != nil)
-            }
-
-            let limitations = result.limitations.presentationLabels
-            if !limitations.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Observed limitations")
-                        .font(Theme.Typography.captionMedium)
-                        .foregroundStyle(.secondary)
-                    ForEach(limitations, id: \.self) { limitation in
-                        Label(limitation, systemImage: "info.circle")
-                            .font(Theme.Typography.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Theme.Metrics.spacingM) {
-                    followStreamDirection(
-                        result.aToB,
-                        title: "\(result.tuple.a.display) → \(result.tuple.b.display)"
-                    )
-                    followStreamDirection(
-                        result.bToA,
-                        title: "\(result.tuple.b.display) → \(result.tuple.a.display)"
-                    )
-                }
-                VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                    followStreamDirection(
-                        result.aToB,
-                        title: "\(result.tuple.a.display) → \(result.tuple.b.display)"
-                    )
-                    followStreamDirection(
-                        result.bToA,
-                        title: "\(result.tuple.b.display) → \(result.tuple.a.display)"
-                    )
-                }
-            }
-        }
-    }
-
-    private func followStreamDirection(
-        _ snapshot: FollowStreamDirectionSnapshot,
-        title: String
-    )
-        -> some View
-    {
-        let presentation = FollowStreamDirectionPresentation(
-            snapshot: snapshot,
-            mode: followStreamDisplayMode
-        )
-        return GroupBox {
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                HStack {
-                    Text("\(snapshot.retainedByteCount.formatted()) retained bytes")
-                    if snapshot.observedOmittedByteCount > 0 {
-                        Text("· \(snapshot.observedOmittedByteCount.formatted()) omitted by reader bounds")
-                    }
-                    if presentation.viewOmittedByteCount > 0 {
-                        Text("· \(presentation.viewOmittedByteCount.formatted()) not shown")
-                    }
-                }
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.secondary)
-
-                if presentation.body.isEmpty {
-                    placeholder("No application bytes were retained in this direction.")
-                } else {
-                    Text(presentation.body)
-                        .font(Theme.Typography.monoSmall)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Text(title)
-                .font(Theme.Typography.captionMedium)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: Requests
@@ -758,7 +632,9 @@ struct InspectorView: View {
         } else if case let .failed(message) = coordinator.citedFrame.state {
             placeholder(message)
         } else if !bytes.isEmpty {
-            HexDumpView(bytes: bytes, highlight: nil)
+            PacketBytesPane(bytes: bytes, onShowBytes: { showBytes($0, of: session) }, dumpStyle: dumpStyleBinding)
+                .environment(\.packetTextZoom, coordinator.packetDetailOptions.textZoom)
+                .environment(\.byteDumpStyle, coordinator.packetDetailOptions.byteDumpStyle)
         } else if coordinator.isLoadingSelectedSessionEvidence {
             ProgressView("Loading selected evidence…")
         } else if let error = coordinator.selectedSessionEvidenceError {
@@ -862,6 +738,36 @@ struct InspectorView: View {
         }
     }
 
+    /// ↑ ↓ ← → and ⌘← ⌘→ in the decode tree (``DecodeTreeNavigation``).
+    private func navigate(_ press: KeyPress, layers: [DecodedLayer]) -> KeyPress.Result {
+        let command = press.modifiers.contains(.command)
+        let key: DecodeTreeNavigation.Key = switch press.key {
+        case .upArrow: .up
+        case .downArrow: .down
+        case .leftArrow: command ? .collapseAll : .left
+        default: command ? .expandAll : .right
+        }
+        guard let outcome = DecodeTreeNavigation.press(
+            key, layers: layers, selection: selectedRange, collapsed: collapsedLayers
+        ) else {
+            return .ignored
+        }
+        collapsedLayers = outcome.collapsed
+        selectedRange = outcome.selection
+        byteRevealToken &+= 1
+        return .handled
+    }
+
+    /// The frame's decode tree as shown: the cited frame's, else the session's
+    /// representative packet's, with checksum notes when View ▸ Validate Checksums is on.
+    private func inspectedLayers(_ session: SessionSummary) -> [DecodedLayer] {
+        let layers = selectedCitedFrame?.layers ?? session.decodedLayers
+        guard coordinator.packetDetailOptions.validateChecksums else {
+            return layers
+        }
+        return ChecksumValidation.annotate(layers, bytes: evidenceBytes(for: session))
+    }
+
     private func selectedIdentity(for session: SessionSummary) -> String {
         if let query = session.dnsQuery, !query.isEmpty {
             return query
@@ -870,13 +776,6 @@ struct InspectorView: View {
             return sni
         }
         return session.host
-    }
-
-    private func followStreamCompleteness(_ completeness: FollowStreamCompleteness) -> String {
-        switch completeness {
-        case .complete: "Complete file"
-        case .incompleteTruncatedTail: "Truncated tail"
-        }
     }
 
     /// Application-layer layers, flattened out of the decode tree in order.
@@ -957,6 +856,16 @@ struct InspectorView: View {
             tabs.insert(.layers, at: tabs.index(after: evidenceIndex))
         }
         return tabs
+    }
+
+    /// Show Packet Bytes on a frame's (or a selected field's) bytes.
+    private func showBytes(_ bytes: [UInt8], of session: SessionSummary) {
+        let frame = selectedCitedFrame.map { String(localized: "Frame \($0.provenance.ordinal.rawValue.formatted())") }
+        coordinator.packetBytesInspection.show(PacketBytesSubject(
+            title: [frame, session.host].compactMap(\.self).joined(separator: " — "),
+            bytes: bytes
+        ))
+        openWindow(id: TracexyApp.packetBytesWindowID)
     }
 
     private func evidenceBytes(for session: SessionSummary) -> [UInt8] {
@@ -1071,17 +980,16 @@ private struct CorrelatedActionTimeline: View {
         activity.duration != nil && activity.startTime != nil
     }
 
-    /// "142 ms to first byte · 296 ms complete" — the two numbers the action is
+    /// "First byte after 142 ms, complete after 296 ms" — the two numbers the action is
     /// judged on. The first is stated only when something measured a latency.
     private var headerDetail: String {
         guard hasKnownSpan else {
             return "Duration unknown — some frames have no capture time"
         }
-        let complete = "\(Self.ms(spanMilliseconds)) complete"
         guard let ttfb = firstByteMilliseconds else {
-            return complete
+            return String(localized: "Complete after \(Self.ms(spanMilliseconds))")
         }
-        return "\(Self.ms(ttfb)) to first byte · \(complete)"
+        return String(localized: "First byte after \(Self.ms(ttfb)), complete after \(Self.ms(spanMilliseconds))")
     }
 
     private var firstByteMilliseconds: Double? {
@@ -1243,185 +1151,5 @@ private struct CorrelatedActionTimeline: View {
         value >= 1_000
             ? String(format: "%.2f s", value / 1_000)
             : String(format: "%.0f ms", value)
-    }
-}
-
-// MARK: - DecodedLayerTree
-
-/// A selectable decode tree (Eth → IP → TCP → TLS → handshake). Tapping a layer
-/// header or a field reports its byte range so the hex pane can highlight it.
-private struct DecodedLayerTree: View {
-    // MARK: Internal
-
-    let layers: [DecodedLayer]
-    let selectedRange: Range<Int>?
-    let onSelect: (Range<Int>?) -> Void
-    var depth = 0
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(layers) { layer in
-                VStack(alignment: .leading, spacing: 2) {
-                    layerHeader(layer)
-                    ForEach(Array(layer.fields.enumerated()), id: \.offset) { _, decodedField in
-                        fieldRow(decodedField)
-                    }
-                    if !layer.children.isEmpty {
-                        DecodedLayerTree(
-                            layers: layer.children, selectedRange: selectedRange, onSelect: onSelect,
-                            depth: depth + 1
-                        )
-                        .padding(.leading, 14)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: Private
-
-    private func layerHeader(_ layer: DecodedLayer) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "chevron.down").font(.system(size: Theme.Icon.small)).foregroundStyle(.secondary)
-            Text(layer.title).font(Theme.Typography.bodyMedium)
-                .foregroundStyle(Theme.color(for: layer.proto))
-            if !layer.summary.isEmpty {
-                Text(layer.summary).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 1).padding(.horizontal, 4)
-        .background(rowBackground(layer.byteRange), in: RoundedRectangle(cornerRadius: 4))
-        .contentShape(Rectangle())
-        // Tap still selects the byte range for the hex pane; the context menu is
-        // an additive right-click affordance and leaves that behavior untouched.
-        .onTapGesture { onSelect(layer.byteRange) }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { onSelect(layer.byteRange) }
-        .contextMenu {
-            Button("Copy Layer Summary", systemImage: "doc.on.doc") {
-                copy(DecodedClipboardText.layerSummary(layer))
-            }
-        }
-    }
-
-    private func fieldRow(_ field: DecodedField) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(field.name).font(Theme.Typography.caption).foregroundStyle(.secondary)
-                .frame(width: 96, alignment: .leading)
-            Text(field.value).font(Theme.Typography.monoSmall)
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 15).padding(.trailing, 4).padding(.vertical, 1)
-        .background(rowBackground(field.byteRange), in: RoundedRectangle(cornerRadius: 4))
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect(field.byteRange) }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { onSelect(field.byteRange) }
-        .contextMenu {
-            Button("Copy Value", systemImage: "doc.on.doc") {
-                copy(DecodedClipboardText.value(field))
-            }
-            Button("Copy Field Name", systemImage: "textformat") {
-                copy(DecodedClipboardText.name(field))
-            }
-            Button("Copy \u{201C}Name: Value\u{201D}", systemImage: "text.append") {
-                copy(DecodedClipboardText.nameValue(field))
-            }
-        }
-    }
-
-    private func rowBackground(_ range: Range<Int>?) -> Color {
-        guard let range, range == selectedRange else {
-            return .clear
-        }
-        return Color.accentColor.opacity(0.18)
-    }
-
-    /// The only side effect of the copy actions: the text formatting itself lives
-    /// in the pure ``DecodedClipboardText`` so it stays independently testable.
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-// MARK: - HexDumpView
-
-/// A read-only hex + ASCII dump (offset · 16 bytes · ASCII), Wireshark-style,
-/// over the representative packet's real captured bytes. Bytes inside `highlight`
-/// are tinted to mirror the field selected in the decode tree.
-private struct HexDumpView: View {
-    // MARK: Internal
-
-    let bytes: [UInt8]
-    var highlight: Range<Int>?
-
-    var body: some View {
-        // One Text(AttributedString) per row (not ~32 views) — keeps the hex pane
-        // light enough to stay smooth while a capture is updating.
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(rowStarts, id: \.self) { start in
-                Text(row(start: start))
-                    .font(Theme.Typography.monoSmall)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .textSelection(.enabled)
-    }
-
-    // MARK: Private
-
-    private var rowStarts: [Int] {
-        Array(stride(from: 0, to: bytes.count, by: 16))
-    }
-
-    private func row(start: Int) -> AttributedString {
-        var line = attributed(String(format: "%04X   ", start), color: .secondary)
-        for col in 0 ..< 16 {
-            let index = start + col
-            if index < bytes.count {
-                line += attributed(String(format: "%02X ", bytes[index]), highlighted: isHighlighted(index))
-            } else {
-                line += attributed("   ")
-            }
-            if col == 7 {
-                line += attributed(" ")
-            }
-        }
-        line += attributed("  ")
-        for col in 0 ..< 16 {
-            let index = start + col
-            if index < bytes.count {
-                line += attributed(
-                    String(asciiChar(bytes[index])), color: .secondary, highlighted: isHighlighted(index)
-                )
-            } else {
-                line += attributed(" ")
-            }
-        }
-        return line
-    }
-
-    private func attributed(_ string: String, color: Color? = nil, highlighted: Bool = false) -> AttributedString {
-        var piece = AttributedString(string)
-        if let color {
-            piece.foregroundColor = color
-        }
-        if highlighted {
-            piece.backgroundColor = Color.accentColor.opacity(0.35)
-        }
-        return piece
-    }
-
-    private func isHighlighted(_ index: Int) -> Bool {
-        guard let highlight else {
-            return false
-        }
-        return highlight.contains(index)
-    }
-
-    private func asciiChar(_ byte: UInt8) -> Character {
-        byte >= 0x20 && byte < 0x7F ? Character(UnicodeScalar(byte)) : "."
     }
 }

@@ -236,7 +236,8 @@ nonisolated enum CaptureConfigurationError: Error, Equatable {
 
 /// The immutable capture parameters ferried across the app↔helper XPC boundary as
 /// a typed, `NSSecureCoding` object: the interface to open, the snap length, the
-/// promiscuous flag, and an optional BPF filter expression.
+/// promiscuous flag, an optional BPF filter expression, and its compile optimizer
+/// choice.
 ///
 /// This is the *only* privileged command surface — a fixed, validated description
 /// of a capture, never an arbitrary command. Both the app (before it asks the
@@ -254,11 +255,12 @@ nonisolated enum CaptureConfigurationError: Error, Equatable {
 nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @unchecked Sendable {
     // MARK: Lifecycle
 
-    init(interface: String, snapLength: Int, promiscuous: Bool, bpf: String?) {
+    init(interface: String, snapLength: Int, promiscuous: Bool, bpf: String?, optimizeBPF: Bool = true) {
         self.interface = interface
         self.snapLength = snapLength
         self.promiscuous = promiscuous
         self.bpf = bpf
+        self.optimizeBPF = optimizeBPF
     }
 
     required init?(coder: NSCoder) {
@@ -266,6 +268,9 @@ nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @uncheck
         // A snap length written as Int64; a nonsensical value is caught by `validated()`.
         snapLength = Int(coder.decodeInt64(forKey: Key.snapLength))
         promiscuous = coder.decodeBool(forKey: Key.promiscuous)
+        optimizeBPF = coder.containsValue(forKey: Key.optimizeBPF)
+            ? coder.decodeBool(forKey: Key.optimizeBPF)
+            : true
         // A missing/empty BPF string decodes to `nil` — no filter.
         let decodedBPF = coder.decodeObject(of: NSString.self, forKey: Key.bpf) as String?
         bpf = (decodedBPF?.isEmpty ?? true) ? nil : decodedBPF
@@ -296,6 +301,14 @@ nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @uncheck
     /// Trimmed BPF expression, or `nil` for "capture everything". Never an empty
     /// string — an empty filter is normalized to `nil` so it is unambiguous.
     let bpf: String?
+    /// Whether libpcap optimizes the BPF program when a filter is present.
+    /// Missing values from protocol-v4/v5 archives default to the historical
+    /// optimized behavior.
+    let optimizeBPF: Bool
+
+    var bpfOptimizerFlag: Int32 {
+        optimizeBPF ? 1 : 0
+    }
 
     /// Clamp a raw snap length into the supported range. A non-positive value is
     /// treated as unset and becomes the full-frame default; anything else is
@@ -332,7 +345,8 @@ nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @uncheck
             interface: trimmedInterface,
             snapLength: Self.clampedSnapLength(snapLength),
             promiscuous: promiscuous,
-            bpf: normalizedBPF
+            bpf: normalizedBPF,
+            optimizeBPF: optimizeBPF
         ))
     }
 
@@ -340,6 +354,7 @@ nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @uncheck
         coder.encode(interface as NSString, forKey: Key.interface)
         coder.encode(Int64(snapLength), forKey: Key.snapLength)
         coder.encode(promiscuous, forKey: Key.promiscuous)
+        coder.encode(optimizeBPF, forKey: Key.optimizeBPF)
         if let bpf {
             coder.encode(bpf as NSString, forKey: Key.bpf)
         }
@@ -352,6 +367,7 @@ nonisolated final class CaptureConfiguration: NSObject, NSSecureCoding, @uncheck
         static let snapLength = "sl"
         static let promiscuous = "pr"
         static let bpf = "bpf"
+        static let optimizeBPF = "ob"
     }
 }
 

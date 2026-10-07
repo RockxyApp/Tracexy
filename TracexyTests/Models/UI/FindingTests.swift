@@ -46,7 +46,7 @@ struct FindingTests {
         #expect(finding.citedFrames == [provenance])
         #expect(finding
             .subtitle ==
-            "TC bit observed · resolver.example · 1 cited observation · 2 omitted · bounded evidence omitted")
+            "TC bit observed for resolver.example. 1 cited observation (2 omitted), bounded evidence omitted.")
         #expect(!finding.subtitle.localizedCaseInsensitiveContains("failed"))
         #expect(!finding.subtitle.localizedCaseInsensitiveContains("attack"))
     }

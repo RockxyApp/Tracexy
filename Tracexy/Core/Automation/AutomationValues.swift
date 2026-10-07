@@ -121,6 +121,11 @@ nonisolated enum AutomationError: Error, Sendable, Equatable {
     case filterRequiresDisclosure(field: AutomationFilterField)
     /// A cursor carried a non-finite timestamp or negative ordinal.
     case invalidCursor(field: String)
+    /// This History file was written before findings were recorded (schema v2) and
+    /// has not been upgraded by the app yet.
+    case findingsNotRecorded
+    /// A finding filter's kind or severity was not a known name.
+    case unknownFindingFilter(field: String)
 }
 
 // MARK: - AutomationText
@@ -657,5 +662,130 @@ nonisolated struct AutomationSessionPageRequest: Sendable, Equatable {
             throw AutomationError.filterRequiresDisclosure(field: .host)
         }
         return normalized
+    }
+}
+
+// MARK: - AutomationFindingValue
+
+/// One stored finding as automation sees it: its public kind name (the word the
+/// Session Expression language uses), severity, coverage, citation counts and the
+/// capture time of its first cited frame. It names its session only by ID, so it
+/// discloses no host, process or address the session page would withhold.
+nonisolated struct AutomationFindingValue: Codable, Sendable, Equatable {
+    // MARK: Lifecycle
+
+    init(_ record: HistoryFindingRecord) {
+        findingID = record.findingID
+        sessionID = record.sessionID
+        kind = record.kind
+        severity = record.severity.token
+        coverage = record.coverage
+        citedObservationCount = record.citedObservationCount
+        omittedCitationCount = record.omittedCitationCount
+        firstCitedAt = record.firstCitedAt
+    }
+
+    // MARK: Internal
+
+    let findingID: UUID
+    let sessionID: UUID
+    let kind: String
+    let severity: String
+    let coverage: String
+    let citedObservationCount: Int
+    let omittedCitationCount: Int64
+    let firstCitedAt: Double?
+}
+
+// MARK: - AutomationFindingCursor
+
+nonisolated struct AutomationFindingCursor: Codable, Sendable, Equatable {
+    // MARK: Lifecycle
+
+    init(ordinal: Int) {
+        self.ordinal = ordinal
+    }
+
+    init(_ storage: HistoryFindingCursor) {
+        ordinal = storage.ordinal
+    }
+
+    // MARK: Internal
+
+    let ordinal: Int
+
+    func storageCursor() throws -> HistoryFindingCursor {
+        guard ordinal >= 0 else {
+            throw AutomationError.invalidCursor(field: "ordinal")
+        }
+        return HistoryFindingCursor(ordinal: ordinal)
+    }
+}
+
+// MARK: - AutomationFindingPage
+
+/// One ordinal-ascending page of a capture's findings, filtered on that page only;
+/// `examinedCount` and `nextCursor` work as for sessions.
+nonisolated struct AutomationFindingPage: Codable, Sendable, Equatable {
+    let captureID: UUID
+    let findings: [AutomationFindingValue]
+    let examinedCount: Int
+    let nextCursor: AutomationFindingCursor?
+    let pageSize: Int
+}
+
+// MARK: - AutomationFindingPageRequest
+
+nonisolated struct AutomationFindingPageRequest: Sendable, Equatable {
+    // MARK: Lifecycle
+
+    init(
+        captureID: UUID,
+        pageSize: Int,
+        cursor: AutomationFindingCursor? = nil,
+        sessionID: UUID? = nil,
+        kind: String? = nil,
+        severity: String? = nil
+    ) {
+        self.captureID = captureID
+        self.pageSize = pageSize
+        self.cursor = cursor
+        self.sessionID = sessionID
+        self.kind = kind
+        self.severity = severity
+    }
+
+    // MARK: Internal
+
+    let captureID: UUID
+    let pageSize: Int
+    let cursor: AutomationFindingCursor?
+    /// Only this session's findings (read by the store, not filtered afterwards).
+    let sessionID: UUID?
+    /// An exact finding kind name, e.g. `retransmission`.
+    let kind: String?
+    /// `note`, `warning` or `error`.
+    let severity: String?
+
+    func validate() throws {
+        guard (1 ... HistoryLimits.maxReadPageSize).contains(pageSize) else {
+            throw AutomationError.invalidPageSize(pageSize)
+        }
+        if let kind {
+            guard !kind.isEmpty, kind.utf8.count <= HistoryLimits.maxFindingTokenUTF8Bytes,
+                  kind.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else
+            {
+                throw AutomationError.unknownFindingFilter(field: "kind")
+            }
+        }
+        if let severity {
+            guard HistoryFindingSeverity.allCases.contains(where: { $0.token == severity }) else {
+                throw AutomationError.unknownFindingFilter(field: "severity")
+            }
+        }
+    }
+
+    func matches(_ record: HistoryFindingRecord) -> Bool {
+        (kind == nil || record.kind == kind) && (severity == nil || record.severity.token == severity)
     }
 }

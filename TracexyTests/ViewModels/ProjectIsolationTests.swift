@@ -88,8 +88,10 @@ struct ProjectIsolationTests {
             connections: .empty,
             datagramEvidence: .empty,
             tlsEvidence: .empty,
+            segmentSeries: .empty,
             connectionAnalysis: .empty,
-            datagramAnalysis: .empty
+            datagramAnalysis: .empty,
+            tlsAnalysis: .empty
         ))
 
         let workspaceA = coordinator.workspaces.activeWorkspace

@@ -36,8 +36,10 @@ nonisolated enum HistoryRecordProjection {
             completeness: HistoryCompleteness,
             timeBasis: HistoryCaptureTimeBasis = .captured,
             sessions: [SessionSummary],
+            findings: [HistoryFindingRecord] = [],
             maskIPAddresses: Bool
         ) {
+            self.findings = findings
             self.captureID = captureID
             self.startedAt = startedAt
             self.endedAt = endedAt
@@ -59,6 +61,9 @@ nonisolated enum HistoryRecordProjection {
         /// event. Resolved by the caller, which alone knows which it had.
         let timeBasis: HistoryCaptureTimeBasis
         let sessions: [SessionSummary]
+        /// The capture's findings as neutral records (see
+        /// ``HistoryFindingRecord/from(connection:)`` and siblings).
+        let findings: [HistoryFindingRecord]
         let maskIPAddresses: Bool
     }
 
@@ -67,6 +72,7 @@ nonisolated enum HistoryRecordProjection {
     struct Output: Sendable {
         let capture: HistoryCaptureRecord
         let sessions: [HistorySessionRecord]
+        let findings: [HistoryFindingRecord]
     }
 
     /// Project one capture's neutral history records. Pure and total: it never
@@ -89,7 +95,14 @@ nonisolated enum HistoryRecordProjection {
         let sessions = input.sessions.map { session in
             projectSession(session, maskIPAddresses: input.maskIPAddresses)
         }
-        return Output(capture: capture, sessions: sessions)
+        // A finding is kept only for a session this capture stores, in a stable order,
+        // and never past the store's bound.
+        let stored = Set(sessions.map(\.sessionID))
+        var seen = Set<UUID>()
+        let findings = input.findings
+            .filter { stored.contains($0.sessionID) && seen.insert($0.findingID).inserted }
+            .prefix(HistoryLimits.maxFindingsPerCapture)
+        return Output(capture: capture, sessions: sessions, findings: Array(findings))
     }
 
     // MARK: Private

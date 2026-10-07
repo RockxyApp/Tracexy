@@ -131,12 +131,15 @@ nonisolated final class SessionFrameScanner {
         var matched = 0
         var frames: [SessionFrameReference] = []
         var firstTimestamp: Date?
+        var sequential = SequentialFrameDecoder()
         let completion: CaptureStreamCompletion
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
                 scanned += 1
-                if let reference = match(event, ordinal: scanned, firstTimestamp: &firstTimestamp) {
+                if let reference = match(
+                    event, ordinal: scanned, firstTimestamp: &firstTimestamp, sequential: &sequential
+                ) {
                     matched += 1
                     if frames.count < configuration.maxRetainedFrames {
                         frames.append(reference)
@@ -194,7 +197,8 @@ nonisolated final class SessionFrameScanner {
     private func match(
         _ event: CaptureFrameEvent,
         ordinal: Int,
-        firstTimestamp: inout Date?
+        firstTimestamp: inout Date?,
+        sequential: inout SequentialFrameDecoder
     )
         -> SessionFrameReference?
     {
@@ -205,8 +209,12 @@ nonisolated final class SessionFrameScanner {
             capturedLength: event.reference.capturedLength,
             linkType: event.reference.linkType
         )
-        let packet = SessionBuilder.decodePacket(
-            frame, linkType: reader.defaultLinkType ?? event.reference.linkType
+        let locator = SessionEvidenceLocator(sourceToken: sourceToken, offset: event.reference.payloadOffset)
+        let packet = sequential.decode(
+            frame,
+            linkType: reader.defaultLinkType ?? event.reference.linkType,
+            ordinal: UInt64(ordinal),
+            locator: locator
         )
         guard let tuple = packet.fiveTuple, SessionBuilder.sessionID(for: tuple) == sessionID else {
             return nil
@@ -230,7 +238,8 @@ nonisolated final class SessionFrameScanner {
             capturedLength: event.reference.capturedLength,
             originalLength: event.reference.originalLength,
             linkType: event.reference.linkType,
-            locator: SessionEvidenceLocator(sourceToken: sourceToken, offset: event.reference.payloadOffset)
+            locator: locator,
+            reassembledFrom: sequential.lastReassembledFrom
         )
         return SessionFrameReference(
             provenance: provenance,

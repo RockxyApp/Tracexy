@@ -376,7 +376,7 @@ final class NativeWorkspaceToolbar: NSObject, NSToolbarDelegate {
             systemImage: "sidebar.trailing",
             action: #selector(toggleContextDock(_:))
         )
-        contextDockItem.toolTip = String(localized: "Show or hide the inspector (Details · AI Assistant).")
+        contextDockItem.toolTip = String(localized: "Show or hide the inspector (Details and AI Assistant).")
 
         let group = NSToolbarItemGroup(itemIdentifier: Self.actionsIdentifier)
         group.label = String(localized: "Inspectors")

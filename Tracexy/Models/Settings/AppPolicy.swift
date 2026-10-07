@@ -23,6 +23,12 @@ protocol AppPolicy: Sendable {
     var maxPinnedHosts: Int { get }
     /// Maximum advanced session-filter rule rows in a single workspace.
     var maxSessionFilterRules: Int { get }
+    /// Maximum one-click filter buttons a Project may grow to.
+    var maxFilterButtons: Int { get }
+    /// Maximum named expression macros a Project may grow to.
+    var maxExpressionMacros: Int { get }
+    /// Maximum local GeoIP/ASN database files a Project may refer to.
+    var maxGeoIPDatabases: Int { get }
 }
 
 extension AppPolicy {
@@ -45,6 +51,18 @@ extension AppPolicy {
     var maxSessionFilterRules: Int {
         12
     }
+
+    var maxFilterButtons: Int {
+        10
+    }
+
+    var maxExpressionMacros: Int {
+        10
+    }
+
+    var maxGeoIPDatabases: Int {
+        1
+    }
 }
 
 // MARK: - DefaultAppPolicy
@@ -58,4 +76,7 @@ struct DefaultAppPolicy: AppPolicy {
     let maxFocusSets = 5
     let maxPinnedHosts = 5
     let maxSessionFilterRules = 12
+    let maxFilterButtons = 10
+    let maxExpressionMacros = 10
+    let maxGeoIPDatabases = 1
 }

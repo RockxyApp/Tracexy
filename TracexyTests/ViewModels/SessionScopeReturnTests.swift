@@ -270,7 +270,7 @@ struct SessionScopeReturnTests {
         await coordinator.waitForEvidenceProjection()
         workspace.categoryFilters = [.tls]
 
-        coordinator.followSelectedTCPStream()
+        coordinator.followSelectedStream()
         await coordinator.waitForFollowStream()
 
         #expect(workspace.sessionScopeReturnStack.isEmpty)

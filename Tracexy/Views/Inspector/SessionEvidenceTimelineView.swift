@@ -18,7 +18,8 @@ struct SessionEvidenceTimelineView: View {
     var body: some View {
         let items = SessionEvidenceItem.timeline(
             connections: selection.connections,
-            tls: selection.tls
+            tls: selection.tls,
+            datagrams: selection.datagrams
         )
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             evidenceHeader(items: items)
@@ -39,7 +40,7 @@ struct SessionEvidenceTimelineView: View {
 
             if items.isEmpty {
                 evidenceNotice(
-                    "No connection or direct-frame TLS observations were retained for this session. "
+                    "No connection, direct-frame TLS or datagram observations were retained for this session. "
                         + "Capture-level bounds below may still limit what can be concluded.",
                     systemImage: "rectangle.dashed"
                 )
@@ -100,6 +101,23 @@ struct SessionEvidenceTimelineView: View {
         return labels
     }
 
+    private var datagramCoverage: [String] {
+        guard let datagrams = selection.datagrams else {
+            return []
+        }
+        var labels: [String] = []
+        if datagrams.omittedObservationCount > 0 {
+            labels.append("\(datagrams.omittedObservationCount.formatted()) datagram observations omitted")
+        }
+        if datagrams.snapLengthTruncationObserved {
+            labels.append("Datagram-bearing snap-length truncation was observed")
+        }
+        if datagrams.lossKnowledge != .noLossReported {
+            labels.append(SessionEvidenceCopy.lossLabel(datagrams.lossKnowledge))
+        }
+        return labels
+    }
+
     /// These counters describe the capture, not the selected session. The copy
     /// keeps that scope explicit so a global omission is never attributed here.
     private var captureCoverage: [String] {
@@ -136,6 +154,24 @@ struct SessionEvidenceTimelineView: View {
         if tls.countersOverflowed {
             labels.append("Capture-level: a TLS evidence counter saturated")
         }
+
+        let datagrams = selection.datagramCoverage
+        if datagrams.omittedObservationCount > 0 {
+            labels.append(
+                "Capture-level: \(datagrams.omittedObservationCount.formatted()) datagram observations omitted"
+            )
+        }
+        if datagrams.excludedTCPDNSFactCount > 0 {
+            labels.append(
+                "Capture-level: \(datagrams.excludedTCPDNSFactCount.formatted()) TCP-carried DNS facts excluded from datagram evidence"
+            )
+        }
+        if datagrams.capacityReached {
+            labels.append("Capture-level: a datagram evidence retention bound was reached")
+        }
+        if datagrams.countersOverflowed {
+            labels.append("Capture-level: a datagram evidence counter saturated")
+        }
         return labels
     }
 
@@ -143,7 +179,7 @@ struct SessionEvidenceTimelineView: View {
         let connectionCaveats = selection.connections.enumerated().flatMap { index, connection in
             connectionCoverage(connection, index: index)
         }
-        let tlsCaveats = tlsCoverage
+        let tlsCaveats = tlsCoverage + datagramCoverage
         let globalCaveats = captureCoverage
 
         if !connectionCaveats.isEmpty || !tlsCaveats.isEmpty || !globalCaveats.isEmpty {
@@ -175,7 +211,7 @@ struct SessionEvidenceTimelineView: View {
     private func evidenceHeader(items: [SessionEvidenceItem]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Metrics.spacingM) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Connection & TLS Evidence")
+                Text("Session Evidence")
                     .font(Theme.Typography.bodyEmphasis)
                 Text(headerSummary(items: items))
                     .font(Theme.Typography.caption)
@@ -209,12 +245,16 @@ struct SessionEvidenceTimelineView: View {
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: Theme.Metrics.spacingS) {
-                    Text("Frame \(item.ordinal.rawValue.formatted())")
-                    Text("·")
-                    // The frame ordinal is always exact; its capture instant is
-                    // only shown when the file actually recorded one.
-                    Text(item.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "no capture time")
+                // The frame ordinal is always exact; its capture instant is only
+                // shown when the file actually recorded one.
+                Group {
+                    if let time = item.timestamp {
+                        Text(
+                            "Frame \(item.ordinal.rawValue.formatted()) at \(time.formatted(date: .omitted, time: .standard))"
+                        )
+                    } else {
+                        Text("Frame \(item.ordinal.rawValue.formatted()), no capture time")
+                    }
                 }
                 .font(Theme.Typography.monoSmall)
                 .foregroundStyle(.secondary)
@@ -280,12 +320,22 @@ struct SessionEvidenceTimelineView: View {
     }
 
     private func headerSummary(items: [SessionEvidenceItem]) -> String {
-        let connectionLabel = selection.connections.count == 1
-            ? "1 connection"
-            : "\(selection.connections.count) connection incarnations"
-        let eventCount = items.count { $0.kind == .connection }
+        var parts: [String] = []
+        if !selection.connections.isEmpty {
+            parts.append(selection.connections.count == 1
+                ? "1 connection"
+                : "\(selection.connections.count) connection incarnations")
+            parts.append("\(items.count { $0.kind == .connection }) TCP events")
+        }
         let tlsCount = items.count { $0.kind == .tls }
-        return "\(connectionLabel) · \(eventCount) TCP events · \(tlsCount) direct-frame TLS records"
+        if tlsCount > 0 || selection.tls != nil {
+            parts.append("\(tlsCount) direct-frame TLS records")
+        }
+        let datagramCount = items.count { $0.kind == .dns || $0.kind == .icmp }
+        if datagramCount > 0 {
+            parts.append("\(datagramCount) datagram observations")
+        }
+        return parts.isEmpty ? "No retained observations" : parts.joined(separator: ", ")
     }
 
     private func connectionCoverage(_ connection: ConnectionSummary, index: Int) -> [String] {

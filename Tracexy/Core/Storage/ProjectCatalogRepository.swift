@@ -25,6 +25,49 @@ nonisolated enum ProjectCatalogRepositoryError: Error, Equatable, Sendable {
     case fileSystem(String)
 }
 
+// MARK: - ProjectCatalogCoding
+
+/// The catalog's one JSON form, shared by the file and the size check made before
+/// a change is accepted.
+nonisolated enum ProjectCatalogCoding {
+    static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    /// Bytes the catalog takes on disk; `Int.max` when it cannot be encoded.
+    static func encodedByteCount(of catalog: ProjectCatalog) -> Int {
+        (try? makeEncoder().encode(catalog).count) ?? Int.max
+    }
+
+    /// Bytes one Project takes inside the catalog (and inside a `.tracexyproject`).
+    static func encodedByteCount(of project: Project) -> Int {
+        (try? makeEncoder().encode(project).count) ?? Int.max
+    }
+
+    /// Bytes the catalog takes on disk, given each of its Projects' own encoded
+    /// size in order. The encoding has no whitespace, so the file is the catalog
+    /// without Projects plus each Project and the commas between them.
+    static func encodedByteCount(of catalog: ProjectCatalog, projectBytes: [Int]) -> Int {
+        var envelope = catalog
+        envelope.projects = []
+        guard let base = try? makeEncoder().encode(envelope).count else {
+            return Int.max
+        }
+        var total = base + max(0, projectBytes.count - 1)
+        for bytes in projectBytes {
+            let (sum, overflow) = total.addingReportingOverflow(bytes)
+            if overflow {
+                return Int.max
+            }
+            total = sum
+        }
+        return total
+    }
+}
+
 // MARK: - JSONProjectCatalogRepository
 
 /// Actor-isolated JSON v1 catalog persistence rooted at an injected directory.
@@ -53,14 +96,17 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
 
     func load(seed: ProjectCatalog) async throws -> ProjectCatalog {
         try prepareDirectory()
+        let identityBeforeRead = try existingFileStatus()?.identity
         if let data = try readExistingData() {
-            return try decode(data)
+            let catalog = try decode(data)
+            remember(catalog, in: identityBeforeRead)
+            return catalog
         }
 
         let normalizedSeed = try validate(seed)
         let data = try encode(normalizedSeed)
         do {
-            try writeAtomically(data)
+            try remember(normalizedSeed, in: writeAtomically(data))
         } catch {
             // Another writer may have won the missing-file race. Adopt that
             // complete catalog instead of overwriting it.
@@ -84,7 +130,14 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
             )
         }
 
-        let actualRevision: UInt64 = if let existing = try readExistingData() {
+        let actualRevision: UInt64 = if let written = lastWritten,
+                                        let status = try existingFileStatus(),
+                                        status.identity == written.identity
+        {
+            // The file is still the one this repository wrote; reading back a
+            // large catalog on every save only to learn its revision is wasted.
+            written.revision
+        } else if let existing = try readExistingData() {
             try decode(existing).revision
         } else {
             0
@@ -95,7 +148,8 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
                 actual: actualRevision
             )
         }
-        try writeAtomically(encode(normalized))
+        let identity = try writeAtomically(encode(normalized))
+        remember(normalized, in: identity)
     }
 
     @discardableResult
@@ -120,7 +174,7 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
         }
 
         do {
-            try writeAtomically(encoded)
+            try remember(normalized, in: writeAtomically(encoded))
         } catch {
             if let recoveryURL, !fileManager.fileExists(atPath: fileURL.path) {
                 try? fileManager.moveItem(at: recoveryURL, to: fileURL)
@@ -135,14 +189,26 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
     private struct FileStatus {
         let fileType: mode_t
         let size: Int
+        let identity: FileIdentity
     }
 
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .millisecondsSince1970
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }()
+    /// What identifies one written version of the file: replacing it (another
+    /// writer, a restore) changes the inode, and editing it in place changes the
+    /// size or modification time.
+    private struct FileIdentity: Equatable {
+        let device: dev_t
+        let inode: ino_t
+        let size: off_t
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+    }
+
+    private struct WrittenCatalog {
+        let revision: UInt64
+        let identity: FileIdentity
+    }
+
+    private static let encoder = ProjectCatalogCoding.makeEncoder()
 
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -151,6 +217,16 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
     }()
 
     private let fileManager: FileManager
+
+    private var lastWritten: WrittenCatalog?
+
+    /// Notes that the file identified by `identity` holds `catalog`. An identity
+    /// taken before a read, or from the written file before it replaced the old
+    /// one, can only ever be stale — never wrongly current — so a later save
+    /// falls back to reading the file instead of trusting it.
+    private func remember(_ catalog: ProjectCatalog, in identity: FileIdentity?) {
+        lastWritten = identity.map { WrittenCatalog(revision: catalog.revision, identity: $0) }
+    }
 
     private func prepareDirectory() throws {
         if let status = try fileStatus(at: directoryURL) {
@@ -244,7 +320,11 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
         }
     }
 
-    private func writeAtomically(_ data: Data) throws {
+    /// Writes `data` beside the catalog and moves it into place. Returns the
+    /// written file's identity, taken before the move so it can never describe a
+    /// file another writer put there afterwards.
+    @discardableResult
+    private func writeAtomically(_ data: Data) throws -> FileIdentity? {
         let temporaryURL = directoryURL.appendingPathComponent(
             ".projects-\(UUID().uuidString).tmp",
             isDirectory: false
@@ -252,12 +332,14 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
         do {
             try data.write(to: temporaryURL, options: .withoutOverwriting)
             setRestrictiveFilePermissions(temporaryURL)
+            let identity = try fileStatus(at: temporaryURL)?.identity
             if try existingFileStatus() != nil {
                 _ = try fileManager.replaceItemAt(fileURL, withItemAt: temporaryURL)
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: fileURL)
             }
             setRestrictiveFilePermissions(fileURL)
+            return identity
         } catch let error as ProjectCatalogRepositoryError {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
@@ -275,7 +357,17 @@ actor JSONProjectCatalogRepository: ProjectCatalogPersisting {
         var value = stat()
         let result = url.path.withCString { lstat($0, &value) }
         if result == 0 {
-            return FileStatus(fileType: value.st_mode & S_IFMT, size: Int(clamping: value.st_size))
+            return FileStatus(
+                fileType: value.st_mode & S_IFMT,
+                size: Int(clamping: value.st_size),
+                identity: FileIdentity(
+                    device: value.st_dev,
+                    inode: value.st_ino,
+                    size: value.st_size,
+                    modifiedSeconds: value.st_mtimespec.tv_sec,
+                    modifiedNanoseconds: value.st_mtimespec.tv_nsec
+                )
+            )
         }
         if errno == ENOENT {
             return nil

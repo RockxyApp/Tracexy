@@ -173,9 +173,8 @@ enum SessionFilterOperator: String, CaseIterable, Codable, Hashable {
 struct SessionFilterRule: Identifiable, Codable, Hashable {
     // MARK: Lifecycle
 
-    // Swift's synthesized initializer inherits main-actor isolation in this target.
-    // Keep this explicit initializer available to capture-processing code.
-    // swiftlint:disable:next unneeded_synthesized_initializer
+    /// Swift's synthesized initializer inherits main-actor isolation in this target.
+    /// Keep this explicit initializer available to capture-processing code.
     nonisolated init(
         id: UUID = UUID(),
         isEnabled: Bool = true,
@@ -189,7 +188,7 @@ struct SessionFilterRule: Identifiable, Codable, Hashable {
         self.connector = connector
         self.field = field
         self.filterOperator = filterOperator
-        self.value = value
+        self.value = Self.bounded(value)
     }
 
     // MARK: Internal
@@ -199,7 +198,16 @@ struct SessionFilterRule: Identifiable, Codable, Hashable {
     var connector: FilterLogicConnector = .and
     var field: SessionFilterField = .host
     var filterOperator: SessionFilterOperator = .contains
-    var value: String = ""
+
+    /// Held to the stored string bound as it is typed, so a pasted value can
+    /// never make the Project's tabs unsaveable.
+    var value: String = "" {
+        didSet {
+            if value.count > ProjectLimits.maximumStringLength {
+                value = Self.bounded(value)
+            }
+        }
+    }
 
     /// Clamps a rule list to `limit` rows and guarantees at least one editable
     /// row remains. Used whenever an external source (a Focus Set, a preset)
@@ -208,6 +216,14 @@ struct SessionFilterRule: Identifiable, Codable, Hashable {
     nonisolated static func normalized(_ rules: [SessionFilterRule], limit: Int) -> [SessionFilterRule] {
         let bounded = Array(rules.prefix(max(1, limit)))
         return bounded.isEmpty ? [SessionFilterRule()] : bounded
+    }
+
+    // MARK: Private
+
+    nonisolated private static func bounded(_ value: String) -> String {
+        value.count > ProjectLimits.maximumStringLength
+            ? String(value.prefix(ProjectLimits.maximumStringLength))
+            : value
     }
 }
 

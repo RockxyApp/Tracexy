@@ -250,6 +250,20 @@ final class HelperClient {
         }
     }
 
+    /// Older helpers decode missing optimizer settings as the historical default.
+    /// They cannot honor an explicit unoptimized compile request.
+    nonisolated static func supportsCaptureConfiguration(
+        _ configuration: CaptureConfiguration,
+        helperProtocolVersion: Int?
+    )
+        -> Bool
+    {
+        guard configuration.bpf != nil, !configuration.optimizeBPF else {
+            return true
+        }
+        return (helperProtocolVersion ?? 0) >= 6
+    }
+
     /// Pure update decision. Capture compatibility and executable convergence are
     /// deliberately separate: an older known protocol may keep capturing while it
     /// still needs a one-time explicit migration.

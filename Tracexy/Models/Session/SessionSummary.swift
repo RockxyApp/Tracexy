@@ -69,6 +69,15 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     var latencyMilliseconds: Double?
     var bytesUp: Int
     var bytesDown: Int
+    /// Frames the client sent and received, counted on the same orientation as
+    /// ``bytesUp``/``bytesDown``. Zero on hand-built summaries that predate them.
+    var packetsUp: Int = 0
+    var packetsDown: Int = 0
+    /// The TCP stages the capture showed (Wireshark's `tcp.completeness`); empty for
+    /// a session that is not TCP.
+    var tcpCompleteness = TCPCompleteness()
+    /// Every contributing frame's length on the wire, in Wireshark's ranges.
+    var frameLengths = FrameLengthHistogram()
 
     /// Real decode of the representative packet — drives the Inspector's Layers
     /// and Decoded tabs (no placeholder data).
@@ -97,6 +106,8 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     var captureInterfaceIDs: [Int] = []
     /// More distinct interfaces contributed than ``maxCaptureInterfaces`` retains.
     var captureInterfaceOverflow: Bool = false
+    /// HTTP/1 requests and responses and DHCP messages counted by kind, bounded.
+    var messageTally = SessionMessageTally()
 
     /// Whether this session's own timing could not be established because at least
     /// one contributing frame carried no capture time.
@@ -118,18 +129,20 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// column (Wireshark-style), derived from the real decode — never a placeholder.
     nonisolated var infoSummary: String {
         if let dnsQuery, !dnsQuery.isEmpty {
+            let service = [ProtocolKind.mdns, .llmnr].first { protocolStack.contains($0) }?.label ?? ProtocolKind.dns
+                .label
             if let answer = dnsAnswers.first {
-                return "DNS \(dnsQuery) → \(answer)"
+                return "\(service) \(dnsQuery) → \(answer)"
             }
-            return "DNS query \(dnsQuery)"
+            return "\(service) query \(dnsQuery)"
         }
         if let sni, !sni.isEmpty {
-            return "\(primaryProtocol.label) · \(sni)"
+            return "\(primaryProtocol.label) to \(sni)"
         }
         if let last = decodedLayers.last(where: { !$0.summary.isEmpty }) {
             return last.summary
         }
-        return protocolStack.map(\.label).joined(separator: " · ")
+        return protocolStack.map(\.label).joined(separator: " › ")
     }
 
     nonisolated var totalBytes: Int {
@@ -147,6 +160,27 @@ nonisolated struct SessionSummary: Identifiable, Hashable, Sendable {
     /// Process name for column sorting; unattributed sessions sort after named ones.
     nonisolated var sortableProcessName: String {
         processName ?? "\u{10FFFF}"
+    }
+
+    /// Server name for column sorting; sessions without one sort after named ones.
+    /// Wireshark's `tcp.completeness` number, -1 for a session that is not TCP so
+    /// those sort apart from a TCP session with nothing seen.
+    nonisolated var sortableCompleteness: Int {
+        protocolStack.contains(.tcp) ? Int(tcpCompleteness.rawValue) : -1
+    }
+
+    nonisolated var sortableServerName: String {
+        sni.flatMap { $0.isEmpty ? nil : $0 } ?? "\u{10FFFF}"
+    }
+
+    /// Duration for column sorting; unknown durations sort after every known one.
+    nonisolated var sortableDuration: TimeInterval {
+        duration ?? .infinity
+    }
+
+    /// Latency for column sorting; sessions without a measurement sort last.
+    nonisolated var sortableLatency: Double {
+        latencyMilliseconds ?? .infinity
     }
 
     /// The innermost protocol's label, the value the Protocol column shows.

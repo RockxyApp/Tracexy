@@ -317,7 +317,7 @@ struct HistoryView: View {
                 }
                 .width(min: 130, ideal: 200)
                 TableColumn("Stack") { session in
-                    Text(session.protocols.map { $0.uppercased() }.joined(separator: " · "))
+                    Text(session.protocols.map { $0.uppercased() }.joined(separator: " › "))
                         .font(Theme.Typography.caption)
                         .lineLimit(1)
                 }
@@ -493,19 +493,17 @@ private struct HistoryCaptureRow: View {
                 )
                 .font(Theme.Typography.navigationMedium)
                 HStack(spacing: 5) {
-                    Text(capture.record.sourceKind == .live ? "Live" : "Saved")
-                    Text("·")
-                    Text(capture.sessionCount == 1 ? "1 session" : "\(capture.sessionCount.formatted()) sessions")
+                    Text(Self.captureLine(capture))
                     // The row's headline instant is the open event, not the
                     // capture's own time, whenever the file left frames untimed.
                     if capture.record.timeBasis == .opened {
-                        Text("·")
-                        Text("Opened here")
+                        Image(systemName: "clock.badge.questionmark")
                             .help("This capture's own time is unknown, so this is when it was opened.")
+                            .accessibilityLabel("Time opened")
                     } else if capture.record.timeBasis == .legacy {
-                        Text("·")
-                        Text("Legacy time")
+                        Image(systemName: "clock.arrow.circlepath")
                             .help("Saved before capture-time provenance was tracked. The recorded times are preserved.")
+                            .accessibilityLabel("Legacy time")
                     }
                 }
                 .font(Theme.Typography.caption)
@@ -520,5 +518,16 @@ private struct HistoryCaptureRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+    }
+
+    /// "Live capture, 3 sessions" — the kind and size in one phrase.
+    static func captureLine(_ capture: HistoryStoredCapture) -> String {
+        let count = capture.sessionCount.formatted()
+        switch (capture.record.sourceKind == .live, capture.sessionCount == 1) {
+        case (true, true): return String(localized: "Live capture, 1 session")
+        case (true, false): return String(localized: "Live capture, \(count) sessions")
+        case (false, true): return String(localized: "Saved capture, 1 session")
+        case (false, false): return String(localized: "Saved capture, \(count) sessions")
+        }
     }
 }

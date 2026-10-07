@@ -10,7 +10,7 @@ import Foundation
 /// loss figure none of them can be falsified. A capture tool that cannot say how
 /// much it missed is asking to be trusted rather than checked.
 ///
-/// `CLAUDE.md` §3 requires drop-counting on the capture path; this is it.
+/// Every capture path counts its drops; this is where they are kept.
 nonisolated struct CaptureStatistics: Sendable, Equatable {
     /// Packets delivered to us by the kernel filter.
     var received: UInt32 = 0
