@@ -32,12 +32,41 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.8.1** — 2026-09-22
+**v0.9.0** — 2026-10-08
+
+### Added
+
+- Open several named workspace tabs in one Project. Each keeps its own scope, filters, grouping and panels, and the Project restores them on reopen.
+- Investigate sessions with richer expressions, reusable filter buttons and macros, imported display filters, address names, session tags and evidence-linked notes.
+- Browse every retained frame, search its text or bytes, inspect decoded fields and packet bytes, validate checksums, add frame comments, and jump between a finding, session and cited frame.
+- Follow TCP and UDP conversations with frame citations and visible capture gaps. Read HTTP/1 exchanges, cleartext HTTP/2 including h2c upgrades, and WebSocket messages; save supported streams and HTTP response bodies.
+- See response-time measurements, TCP health charts, traffic and field plots, a session ladder, and a flow graph drawn from captured frames.
+- Use new Statistics views for conversations, endpoints, protocol hierarchy, DNS, HTTP, IP, packet lengths, service response times, SIP calls and RTP streams, with scoped export where available.
+- Find evidence-linked TCP, DNS, TLS and ICMP problems, including unanswered handshakes, flow-control issues and cleartext credentials, with explicit unknown states when evidence is incomplete.
+- Decode fragmented IPv4 and IPv6 datagrams, GRE and VXLAN tunnels, and more local, enterprise and media protocols including mDNS, DHCP, NTP, SIP/RTP, SMB, LDAP, Kerberos and TFTP.
+- Add a local MaxMind-format GeoIP database to a Project for optional endpoint and session location context; private and special addresses are not looked up.
+- Manage capture interfaces, validate and save BPF filters, choose per-interface optimization, stop automatically by time or packet count, and rotate long live captures into bounded files.
+- Merge or split capture files, open LZ4-compressed captures and named-pipe input, inspect file structure, and export selected frames with optional address masking, notes and comments.
+- Export bounded HTTP, SMB, email, FTP and certificate objects, packet dissections and application PDUs from captured evidence.
+- Use the command line to inspect captures, sessions, frames, statistics and supported objects, and let an explicitly granted read-only MCP client list findings from History.
+- Use the native interface in Vietnamese.
 
 ### Fixed
 
-- Preserve approved helper updates
-- Restore idle exit timer delivery
+- RTP Stream Analysis handles out-of-range timestamps without crashing, computes off the main thread, and keeps both directions on one graph time axis.
+- SMB Export Objects finds files across real share and handle lifecycles. Save All continues past individual failures and gives colliding file names unique destinations.
+- Switching Projects refreshes capture-backed report windows, and early-opened Endpoints and Inspector views load their location context.
+- Large Project catalogs and captures no longer stall routine saves or investigation views; over-limit saved data stays readable and editable while new additions remain gated.
+- Project imports, tab actions, filter buttons and macros enforce capacity at the final write and preserve stored values this version cannot read.
+- Cleartext HTTP/2 and WebSocket filters match their sessions; HTTP/1 requests with binary bodies and HTTP/2 prefaces sharing a segment remain readable.
+- Auxiliary window controls, narrow inspector layouts, session selection and cited-frame navigation remain usable across window and accessibility transitions.
+- PCAPNG TLS key-log blocks and equal-count statistics rows display correctly.
+
+### Changed
+
+- Export Objects and Export PDUs scan many connections in grouped passes, reducing repeated reads of large captures.
+- Quitting during live capture now stops capture cleanly and retains session History; captured packets still require an explicit save.
+- Session, finding, inspector and status text uses clearer plain-language descriptions and keeps unknown or missing evidence explicit.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->

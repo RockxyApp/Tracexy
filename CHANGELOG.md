@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+### Fixed
+
+### Changed
+
+## [0.9.0] - 2026-10-08
+
+### Added
+
 - Open several named workspace tabs in one Project. Each keeps its own scope, filters, grouping and panels, and the Project restores them on reopen.
 - Investigate sessions with richer expressions, reusable filter buttons and macros, imported display filters, address names, session tags and evidence-linked notes.
 - Browse every retained frame, search its text or bytes, inspect decoded fields and packet bytes, validate checksums, add frame comments, and jump between a finding, session and cited frame.
@@ -23,12 +31,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Use the command line to inspect captures, sessions, frames, statistics and supported objects, and let an explicitly granted read-only MCP client list findings from History.
 - Use the native interface in Vietnamese.
 
-### Changed
-
-- Export Objects and Export PDUs scan many connections in grouped passes, reducing repeated reads of large captures.
-- Quitting during live capture now stops capture cleanly and retains session History; captured packets still require an explicit save.
-- Session, finding, inspector and status text uses clearer plain-language descriptions and keeps unknown or missing evidence explicit.
-
 ### Fixed
 
 - RTP Stream Analysis handles out-of-range timestamps without crashing, computes off the main thread, and keeps both directions on one graph time axis.
@@ -39,6 +41,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Cleartext HTTP/2 and WebSocket filters match their sessions; HTTP/1 requests with binary bodies and HTTP/2 prefaces sharing a segment remain readable.
 - Auxiliary window controls, narrow inspector layouts, session selection and cited-frame navigation remain usable across window and accessibility transitions.
 - PCAPNG TLS key-log blocks and equal-count statistics rows display correctly.
+
+### Changed
+
+- Export Objects and Export PDUs scan many connections in grouped passes, reducing repeated reads of large captures.
+- Quitting during live capture now stops capture cleanly and retains session History; captured packets still require an explicit save.
+- Session, finding, inspector and status text uses clearer plain-language descriptions and keeps unknown or missing evidence explicit.
 
 ## [0.8.1] - 2026-09-22
 
