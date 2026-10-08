@@ -10,9 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- When live capture has no sessions, show guidance for specialized Wi-Fi interfaces and active capture filters.
-
 ### Changed
+
+## [0.9.1] - 2026-10-08
+
+### Fixed
+
+- When live capture has no sessions, show guidance for specialized Wi-Fi interfaces and active capture filters.
 
 ## [0.9.0] - 2026-10-08
 

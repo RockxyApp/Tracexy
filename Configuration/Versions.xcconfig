@@ -7,8 +7,8 @@
 // Do NOT duplicate these values in Swift constants. All runtime code reads
 // from Bundle.main.infoDictionary.
 
-TRACEXY_APP_VERSION = 0.9.0
-TRACEXY_APP_BUILD = 15
+TRACEXY_APP_VERSION = 0.9.1
+TRACEXY_APP_BUILD = 16
 
 TRACEXY_HELPER_VERSION = 2.4.0
 TRACEXY_HELPER_BUILD = 11
