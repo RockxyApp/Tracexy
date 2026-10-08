@@ -89,13 +89,14 @@ struct SessionCenterView: View {
 
     static func waitingForPacketsMessage(interfaceID: String, hasCaptureFilter: Bool) -> String {
         if NetworkInterfaces.isSpecialPurposeWiFi(interfaceID) {
-            return "This interface carries specialized Wi-Fi traffic. Choose your connected Wi-Fi or Ethernet "
-                + "interface for ordinary internet sessions."
+            return String(
+                localized: "This interface carries specialized Wi-Fi traffic. Choose your connected Wi-Fi or Ethernet interface for internet sessions."
+            )
         }
         if hasCaptureFilter {
-            return "Waiting for packets that match the capture filter…"
+            return String(localized: "Waiting for packets matching the capture filter…")
         }
-        return "Waiting for packets…"
+        return String(localized: "Waiting for packets…")
     }
 
     // MARK: Private

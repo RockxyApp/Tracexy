@@ -142,11 +142,11 @@ struct LiveInvestigationChromeTests {
         let readiness = makeReadiness(interfaceID: "llw0", interface: interface)
 
         #expect(item("Interface", in: readiness)?.level == .attention)
-        #expect(readiness.description.contains("connected Wi-Fi or Ethernet"))
-        #expect(SessionCenterView.waitingForPacketsMessage(interfaceID: "llw0", hasCaptureFilter: false)
-            .contains("connected Wi-Fi or Ethernet"))
+        #expect(readiness.description == SessionCenterView.waitingForPacketsMessage(
+            interfaceID: "llw0", hasCaptureFilter: false
+        ))
         #expect(SessionCenterView.waitingForPacketsMessage(interfaceID: "en0", hasCaptureFilter: true)
-            .contains("capture filter"))
+            != SessionCenterView.waitingForPacketsMessage(interfaceID: "en0", hasCaptureFilter: false))
         #expect(!NetworkInterfaces.isSpecialPurposeWiFi("en0"))
         #expect(NetworkInterfaces.isSpecialPurposeWiFi("awdl0"))
     }

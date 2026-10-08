@@ -92,8 +92,9 @@ struct CaptureReadinessPresentation: Equatable {
 
     private static func description(for state: CaptureDisplayState, error: String?, interfaceID: String) -> String {
         if NetworkInterfaces.isSpecialPurposeWiFi(interfaceID), state == .stopped || state == .capturing {
-            return "This Wi-Fi interface carries specialized traffic. Choose your connected Wi-Fi or Ethernet "
-                + "interface to capture ordinary internet sessions."
+            return String(
+                localized: "This interface carries specialized Wi-Fi traffic. Choose your connected Wi-Fi or Ethernet interface for internet sessions."
+            )
         }
         return switch state {
         case .stopped:
@@ -129,7 +130,7 @@ struct CaptureReadinessPresentation: Equatable {
         if NetworkInterfaces.isSpecialPurposeWiFi(id) {
             return CaptureReadinessItem(
                 label: "Interface",
-                value: "\(interface.menuLabel) — specialized traffic",
+                value: interface.menuLabel,
                 systemImage: interface.symbol,
                 level: .attention
             )
