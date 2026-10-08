@@ -129,6 +129,28 @@ struct LiveInvestigationChromeTests {
         #expect(interface?.level == .attention)
     }
 
+    @Test("specialized Wi-Fi capture explains an empty session list")
+    func specializedWiFiGuidance() {
+        let interface = NetworkInterface(
+            id: "llw0",
+            displayName: "Low-Latency Wi-Fi",
+            category: .wifi,
+            ipv4: nil,
+            isUp: true,
+            isLoopback: false
+        )
+        let readiness = makeReadiness(interfaceID: "llw0", interface: interface)
+
+        #expect(item("Interface", in: readiness)?.level == .attention)
+        #expect(readiness.description.contains("connected Wi-Fi or Ethernet"))
+        #expect(SessionCenterView.waitingForPacketsMessage(interfaceID: "llw0", hasCaptureFilter: false)
+            .contains("connected Wi-Fi or Ethernet"))
+        #expect(SessionCenterView.waitingForPacketsMessage(interfaceID: "en0", hasCaptureFilter: true)
+            .contains("capture filter"))
+        #expect(!NetworkInterfaces.isSpecialPurposeWiFi("en0"))
+        #expect(NetworkInterfaces.isSpecialPurposeWiFi("awdl0"))
+    }
+
     @Test("live readiness keeps loss stages separate")
     func liveLossStages() {
         let presentation = makeReadiness(
@@ -190,6 +212,7 @@ struct LiveInvestigationChromeTests {
 
     private func makeReadiness(
         displayState: CaptureDisplayState = .stopped,
+        interfaceID: String = "en0",
         interface: NetworkInterface? = NetworkInterface(
             id: "en0",
             displayName: "Wi-Fi",
@@ -208,7 +231,7 @@ struct LiveInvestigationChromeTests {
         CaptureReadinessPresentation(
             displayState: displayState,
             captureError: displayState == .error ? "Capture failed." : nil,
-            interfaceID: "en0",
+            interfaceID: interfaceID,
             interface: interface,
             configuration: CaptureConfiguration(
                 interface: "en0",

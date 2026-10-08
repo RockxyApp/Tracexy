@@ -45,7 +45,7 @@ struct CaptureReadinessPresentation: Equatable {
         retentionEvictionCount: UInt64
     ) {
         title = displayState.title
-        description = Self.description(for: displayState, error: captureError)
+        description = Self.description(for: displayState, error: captureError, interfaceID: interfaceID)
         systemImage = Self.systemImage(for: displayState)
         actionTitle = displayState == .capturing ? "Stop Capture" : "Start Capture"
         isActionEnabled = displayState != .starting
@@ -90,8 +90,12 @@ struct CaptureReadinessPresentation: Equatable {
 
     // MARK: Private
 
-    private static func description(for state: CaptureDisplayState, error: String?) -> String {
-        switch state {
+    private static func description(for state: CaptureDisplayState, error: String?, interfaceID: String) -> String {
+        if NetworkInterfaces.isSpecialPurposeWiFi(interfaceID), state == .stopped || state == .capturing {
+            return "This Wi-Fi interface carries specialized traffic. Choose your connected Wi-Fi or Ethernet "
+                + "interface to capture ordinary internet sessions."
+        }
+        return switch state {
         case .stopped:
             "No new packets are being captured. Review the source below before starting."
         case .starting:
@@ -120,6 +124,14 @@ struct CaptureReadinessPresentation: Equatable {
                 systemImage: "network.slash",
                 level: .attention,
                 isMonospaced: true
+            )
+        }
+        if NetworkInterfaces.isSpecialPurposeWiFi(id) {
+            return CaptureReadinessItem(
+                label: "Interface",
+                value: "\(interface.menuLabel) — specialized traffic",
+                systemImage: interface.symbol,
+                level: .attention
             )
         }
         let state = interface.isUp ? interface.ipv4 ?? "" : String(localized: "not connected")

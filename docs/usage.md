@@ -17,6 +17,10 @@ Live capture reads from a network interface through the signed privileged helper
 begins when you press **Start**. If you explicitly enable **Settings → Capture → Auto-start capture
 on launch**, Tracexy starts capture after launch setup completes. Starting a capture clears the
 previous live buffer and switches you to the live session list so traffic is visible as it arrives.
+For ordinary internet traffic, choose the connected Wi-Fi or Ethernet interface. AWDL and
+Low-Latency Wi-Fi are specialized sources that can report as running while showing no ordinary
+internet sessions. If capture starts but the list stays empty, check the selected interface,
+the BPF capture filter in **Settings → Capture**, and any search or session filters.
 
 The helper streams raw frames to the app in batches; the app decodes them, groups them into sessions,
 and refreshes the list a few times a second while capturing. The list is ordered oldest→newest and stays
