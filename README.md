@@ -32,11 +32,11 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.9.1** — 2026-10-08
+**v0.9.2** — 2026-10-21
 
 ### Fixed
 
-- When live capture has no sessions, show guidance for specialized Wi-Fi interfaces and active capture filters.
+- The official macOS download includes Settings → License so purchased Pro keys can be activated.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->

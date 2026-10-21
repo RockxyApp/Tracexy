@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+## [0.9.2] - 2026-10-21
+
+### Fixed
+
+- The official macOS download includes Settings → License so purchased Pro keys can be activated.
+
 ## [0.9.1] - 2026-10-08
 
 ### Fixed

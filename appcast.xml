@@ -6,6 +6,21 @@
         <description>Tracexy Community release channel</description>
         <language>en</language>
         <item>
+            <title>0.9.2</title>
+            <pubDate>Wed, 21 Oct 2026 08:26:53 +0700</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.9.2</sparkle:fullReleaseNotesLink>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.9.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.9.2 (build 17)
+
+## Fixed
+
+- The official macOS download includes Settings → License so purchased Pro keys can be activated.
+]]></description>
+            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.9.2/Tracexy-0.9.2-17.dmg" length="20720797" type="application/octet-stream" sparkle:edSignature="3B5ppPI6UYOGTrnNPluhETFkTjphzsfeoSt8PZFinL0gJzIdgVTaNoA6r60IFhELKePaf0ZcY9Hx8mnbc9QHBg=="/>
+        </item>
+        <item>
             <title>0.9.1</title>
             <pubDate>Thu, 08 Oct 2026 18:29:23 +0700</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.9.1</sparkle:fullReleaseNotesLink>
@@ -64,22 +79,6 @@
 - PCAPNG TLS key-log blocks and equal-count statistics rows display correctly.
 ]]></description>
             <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.9.0/Tracexy-0.9.0-15.dmg" length="16948424" type="application/octet-stream" sparkle:edSignature="Cp3MiWZHHhwyQDbvb7S1WOxZRviIitkX97VAa3zRzYwrMOYFEaOyw2Fia/ZtQQMaEvJUXrpytnY29gDvZu3ODA=="/>
-        </item>
-        <item>
-            <title>0.8.1</title>
-            <pubDate>Tue, 22 Sep 2026 08:41:06 +0700</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/RockxyApp/Tracexy/releases/tag/v0.8.1</sparkle:fullReleaseNotesLink>
-            <sparkle:version>14</sparkle:version>
-            <sparkle:shortVersionString>0.8.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Tracexy 0.8.1 (build 14)
-
-## Fixed
-
-- Preserve approved helper updates
-- Restore idle exit timer delivery
-]]></description>
-            <enclosure url="https://github.com/RockxyApp/Tracexy/releases/download/v0.8.1/Tracexy-0.8.1-14.dmg" length="11038282" type="application/octet-stream" sparkle:edSignature="R+4TyGwxIDMnQx1/m5uUW/GPZX7aKp8jB0Hdn92gFqjLFYzjxmF6ydmn9l73VWhNC2Ro11/usmWVQN2KpbmIBg=="/>
         </item>
     </channel>
 </rss>
