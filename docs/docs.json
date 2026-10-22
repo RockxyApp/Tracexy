@@ -3,7 +3,7 @@
   "theme": "aspen",
   "name": "Tracexy",
   "description": "Native network intelligence for macOS. Investigate sessions, then inspect the packet evidence.",
-  "colors": { "primary": "#4169E1", "light": "#6488F2", "dark": "#3154BE" },
+  "colors": { "primary": "#4169E1", "light": "#6488F2", "dark": "#6379D8" },
   "favicon": "/assets/icon.png",
   "logo": { "light": "/assets/icon.png", "dark": "/assets/icon.png" },
   "navigation": {
