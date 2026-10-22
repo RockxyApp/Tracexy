@@ -1,0 +1,18 @@
+---
+title: Build from source
+description: Build the public macOS source edition.
+---
+
+# Build from source
+
+The public source edition is licensed under [AGPL-3.0-or-later](https://github.com/RockxyApp/Tracexy/blob/develop/LICENSE). It requires macOS 14+ and Xcode 16+.
+
+```bash
+git clone https://github.com/RockxyApp/Tracexy.git
+cd Tracexy
+cp Configuration/Developer.xcconfig.template Configuration/Developer.xcconfig
+```
+
+Set your own Apple Developer Team ID in the ignored `Configuration/Developer.xcconfig`, then build with the commands in the [developer guide](https://github.com/RockxyApp/Tracexy/blob/develop/docs/getting-started.md). App and helper signatures are checked at runtime. Helper changes require uninstall, rebuild, and reinstall.
+
+The source [architecture](https://github.com/RockxyApp/Tracexy/blob/develop/docs/architecture.md) explains capture, protocol, session, analysis, storage, automation, and UI boundaries.

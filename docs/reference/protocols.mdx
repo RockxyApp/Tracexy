@@ -1,0 +1,12 @@
+---
+title: Protocol coverage
+description: What Tracexy can decode, and where interpretation stops.
+---
+
+# Protocol coverage
+
+Tracexy decodes Ethernet and VLAN, Linux cooked, loopback and raw IP framing; ARP, IPv4/IPv6, ICMP, TCP/UDP; and selected application protocols. IPv4/IPv6 fragment reassembly is bounded. Supported application observations include DNS, TLS metadata, HTTP/1, STUN, QUIC long headers, local services, and selected cleartext protocols. Some richer application views are available only through explicit Follow or Statistics actions.
+
+This is a **bounded, selected protocol set**, not Wireshark's dissector catalog. TLS and QUIC payload decryption, arbitrary extension dissectors, and general field-by-field coverage are not available. Unknown and truncated bytes remain visible as evidence without a guessed protocol interpretation.
+
+For exact fields and limits, see the [protocol reference in the repository](https://github.com/RockxyApp/Tracexy/blob/develop/docs/protocol-support.md) and the [feature coverage matrix](/reference/feature-coverage).

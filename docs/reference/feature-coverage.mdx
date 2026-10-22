@@ -1,0 +1,77 @@
+---
+title: Feature coverage
+description: A transparent map of Wireshark workflow areas and Tracexy support.
+---
+
+# Feature coverage
+
+This catalog follows the major workflow areas of the [Wireshark User's Guide](https://www.wireshark.org/docs/wsug_html_chunked/). It helps Wireshark users find the corresponding Tracexy workflow. **Available** means a supported Tracexy action, not identical behavior or equivalent protocol breadth. **Partial** means a useful but narrower implementation. **Coming soon** identifies a gap or exploration area, not a committed release date. Protocol-specific tools and the full Wireshark dissector catalog are summarized by family; individual dissectors are not a promise to implement each one.
+
+## Capture and files
+
+| Wireshark workflow | Tracexy status | Scope |
+| --- | --- | --- |
+| Live interface capture; start, stop, restart | Available | Signed macOS helper, interface selection, readiness, loss accounting. |
+| Capture filters | Available | BPF filter entry, validation, saved/imported named filters. |
+| Remote capture and extcap sources | Partial | Supported local FIFO/source workflows; no general extcap or remote-capture plugin system. |
+| Auto-stop and capture rotation | Partial | Bounded auto-stop and supported rotated file sets; not all Wireshark dumpcap options. |
+| Open PCAP/PCAPNG and compressed captures | Available | Content sniffing, saved/open-in-place workflows, bounded gzip/LZ4 and selected archives. |
+| Merge, split, save, export selected packets | Available | Supported capture formats with explicit conversion limits. |
+| Text hex-dump import and every Wireshark capture format | Coming soon | Use Wireshark to convert unsupported inputs to PCAPNG. |
+| Capture file properties, comments, timestamps | Partial | File info and supported comments/time handling; not every pcapng option or Wireshark metadata view. |
+| Print packet views | Coming soon | Export supported evidence instead. |
+
+## Packet inspection and navigation
+
+| Wireshark workflow | Tracexy status | Scope |
+| --- | --- | --- |
+| Packet list, details tree, hex/bytes pane | Available | All Frames and evidence inspector; supported layers only. |
+| Search/find packet, go to frame, related packets | Available | Text/hex search and supported frame/session navigation. |
+| Packet marking, ignoring, comments | Available | Local investigation controls and supported comment export. |
+| Custom columns, layout, colorization | Partial | Custom session columns and native layout; Wireshark coloring-rule/profile semantics are not reproduced. |
+| Decode As and enabled protocols | Partial | Selected protocol/port overrides; no universal dissector dispatch. |
+| Checksum validation and malformed-packet hints | Partial | Selected IP/TCP/UDP checks and bounded decode warnings; no universal expert validation. |
+| Name resolution and address book | Partial | Local address names and optional user-selected GeoIP/ASN databases; no broad Wireshark resolver parity. |
+| Time references, shift and display formats | Partial | Selected frame time controls and export shift; not every Wireshark time mode. |
+| Field-level packet display filters and macros | Coming soon | Session Expressions query whole sessions and deliberately use different syntax. |
+| Wireshark profiles, coloring rules, and preferences import | Coming soon | Capture-filter and selected saved-filter imports are narrower. |
+
+## Sessions, analysis, and graphs
+
+| Wireshark workflow | Tracexy status | Scope |
+| --- | --- | --- |
+| Conversations and endpoints | Available | Session-first tables, host/endpoint projections, app context when observed. |
+| Follow TCP/UDP/application stream | Partial | On-demand bounded follow for stable sources and selected protocols; no universal stream dissector. |
+| Protocol hierarchy, capture summary, packet lengths | Available | Scope-aware Overview and Statistics views. |
+| I/O graphs, flow graph, timeline | Partial | Traffic timeline and supported graphs; not every Wireshark graph calculation or plot. |
+| TCP stream graphs and deep sequence analysis | Partial | Selected lifecycle, retransmission, RTT/flow-control evidence; no full set of Wireshark TCP plots. |
+| Expert information | Partial | Evidence-linked selected findings with explicit coverage limits; not a general expert engine. |
+| HTTP, DNS, IP, service response, distribution statistics | Partial | Selected statistics trees and views over supported decoded traffic. |
+| Telephony: SIP, RTP, VoIP calls, multicast | Partial | Selected SIP/RTP/multicast views; broad telephony analysis, playback, and all codecs remain unavailable. |
+| Wireless: 802.11, radiotap, WLAN decryption, Bluetooth | Coming soon | No broad radio-layer analysis or key management. |
+| Protocol-specific statistics for the full dissector catalog | Coming soon | Coverage is limited to the protocols listed in the app and [protocol reference](/reference/protocols). |
+| Arbitrary plots, taps, Lua and dissector plugins | Coming soon | No compatible plugin/tap execution model. |
+
+## Protocols and content
+
+| Wireshark workflow | Tracexy status | Scope |
+| --- | --- | --- |
+| Ethernet/VLAN, cooked/loopback/raw IP, ARP, IPv4/IPv6, ICMP, TCP/UDP | Available | Bounded decode; supported IPv4/IPv6 fragment reassembly. |
+| DNS, TLS, HTTP/1, STUN, QUIC | Partial | Selected metadata and explicit follow views; QUIC long headers only. |
+| HTTP/2, WebSocket, mail, SSH, local services, tunnels | Partial | Selected cleartext and on-demand paths; coverage depends on source and protocol. |
+| HTTP/3, deep QUIC, encrypted HTTP content | Coming soon | No QUIC or TLS decryption. |
+| Complete Wireshark protocol dissector catalog | Coming soon | Tracexy has a deliberately bounded selected set. |
+| TLS/QUIC decryption and key-log workflows | Coming soon | Encrypted application bytes are not exposed. |
+| Export Objects and upper-layer PDUs | Partial | Selected supported protocols and reconstructed objects, with completeness limits. |
+
+## Automation and customization
+
+| Wireshark workflow | Tracexy status | Scope |
+| --- | --- | --- |
+| Command-line capture/open/export | Partial | Selected Tracexy command-line actions; not TShark/dumpcap compatibility. |
+| Read-only automation | Available | Scoped MCP History projection after an explicit Project grant; no raw packets or capture control. |
+| TShark field extraction and scripting pipelines | Coming soon | No general Wireshark field registry or `-T fields` equivalent. |
+| Configuration profiles and portable settings | Partial | Project configuration transfer; no Wireshark profile import. |
+| Lua plugins, custom dissectors, extcap integration | Coming soon | No public extension SDK. |
+
+<Note>Wireshark feature names and categories are used for orientation only. Tracexy is a separate product with a different session-first workflow. For a specific operation, use the linked Tracexy guide and confirm the current app build.</Note>

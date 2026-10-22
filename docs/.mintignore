@@ -1,0 +1,4 @@
+# Repository reference material is linked through GitHub, not published as hidden site pages.
+*.md
+design/
+.DS_Store

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "Tracexy",
+  "description": "Native network intelligence for macOS. Investigate sessions, then inspect the packet evidence.",
+  "colors": { "primary": "#4169E1", "light": "#6488F2", "dark": "#3154BE" },
+  "favicon": "/assets/icon.png",
+  "logo": { "light": "/assets/icon.png", "dark": "/assets/icon.png" },
+  "navigation": {
+    "groups": [
+      { "group": "Start here", "pages": ["index", "quickstart", "concepts"] },
+      { "group": "Investigate", "pages": ["guides/capture", "guides/saved-captures", "guides/sessions-and-evidence", "guides/filter-and-find", "guides/export-and-share"] },
+      { "group": "Reference", "pages": ["reference/feature-coverage", "reference/protocols", "reference/privacy", "reference/troubleshooting", "reference/development", "changelog"] }
+    ],
+    "global": { "anchors": [
+      { "anchor": "GitHub", "href": "https://github.com/RockxyApp/Tracexy", "icon": "github" },
+      { "anchor": "Releases", "href": "https://github.com/RockxyApp/Tracexy/releases", "icon": "download" }
+    ] }
+  },
+  "navbar": { "primary": { "type": "button", "label": "Download", "href": "https://github.com/RockxyApp/Tracexy/releases" } },
+  "footer": { "socials": { "github": "https://github.com/RockxyApp/Tracexy" } }
+}

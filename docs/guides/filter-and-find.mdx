@@ -1,0 +1,12 @@
+---
+title: Filter and find
+description: Narrow captures and sessions without losing track of scope.
+---
+
+# Find the traffic that matters
+
+Use a **BPF capture filter** before live capture to choose incoming packets. In a saved or live investigation, use the interface's protocol, app, domain, host, and finding controls to narrow what you see. Focus Sets and Noise Control help keep a useful scope; reset and return controls make the active scope explicit.
+
+**Session Expressions** evaluate bounded, typed facts about whole sessions. They are not Wireshark display filters: packet-field syntax such as `ip.addr` and `tcp.port` is intentionally different. The editor reports unsupported expressions instead of silently broadening results. Wireshark `dfilters` can be imported as saved entries where supported, but import does not promise full expression compatibility.
+
+For a particular frame, use **All Frames** and **Find Packet** to search packet text, hex bytes, or supported fields. See the [full usage reference](https://github.com/RockxyApp/Tracexy/blob/develop/docs/usage.md) for grammar and keyboard details.
