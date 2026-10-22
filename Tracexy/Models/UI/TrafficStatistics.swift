@@ -297,13 +297,18 @@ enum TrafficStatistics {
 
     static func csv(_ rows: [TrafficConversationRow]) -> String {
         let header = "Address A,Port A,Address B,Port B,Sessions,Packets,Bytes,Packets A→B,Bytes A→B,Packets B→A,Bytes B→A,Duration"
-        let lines = rows.map { row in
-            [
-                row.addressA, row.portA.map(String.init) ?? "", row.addressB, row.portB.map(String.init) ?? "",
+        var lines: [String] = []
+        for row in rows {
+            let portA = row.portA.map { String($0) } ?? ""
+            let portB = row.portB.map { String($0) } ?? ""
+            let duration = row.duration.map { String(format: "%.6f", $0) } ?? ""
+            let values: [String] = [
+                row.addressA, portA, row.addressB, portB,
                 String(row.sessionCount), String(row.packets), String(row.bytes), String(row.packetsAToB),
                 String(row.bytesAToB), String(row.packetsBToA), String(row.bytesBToA),
-                row.duration.map { String(format: "%.6f", $0) } ?? "",
-            ].joined(separator: ",")
+                duration,
+            ]
+            lines.append(values.joined(separator: ","))
         }
         return ([header] + lines).joined(separator: "\n")
     }
