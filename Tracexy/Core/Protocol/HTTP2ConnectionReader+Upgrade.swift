@@ -104,13 +104,15 @@ extension HTTP2ConnectionReader {
             return []
         }
         let bytes = [UInt8](data)
-        return stride(from: 0, to: min(bytes.count, maximumUpgradeSettings * 6), by: 6).map { offset in
-            HTTP2Setting(
-                identifier: UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1]),
-                value: UInt32(bytes[offset + 2]) << 24 | UInt32(bytes[offset + 3]) << 16
-                    | UInt32(bytes[offset + 4]) << 8 | UInt32(bytes[offset + 5])
-            )
+        let end = min(bytes.count, maximumUpgradeSettings * 6)
+        var settings: [HTTP2Setting] = []
+        for offset in stride(from: 0, to: end, by: 6) {
+            let identifier = UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
+            let high = UInt32(bytes[offset + 2]) << 24 | UInt32(bytes[offset + 3]) << 16
+            let low = UInt32(bytes[offset + 4]) << 8 | UInt32(bytes[offset + 5])
+            settings.append(HTTP2Setting(identifier: identifier, value: high | low))
         }
+        return settings
     }
 
     /// The header lines of an HTTP/1 head in order, names lower-cased; the start
