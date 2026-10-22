@@ -1,0 +1,14 @@
+---
+title: Live capture
+description: Select an interface, capture deliberately, and understand capture coverage.
+---
+
+# Capture live traffic
+
+Choose a network interface in the toolbar, review **Capture Readiness**, then press **Start**. The signed privileged helper requires one-time macOS approval. You can set a BPF capture filter before starting; it controls which packets enter the capture. The app can also import named Wireshark capture filters for review and reuse.
+
+Press **Stop** to finalize the capture and its History summary. Save the complete captured frames if you need a durable raw file. Tracexy tracks kernel/interface loss, helper-buffer loss, and the bounded local inspection window separately; none is a measure of the others.
+
+<Warning>A capture filter removes unmatched packets at capture time. Session filters only narrow the view of evidence already captured.</Warning>
+
+[Inspect sessions](/guides/sessions-and-evidence) · [Capture privacy](/reference/privacy)

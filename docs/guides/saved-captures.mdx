@@ -1,0 +1,12 @@
+---
+title: Saved captures
+description: Open, import, and preserve packet captures.
+---
+
+# Analyze a saved capture
+
+Use **File → Open** to reference a capture in place, or **Import into Library** to keep a managed copy in the current Project. Tracexy recognizes PCAP and PCAPNG by content. The app also accepts bounded gzip/LZ4 compressed captures, rotated file sets, and the supported TCP Viewer session archive format. Import does not turn Wireshark profiles, display filters, or coloring rules into Tracexy settings.
+
+The original capture bytes remain intact. File information, frame browsing, export of selected frames, merge/split, and format conversion are available for supported inputs. Some conversions cannot preserve untimed frames or source-specific metadata; review the export summary before sharing.
+
+See the detailed [capture migration reference](https://github.com/RockxyApp/Tracexy/blob/develop/docs/capture-migration.md) for exact format and recovery limits.

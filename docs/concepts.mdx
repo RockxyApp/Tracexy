@@ -1,0 +1,14 @@
+---
+title: Core concepts
+description: Projects, captures, sessions, findings, and cited frames.
+---
+
+# A path from traffic to evidence
+
+- **Project** keeps its own workspace, saved library, History, capture settings, and privacy choices.
+- **Capture** is live traffic or a saved source. A saved file can be opened in place or imported into the Project library.
+- **Session** groups observed packets by a canonical conversation identity. It is a view of evidence, not a claim that every packet or application message was observed.
+- **Observation** describes retained protocol, timing, or connection facts. **Finding** is a narrower, evidence-linked interpretation with coverage limits.
+- **Frame citation** identifies the exact local packet supporting an observation or finding. The inspector can load that frame's layers and bytes.
+
+Capture loss, truncation, missing timestamps, and bounded retention can limit conclusions. Tracexy keeps these limits visible instead of filling gaps with inferred facts. See [sessions and evidence](/guides/sessions-and-evidence) and [privacy](/reference/privacy).

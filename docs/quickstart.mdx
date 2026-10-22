@@ -1,0 +1,17 @@
+---
+title: Quickstart
+description: Get from a capture to a cited packet in a few steps.
+---
+
+# Your first investigation
+
+Tracexy requires macOS 14 or later. Download an [official release](https://github.com/RockxyApp/Tracexy/releases), or [build the public source](/reference/development). A saved capture is the simplest way to try the app: it needs no privileged helper.
+
+<Steps>
+  <Step title="Open a capture">Choose **File → Open** and select a PCAP or PCAPNG file. Tracexy also supports bounded gzip, LZ4, and selected TCP Viewer archive imports; see [saved captures](/guides/saved-captures).</Step>
+  <Step title="Find a session">Use **Overview** for hosts, protocols, apps, and findings, then open **Sessions**. A session groups the observed traffic for a conversation; an unknown process or time remains unknown.</Step>
+  <Step title="Inspect the evidence">Select a session and open its **Evidence** inspector. Follow a finding or observation to its cited frame, then inspect layers, payload, and hex.</Step>
+  <Step title="Share deliberately">Export an investigation summary or a protected session document. Raw PCAP/PCAPNG exports preserve packet bytes and need careful handling.</Step>
+</Steps>
+
+For live capture, choose an interface and press **Start**. macOS approval of Tracexy's signed capture helper is required once. [Live capture guide](/guides/capture).

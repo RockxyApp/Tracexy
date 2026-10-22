@@ -1,0 +1,24 @@
+---
+title: Troubleshooting
+description: Common capture, file, and evidence issues.
+---
+
+# Troubleshooting
+
+## Live capture does not start
+
+Check **Capture Readiness**, the selected interface, and macOS approval for the signed helper in **System Settings → Login Items**. A rebuilt helper requires its supported uninstall/reinstall lifecycle; rebuilding the app alone does not replace the running helper.
+
+## A session has no process or finding
+
+Imported captures often lack Mac process context. A finding requires specific retained evidence, and missing packets or truncated capture may prevent one. Absence of a finding does not prove the traffic was healthy.
+
+## A cited frame cannot open
+
+The original in-place capture may have moved or changed, or the live source may have reset. Reopen/reload the exact source. Tracexy does not substitute a different packet for an unavailable citation.
+
+## Encrypted content is unreadable
+
+Tracexy observes packet and TLS/QUIC metadata but does not decrypt traffic. Use a tool designed for application-layer interception when you have authority to inspect that traffic.
+
+For reproducible issues, include app version, macOS version, capture format, and redacted steps in a [GitHub issue](https://github.com/RockxyApp/Tracexy/issues). Do not attach private packet captures by default.

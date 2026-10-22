@@ -1,0 +1,14 @@
+---
+title: Sessions and evidence
+description: Follow a conversation from overview to exact packet bytes.
+---
+
+# Investigate a session
+
+**Overview** highlights hosts, protocols, apps, findings, and traffic activity. Open **Sessions** to inspect a conversation's endpoints, timing, byte counts, protocol observations, and available process attribution. Process ownership depends on capture context and may be unknown.
+
+The bottom **Evidence** inspector shows retained connection and TLS observations. The right **Details** dock provides context for the selection. Open a cited frame to inspect packet layers, payload, and hex. The source file or stopped live spool must still be available for exact byte reads.
+
+**Follow Stream** reads an identity-checked stable source on demand. TCP reconstruction is bounded and reports gaps, overlaps, and truncation. The app also offers supported datagram and application-specific follow views; encrypted TLS/QUIC payloads remain encrypted.
+
+[Filter sessions](/guides/filter-and-find) · [Coverage matrix](/reference/feature-coverage)
