@@ -544,14 +544,9 @@ struct TracexyApp: App {
                 }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                 .disabled(!coordinator.hasAnyFinding)
-            }
+                Divider()
 
-            // View ▸ Back to Previous Scope (⌘[). The same single route the shared
-            // scope notice offers, so the menu and the notice can never disagree
-            // about what going back means.
-            //
-            // Disabled when the current source has no valid return point.
-            CommandGroup(after: .sidebar) {
+                // The same scope actions are also available from the shared notice.
                 Button(SessionScopeReturnAction.title) {
                     coordinator.returnToPreviousSessionScope()
                 }
