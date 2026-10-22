@@ -323,6 +323,19 @@ legacy_personal_mail_commit() {
     esac
 }
 
+# GitHub's pull_request checkout is a temporary merge commit. Its author email
+# comes from the PR account rather than the branch's committed metadata. Keep
+# scanning its tree and both parent histories, but do not treat that synthetic
+# commit's author as a published branch commit.
+synthetic_pull_request_merge_commit() {
+    [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || return 1
+    [ "$1" = "${GITHUB_SHA:-}" ] || return 1
+    [ "$1" = "$(git rev-parse HEAD)" ] || return 1
+    set -- $(git rev-list --parents -n 1 HEAD)
+    [ "$#" -eq 3 ] || return 1
+    [ "$(git log -1 --format=%s HEAD)" = "Merge $3 into $2" ]
+}
+
 hist_mail_hashes="$(git log HEAD --format='%H%x09%ae%x09%ce' 2>/dev/null \
     | grep -iE '@(gmail|googlemail|yahoo|ymail|hotmail|outlook|live|msn|icloud|me|mac|aol|gmx|proton|protonmail|pm|zoho|fastmail)\.[A-Za-z]{2,}' \
     | cut -f1 | sort -u)"
@@ -331,6 +344,7 @@ if [ -n "$hist_mail_hashes" ]; then
     hist_mail_out="$(printf '%s\n' "$hist_mail_hashes" | while IFS= read -r h; do
         [ -n "$h" ] || continue
         legacy_personal_mail_commit "$h" && continue
+        synthetic_pull_request_merge_commit "$h" && continue
         printf '%s: personal webmail in commit author/committer metadata\n' "$h"
     done)"
 fi
