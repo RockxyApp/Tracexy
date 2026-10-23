@@ -13,6 +13,20 @@ import Testing
 struct ConnectionValidatorAuditTokenTests {
     // MARK: Internal
 
+    @Test("Local Xcode products include the routed DerivedData cache")
+    func localBuildProductPathsAreConstrained() {
+        let defaultProduct = "/Users/developer/Library/Developer/Xcode/DerivedData/Tracexy-abc/Build/Products/Debug/Tracexy.app"
+        let routedProduct = "/example/caches/xcode/Tracexy-sync-0123456789ab/DerivedData/Build/Products/Debug/Tracexy.app"
+        let unrelated = "/tmp/DerivedData/Build/Products/Debug/Tracexy.app"
+        let wrongCache = "/tmp/caches/xcode/Tracexy-sync-not-a-hash/DerivedData/Build/Products/Debug/Tracexy.app"
+
+        #expect(CallerValidation.isXcodeDerivedDataBuildProduct(path: defaultProduct))
+        #expect(CallerValidation.isXcodeDerivedDataBuildProduct(path: routedProduct))
+        #expect(!CallerValidation.isXcodeDerivedDataBuildProduct(path: unrelated))
+        #expect(!CallerValidation.isXcodeDerivedDataBuildProduct(path: wrongCache))
+        #expect(!CallerValidation.isXcodeDerivedDataBuildProduct(path: routedProduct + "/../forged"))
+    }
+
     @Test("A missing audit token is rejected (fails closed)")
     func missingTokenFailsClosed() {
         // PID is deliberately the current process, which the diagnostic PID path would accept —

@@ -148,8 +148,32 @@ enum CallerValidation {
     }
 
     static func isXcodeDerivedDataBuildProduct(path: String) -> Bool {
-        path.contains("/Library/Developer/Xcode/DerivedData/")
-            && path.contains("/Build/Products/")
+        let components = path.split(separator: "/").map(String.init)
+        guard path.hasPrefix("/"), !components.contains(".."),
+              let derivedDataIndex = components.lastIndex(of: "DerivedData") else
+        {
+            return false
+        }
+
+        // Xcode's default and the local devvault wrapper both keep a distinct
+        // DerivedData/Build/Products tree. Do not accept an arbitrary directory
+        // merely because its name contains "DerivedData".
+        let defaultRoot = derivedDataIndex >= 3
+            && Array(components[(derivedDataIndex - 3) ..< derivedDataIndex])
+            == ["Library", "Developer", "Xcode"]
+            && components.count > derivedDataIndex + 4
+            && components[derivedDataIndex + 2] == "Build"
+            && components[derivedDataIndex + 3] == "Products"
+        let routedRoot = derivedDataIndex >= 3
+            && components[derivedDataIndex - 3] == "caches"
+            && components[derivedDataIndex - 2] == "xcode"
+            && components[derivedDataIndex - 1].split(separator: "-").last.map { suffix in
+                suffix.count == 12 && suffix.allSatisfy(\.isHexDigit)
+            } == true
+            && components.count > derivedDataIndex + 3
+            && components[derivedDataIndex + 1] == "Build"
+            && components[derivedDataIndex + 2] == "Products"
+        return defaultRoot || routedRoot
     }
 
     /// Obtains a `SecCode` from raw audit token data (32-byte `audit_token_t`).
