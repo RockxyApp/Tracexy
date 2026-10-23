@@ -385,6 +385,10 @@ final class AssistantAndMCPUITests: XCTestCase {
             app.typeKey(",", modifierFlags: .command)
         }
         XCTAssertTrue(settings.waitForExistence(timeout: 15), "Settings must open")
+        // The workspace can remain the key window while the Settings scene is
+        // already present. Invoke its command again to bring Settings forward
+        // before interacting with controls or its scroll view.
+        app.typeKey(",", modifierFlags: .command)
         settings.click()
         let mcpStatus = settings.staticTexts["mcp.statusTitle"]
         if mcpStatus.waitForExistence(timeout: 2) {

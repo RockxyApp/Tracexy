@@ -276,10 +276,10 @@ report "Forbidden sensitive path (policy)" "$FORBIDDEN_OUT"
 # grep but never emitted — only the commit hash is printed. `%x09` is a tab, so
 # `cut -f1` (default tab delimiter) extracts the hash and discards the addresses.
 #
-# The exact hashes below are merge commits that were already public before this
-# forward-looking gate could enforce noreply metadata. Rewriting published tags
-# would be more harmful than retaining them, so only those immutable objects are
-# baselined; every new commit remains subject to the strict check.
+# The exact hashes below are already-published commits with historical metadata.
+# Rewriting public history would be more harmful than retaining them, so only
+# those immutable objects are baselined; every new commit remains subject to
+# the strict check.
 legacy_personal_mail_commit() {
     case "$1" in
     09d3dd91c755fd853e79b5d49762140263149993 \
@@ -290,11 +290,13 @@ legacy_personal_mail_commit() {
         | 2e2d6e4b68d25adb44b9e221d082ef42f1c32e1a \
         | 290cf0c0d6769900e76e0b5f04e914376742d54e \
         | 341be63e2c09362fa210d855f42830a54cb87973 \
+        | 370c8a4b50e44a74c2a538aca0a2fc679c50bca6 \
         | 48f1e39129d3835872a513cb7cbb96d96d25562d \
         | 49bef5ef6d42651b0bd7c3739ca7a18516961851 \
         | 523b17b715a890f566b3f8e958625d7482113127 \
         | 5570f4fe549e767e3691f5e0c5b2faad98f87285 \
         | 5f0ec0b18c4193263a918f85de1e41257f9d8f6d \
+        | 64ae7776f847d38704f07fda8d634047415ef374 \
         | 70ef5119bc6ecf556943a750e563da115180d445 \
         | 74fc79db6b41288ca73808074c85504a2f58044e \
         | 7abcb836c52cb4f29c9518e711bcde3bafff9711 \

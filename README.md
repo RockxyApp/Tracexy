@@ -32,12 +32,11 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.8.1** — 2026-09-22
+**v0.9.2** — 2026-10-21
 
 ### Fixed
 
-- Preserve approved helper updates
-- Restore idle exit timer delivery
+- The official macOS download includes Settings → License so purchased Pro keys can be activated.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->

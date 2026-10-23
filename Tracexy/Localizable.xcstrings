@@ -19002,6 +19002,16 @@
         }
       }
     },
+    "This interface carries specialized Wi-Fi traffic. Choose your connected Wi-Fi or Ethernet interface for internet sessions.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Giao diện này chỉ mang lưu lượng Wi-Fi chuyên dụng. Hãy chọn Wi-Fi hoặc Ethernet đang kết nối để xem các phiên Internet."
+          }
+        }
+      }
+    },
     "This is exactly what leaves Tracexy, and it goes only to the local endpoint below. No packet bytes, payload bodies, URLs, file paths or credentials are included. The optional Host field can contain a DNS- or SNI-derived display name.": {
       "localizations": {
         "vi": {
@@ -20054,6 +20064,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Không có danh sách cuộc gọi VoIP"
+          }
+        }
+      }
+    },
+    "Waiting for packets matching the capture filter…": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang chờ gói khớp bộ lọc bắt gói…"
           }
         }
       }
