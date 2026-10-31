@@ -95,6 +95,16 @@ struct SessionStoreTests {
         #expect(page.sessions.first?.duration == nil)
     }
 
+    @Test("Corrected capture time basis round-trips without a schema rewrite")
+    func correctedTimeBasisRoundTrips() async throws {
+        let store = try SessionStore()
+        let capture = Self.capture(timeBasis: .correctedCaptured)
+        try await store.replaceCapture(capture, sessions: [Self.session()])
+        let stored = try #require(try await store.capture(id: capture.captureID))
+        #expect(stored.record.timeBasis == .correctedCaptured)
+        #expect(await store.schemaVersion == 4)
+    }
+
     @Test("A failed migration rolls back and leaves version 0 for a clean retry")
     func migrationRollsBackOnFault() async throws {
         let url = Self.temporaryURL()
@@ -120,10 +130,10 @@ struct SessionStoreTests {
         let url = Self.temporaryURL()
         defer { Self.removeDatabaseFiles(url) }
         let raw = try SQLiteDatabase(path: url.path, readOnly: false)
-        try raw.execute("PRAGMA user_version = 4;")
+        try raw.execute("PRAGMA user_version = 5;")
         raw.close()
 
-        #expect(throws: HistoryStoreError.unsupportedSchema(version: 4)) {
+        #expect(throws: HistoryStoreError.unsupportedSchema(version: 5)) {
             _ = try SessionStore(configuration: .init(location: .file(url)))
         }
     }

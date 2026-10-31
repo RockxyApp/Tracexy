@@ -265,7 +265,7 @@ struct ProjectSourceRaceTests {
         let result = try SavedCaptureStreamLoader(contentsOf: replacement.url).load()
         let loaderGate = SourceRaceGate()
         let saveGate = SourceRaceGate()
-        coordinator.savedCaptureLoadOperation = SavedCaptureLoadOperation { _, _, _ in
+        coordinator.savedCaptureLoadOperation = SavedCaptureLoadOperation { _, _, _, _ in
             await loaderGate.pause()
             return result
         }

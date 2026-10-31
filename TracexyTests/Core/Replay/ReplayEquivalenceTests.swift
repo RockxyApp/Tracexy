@@ -316,7 +316,7 @@ struct ReplayEquivalenceTests {
     // MARK: Snapshot stability & no random ids
 
     @Test
-    func snapshotJSONIsDeterministicAndCarriesNoLayerIDs() {
+    func snapshotJSONIsDeterministicAndCarriesNoLayerIDs() throws {
         let sessions = SessionBuilder.build(
             from: ReplayCorpus.conversationCapturedFrames(), linkType: LinkType.ethernet
         )
@@ -334,6 +334,28 @@ struct ReplayEquivalenceTests {
         #expect(
             digest == ReplayGoldens.conversationSnapshotDigest,
             "reviewed canonical snapshot digest changed: \(digest)"
+        )
+        // Audit method fidelity first: re-encoding the canonical tree unchanged must
+        // reproduce the current digest exactly. Without this, a schema finding could
+        // be an artefact of the audit's re-encoder rather than a real delta.
+        #expect(
+            try CanonicalSnapshotAudit.digestOfCanonicalRoundTrip(json) == digest,
+            "canonical round-trip is not faithful, so the schema audit proves nothing"
+        )
+        // The digest says only that something moved. These pin what: the whole
+        // decode-tree schema, and the fact that removing this branch's declared
+        // additive packet facts leaves exactly the schema the reviewed baseline
+        // emitted — so a renamed or dropped field fails even if a digest were
+        // refreshed to match it.
+        let schema = try CanonicalSnapshotAudit.schemaNames(json)
+        #expect(
+            schema == CanonicalSnapshotAudit.conversationSchema,
+            "snapshot schema changed: \(schema.joined(separator: " | "))"
+        )
+        let baselineSchema = try CanonicalSnapshotAudit.schemaNamesWithoutAdditivePacketFacts(json)
+        #expect(
+            baselineSchema == CanonicalSnapshotAudit.conversationBaselineSchema,
+            "reviewed baseline schema is no longer recovered: \(baselineSchema.joined(separator: " | "))"
         )
 
         // The only UUIDs in the schema are the stable session ids — one per session.

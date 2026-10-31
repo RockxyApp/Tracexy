@@ -8,6 +8,30 @@ struct IPInIPTests {
     // MARK: Internal
 
     @Test
+    func frameExpressionsMatchOuterAndInnerTunnelAddresses() throws {
+        var parser = FrameExpressionParser()
+        for (frame, outer, inner) in [
+            (Self.frames[0], "192.0.2.1", "10.9.0.1"),
+            (Self.frames[1], "192.0.2.1", "2001:db8::a"),
+        ] {
+            let packet = SessionBuilder.decodePacket(
+                CapturedFrame(bytes: frame, timestamp: nil, originalLength: frame.count),
+                linkType: LinkType.ethernet
+            )
+            let facts = FrameFilterFacts(packet: packet)
+            #expect(try parser.parse("ip.addr == \(outer)").evaluate(facts) == .yes)
+            #expect(try parser.parse("ip.src == \(outer)").evaluate(facts) == .yes)
+            #expect(try parser.parse("ip.addr == \(inner)").evaluate(facts) == .yes)
+            let absent = try parser.parse("ip.addr == 203.0.113.77").evaluate(facts)
+            let expectedAbsent: FrameTruth = facts.ipAddressCouldBeHidden ? .unknown : .no
+            #expect(
+                absent == expectedAbsent,
+                "got \(String(describing: absent)); source=\(facts.sourceIPAddresses.map(\.compressedText)), destination=\(facts.destinationIPAddresses.map(\.compressedText)), hidden=\(facts.ipAddressCouldBeHidden)"
+            )
+        }
+    }
+
+    @Test
     func innerFlowsBecomeTheSessions() throws {
         let url = try Self.capture()
         defer { try? FileManager.default.removeItem(at: url) }

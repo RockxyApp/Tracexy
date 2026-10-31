@@ -436,6 +436,26 @@ struct HistoryIntegrationTests {
         let empty = try MainContentCoordinator.historyLifetime(for: .empty, openedAt: openedAt)
         #expect(empty.timeBasis == .opened)
         #expect(empty.startedAt == openedAt)
+        var completeCorrectedMetadata = CaptureMetadataAccumulator()
+        completeCorrectedMetadata.add(
+            linkType: 1, timestamp: Date(timeIntervalSince1970: 1_000), hasDecodedLinkLayer: true
+        )
+        completeCorrectedMetadata.add(
+            linkType: 1, timestamp: Date(timeIntervalSince1970: 1_050), hasDecodedLinkLayer: true
+        )
+        var completeCorrectedSummary = completeCorrectedMetadata.summary()
+        completeCorrectedSummary.hasTimestampCorrectionMarker = true
+        let corrected = try MainContentCoordinator.historyLifetime(for: completeCorrectedSummary, openedAt: openedAt)
+        #expect(corrected.timeBasis == .correctedCaptured)
+        #expect(corrected.startedAt == 1_000)
+        completeCorrectedMetadata.add(linkType: 1, timestamp: nil, hasDecodedLinkLayer: true)
+        var incompleteCorrectedSummary = completeCorrectedMetadata.summary()
+        incompleteCorrectedSummary.hasTimestampCorrectionMarker = true
+        let openedCorrected = try MainContentCoordinator.historyLifetime(
+            for: incompleteCorrectedSummary, openedAt: openedAt
+        )
+        #expect(openedCorrected.timeBasis == .openedCorrected)
+        #expect(openedCorrected.startedAt == openedAt)
         #expect(throws: HistoryStoreError.self) {
             try MainContentCoordinator.historyLifetime(for: .empty, openedAt: .nan)
         }

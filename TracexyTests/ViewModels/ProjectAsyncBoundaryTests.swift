@@ -164,7 +164,7 @@ struct ProjectAsyncBoundaryTests {
             try SavedCaptureStreamLoader(contentsOf: capture.url).load()
         }.value
         let gate = ProjectLoaderGate()
-        coordinator.savedCaptureLoadOperation = SavedCaptureLoadOperation { _, _, progress in
+        coordinator.savedCaptureLoadOperation = SavedCaptureLoadOperation { _, _, _, progress in
             await gate.pause()
             // Deliberately ignore cancellation and even send late progress.
             // The coordinator must retire both callbacks, not trust the worker.

@@ -70,7 +70,7 @@ enum ReplayGoldens {
     /// Checksum) and widens TCP Flags to bytes 12–13; removing those fields and
     /// restoring the one-byte Flags span reproduces the prior `e387dbd25f5d81e7` pin.
     /// Checksum validation adds the ICMP Checksum field; removing it reproduces `63e7161c77a56283`.
-    static let conversationSnapshotDigest = "542f6cad06bb6a4a"
+    static let conversationSnapshotDigest = "19d9ae997944c23e"
 
     /// FNV-1a-64 of the complete canonical *connection* JSON for the primary
     /// conversation. It is additive to `conversationSnapshotDigest` and

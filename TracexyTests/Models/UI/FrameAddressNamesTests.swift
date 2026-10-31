@@ -49,6 +49,9 @@ struct FrameAddressNamesTests {
             ReplayCorpus.Frame(bytes: $0.element, offsetSeconds: $0.offset, linkType: LinkType.ethernet)
         })).write(to: url)
         let sessions = try SavedCaptureStreamLoader(contentsOf: url).load().sessions
+        let fileMapping = CaptureNameResolutionRecord(
+            address: "198.51.100.7", name: CaptureBoundedText(text: "from-file.example.test")
+        )
 
         let suite = "frame-names-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -57,12 +60,12 @@ struct FrameAddressNamesTests {
         book.bind(to: defaults)
         book.setSubnetName("lab", for: "192.0.2.0/24")
 
-        var name = FrameAddressNames.resolver(sessions: sessions, book: book)
+        var name = FrameAddressNames.resolver(sessions: sessions, book: book, captureFileRecords: [fileMapping])
         #expect(name("198.51.100.7") == "web.example.test")
         #expect(name("192.0.2.10") == "lab.10")
         #expect(name("203.0.113.1") == "203.0.113.1")
         book.setName("frontend", for: "198.51.100.7")
-        name = FrameAddressNames.resolver(sessions: sessions, book: book)
+        name = FrameAddressNames.resolver(sessions: sessions, book: book, captureFileRecords: [fileMapping])
         #expect(name("198.51.100.7") == "frontend")
 
         guard WiresharkOracle.isAvailable else {
@@ -71,6 +74,23 @@ struct FrameAddressNamesTests {
         #expect(try WiresharkOracle.tsharkFields(
             url, fields: ["ip.dst_host"], filter: "tcp", extraArguments: ["-N", "dn"]
         ) == [["web.example.test"]])
+    }
+
+    @Test
+    func projectAndObservedDnsNamesPrecedePcapngFileMappings() throws {
+        let suite = "frame-names-nrb-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { TestPreferences.remove(suite) }
+        let book = AddressNameBook()
+        book.bind(to: defaults)
+        let mapping = CaptureNameResolutionRecord(
+            address: "192.0.2.10", name: CaptureBoundedText(text: "file.example.test")
+        )
+        var name = FrameAddressNames.resolver(sessions: [], book: book, captureFileRecords: [mapping])
+        #expect(name("192.0.2.10") == "file.example.test")
+        book.setName("project-name", for: "192.0.2.10")
+        name = FrameAddressNames.resolver(sessions: [], book: book, captureFileRecords: [mapping])
+        #expect(name("192.0.2.10") == "project-name")
     }
 
     @Test

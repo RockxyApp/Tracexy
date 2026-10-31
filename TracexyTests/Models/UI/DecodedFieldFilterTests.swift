@@ -80,4 +80,22 @@ struct DecodedFieldFilterTests {
         // Prepared, not applied: the accepted expression is unchanged.
         #expect(workspace.acceptedInvestigationDraft?.expression == "port == \(port)")
     }
+
+    @Test
+    func frameFilterActionsStaySeparateFromSessionExpression() {
+        let isolation = ProjectIsolationEnvironment(name: "frame-filter-action")
+        defer { isolation.tearDown() }
+        let coordinator = isolation.makeCoordinator()
+        let workspace = coordinator.activeWorkspace
+        workspace.investigationDraft.expression = "tcp"
+
+        coordinator.filterFrames(with: "tcp.srcport == 50000", combination: .selected, applying: true)
+        #expect(coordinator.allFrames.acceptedFrameExpressionText == "tcp.srcport == 50000")
+        #expect(workspace.investigationDraft.expression == "tcp")
+
+        coordinator.filterFrames(with: "tcp.dstport == 443", combination: .andSelected, applying: false)
+        #expect(coordinator.allFrames.frameExpressionDraft == "(tcp.srcport == 50000) and tcp.dstport == 443")
+        #expect(coordinator.allFrames.acceptedFrameExpressionText == "tcp.srcport == 50000")
+        #expect(workspace.investigationDraft.expression == "tcp")
+    }
 }

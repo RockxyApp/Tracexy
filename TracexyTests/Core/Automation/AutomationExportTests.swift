@@ -193,7 +193,12 @@ struct AutomationExportTests {
 
     @Test("A capture always discloses whether its lifetime is captured or an open event")
     func captureDisclosesTimeBasis() throws {
-        for (storage, spelling) in [(HistoryCaptureTimeBasis.captured, "captured"), (.opened, "opened")] {
+        for (storage, spelling) in [
+            (HistoryCaptureTimeBasis.captured, "captured"),
+            (.opened, "opened"),
+            (.correctedCaptured, "correctedCaptured"),
+            (.openedCorrected, "openedCorrected"),
+        ] {
             let capture = AutomationCaptureValue(HistoryStoredCapture(
                 record: HistoryCaptureRecord(
                     captureID: UUID(),

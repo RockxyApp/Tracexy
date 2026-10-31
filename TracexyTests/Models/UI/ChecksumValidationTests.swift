@@ -59,6 +59,7 @@ struct ChecksumValidationTests {
 
         // The note reads as Wireshark's does.
         #expect(ChecksumStatus.incorrect(expected: 0x1A2B).note == "[incorrect, should be 0x1a2b]")
+        #expect(ChecksumStatus.incorrect32(expected: 0x12345678).note == "[incorrect, should be 0x12345678]")
         let annotated = ChecksumValidation.annotate(Self.decode(zeroed), bytes: zeroed)
         let tcpChecksum = annotated.first { $0.proto == .tcp }?.fields.first { $0.name == "Checksum" }?.value
         #expect(tcpChecksum == "0x0000 [incorrect, should be \(PacketDecoder.hex(tcpExpected, digits: 4))]")
