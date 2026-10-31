@@ -71,7 +71,9 @@ nonisolated enum SupportedProtocols {
             (
                 .sctp,
                 "Stream Control Transmission Protocol",
-                String(localized: "Common header, bounded chunks and CRC32C; no association or stream reconstruction")
+                String(
+                    localized: "Common header, bounded chunks and CRC32C; sessions per endpoint pair, no stream reconstruction"
+                )
             ),
             (.gre, "Generic Routing Encapsulation", String(localized: "The tunnel and the packet inside it")),
             (.vxlan, "Virtual Extensible LAN", String(localized: "The network identifier and the frame inside it")),

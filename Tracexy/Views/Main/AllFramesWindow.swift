@@ -395,7 +395,8 @@ struct AllFramesWindow: View {
                         "Filter individual listed frames. Supports frame.len and frame.cap_len comparisons, "
                             + "frame.truncated, tcp.rst, tcp.syn, tcp.port, tcp.srcport, tcp.dstport, "
                             + "tcp.flags.fin/syn/reset/push/ack/urg/ece/cwr, tcp.window_size_value, "
-                            + "udp.port, udp.srcport, udp.dstport, ip.addr, ip.src, "
+                            + "udp.port, udp.srcport, udp.dstport, sctp.port, sctp.srcport, sctp.dstport, "
+                            + "ip.addr, ip.src, "
                             + "ip.dst, ip.id, ip.flags.df, dns.response, dns.rcode, dns.id, dns.flags.truncated, "
                             + "icmp.type/code, icmpv6.type/code, and/or/not."
                     )

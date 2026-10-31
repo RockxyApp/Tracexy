@@ -855,6 +855,59 @@ struct FrameExpressionTests {
         #expect(state.acceptedFrameExpressionText == "tcp.rst")
     }
 
+    @Test("SCTP port terms match the typed common header and stay unknown when it was cut")
+    func sctpPortPredicates() throws {
+        var packet = DecodedPacket(timestamp: nil, originalLength: 70)
+        packet.transport = .sctp
+        packet.sourceEndpoint = IPEndpoint(ip: "192.0.2.10", port: 50_000)
+        packet.destinationEndpoint = IPEndpoint(ip: "198.51.100.7", port: 2_905)
+        packet.sctpFacts = SCTPFacts(
+            sourcePort: 50_000, destinationPort: 2_905, verificationTag: 1,
+            chunkTypes: [SCTPChunkType.data], chunksOmitted: false
+        )
+        let facts = FrameFilterFacts(packet: packet)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("sctp.port == 2905").evaluate(facts) == .yes)
+        #expect(try parser.parse("sctp.port == 50000").evaluate(facts) == .yes)
+        #expect(try parser.parse("sctp.port == 443").evaluate(facts) == .no)
+        #expect(try parser.parse("sctp.srcport == 50000").evaluate(facts) == .yes)
+        #expect(try parser.parse("sctp.dstport == 2905").evaluate(facts) == .yes)
+        #expect(try parser.parse("sctp.srcport == 2905").evaluate(facts) == .no)
+        // A TCP frame is not an SCTP port match, and vice versa.
+        var tcp = DecodedPacket(timestamp: nil, originalLength: 54)
+        tcp.transport = .tcp
+        tcp.sourceEndpoint = IPEndpoint(ip: "192.0.2.10", port: 2_905)
+        tcp.destinationEndpoint = IPEndpoint(ip: "198.51.100.7", port: 2_905)
+        tcp.tcpFacts = TCPSegmentFacts(
+            sequenceNumber: 1, acknowledgementNumber: 1, flags: [.ack], windowSize: 100,
+            headerLength: 20, payloadSequence: 1, payloadLength: 0, options: TCPOptionFacts()
+        )
+        #expect(try parser.parse("sctp.port == 2905").evaluate(FrameFilterFacts(packet: tcp)) == .no)
+        #expect(try parser.parse("udp.port == 2905").evaluate(facts) == .no)
+
+        // A frame whose decode stopped before the SCTP header cannot disprove a
+        // port, so the term is unknown rather than a non-match — including under
+        // negation, as the other port families already behave.
+        var cut = DecodedPacket(timestamp: nil, originalLength: 70)
+        cut.transport = .sctp
+        cut.decodeStop = .cutShort
+        let cutFacts = FrameFilterFacts(packet: cut)
+        #expect(try parser.parse("sctp.port == 2905").evaluate(cutFacts) == .unknown)
+        #expect(try parser.parse("not sctp.dstport == 2905").evaluate(cutFacts) == .unknown)
+    }
+
+    @Test("an SCTP port field in the decode tree offers its own frame filter term")
+    func sctpPortFieldBecomesAFrameFilterTerm() {
+        #expect(
+            DecodedFrameFilter.term(proto: .sctp, field: "Source Port", value: "50000")
+                == "sctp.srcport == 50000"
+        )
+        #expect(
+            DecodedFrameFilter.term(proto: .sctp, field: "Destination Port", value: "2905 (sctp)")
+                == "sctp.dstport == 2905"
+        )
+    }
+
     @Test @MainActor
     func decodedFieldHighlightPreservesAppliedFilterAndDraft() {
         let state = CaptureFrameListState()

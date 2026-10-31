@@ -143,6 +143,10 @@ nonisolated enum DecodedFrameFilter {
             UInt16(value.prefix { $0.isNumber }).map { "udp.srcport == \($0)" }
         case (.udp, "Destination Port"):
             UInt16(value.prefix { $0.isNumber }).map { "udp.dstport == \($0)" }
+        case (.sctp, "Source Port"):
+            UInt16(value.prefix { $0.isNumber }).map { "sctp.srcport == \($0)" }
+        case (.sctp, "Destination Port"):
+            UInt16(value.prefix { $0.isNumber }).map { "sctp.dstport == \($0)" }
         case (.tcp, "Window"):
             UInt16(value).map { "tcp.window_size_value == \($0)" }
         case (.tcp, "Seq"):

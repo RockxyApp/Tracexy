@@ -24,6 +24,8 @@ nonisolated struct FrameFilterFacts: Hashable, Sendable {
         destinationTCPPort = packet.tcpFacts == nil ? nil : packet.destinationEndpoint?.port
         sourceUDPPort = packet.transport == .udp ? packet.sourceEndpoint?.port : nil
         destinationUDPPort = packet.transport == .udp ? packet.destinationEndpoint?.port : nil
+        sourceSCTPPort = packet.sctpFacts?.sourcePort
+        destinationSCTPPort = packet.sctpFacts?.destinationPort
         tcpFlags = packet.tcpFacts?.flags
         tcpWindowSizeValue = packet.tcpFacts?.windowSize
         tcpSequenceRaw = packet.tcpFacts?.sequenceNumber
@@ -84,6 +86,10 @@ nonisolated struct FrameFilterFacts: Hashable, Sendable {
     let destinationTCPPort: UInt16?
     let sourceUDPPort: UInt16?
     let destinationUDPPort: UInt16?
+    /// Read from the typed SCTP common header, so a frame cut before its ports
+    /// were captured has no port to match rather than a guessed one.
+    let sourceSCTPPort: UInt16?
+    let destinationSCTPPort: UInt16?
     let tcpFlags: TCPFlags?
     let tcpWindowSizeValue: UInt16?
     let tcpSequenceRaw: UInt32?
@@ -277,6 +283,9 @@ nonisolated indirect enum FrameExpression: Sendable, Equatable {
         case udpPort(UInt16)
         case udpSourcePort(UInt16)
         case udpDestinationPort(UInt16)
+        case sctpPort(UInt16)
+        case sctpSourcePort(UInt16)
+        case sctpDestinationPort(UInt16)
         case ipAddress(IPAddressValue)
         case ipSource(IPAddressValue)
         case ipDestination(IPAddressValue)
@@ -382,6 +391,16 @@ nonisolated indirect enum FrameExpression: Sendable, Equatable {
                 return portMatch(port, observed: facts.sourceUDPPort, protocolNumber: 17, facts: facts)
             case let .udpDestinationPort(port):
                 return portMatch(port, observed: facts.destinationUDPPort, protocolNumber: 17, facts: facts)
+            case let .sctpPort(port):
+                guard let source = facts.sourceSCTPPort, let destination = facts.destinationSCTPPort else {
+                    return facts
+                        .decodingStopped || fragmentMayContain(protocolNumber: 132, facts: facts) ? .unknown : .no
+                }
+                return source == port || destination == port ? .yes : .no
+            case let .sctpSourcePort(port):
+                return portMatch(port, observed: facts.sourceSCTPPort, protocolNumber: 132, facts: facts)
+            case let .sctpDestinationPort(port):
+                return portMatch(port, observed: facts.destinationSCTPPort, protocolNumber: 132, facts: facts)
             case let .ipAddress(address):
                 if facts.sourceIPAddresses.contains(address) || facts.destinationIPAddresses.contains(address) {
                     return .yes
@@ -768,6 +787,9 @@ nonisolated struct FrameExpressionParser {
              "udp.port",
              "udp.srcport",
              "udp.dstport",
+             "sctp.port",
+             "sctp.srcport",
+             "sctp.dstport",
              "dns.rcode",
              "ip.addr",
              "ip.src",
@@ -786,7 +808,10 @@ nonisolated struct FrameExpressionParser {
                  "tcp.dstport",
                  "udp.port",
                  "udp.srcport",
-                 "udp.dstport":
+                 "udp.dstport",
+                 "sctp.port",
+                 "sctp.srcport",
+                 "sctp.dstport":
                 guard let port = UInt16(value.text) else {
                     throw FrameExpressionError(position: value.position, reason: "Expected a port from 0 to 65535")
                 }
@@ -796,7 +821,10 @@ nonisolated struct FrameExpressionParser {
                 case "tcp.dstport": return .tcpDestinationPort(port)
                 case "udp.port": return .udpPort(port)
                 case "udp.srcport": return .udpSourcePort(port)
-                default: return .udpDestinationPort(port)
+                case "udp.dstport": return .udpDestinationPort(port)
+                case "sctp.port": return .sctpPort(port)
+                case "sctp.srcport": return .sctpSourcePort(port)
+                default: return .sctpDestinationPort(port)
                 }
             case "dns.rcode":
                 guard let code = UInt8(value.text), code <= 15 else {

@@ -182,14 +182,17 @@ nonisolated enum DisplayFilterTranslator {
              "ipv6.dst_host":
             return try (address("destination.ip", comparison), false)
         case "tcp.port",
-             "udp.port":
-            return try ("(\(lower.prefix(3)) and \(port("port", comparison)))", false)
+             "udp.port",
+             "sctp.port":
+            return try ("(\(transportTerm(lower)) and \(port("port", comparison)))", false)
         case "tcp.srcport",
-             "udp.srcport":
-            return try ("(\(lower.prefix(3)) and \(port("source.port", comparison)))", false)
+             "udp.srcport",
+             "sctp.srcport":
+            return try ("(\(transportTerm(lower)) and \(port("source.port", comparison)))", false)
         case "tcp.dstport",
-             "udp.dstport":
-            return try ("(\(lower.prefix(3)) and \(port("destination.port", comparison)))", false)
+             "udp.dstport",
+             "sctp.dstport":
+            return try ("(\(transportTerm(lower)) and \(port("destination.port", comparison)))", false)
         case "eth.addr":
             return try (mac("mac", comparison), false)
         case "eth.src":
@@ -255,6 +258,13 @@ nonisolated enum DisplayFilterTranslator {
         default:
             throw Refusal("“\(field.prefix(64))” has no session meaning in Tracexy.")
         }
+    }
+
+    /// The Session Expression protocol term a `tcp.*` / `udp.*` / `sctp.*` port
+    /// field belongs to, taken from the field name rather than a fixed prefix
+    /// length, so `sctp.srcport` reads as `sctp` and not `sct`.
+    private static func transportTerm(_ field: String) -> String {
+        String(field.prefix { $0 != "." })
     }
 
     private static func address(_ field: String, _ comparison: (op: String, value: Value)) throws -> String {
