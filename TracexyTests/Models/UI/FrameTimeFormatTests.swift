@@ -185,7 +185,7 @@ struct FrameTimeFormatTests {
     func timeReferencesAreBoundedSortedAndClearedOnProjectBinding() throws {
         let suiteName = "FrameTimeDisplayTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defer { TestPreferences.remove(suiteName) }
         let display = SessionTimeDisplay()
         display.bind(to: defaults)
         let persistedSettings = defaults.persistentDomain(forName: suiteName) ?? [:]

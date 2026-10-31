@@ -89,8 +89,8 @@ struct FrameColorRuleLibraryTests {
         let defaultsA = try #require(UserDefaults(suiteName: suiteA))
         let defaultsB = try #require(UserDefaults(suiteName: suiteB))
         defer {
-            defaultsA.removePersistentDomain(forName: suiteA)
-            defaultsB.removePersistentDomain(forName: suiteB)
+            TestPreferences.remove(suiteA)
+            TestPreferences.remove(suiteB)
         }
         let library = FrameColorRuleLibrary()
         library.bind(projectID: projectA, defaults: defaultsA)

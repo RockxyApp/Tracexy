@@ -164,6 +164,42 @@ struct FrameExportActivationTests {
     }
 
     @Test("A finalized sessionless live capture still allows whole-capture export")
+    func stoppedSessionlessExport() async throws {
+        let env = try await makeEnvironment()
+        defer { env.teardown() }
+        let coordinator = env.coordinator
+        // An Ethertype in the local-experimental range, so the fold below is
+        // empty because the frame folds into nothing — not because the test
+        // handed the coordinator an empty fold. An SCTP frame stood here once
+        // and no longer qualifies: SCTP folds into a session.
+        let bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0xB5, 0xAA]
+        let frame = CapturedFrame(
+            bytes: bytes, timestamp: Date(timeIntervalSince1970: 1_800_000_000),
+            originalLength: bytes.count, linkType: LinkType.ethernet
+        )
+        try await coordinator.liveCaptureSpool.reset(epoch: 70)
+        _ = try await coordinator.liveCaptureSpool.append([frame], defaultLinkType: LinkType.ethernet, epoch: 70)
+        coordinator.startGeneration = 71
+        coordinator.publishLiveDetailed(
+            InvestigationSnapshot(fold: SessionBuilder.buildDetailed(from: [frame], linkType: LinkType.ethernet)),
+            expectedGeneration: 71,
+            isCapturing: false
+        )
+        for _ in 0 ..< 50 {
+            await Task.yield()
+        }
+        #expect(coordinator.sessions.isEmpty)
+        #expect(coordinator.canExportFrames)
+
+        let output = env.directory.appendingPathComponent("sessionless-out.pcapng")
+        coordinator.exportFrames(to: output, scope: .wholeCapture, options: .init())
+        await coordinator.waitForFrameExport()
+        #expect(coordinator.captureError == nil)
+        let loaded = try SavedCaptureStreamLoader(contentsOf: output).load()
+        #expect(loaded.totalFrames == 1)
+    }
+
+    @Test("A finalized SCTP-only live capture folds one session and still exports")
     func stoppedSCTPOnlyExport() async throws {
         let env = try await makeEnvironment()
         defer { env.teardown() }
@@ -177,14 +213,15 @@ struct FrameExportActivationTests {
         _ = try await coordinator.liveCaptureSpool.append([frame], defaultLinkType: LinkType.ethernet, epoch: 70)
         coordinator.startGeneration = 71
         coordinator.publishLiveDetailed(
-            InvestigationSnapshot(fold: SessionBuilder.buildDetailed(from: [], linkType: LinkType.ethernet)),
+            InvestigationSnapshot(fold: SessionBuilder.buildDetailed(from: [frame], linkType: LinkType.ethernet)),
             expectedGeneration: 71,
             isCapturing: false
         )
         for _ in 0 ..< 50 {
             await Task.yield()
         }
-        #expect(coordinator.sessions.isEmpty)
+        #expect(coordinator.sessions.count == 1)
+        #expect(coordinator.sessions.first?.protocolStack.contains(.sctp) == true)
         #expect(coordinator.canExportFrames)
 
         let output = env.directory.appendingPathComponent("sctp-only-out.pcapng")

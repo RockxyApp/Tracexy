@@ -54,18 +54,13 @@ struct SavedCaptureOpeningTests {
     func sessionlessCaptureCanListFrames() async throws {
         let environment = try await makeEnvironment()
         defer { environment.teardown() }
-        let sctp = SyntheticSCTPPacketBuilder.Options(
-            sourceAddress: "192.0.2.1", destinationAddress: "192.0.2.2",
-            sourcePort: 5_000, destinationPort: 5_001, ipv6: false,
-            mode: .data(payloadProtocolIdentifier: 42)
-        )
-        let generated = try HexDumpCaptureParser.parse(
-            Data("000000 aa\n".utf8), linkType: LinkType.ethernet, syntheticSCTP: sctp
-        )
-        let generatedFrame = try #require(generated.first)
+        // An Ethertype in the local-experimental range folds into no session at
+        // all. An SCTP frame used to stand here, but SCTP now carries a
+        // five-tuple and folds into a session, so it no longer proves this.
+        let bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0xB5, 0xAA]
         let frame = CapturedFrame(
-            bytes: generatedFrame.bytes, timestamp: Date(),
-            originalLength: generatedFrame.originalLength, linkType: LinkType.ethernet
+            bytes: bytes, timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            originalLength: bytes.count, linkType: LinkType.ethernet
         )
         let decoded = PacketDecoder.decode(
             PacketBuffer(frame.bytes), linkType: LinkType.ethernet, timestamp: frame.timestamp,
