@@ -569,65 +569,6 @@ extension MainContentCoordinator {
         return result
     }
 
-    /// Applies an I/O Graph expression to every frame of a stable capture. Zero and
-    /// unknown matches still contribute their timestamps to the capture-wide axis.
-    func scanFilteredTrafficTimeline(_ expression: FrameExpression) async throws -> FilteredTrafficTimeline {
-        if isCapturing || isStarting {
-            throw FilteredTrafficTimeline.ScanError.sourceUnavailable(
-                String(localized: "Stop the live capture before applying an I/O Graph filter.")
-            )
-        }
-        if let reason = allFramesUnavailableReason {
-            throw FilteredTrafficTimeline.ScanError.sourceUnavailable(reason)
-        }
-        let generation = startGeneration
-        let projectID = projectStore.activeProjectID
-        let savedURL = isViewingSavedCapture ? savedCaptureEvidenceURL : nil
-        let savedIdentity = adoptedSavedCaptureIdentity
-        let spool = liveCaptureSpool
-        let correction = activeSavedCapture?.timeCorrection
-        let worker = Task.detached(priority: .userInitiated) {
-            let temporaryURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("tracexy-filtered-traffic-\(UUID().uuidString).pcapng")
-            defer { try? FileManager.default.removeItem(at: temporaryURL) }
-            let source = try await Self.frameToolSource(
-                savedURL: savedURL, savedIdentity: savedIdentity, spool: spool, temporaryURL: temporaryURL
-            )
-            let scanner = try CaptureFrameListScanner(
-                contentsOf: source.url, expectedIdentity: source.identity, sourceToken: source.token,
-                configuration: .init(maxRetainedFrames: 1, timeCorrection: savedURL == nil ? nil : correction)
-            )
-            var accumulator = FilteredTrafficTimelineAccumulator(expression: expression)
-            let list = try scanner.scan(onRow: { accumulator.record($0) })
-            guard list.completeness == .complete else {
-                throw FilteredTrafficTimeline.ScanError.incomplete
-            }
-            return (accumulator.result(), source.token)
-        }
-        let (result, sourceToken) = try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
-        if savedURL == nil {
-            let currentToken = await spool.currentSourceToken()
-            guard liveCaptureSpool === spool, currentToken == sourceToken else {
-                throw CancellationError()
-            }
-        }
-        guard !Task.isCancelled,
-              generation == startGeneration,
-              projectID == projectStore.activeProjectID,
-              savedURL == (isViewingSavedCapture ? savedCaptureEvidenceURL : nil),
-              savedIdentity == adoptedSavedCaptureIdentity,
-              correction == activeSavedCapture?.timeCorrection,
-              allFramesUnavailableReason == nil else
-        {
-            throw CancellationError()
-        }
-        return result
-    }
-
     /// Search typed facts without modifying the applied All Frames expression or scope.
     func findAdjacentFrame(
         matching expression: FrameExpression, after current: UInt64?, forward: Bool

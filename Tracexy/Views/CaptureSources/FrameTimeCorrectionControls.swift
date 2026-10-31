@@ -13,7 +13,11 @@ final class FrameTimeCorrectionControls: NSView {
         enabledCheckbox.target = self
         enabledCheckbox.action = #selector(controlChanged)
         enabledCheckbox.toolTip = String(
-            localized: "Write a corrected PCAPNG copy using one frame to set a fixed offset or two frames to correct clock drift. The open capture stays unchanged."
+            localized: """
+            Write a corrected PCAPNG copy using one frame to set a fixed offset or two frames to correct clock drift.
+            The source file is never edited, and the corrected copy opens in place of the capture you are viewing.
+            The whole capture is written, so scope, ignored frames and the other packet options do not apply.
+            """
         )
         enabledCheckbox.setAccessibilityLabel(String(localized: "Correct timestamps in exported copy"))
         modePopUp.addItems(withTitles: [

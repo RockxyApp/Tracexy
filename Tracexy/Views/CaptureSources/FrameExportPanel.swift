@@ -564,6 +564,11 @@ final class FrameExportAccessoryView: NSView, NSTextViewDelegate {
         anonymizeCheckbox.isEnabled = !correctionEnabled
         headersPopUp.isEnabled = !correctionEnabled
         gzipCheckbox.isEnabled = !correctionEnabled
+        // Correcting timestamps writes the whole capture, so an ignored-frame
+        // exclusion cannot be honored. The box stayed clickable while
+        // `excludesIgnoredFrames` already refused it, which is a control that
+        // does nothing.
+        ignoredFramesCheckbox.isEnabled = !correctionEnabled
         timeCorrectionControls.setAvailable(true)
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]
         if let frames = choice.frameEstimate {
