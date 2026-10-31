@@ -33,6 +33,12 @@ nonisolated struct PcapngFrameReference: Sendable, Equatable {
     /// carries no timestamp field, so its capture instant is genuinely unknown
     /// rather than the Unix epoch.
     let timestamp: Date?
+    /// Interface-relative direction from `epb_flags`, if supplied.
+    let direction: CaptureDirection
+    /// Complete `epb_flags` word, including bits not interpreted as direction.
+    let packetFlags: UInt32?
+    /// Arbitrary packet identity from `epb_packetid`, when present.
+    let packetID: UInt64?
     /// Zero-based index of the section this frame was found in.
     let sectionIndex: Int
     /// Declaration-order interface id within the current section.
@@ -42,6 +48,9 @@ nonisolated struct PcapngFrameReference: Sendable, Equatable {
     /// Whether the block carried at least one `opt_comment`. The text is not
     /// retained on the reference.
     let hasComment: Bool
+    /// Whether the block contained a non-terminal option. An end marker alone is
+    /// structural and is not packet metadata.
+    let hasOptions: Bool
     /// Absolute byte range of the block's option list (empty when none), so an
     /// exporter can copy the options of a same-byte-order source verbatim.
     let optionsRange: Range<UInt64>
@@ -165,6 +174,9 @@ nonisolated final class PcapngStreamReader {
     /// adapter, which must report a file-level link type.
     private(set) var firstDeclaredLinkType: UInt32?
 
+    /// Bounded host mappings read from complete Name Resolution Blocks.
+    private(set) var nameResolutionRecords: [CaptureNameResolutionRecord] = []
+
     /// The bounded container inventory folded so far: sections, interfaces and
     /// their options, statistics, and counts of blocks this reader skips. Complete
     /// once ``next()`` has returned a terminal.
@@ -287,6 +299,9 @@ nonisolated final class PcapngStreamReader {
     private static let optionStatisticsOSDropped: UInt16 = 7
     private static let optionStatisticsDelivered: UInt16 = 8
 
+    private static let maximumNameResolutionBlockBytes = 65_536
+    private static let maximumNameResolutionRecords = 500
+
     private let handle: FileHandle
     private let configuration: Configuration
     /// Absolute offset of the next byte to read. Kept in lock-step with the handle
@@ -317,6 +332,7 @@ nonisolated final class PcapngStreamReader {
         case simplePacketType: 16
         case interfaceStatisticsType: 24
         case decryptionSecretsType: 20
+        case nameResolutionType: 16
         default: 12
         }
     }
@@ -405,6 +421,44 @@ nonisolated final class PcapngStreamReader {
         }
         #endif
         return PcapFileIdentity(size: 0, modifiedAt: nil, device: 0, inode: 0)
+    }
+
+    private static func readUInt16(_ bytes: [UInt8], at offset: Int, little: Bool) -> UInt16 {
+        little ? UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+            : (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
+    }
+
+    private static func roundedWordLength(_ value: Int) -> Int {
+        (value + 3) & ~3
+    }
+
+    private static func formatAddress(_ bytes: [UInt8]) -> String {
+        if bytes.count == 4 {
+            return bytes.map(String.init).joined(separator: ".")
+        }
+        let words = stride(from: 0, to: 16, by: 2).map { UInt16(bytes[$0]) << 8 | UInt16(bytes[$0 + 1]) }
+        var longestZeroRun: Range<Int>?
+        var index = 0
+        while index < words.count {
+            guard words[index] == 0 else {
+                index += 1
+                continue
+            }
+            let start = index
+            while index < words.count, words[index] == 0 {
+                index += 1
+            }
+            let run = start ..< index
+            if run.count >= 2, run.count > (longestZeroRun?.count ?? 0) {
+                longestZeroRun = run
+            }
+        }
+        guard let longestZeroRun else {
+            return words.map { String($0, radix: 16) }.joined(separator: ":")
+        }
+        let left = words[..<longestZeroRun.lowerBound].map { String($0, radix: 16) }.joined(separator: ":")
+        let right = words[longestZeroRun.upperBound...].map { String($0, radix: 16) }.joined(separator: ":")
+        return "\(left)::\(right)"
     }
 
     private func readBlock() throws -> Step {
@@ -556,6 +610,10 @@ nonisolated final class PcapngStreamReader {
                 return try readDecryptionSecretsSummary(
                     blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
                 )
+            case Self.nameResolutionType:
+                return try readNameResolutionBlock(
+                    blockStart: blockStart, totalLength: totalLength, blockEndTotal: blockEndTotal, little: little
+                )
             default:
                 return try skipUnknown(
                     type: type,
@@ -563,6 +621,79 @@ nonisolated final class PcapngStreamReader {
                 )
             }
         }
+    }
+
+    /// Parse a bounded PCAPNG Name Resolution Block. Oversized blocks are skipped
+    /// without allocating their body; records and names are independently capped.
+    private func readNameResolutionBlock(
+        blockStart: UInt64,
+        totalLength: UInt64,
+        blockEndTotal: UInt64,
+        little: Bool
+    )
+        throws -> Step
+    {
+        try checkCancellation()
+        let bodyLength = totalLength - 12
+        guard bodyLength <= Self.maximumNameResolutionBlockBytes else {
+            try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
+            properties.updateBlocks {
+                $0.nameResolutionBlockCount += 1
+                $0.oversizedNameResolutionBlockCount += 1
+            }
+            offset = blockEndTotal
+            return .advanced
+        }
+        let body = try [UInt8](readFully(Int(bodyLength)))
+        try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
+        properties.updateBlocks { $0.nameResolutionBlockCount += 1 }
+        var cursor = 0
+        var foundEndRecord = false
+        while cursor + 4 <= body.count {
+            try checkCancellation()
+            let type = Self.readUInt16(body, at: cursor, little: little)
+            let length = Int(Self.readUInt16(body, at: cursor + 2, little: little))
+            cursor += 4
+            if type == 0 {
+                guard length == 0 else {
+                    throw PacketError.malformed("pcapng: invalid NRB end record")
+                }
+                foundEndRecord = true
+                break
+            }
+            guard length <= body.count - cursor else {
+                throw PacketError.malformed("pcapng: NRB record overruns block")
+            }
+            let recordEnd = cursor + length
+            let addressLength = type == 1 ? 4 : (type == 2 ? 16 : 0)
+            if addressLength > 0, length > addressLength {
+                let address = Self.formatAddress(Array(body[cursor ..< cursor + addressLength]))
+                let nameBytes = Array(body[cursor + addressLength ..< recordEnd])
+                var start = 0
+                for end in nameBytes.indices where nameBytes[end] == 0 {
+                    if end > start, nameResolutionRecords.count < Self.maximumNameResolutionRecords {
+                        let bytes = Array(nameBytes[start ..< end].prefix(CaptureBoundedText.maxBytes))
+                        nameResolutionRecords.append(CaptureNameResolutionRecord(
+                            address: address,
+                            name: CaptureBoundedText(bytes: bytes, declaredLength: end - start)
+                        ))
+                        properties.updateBlocks { $0.nameResolutionMappingCount += 1 }
+                    } else if end > start {
+                        properties.updateBlocks { $0.nameResolutionMappingOmittedCount += 1 }
+                    }
+                    start = end + 1
+                }
+            }
+            cursor += Self.roundedWordLength(length)
+            guard cursor <= body.count else {
+                throw PacketError.malformed("pcapng: NRB padding overruns block")
+            }
+        }
+        guard foundEndRecord else {
+            throw PacketError.malformed("pcapng: missing NRB end record")
+        }
+        offset = blockEndTotal
+        return .advanced
     }
 
     /// Validate a declared block length: aligned, at least the per-type minimum,
@@ -837,9 +968,39 @@ nonisolated final class PcapngStreamReader {
         // Options follow the padded payload. Only comment presence is folded; no
         // comment text, hash, or verdict is retained per frame.
         var hasComment = false
-        try walkOptions(optionsStart: paddedEnd, optionsEnd: blockEnd, little: little) { code, _ in
+        var hasOptions = false
+        var direction: CaptureDirection = .unknown
+        var packetFlags: UInt32?
+        var sawFlags = false
+        var packetID: UInt64?
+        try walkOptions(optionsStart: paddedEnd, optionsEnd: blockEnd, little: little) { code, length in
+            hasOptions = true
             if code == Self.optionComment {
                 hasComment = true
+            } else if code == 2 {
+                guard length == 4, !sawFlags else {
+                    throw PacketError.malformed("pcapng: invalid or duplicate epb_flags")
+                }
+                let bytes = try readFully(4)
+                guard bytes.count == 4 else {
+                    throw PacketError.malformed("pcapng: truncated epb_flags")
+                }
+                let value = PacketBuffer([UInt8](bytes))
+                packetFlags = try little ? value.u32le(0) : value.u32(0)
+                direction = CaptureDirection(epbFlags: packetFlags ?? 0)
+                sawFlags = true
+            } else if code == 5 {
+                guard length == 8, packetID == nil else {
+                    throw PacketError.malformed("pcapng: invalid or duplicate epb_packetid")
+                }
+                let bytes = try readFully(8)
+                guard bytes.count == 8 else {
+                    throw PacketError.malformed("pcapng: truncated epb_packetid")
+                }
+                let value = PacketBuffer([UInt8](bytes))
+                let first = try UInt64(little ? value.u32le(0) : value.u32(0))
+                let second = try UInt64(little ? value.u32le(4) : value.u32(4))
+                packetID = little ? (second << 32 | first) : (first << 32 | second)
             }
         }
         try validateTrailer(blockStart: blockStart, totalLength: totalLength, little: little)
@@ -851,10 +1012,14 @@ nonisolated final class PcapngStreamReader {
             capturedLength: capturedLength,
             originalLength: originalLength,
             timestamp: timestamp,
+            direction: direction,
+            packetFlags: packetFlags,
+            packetID: packetID,
             sectionIndex: sectionIndex,
             interfaceID: interfaceID,
             linkType: interface.linkType,
             hasComment: hasComment,
+            hasOptions: hasOptions,
             optionsRange: paddedEnd ..< blockEnd,
             littleEndian: little
         )
@@ -914,10 +1079,14 @@ nonisolated final class PcapngStreamReader {
             capturedLength: capturedLength,
             originalLength: originalLength,
             timestamp: nil,
+            direction: .unknown,
+            packetFlags: nil,
+            packetID: nil,
             sectionIndex: sectionIndex,
             interfaceID: 0,
             linkType: interface.linkType,
             hasComment: false,
+            hasOptions: false,
             optionsRange: blockEndTotal ..< blockEndTotal,
             littleEndian: little
         )
