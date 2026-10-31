@@ -185,6 +185,10 @@ struct ExportObjectsWindow: View {
         if list.skippedStreamCount > 0 {
             text += String(localized: "; \(list.skippedStreamCount.formatted()) more streams not read")
         }
+        if list.ambiguousStreamCount > 0 {
+            text +=
+                String(localized: "; \(list.ambiguousStreamCount.formatted()) FTP streams lacked a proven packet order")
+        }
         if list.omittedObjectCount > 0 {
             text += String(localized: "; \(list.omittedObjectCount.formatted()) objects past the size limit")
         }

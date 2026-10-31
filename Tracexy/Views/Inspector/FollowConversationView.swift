@@ -13,8 +13,10 @@ struct FollowConversationView: View {
 
     let coordinator: MainContentCoordinator
     let session: SessionSummary
+    let scrollToDatagram: (String) -> Void
 
     var body: some View {
+        let exportKey = streamExportKey
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             header
 
@@ -43,13 +45,36 @@ struct FollowConversationView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
+        .onChange(of: query) { _, _ in activeMatchingDatagramID = nil }
+        .onChange(of: isCaseSensitive) { _, _ in activeMatchingDatagramID = nil }
+        .onChange(of: mode) { _, _ in activeMatchingDatagramID = nil }
+        .onChange(of: datagramDirection) { _, _ in activeMatchingDatagramID = nil }
+        .onChange(of: session.id) { _, _ in
+            activeMatchingDatagramID = nil
+            datagramDirection = .both
+        }
+        .onChange(of: coordinator.followStreamRequestID) { _, _ in activeMatchingDatagramID = nil }
+        .task(id: exportKey) {
+            guard !Task.isCancelled, exportKey == streamExportKey else {
+                return
+            }
+            await exportPreparation.prepare(exportKey == nil ? nil : presentedStreamResult, key: exportKey)
+        }
+        .onChange(of: streamExportKey) { _, _ in streamActionError = nil }
+        .onDisappear { exportPreparation.cancel() }
     }
 
     // MARK: Private
 
     @State private var mode: FollowStreamDisplayMode = .text
     @State private var query = ""
+    @State private var isCaseSensitive = false
+    @State private var activeMatchingDatagramID: Int?
+    @State private var datagramDirection: FollowDatagramDirectionScope = .both
     @State private var httpSaveError: String?
+    @State private var streamActionError: String?
+    @State private var isSavingDatagrams = false
+    @State private var exportPreparation = FollowStreamExportPreparation()
     @Environment(\.openWindow) private var openWindow
 
     private var isDatagram: Bool {
@@ -76,7 +101,14 @@ struct FollowConversationView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: Theme.Metrics.spacingM)
+            Toggle("Case Sensitive", isOn: $isCaseSensitive)
+                .toggleStyle(.checkbox)
+                .font(Theme.Typography.caption)
+                .help("Match uppercase and lowercase letters exactly. The default also ignores case and diacritics.")
             searchField
+            if isDatagram {
+                datagramFindNavigation
+            }
             Picker("Display", selection: $mode) {
                 ForEach(FollowStreamDisplayMode.allCases) { mode in
                     Text(mode.title).tag(mode)
@@ -174,7 +206,7 @@ struct FollowConversationView: View {
             field("Scanned Frames", scanned.formatted())
             field("Source", completeness == .complete ? "Complete file" : "Truncated tail")
             if !query.trimmingCharacters(in: .whitespaces).isEmpty {
-                field("Matches", matchCount.formatted())
+                field(isDatagram ? "Datagram Matches" : "Stream Matches", matchCount.formatted())
             }
             Spacer(minLength: Theme.Metrics.spacingM)
             Button("Refresh") {
@@ -223,6 +255,69 @@ struct FollowConversationView: View {
 // MARK: - TCP stream
 
 private extension FollowConversationView {
+    var datagramFindNavigation: some View {
+        let ids = matchingDatagramIDs
+        let position = activeMatchingDatagramID.flatMap { active in
+            ids.firstIndex(of: active).map { $0 + 1 }
+        }
+        return HStack(spacing: Theme.Metrics.spacingS) {
+            Button {
+                moveDatagramMatch(by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.plain)
+            .disabled(ids.isEmpty)
+            .accessibilityLabel("Previous matching datagram")
+            .help("Go to the previous matching datagram; wraps at the start")
+
+            Button {
+                moveDatagramMatch(by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.plain)
+            .disabled(ids.isEmpty)
+            .accessibilityLabel("Next matching datagram")
+            .help("Go to the next matching datagram; wraps at the end")
+
+            Text(position.map { "Datagram \($0) of \(ids.count)" } ?? "\(ids.count) matching datagrams")
+                .font(Theme.Typography.micro)
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+    }
+
+    var matchingDatagramIDs: [Int] {
+        guard let result = coordinator.followDatagramResult,
+              SessionBuilder.sessionID(for: result.tuple) == session.id else
+        {
+            return []
+        }
+        return FollowDatagramPresentation(result: result, mode: mode, direction: datagramDirection)
+            .matchingRowIDs(query: query, caseSensitive: isCaseSensitive)
+    }
+
+    func moveDatagramMatch(by offset: Int) {
+        let ids = matchingDatagramIDs
+        guard !ids.isEmpty else {
+            activeMatchingDatagramID = nil
+            return
+        }
+        let next: Int = if let active = activeMatchingDatagramID, let index = ids.firstIndex(of: active) {
+            (index + offset + ids.count) % ids.count
+        } else {
+            offset < 0 ? ids.count - 1 : 0
+        }
+        let id = ids[next]
+        activeMatchingDatagramID = id
+        scrollToDatagram(datagramScrollTarget(id))
+    }
+
+    func datagramScrollTarget(_ id: Int) -> String {
+        "follow-datagram-\(coordinator.followStreamRequestID)-\(session.id)-\(id)"
+    }
+
     var matchCount: Int {
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else {
@@ -231,96 +326,190 @@ private extension FollowConversationView {
         if let result = presentedStreamResult {
             return [result.aToB, result.bToA].reduce(0) { total, snapshot in
                 FollowStreamDirectionPresentation(snapshot: snapshot, mode: mode).runSections
-                    .reduce(total) { $0 + FollowTranscriptSearch.matches(of: needle, in: $1.text).count }
+                    .reduce(total) {
+                        $0 + FollowTranscriptSearch.matches(
+                            of: needle,
+                            in: $1.text,
+                            caseSensitive: isCaseSensitive
+                        ).count
+                    }
             }
         }
-        if let result = coordinator.followDatagramResult {
-            return FollowDatagramPresentation(result: result, mode: mode).rows.reduce(0) { total, row in
-                let text = ([row.dnsHeadline ?? ""] + row.dnsAnswers + [row.payload]).joined(separator: "\n")
-                return total + FollowTranscriptSearch.matches(of: needle, in: text).count
-            }
+        if let result = coordinator.followDatagramResult,
+           SessionBuilder.sessionID(for: result.tuple) == session.id
+        {
+            return FollowDatagramPresentation(result: result, mode: mode, direction: datagramDirection)
+                .matchCount(query: needle, caseSensitive: isCaseSensitive)
         }
         return 0
     }
 
-    /// Wireshark's Follow Stream footer: the turn summary, and Save as / Copy in its
-    /// Show-as formats for both directions or one.
-    func streamExportRow(_ result: FollowStreamResult) -> some View {
-        let turns = FollowStreamExport.turns(of: result)
-        return HStack(spacing: Theme.Metrics.spacingM) {
-            Text(FollowStreamExport.summary(of: result, turns: turns))
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Spacer(minLength: Theme.Metrics.spacingM)
-            Menu("Save Stream") {
-                ForEach(FollowStreamExport.Side.allCases) { side in
-                    Section(sideTitle(side, result: result)) {
-                        ForEach(FollowStreamExport.Format.allCases) { format in
-                            Button(String(localized: "\(format.title)…")) {
-                                saveStream(turns, format: format, side: side, tuple: result.tuple)
-                            }
-                        }
-                    }
-                }
-                Divider()
-                ForEach([FollowStreamExport.Format.cArrays, .yaml, .hexDump], id: \.self) { format in
-                    Button(String(localized: "Copy as \(format.title)")) {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(
-                            String(
-                                bytes: FollowStreamExport
-                                    .data(turns, format: format, side: .both, tuple: result.tuple),
-                                encoding: .utf8
-                            ) ?? "",
-                            forType: .string
-                        )
-                    }
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .controlSize(.small)
-            .disabled(turns.isEmpty)
-            .help(
-                "Save or copy the stream as raw bytes, ASCII, a hex dump, C arrays or YAML, as Wireshark's Follow Stream does"
-            )
-            Button("Filter Out This Stream") {
-                coordinator.showSessions(narrowingWith: FollowStreamExport.filterOutTerm(result.tuple))
-            }
-            .buttonStyle(.link)
-            .controlSize(.small)
-            .help("Narrow the main window to every session except this stream's, as Wireshark's Follow Stream does")
+    var streamExportKey: FollowStreamExportKey? {
+        guard !coordinator.isLoadingFollowStream,
+              coordinator.activeWorkspace.selectedSessionID == session.id,
+              let captured = coordinator.followStreamResult,
+              SessionBuilder.sessionID(for: captured.tuple) == session.id else
+        {
+            return nil
         }
+        let reading = FollowStreamReadings.installed
+        return FollowStreamExportKey(
+            projectID: coordinator.projectStore.activeProjectID,
+            workspaceID: coordinator.activeWorkspace.id,
+            generation: coordinator.startGeneration,
+            requestID: coordinator.followStreamRequestID,
+            sessionID: session.id,
+            identity: captured.identity,
+            readingID: reading.map { ObjectIdentifier($0) },
+            readingRevision: reading?.presentationRevision ?? 0
+        )
     }
 
-    func sideTitle(_ side: FollowStreamExport.Side, result: FollowStreamResult) -> String {
-        switch side {
-        case .both: String(localized: "Both Directions")
-        case .aToB: "\(result.tuple.a.display) → \(result.tuple.b.display)"
-        case .bToA: "\(result.tuple.b.display) → \(result.tuple.a.display)"
+    var currentExportSnapshot: FollowStreamExportSnapshot? {
+        guard let key = streamExportKey, exportPreparation.key == key else {
+            return nil
+        }
+        return exportPreparation.snapshot
+    }
+
+    func streamExportRow(_ result: FollowStreamResult) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                if let snapshot = currentExportSnapshot, let key = streamExportKey {
+                    Text(FollowStreamExport.summary(of: result, snapshot: snapshot))
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Spacer(minLength: Theme.Metrics.spacingM)
+                    FollowStreamExportMenus(
+                        snapshot: snapshot, tuple: result.tuple,
+                        onSave: { format, side in
+                            saveStream(snapshot, key: key, format: format, side: side, tuple: result.tuple)
+                        },
+                        onCopy: { format in
+                            copyStream(snapshot, key: key, format: format, tuple: result.tuple)
+                        },
+                        onPrint: { format, side in
+                            printStream(snapshot, key: key, format: format, side: side, result: result)
+                        }
+                    )
+                    .disabled(exportPreparation.isPerformingAction)
+                } else {
+                    Text(exportPreparation.key == streamExportKey
+                        ? exportPreparation.error ?? String(localized: "Preparing stream export…")
+                        : String(localized: "Preparing stream export…"))
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: Theme.Metrics.spacingM)
+                }
+                Button("Filter Out This Stream") {
+                    coordinator.showSessions(narrowingWith: FollowStreamExport.filterOutTerm(result.tuple))
+                }
+                .buttonStyle(.link)
+                .controlSize(.small)
+                .help("Narrow the main window to every session except this stream's")
+            }
+            if let snapshot = currentExportSnapshot {
+                if snapshot.unknownProvenanceByteCount > 0 {
+                    Text(
+                        "First-frame provenance is unavailable for \(snapshot.unknownProvenanceByteCount.formatted()) retained bytes. Their frame and time remain unknown."
+                    )
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.secondary)
+                }
+                if !snapshot.canExport(side: .both) {
+                    Text(FollowStreamExport.ExportError.orderingUnavailable.localizedDescription)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
     func saveStream(
-        _ turns: [FollowStreamTurn],
+        _ snapshot: FollowStreamExportSnapshot,
+        key: FollowStreamExportKey,
         format: FollowStreamExport.Format,
         side: FollowStreamExport.Side,
         tuple: FiveTuple
     ) {
+        guard streamExportKey == key else {
+            return
+        }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "stream-\(tuple.a.port)-\(tuple.b.port).\(format.fileExtension)"
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else {
+        guard panel.runModal() == .OK, let url = panel.url, streamExportKey == key else {
             return
         }
-        do {
-            try FollowStreamExport.data(turns, format: format, side: side, tuple: tuple).write(
-                to: url,
-                options: .atomic
+        streamActionError = nil
+        exportPreparation.perform(key: key, isCurrent: { streamExportKey == key }) {
+            try FollowStreamExport.data(snapshot, format: format, side: side, tuple: tuple)
+        } completion: { data in
+            try await Task.detached(priority: .utility) { try data.write(to: url, options: .atomic) }.value
+        } failure: { error in
+            streamActionError = String(localized: "Couldn’t save the stream: \(error.localizedDescription)")
+        }
+    }
+
+    func copyStream(
+        _ snapshot: FollowStreamExportSnapshot, key: FollowStreamExportKey,
+        format: FollowStreamExport.Format, tuple: FiveTuple
+    ) {
+        streamActionError = nil
+        exportPreparation.perform(key: key, isCurrent: { streamExportKey == key }) {
+            try FollowStreamExport.data(snapshot, format: format, side: .both, tuple: tuple)
+        } completion: { data in
+            guard let text = String(data: data, encoding: .utf8) else {
+                streamActionError = String(localized: "This stream could not be formatted for the clipboard.")
+                return
+            }
+            NSPasteboard.general.clearContents()
+            if !NSPasteboard.general.setString(text, forType: .string) {
+                streamActionError = String(localized: "The stream could not be copied to the clipboard.")
+            }
+        } failure: { error in
+            streamActionError = String(localized: "Couldn’t copy the stream: \(error.localizedDescription)")
+        }
+    }
+
+    func printStream(
+        _ snapshot: FollowStreamExportSnapshot,
+        key: FollowStreamExportKey,
+        format: FollowStreamExport.Format,
+        side: FollowStreamExport.Side,
+        result: FollowStreamResult
+    ) {
+        streamActionError = nil
+        exportPreparation.perform(key: key, isCurrent: { streamExportKey == key }) {
+            try FollowStreamExport.printableText(
+                snapshot, format: format, side: side, tuple: result.tuple,
+                limitationLabels: result.limitations.presentationLabels,
+                completeness: result.completeness,
+                retainedBytes: result.aToB.retainedByteCount + result.bToA.retainedByteCount,
+                observedOmittedBytes: result.aToB.observedOmittedByteCount + result.bToA.observedOmittedByteCount
             )
-        } catch {
-            httpSaveError = String(localized: "Couldn’t save the stream: \(error.localizedDescription)")
+        } completion: { text in
+            printPreparedStream(text, key: key)
+        } failure: { error in
+            switch error {
+            case FollowStreamExport.PrintError.emptySelection:
+                streamActionError = String(localized: "This direction has no retained bytes to print.")
+            case FollowStreamExport.PrintError.tooLarge:
+                streamActionError =
+                    String(
+                        localized: "This stream is too large to print safely (limit: 8 MiB). Save it to a file instead."
+                    )
+            default:
+                streamActionError = String(localized: "Couldn’t print the stream: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func printPreparedStream(_ printedText: String, key: FollowStreamExportKey) {
+        let error = FollowStreamPrintPanel.run(printedText, isCurrent: { streamExportKey == key })
+        if streamExportKey == key {
+            streamActionError = error
         }
     }
 
@@ -346,6 +535,11 @@ private extension FollowConversationView {
                 controls
             }
             streamExportRow(result)
+            if let streamActionError {
+                Text(streamActionError)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Color(nsColor: .systemRed))
+            }
             let limitations = captured.limitations.presentationLabels
             if !limitations.isEmpty {
                 limitationList(limitations)
@@ -357,10 +551,14 @@ private extension FollowConversationView {
                 httpSection(http)
             }
             if let webSocket = FollowWebSocketPresentation(result: result) {
-                FollowWebSocketSection(webSocket: webSocket, query: query) { coordinator.inspectFollowedFrame($0) }
+                FollowWebSocketSection(webSocket: webSocket, query: query, caseSensitive: isCaseSensitive) {
+                    coordinator.inspectFollowedFrame($0)
+                }
             }
             if let http2 = FollowHTTP2Presentation(result: result) {
-                FollowHTTP2Section(http2: http2, query: query) { coordinator.inspectFollowedFrame($0) }
+                FollowHTTP2Section(http2: http2, query: query, caseSensitive: isCaseSensitive) {
+                    coordinator.inspectFollowedFrame($0)
+                }
             }
 
             ViewThatFits(in: .horizontal) {
@@ -406,7 +604,7 @@ private extension FollowConversationView {
     func httpRow(_ row: FollowHTTPExchangeRow, http: FollowHTTPPresentation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: Theme.Metrics.spacingM) {
-                Text(FollowTranscriptSearch.highlighted(row.request, query: query))
+                Text(FollowTranscriptSearch.highlighted(row.request, query: query, caseSensitive: isCaseSensitive))
                     .font(Theme.Typography.monoSmall)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -502,7 +700,7 @@ private extension FollowConversationView {
 
     @ViewBuilder
     func directions(_ result: FollowStreamResult) -> some View {
-        let origin = FollowStreamExport.origin(of: result)
+        let origin = currentExportSnapshot?.origin
         direction(result.aToB, title: "\(result.tuple.a.display) → \(result.tuple.b.display)", origin: origin)
         direction(result.bToA, title: "\(result.tuple.b.display) → \(result.tuple.a.display)", origin: origin)
     }
@@ -573,7 +771,7 @@ private extension FollowConversationView {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
-            Text(FollowTranscriptSearch.highlighted(section.text, query: query))
+            Text(FollowTranscriptSearch.highlighted(section.text, query: query, caseSensitive: isCaseSensitive))
                 .font(Theme.Typography.zoomed(
                     .subheadline, zoom: coordinator.packetDetailOptions.textZoom, monospaced: true
                 ))
@@ -600,14 +798,40 @@ private extension FollowConversationView {
 // MARK: - UDP conversation
 
 private extension FollowConversationView {
+    enum DatagramExportFormat: Sendable {
+        case yaml
+        case raw
+    }
+
     func datagramResult(_ result: FollowDatagramResult) -> some View {
-        let presentation = FollowDatagramPresentation(result: result, mode: mode)
+        let presentation = FollowDatagramPresentation(result: result, mode: mode, direction: datagramDirection)
         return VStack(alignment: .leading, spacing: Theme.Metrics.spacingL) {
             summaryRow(
-                matched: ("Datagrams", result.matchedFrameCount.formatted()),
+                matched: ("Datagrams, all directions", result.matchedFrameCount.formatted()),
                 scanned: result.scannedFrameCount,
                 completeness: result.completeness
             )
+            Picker("Transcript Direction", selection: $datagramDirection) {
+                Text("Both directions").tag(FollowDatagramDirectionScope.both)
+                Text("\(result.tuple.a.display) → \(result.tuple.b.display)").tag(FollowDatagramDirectionScope.aToB)
+                Text("\(result.tuple.b.display) → \(result.tuple.a.display)").tag(FollowDatagramDirectionScope.bToA)
+            }
+            .help("Filter transcript rows; scan totals and exports cover their stated scopes")
+            Text(
+                "Δ compares adjacent retained datagrams in capture order, including hidden opposite-direction rows; it is not network latency."
+            )
+            .font(Theme.Typography.micro)
+            .foregroundStyle(.secondary)
+            datagramExportRow(result)
+            if isSavingDatagrams {
+                ProgressView("Saving conversation…")
+                    .controlSize(.small)
+            }
+            if let streamActionError {
+                Text(streamActionError)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Color(nsColor: .systemRed))
+            }
             let limitations = result.limitations.presentationLabels
             if !limitations.isEmpty {
                 limitationList(limitations)
@@ -618,13 +842,14 @@ private extension FollowConversationView {
                 section
             }
             if presentation.rows.isEmpty {
-                Text("No datagrams of this conversation were found in the capture source.")
+                Text("No retained datagrams match this transcript direction.")
                     .font(Theme.Typography.body)
                     .foregroundStyle(.secondary)
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(presentation.rows) { row in
                         datagramRow(row)
+                            .id(datagramScrollTarget(row.id))
                         Divider()
                     }
                 }
@@ -642,6 +867,168 @@ private extension FollowConversationView {
         }
     }
 
+    func datagramExportRow(_ result: FollowDatagramResult) -> some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Menu("Save Conversation as YAML") {
+                ForEach(FollowDatagramExport.Side.allCases) { side in
+                    Button(String(localized: "Save \(datagramSideTitle(side, result: result))…")) {
+                        saveDatagrams(result, side: side, format: .yaml)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .controlSize(.small)
+            .disabled(result.messages.isEmpty || isSavingDatagrams)
+            .help("Save retained UDP datagrams with message boundaries, direction, frame and time")
+            Menu("Save Raw Payload") {
+                ForEach(FollowDatagramExport.Side.allCases) { side in
+                    Button(String(localized: "Save \(datagramSideTitle(side, result: result))…")) {
+                        saveDatagrams(result, side: side, format: .raw)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .controlSize(.small)
+            .disabled(result.messages.isEmpty || isSavingDatagrams)
+            .help("Save complete UDP payloads in capture order without datagram boundaries")
+            Button("Filter Out This Stream") {
+                coordinator.showSessions(narrowingWith: FollowStreamExport.filterOutTerm(result.tuple))
+            }
+            .buttonStyle(.link)
+            .controlSize(.small)
+            .help("Show sessions other than this UDP conversation using a Session Expression")
+        }
+    }
+
+    func datagramSideTitle(_ side: FollowDatagramExport.Side, result: FollowDatagramResult) -> String {
+        switch side {
+        case .both: String(localized: "Both Directions")
+        case .aToB: "\(result.tuple.a.display) → \(result.tuple.b.display)"
+        case .bToA: "\(result.tuple.b.display) → \(result.tuple.a.display)"
+        }
+    }
+
+    func saveDatagrams(
+        _ result: FollowDatagramResult,
+        side: FollowDatagramExport.Side,
+        format: DatagramExportFormat
+    ) {
+        guard !isSavingDatagrams else {
+            return
+        }
+        guard result.messages.contains(where: { side.admits($0.direction) }) else {
+            streamActionError = String(localized: "This direction has no retained datagrams to save.")
+            return
+        }
+
+        let originProjectID = coordinator.activeRuntime.projectID
+        let originGeneration = coordinator.startGeneration
+        let originSessionID = coordinator.activeWorkspace.selectedSessionID
+        let originRequestID = coordinator.followStreamRequestID
+        let originIdentity = result.identity
+        let originTuple = result.tuple
+        func isCurrent() -> Bool {
+            datagramExportIsCurrent(
+                projectID: originProjectID, generation: originGeneration, sessionID: originSessionID,
+                requestID: originRequestID, identity: originIdentity, tuple: originTuple
+            )
+        }
+
+        let confirmation = NSAlert()
+        confirmation.messageText = String(localized: "Save UDP application data?")
+        confirmation.informativeText = format == .raw
+            ? String(localized: """
+            UDP payloads can contain credentials or personal information. Raw output concatenates payloads in capture order and loses datagram boundaries.
+            Continue only if you intend to save and review this local application data.
+            """)
+            : String(localized: """
+            The retained datagrams can contain credentials or personal information.
+            The YAML includes their payload bytes in Base64. Continue only if you intend to save and review this local application data.
+            """)
+        confirmation.addButton(withTitle: String(localized: "Continue to Save"))
+        confirmation.addButton(withTitle: String(localized: "Cancel"))
+        guard confirmation.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let panel = NSSavePanel()
+        let fileExtension = format == .raw ? "bin" : "yaml"
+        panel.nameFieldStringValue = "udp-conversation-\(originTuple.a.port)-\(originTuple.b.port).\(fileExtension)"
+        panel.allowedContentTypes = format == .raw ? [.data] : [.yaml]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        guard isCurrent() else {
+            return
+        }
+
+        isSavingDatagrams = true
+        Task {
+            do {
+                let data = try await Task.detached(priority: .utility) {
+                    switch format {
+                    case .yaml: try FollowDatagramExport.yaml(result, side: side)
+                    case .raw: try FollowDatagramExport.raw(result, side: side)
+                    }
+                }.value
+                guard isCurrent() else {
+                    isSavingDatagrams = false
+                    return
+                }
+                try await Task.detached(priority: .utility) {
+                    try data.write(to: url, options: .atomic)
+                }.value
+                if isCurrent() {
+                    streamActionError = nil
+                }
+            } catch FollowDatagramExport.ExportError.tooLarge {
+                if isCurrent() {
+                    streamActionError = format == .raw
+                        ? String(localized: "This selection exceeds the 8 MiB raw payload limit.")
+                        :
+                        String(
+                            localized: "This conversation exceeds the 8 MiB YAML limit. Choose one direction or save a smaller conversation."
+                        )
+                }
+            } catch FollowDatagramExport.ExportError.incomplete {
+                if isCurrent() {
+                    streamActionError =
+                        String(
+                            localized: "Raw payload cannot be saved because this conversation may be incomplete. Use YAML to review the retained datagrams and limitations."
+                        )
+                }
+            } catch {
+                if isCurrent() {
+                    streamActionError =
+                        String(localized: "Couldn’t save the conversation: \(error.localizedDescription)")
+                }
+            }
+            isSavingDatagrams = false
+        }
+    }
+
+    private func datagramExportIsCurrent(
+        projectID: UUID?,
+        generation: Int,
+        sessionID: UUID?,
+        requestID: Int,
+        identity: PcapFileIdentity,
+        tuple: FiveTuple
+    )
+        -> Bool
+    {
+        coordinator.activeRuntime.projectID == projectID
+            && coordinator.startGeneration == generation
+            && coordinator.activeWorkspace.selectedSessionID == sessionID
+            && sessionID == session.id
+            && coordinator.followStreamRequestID == requestID
+            && coordinator.followDatagramResult?.identity == identity
+            && coordinator.followDatagramResult?.tuple == tuple
+    }
+
     func datagramRow(_ row: FollowDatagramRowPresentation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: Theme.Metrics.spacingM) {
@@ -656,14 +1043,22 @@ private extension FollowConversationView {
                 Text(row.timeLabel)
                     .font(Theme.Typography.monoMicro)
                     .foregroundStyle(.secondary)
+                if let deltaLabel = row.deltaLabel {
+                    Text(deltaLabel)
+                        .font(Theme.Typography.monoMicro)
+                        .foregroundStyle(.secondary)
+                        .help(
+                            "Capture-time delta from the preceding retained datagram, including hidden rows; not network latency"
+                        )
+                }
                 frameButton(row.frameLabel, provenance: row.provenance)
             }
             if let headline = row.dnsHeadline {
-                Text(FollowTranscriptSearch.highlighted(headline, query: query))
+                Text(FollowTranscriptSearch.highlighted(headline, query: query, caseSensitive: isCaseSensitive))
                     .font(Theme.Typography.bodyMedium)
                     .textSelection(.enabled)
                 ForEach(Array(row.dnsAnswers.enumerated()), id: \.offset) { _, answer in
-                    Text(FollowTranscriptSearch.highlighted(answer, query: query))
+                    Text(FollowTranscriptSearch.highlighted(answer, query: query, caseSensitive: isCaseSensitive))
                         .font(Theme.Typography.monoSmall)
                         .textSelection(.enabled)
                 }
@@ -674,7 +1069,7 @@ private extension FollowConversationView {
                 }
             }
             if !row.payload.isEmpty {
-                Text(FollowTranscriptSearch.highlighted(row.payload, query: query))
+                Text(FollowTranscriptSearch.highlighted(row.payload, query: query, caseSensitive: isCaseSensitive))
                     .font(Theme.Typography.zoomed(
                         .subheadline, zoom: coordinator.packetDetailOptions.textZoom, monospaced: true
                     ))

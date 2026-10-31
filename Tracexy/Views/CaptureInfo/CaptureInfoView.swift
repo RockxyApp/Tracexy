@@ -297,7 +297,10 @@ struct CaptureInfoView: View {
                 if blocks.nameResolutionBlockCount > 0 {
                     LabeledContent(
                         "Name resolution",
-                        value: "\(blocks.nameResolutionBlockCount.formatted()) blocks — not applied to Sources"
+                        value: "\(blocks.nameResolutionBlockCount.formatted()) blocks, "
+                            + "\(blocks.nameResolutionMappingCount.formatted()) names retained; "
+                            + "\(blocks.nameResolutionMappingOmittedCount.formatted()) omitted, "
+                            + "\(blocks.oversizedNameResolutionBlockCount.formatted()) oversized blocks skipped"
                     )
                 }
                 if !blocks.decryptionSecrets.isEmpty {

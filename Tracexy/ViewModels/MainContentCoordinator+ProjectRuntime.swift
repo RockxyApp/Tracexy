@@ -184,6 +184,7 @@ extension MainContentCoordinator {
         runtime.savedCaptureActivity = savedCaptureActivity
         runtime.savedCaptureMetadata = savedCaptureMetadata
         runtime.savedCaptureProperties = savedCaptureProperties
+        runtime.savedCaptureNameResolutionRecords = savedCaptureNameResolutionRecords
         runtime.savedCaptureWarning = savedCaptureWarning
         runtime.savedCaptureEvidence = savedCaptureEvidence
         runtime.savedCaptureEvidenceURL = savedCaptureEvidenceURL
@@ -252,6 +253,7 @@ extension MainContentCoordinator {
         savedCaptureActivity = runtime.savedCaptureActivity
         savedCaptureMetadata = runtime.savedCaptureMetadata
         savedCaptureProperties = runtime.savedCaptureProperties
+        savedCaptureNameResolutionRecords = runtime.savedCaptureNameResolutionRecords
         savedCaptureWarning = runtime.savedCaptureWarning
         savedCaptureEvidence = runtime.savedCaptureEvidence
         savedCaptureEvidenceURL = runtime.savedCaptureEvidenceURL
@@ -268,7 +270,7 @@ extension MainContentCoordinator {
         expressionLibrary.bind(to: runtime.settingsDefaults)
         addressNames.bind(to: runtime.settingsDefaults)
         investigationViewStates.bind(to: runtime.settingsDefaults)
-        bindViewPreferences(to: runtime.settingsDefaults)
+        bindViewPreferences(to: runtime.settingsDefaults, projectID: runtime.projectID)
         investigationNotes.scope = runtime.investigationNoteScope
         if investigationNotes.scope == nil {
             // A saved file whose identity was still being read when parked.
@@ -328,6 +330,10 @@ extension MainContentCoordinator {
         // Project's windows read their own capture again on demand.
         exportObjects.cancel(clearLists: true)
         allFrames.cancel(clearList: true)
+        allFrames.clearFrameExpression()
+        allFrames.clearFrameHighlight()
+        sessionTimeDisplay.clearTimeReferences()
+        sessionTimeDisplay.selectedFrame = nil
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
         // Cancel evaluation only. A Project boundary is not a capture boundary:
         // clearing here would erase the outgoing Project's structured drafts and
@@ -705,9 +711,12 @@ extension MainContentCoordinator {
 extension MainContentCoordinator {
     /// View ▸ Session/Frame Time, View ▸ Validate Checksums and Capture ▸ Decode As
     /// for a Project: read from its suite, then written back to it.
-    func bindViewPreferences(to defaults: UserDefaults) {
+    func bindViewPreferences(to defaults: UserDefaults, projectID: UUID? = nil) {
         sessionTimeDisplay.bind(to: defaults)
         packetDetailOptions.bind(to: defaults)
         decodeAs.bind(to: defaults)
+        allFrames.frameFilterLibrary.bind(projectID: projectID, defaults: defaults)
+        allFrames.frameColorRuleLibrary.bind(projectID: projectID, defaults: defaults)
+        allFrames.refreshFrameColorRules()
     }
 }

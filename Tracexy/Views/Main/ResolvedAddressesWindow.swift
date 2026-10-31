@@ -1,10 +1,10 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - ResolvedAddressesWindow
 
-/// Statistics ▸ Resolved Addresses: the names this capture's DNS and mDNS answers gave each
-/// address, and the names given in this Project, with a route from every row back
-/// to the sessions it explains.
+/// Statistics ▸ Resolved Addresses: names from capture DNS/mDNS answers, PCAPNG Name
+/// Resolution Blocks, and the current Project address book.
 struct ResolvedAddressesWindow: View {
     // MARK: Internal
 
@@ -18,7 +18,7 @@ struct ResolvedAddressesWindow: View {
                 ContentUnavailableView(
                     "No Resolved Addresses",
                     systemImage: "character.book.closed",
-                    description: Text("No DNS or mDNS answer in this capture named an address.")
+                    description: Text("No DNS, mDNS, or PCAPNG capture-file mapping named an address.")
                 )
             } else {
                 table(rows)
@@ -36,6 +36,14 @@ struct ResolvedAddressesWindow: View {
                 return coordinator.addressNames.setSubnetName(name, for: block)
             }
         }
+        .fileImporter(isPresented: $isImportingHosts, allowedContentTypes: [.plainText, .data]) { result in
+            importHosts(from: result)
+        }
+        .alert("Hosts Import", isPresented: $showsImportNotice) {
+            Button("OK") {}
+        } message: {
+            Text(importNotice)
+        }
     }
 
     // MARK: Private
@@ -43,6 +51,9 @@ struct ResolvedAddressesWindow: View {
     @State private var filter = ""
     @State private var selection: ResolvedAddressRow.ID?
     @State private var subnetDraft: SubnetNameDraft?
+    @State private var isImportingHosts = false
+    @State private var showsImportNotice = false
+    @State private var importNotice = ""
 
     private func table(_ rows: [ResolvedAddressRow]) -> some View {
         Table(rows, selection: $selection) {
@@ -117,10 +128,15 @@ struct ResolvedAddressesWindow: View {
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("Name Subnet…") {
-                subnetDraft = SubnetNameDraft(block: "", name: "")
+            Menu("Manage Names", systemImage: "character.book.closed") {
+                Button("Name Subnet…") {
+                    subnetDraft = SubnetNameDraft(block: "", name: "")
+                }
+                Button("Import Hosts…") {
+                    isImportingHosts = true
+                }
             }
-            .help("Name an IPv4 block, so its addresses show as name.host")
+            .help("Name an IPv4 subnet or import Project address names")
             Button("Show Answering Session") {
                 if let sessionID = selected?.sessionID {
                     coordinator.showSessionThatResolved(sessionID)
@@ -149,6 +165,48 @@ struct ResolvedAddressesWindow: View {
         } else {
             coordinator.selectIP(row.address)
         }
+    }
+
+    private func importHosts(from result: Result<URL, Error>) {
+        guard case let .success(url) = result else {
+            if case let .failure(error) = result {
+                if (error as? CocoaError)?.code == .userCancelled {
+                    return
+                }
+                importNotice = error.localizedDescription
+                showsImportNotice = true
+            }
+            return
+        }
+        guard coordinator.addressNames.canEditNames else {
+            importNotice = "This Project's saved address book cannot be decoded, so it was left unchanged."
+            showsImportNotice = true
+            return
+        }
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let parsed = try WiresharkHostsImporter.parse(Data(contentsOf: url, options: .mappedIfSafe))
+            let applied = coordinator.addressNames.importNames(parsed.names)
+            importNotice = "Added \(applied.added) address names. Skipped \(applied.alreadyNamed) addresses already named in this Project and \(parsed.malformedLines + applied.invalid) malformed entries. Ignored \(parsed.ignoredAliases) extra aliases; shortened \(parsed.truncatedNames) names to \(AddressNameBook.maximumNameCharacters) characters. The last hostname was used for \(parsed.repeatedAddresses) repeated addresses (\(parsed.conflictingAddresses) had conflicting names)."
+            if applied.full {
+                importNotice += " The Project address book reached its \(AddressNameBook.maximumEntries)-address limit."
+            }
+        } catch let error as WiresharkHostsImporter.ImportError {
+            importNotice = switch error {
+            case .fileTooLarge: "The selected hosts file exceeds the 256 KiB import limit."
+            case .tooManyLines: "The selected hosts file exceeds the 10,000-line import limit."
+            case .tooManyAddresses: "The selected hosts file exceeds the 500-address import limit."
+            case .noUsableEntries: "The selected file has no usable UTF-8 host entries."
+            }
+        } catch {
+            importNotice = "Could not read the selected hosts file: \(error.localizedDescription)"
+        }
+        showsImportNotice = true
     }
 }
 

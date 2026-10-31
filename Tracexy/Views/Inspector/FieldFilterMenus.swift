@@ -7,24 +7,47 @@ import SwiftUI
 struct FieldFilterMenus: View {
     // MARK: Internal
 
-    let term: String
+    let term: String?
     let action: (String, DecodedFieldFilter.Combination, Bool) -> Void
+    var frameTerm: String?
+    var frameAction: (String, DecodedFieldFilter.Combination, Bool) -> Void = { _, _, _ in }
 
     var body: some View {
-        Menu("Apply as Filter", systemImage: "line.3.horizontal.decrease.circle") {
-            items(applying: true)
+        if let term {
+            Menu("Apply as Filter", systemImage: "line.3.horizontal.decrease.circle") {
+                items(term, applying: true)
+            }
+            Menu("Prepare as Filter", systemImage: "square.and.pencil") {
+                items(term, applying: false)
+            }
         }
-        Menu("Prepare as Filter", systemImage: "square.and.pencil") {
-            items(applying: false)
+        if let frameTerm {
+            Menu("Apply as Frame Filter", systemImage: "scope") {
+                frameItems(frameTerm, applying: true)
+            }
+            Menu("Prepare as Frame Filter", systemImage: "square.and.pencil") {
+                frameItems(frameTerm, applying: false)
+            }
         }
     }
 
     // MARK: Private
 
-    private func items(applying: Bool) -> some View {
+    @Environment(\.openWindow) private var openWindow
+
+    private func items(_ term: String, applying: Bool) -> some View {
         ForEach(DecodedFieldFilter.Combination.allCases) { combination in
             Button(combination.title) {
                 action(term, combination, applying)
+            }
+        }
+    }
+
+    private func frameItems(_ term: String, applying: Bool) -> some View {
+        ForEach(DecodedFieldFilter.Combination.allCases) { combination in
+            Button(combination.title) {
+                frameAction(term, combination, applying)
+                openWindow(id: TracexyApp.allFramesWindowID)
             }
         }
     }

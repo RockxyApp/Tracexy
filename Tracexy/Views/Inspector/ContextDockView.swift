@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 // MARK: - ContextDockView
@@ -53,9 +54,29 @@ struct ContextDockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Inspector")
+        .onChange(of: tcpHealthScope) { _, _ in tcpHealthScan.reset() }
+        .onDisappear { tcpHealthScan.reset() }
     }
 
     // MARK: Private
+
+    @State private var tcpHealthScan = TCPHealthScanState()
+
+    private var tcpHealthScope: TCPHealthScanScope? {
+        guard let session = coordinator.selectedSession, session.protocolStack.contains(.tcp) else {
+            return nil
+        }
+        return TCPHealthScanScope(
+            projectID: coordinator.projectStore.activeProjectID,
+            workspaceID: coordinator.activeWorkspace.id,
+            sessionID: session.id,
+            generation: coordinator.startGeneration,
+            savedURL: coordinator.isViewingSavedCapture ? coordinator.savedCaptureEvidenceURL : nil,
+            savedIdentity: coordinator.adoptedSavedCaptureIdentity,
+            correction: coordinator.activeSavedCapture?.timeCorrection,
+            unavailableReason: coordinator.allFramesUnavailableReason
+        )
+    }
 
     private var detailsFooterSummary: String {
         guard let session = coordinator.selectedSession else {
@@ -183,7 +204,12 @@ struct ContextDockView: View {
                         // The whole conversation's shape, under the single exchanges
                         // above it: same frames, same inspect route, one chart at a
                         // time so the column stays readable.
-                        let streamHealth = self.streamHealth(for: session)
+                        if session.protocolStack.contains(.tcp) {
+                            tcpHealthSourceControls(for: session)
+                        }
+                        let streamHealth = tcpHealthScan.scope == tcpHealthScope
+                            ? (tcpHealthScan.result?.health ?? self.streamHealth(for: session))
+                            : self.streamHealth(for: session)
                         if !streamHealth.isEmpty {
                             SessionStreamHealthView(health: streamHealth) { provenance in
                                 inspectCitation(provenance, for: session)
@@ -601,6 +627,51 @@ struct ContextDockView: View {
             .foregroundStyle(Self.tint(for: tier))
     }
 
+    private func tcpHealthSourceControls(for session: SessionSummary) -> some View {
+        let isCurrent = tcpHealthScope != nil && tcpHealthScan.scope == tcpHealthScope
+        return ContextInspectorTable(title: "TCP Health Source") {
+            ContextInspectorFullRow {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+                    if let result = tcpHealthScan.result, isCurrent {
+                        Text("Complete source scan: \(result.segmentCount.formatted()) decoded TCP segments")
+                        if result.health.isEmpty {
+                            Text("No timed observations are available to graph.")
+                        }
+                    } else {
+                        Text("Retained session prefix")
+                    }
+                    if tcpHealthScan.isRunning, isCurrent {
+                        if let progress = tcpHealthScan.progress, progress.totalBytes > 0 {
+                            ProgressView(value: Double(progress.bytesConsumed), total: Double(progress.totalBytes))
+                        } else {
+                            ProgressView()
+                        }
+                        Button("Cancel Scan") { tcpHealthScan.reset() }
+                    } else {
+                        HStack {
+                            Button("Analyze Entire Conversation") {
+                                if let scope = tcpHealthScope, scope.sessionID == session.id {
+                                    tcpHealthScan.start(coordinator: coordinator, scope: scope)
+                                }
+                            }
+                            .disabled(coordinator.allFramesUnavailableReason != nil)
+                            .help(coordinator.allFramesUnavailableReason
+                                ?? "Rescan the stable capture source for this TCP session")
+                            if tcpHealthScan.result != nil, isCurrent {
+                                Button("Use Retained Overview") { tcpHealthScan.reset() }
+                            }
+                        }
+                    }
+                    if let error = tcpHealthScan.error, isCurrent {
+                        Text(error).foregroundStyle(Color(nsColor: .systemRed))
+                    }
+                }
+                .font(Theme.Typography.caption)
+                .controlSize(.small)
+            }
+        }
+    }
+
     /// A glyph per tier, so confidence is legible without relying on colour —
     /// the tier is the one thing in this panel a colour-blind user most needs.
     private static func symbol(for tier: ConfidenceTier) -> String {
@@ -875,4 +946,94 @@ private struct BaselinePoint: Identifiable {
     let id: UUID
     let milliseconds: Double
     let isCurrent: Bool
+}
+
+// MARK: - TCPHealthScanScope
+
+private struct TCPHealthScanScope: Equatable, Sendable {
+    let projectID: UUID
+    let workspaceID: UUID
+    let sessionID: UUID
+    let generation: Int
+    let savedURL: URL?
+    let savedIdentity: PcapFileIdentity?
+    let correction: CaptureTimeCorrection?
+    let unavailableReason: String?
+}
+
+// MARK: - TCPHealthScanState
+
+@MainActor
+@Observable
+private final class TCPHealthScanState {
+    // MARK: Internal
+
+    private(set) var scope: TCPHealthScanScope?
+    private(set) var result: FullTCPHealthScanResult?
+    private(set) var progress: PcapStreamProgress?
+    private(set) var error: String?
+    private(set) var isRunning = false
+
+    func start(coordinator: MainContentCoordinator, scope: TCPHealthScanScope) {
+        reset()
+        self.scope = scope
+        isRunning = true
+        let request = requestID
+        task = Task { [weak self, weak coordinator] in
+            guard let coordinator else {
+                self?.finish(nil, error: "The capture source is unavailable.", request: request, scope: scope)
+                return
+            }
+            do {
+                let result = try await coordinator.scanFullTCPHealth(sessionID: scope.sessionID) { [weak self] value in
+                    Task { @MainActor [weak self] in
+                        self?.accept(value, request: request, scope: scope)
+                    }
+                }
+                self?.finish(result, error: nil, request: request, scope: scope)
+            } catch {
+                let message = error is CancellationError
+                    ? String(localized: "The capture or selection changed during the scan.")
+                    : error.localizedDescription
+                self?.finish(nil, error: message, request: request, scope: scope)
+            }
+        }
+    }
+
+    func reset() {
+        requestID &+= 1
+        task?.cancel()
+        task = nil
+        scope = nil
+        result = nil
+        progress = nil
+        error = nil
+        isRunning = false
+    }
+
+    // MARK: Private
+
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var requestID = 0
+
+    private func accept(_ value: PcapStreamProgress, request: Int, scope: TCPHealthScanScope) {
+        guard request == requestID, scope == self.scope, isRunning,
+              progress.map({ value.bytesConsumed >= $0.bytesConsumed }) ?? true else
+        {
+            return
+        }
+        progress = value
+    }
+
+    private func finish(
+        _ result: FullTCPHealthScanResult?, error: String?, request: Int, scope: TCPHealthScanScope
+    ) {
+        guard request == requestID, scope == self.scope else {
+            return
+        }
+        self.result = result
+        self.error = error
+        isRunning = false
+        task = nil
+    }
 }

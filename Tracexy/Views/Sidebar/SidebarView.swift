@@ -543,9 +543,11 @@ struct SidebarView: View {
                 .truncationMode(.middle)
             Spacer(minLength: 0)
             if capture.isReferenced {
-                Image(systemName: capture.isReadable ? "link" : "exclamationmark.triangle")
+                Image(systemName: capture.availability == .checking ? "clock" :
+                    (capture.isReadable ? "link" : "exclamationmark.triangle"))
                     .font(Theme.Typography.caption)
-                    .foregroundStyle(capture.isReadable ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
+                    .foregroundStyle(capture.availability == .checking || capture.isReadable
+                        ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
                     .help(Self.availabilityHelp(capture))
                     .accessibilityLabel(Self.availabilityHelp(capture))
             }
@@ -556,11 +558,12 @@ struct SidebarView: View {
         // a tap gesture alone is invisible to VoiceOver and UI automation.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint(capture.isReadable ? "Opens this capture" : "Shows how to locate this capture")
+        .accessibilityHint(capture.availability == .checking ? "Checks and opens this capture" :
+            (capture.isReadable ? "Opens this capture" : "Shows how to locate this capture"))
         .accessibilityAction { coordinator.openSavedCapture(capture) }
         .contextMenu {
             Button("Open", systemImage: "eye") { coordinator.openSavedCapture(capture) }
-                .disabled(!capture.isReadable)
+                .disabled(capture.availability == .missing || capture.availability == .changed)
             Button("Reveal in Finder", systemImage: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([capture.url])
             }
@@ -833,6 +836,7 @@ struct SidebarView: View {
     private static func availabilityHelp(_ capture: SavedCapture) -> String {
         switch capture.availability {
         case .managed: ""
+        case .checking: "Checking the referenced file on this Mac"
         case .available: "Opened in place on this Mac"
         case .missing: "The referenced file on this Mac can’t be found"
         case .changed: "The referenced file changed on disk"

@@ -465,7 +465,7 @@ struct SessionCenterView: View {
     private func timeCell(_ startTime: Date?) -> some View {
         if let startTime {
             Text(coordinator.sessionTimeDisplay.format.string(
-                for: startTime, captureStart: coordinator.trafficTimeline.firstTimedFrame
+                for: startTime, captureStart: coordinator.trafficTimeline.captureStartFrame
             ))
             .font(Theme.Typography.monoSmall)
             .foregroundStyle(.secondary)

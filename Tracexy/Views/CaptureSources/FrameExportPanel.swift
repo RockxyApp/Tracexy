@@ -46,16 +46,22 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
         /// Address names known for this capture; "Include address names" shows only
         /// when there are some.
         var nameCount = 0
+        /// Snapshot of capture-local ignored packet ordinals when the panel opens.
+        var ignoredFrameOrdinals: Set<UInt64> = []
     }
 
     struct Choice {
         let url: URL
         let scope: FrameExportScope
         let options: FrameExportOptions
+        /// Additional investigator comment written only to the new PCAPNG.
+        var captureComment: String?
         /// Write the notes on the exported sessions as PCAPNG capture comments.
         var includesNotes = false
         /// Write the known address names as a PCAPNG Name Resolution Block.
         var includesNames = false
+        /// Apply a capture-wide timestamp correction to the derived PCAPNG copy.
+        var timeCorrectionRequest: CaptureTimeCorrectionRequest?
     }
 
     func run() -> Choice? {
@@ -100,11 +106,14 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
                 anonymizesAddresses: accessory.anonymizesAddresses,
                 stripsHeaders: accessory.stripsHeaders,
                 removesDuplicates: accessory.removesDuplicates,
+                excludedFrameOrdinals: accessory.excludesIgnoredFrames ? context.ignoredFrameOrdinals : [],
                 truncatesTo: accessory.truncatesTo,
                 shiftsTimeBy: accessory.shiftsTimeBy
             ),
+            captureComment: accessory.captureComment,
             includesNotes: accessory.includesNotes && format == .pcapng && !accessory.anonymizesAddresses,
-            includesNames: accessory.includesNames && format == .pcapng && !accessory.anonymizesAddresses
+            includesNames: accessory.includesNames && format == .pcapng && !accessory.anonymizesAddresses,
+            timeCorrectionRequest: accessory.timeCorrectionRequest
         )
     }
 
@@ -137,6 +146,18 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
         if currentFormat(sender as? NSSavePanel) == .pcap, let reason = context.pcapUnavailableReason {
             throw NSError(
                 domain: "com.amunx.tracexy.export", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: reason]
+            )
+        }
+        if let reason = accessory.captureCommentValidationIssue(format: currentFormat(sender as? NSSavePanel)) {
+            throw NSError(
+                domain: "com.amunx.tracexy.export", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: reason]
+            )
+        }
+        if let reason = accessory.timeCorrectionValidationIssue(format: currentFormat(sender as? NSSavePanel)) {
+            throw NSError(
+                domain: "com.amunx.tracexy.export", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: reason]
             )
         }
@@ -204,12 +225,12 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
 // MARK: - FrameExportAccessoryView
 
 @MainActor
-final class FrameExportAccessoryView: NSView {
+final class FrameExportAccessoryView: NSView, NSTextViewDelegate {
     // MARK: Lifecycle
 
     init(context: FrameExportPanel.Context) {
         self.context = context
-        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 172))
+        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 380))
 
         scopePopUp.addItems(withTitles: context.scopes.map(\.title))
         scopePopUp.selectItem(at: min(max(context.initialScopeIndex, 0), max(context.scopes.count - 1, 0)))
@@ -283,10 +304,12 @@ final class FrameExportAccessoryView: NSView {
         )
         namesCheckbox.target = self
         namesCheckbox.action = #selector(controlChanged)
+        let captureCommentStack = configureCaptureCommentControls()
         duplicatesCheckbox.state = .off
         duplicatesCheckbox.toolTip = String(
             localized: "As editcap -d: leave out a frame whose bytes match one of the five frames before it exactly."
         )
+        configureIgnoredFramesCheckbox()
         truncateCheckbox.state = .off
         truncateCheckbox.toolTip = String(
             localized: "As editcap -s: keep only the first bytes of each frame; the original length is kept."
@@ -304,9 +327,7 @@ final class FrameExportAccessoryView: NSView {
         truncateField.setAccessibilityLabel(String(localized: "Bytes to keep of each frame"))
         truncateField.widthAnchor.constraint(equalToConstant: 72).isActive = true
 
-        estimateLabel.textColor = .secondaryLabelColor
-        estimateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        estimateLabel.setAccessibilityLabel(String(localized: "Estimate"))
+        configureEstimateLabel()
 
         let scopeLabel = NSTextField(labelWithString: String(localized: "Scope:"))
         scopeLabel.alignment = .right
@@ -321,24 +342,19 @@ final class FrameExportAccessoryView: NSView {
         truncateRow.orientation = .horizontal
         truncateRow.spacing = 6
         let shiftRow = makeShiftRow()
+        timeCorrectionControls.onChange = { [weak self] in
+            self?.controlChanged()
+        }
         let stack = NSStackView(views: [
-            preserveCheckbox, notesCheckbox, namesCheckbox, anonymizeCheckbox, duplicatesCheckbox, truncateRow,
-            shiftRow, gzipCheckbox,
+            preserveCheckbox, notesCheckbox, namesCheckbox, anonymizeCheckbox, ignoredFramesCheckbox,
+            duplicatesCheckbox, truncateRow, captureCommentStack,
+            shiftRow, timeCorrectionControls, gzipCheckbox,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 4
 
-        for picker in [startPicker, endPicker] {
-            picker.datePickerStyle = .textFieldAndStepper
-            picker.datePickerElements = [.yearMonthDay, .hourMinuteSecond]
-            picker.target = self
-            picker.action = #selector(controlChanged)
-            if let bounds = context.timeBounds {
-                picker.minDate = bounds.lowerBound
-                picker.maxDate = bounds.upperBound
-            }
-        }
+        configureTimeRangePickers()
         startPicker.dateValue = context.timeBounds?.lowerBound ?? Date()
         endPicker.dateValue = context.timeBounds?.upperBound ?? Date()
         startPicker.setAccessibilityLabel(String(localized: "From"))
@@ -398,6 +414,9 @@ final class FrameExportAccessoryView: NSView {
     }
 
     var selectedScope: FrameExportScope {
+        if timeCorrectionControls.isEnabled {
+            return .wholeCapture
+        }
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]
         if case .timeRange = choice.scope {
             let start = min(startPicker.dateValue, endPicker.dateValue)
@@ -421,16 +440,24 @@ final class FrameExportAccessoryView: NSView {
     }
 
     var compressesWithGzip: Bool {
-        gzipCheckbox.state == .on
+        gzipCheckbox.state == .on && !timeCorrectionControls.isEnabled
     }
 
     var includesNotes: Bool {
         !notesCheckbox.isHidden && notesCheckbox.state == .on
     }
 
+    var captureComment: String? {
+        let value = captureCommentTextView.string
+        return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+    }
+
     /// The Headers pop-up: `nil` keeps every header.
     var stripsHeaders: FrameHeaderStrip? {
-        switch headersPopUp.indexOfSelectedItem {
+        guard !timeCorrectionControls.isEnabled else {
+            return nil
+        }
+        return switch headersPopUp.indexOfSelectedItem {
         case 1: .innerIP
         case 2: .innerEthernet
         default: nil
@@ -442,21 +469,72 @@ final class FrameExportAccessoryView: NSView {
     }
 
     var removesDuplicates: Bool {
-        duplicatesCheckbox.state == .on
+        duplicatesCheckbox.state == .on && !timeCorrectionControls.isEnabled
+    }
+
+    var excludesIgnoredFrames: Bool {
+        !timeCorrectionControls.isEnabled && !ignoredFramesCheckbox.isHidden && ignoredFramesCheckbox.state == .on
     }
 
     /// The byte limit when "Keep at most" is on.
     var truncatesTo: Int? {
-        truncateCheckbox.state == .on ? truncateField.integerValue : nil
+        truncateCheckbox.state == .on && !timeCorrectionControls.isEnabled ? truncateField.integerValue : nil
     }
 
     var anonymizesAddresses: Bool {
-        anonymizeCheckbox.state == .on
+        anonymizeCheckbox.state == .on && !timeCorrectionControls.isEnabled
+    }
+
+    var timeCorrectionRequest: CaptureTimeCorrectionRequest? {
+        timeCorrectionControls.request
     }
 
     /// Seconds added to every frame's time when "Shift times by" is on.
     var shiftsTimeBy: TimeInterval {
-        shiftCheckbox.state == .on && shiftField.doubleValue.isFinite ? shiftField.doubleValue : 0
+        !timeCorrectionControls.isEnabled && shiftCheckbox.state == .on && shiftField.doubleValue.isFinite
+            ? shiftField.doubleValue : 0
+    }
+
+    func timeCorrectionValidationIssue(format: FrameExportFormat) -> String? {
+        guard timeCorrectionControls.isEnabled else {
+            return nil
+        }
+        guard format == .pcapng else {
+            return String(localized: "Time correction requires PCAPNG so frame timestamps stay representable.")
+        }
+        if let issue = timeCorrectionControls.validationIssue {
+            return issue
+        }
+        guard let request = timeCorrectionControls.request else {
+            return String(localized: "Enter valid timestamp anchors for the corrected copy.")
+        }
+        do {
+            try request.validate()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func captureCommentValidationIssue(format: FrameExportFormat) -> String? {
+        guard captureComment != nil else {
+            return nil
+        }
+        let bytes = captureCommentTextView.string.utf8.count
+        guard bytes <= FrameExportOptions.maximumCommentBytes else {
+            return String(
+                localized: "Keep the additional capture comment within \(FrameExportOptions.maximumCommentBytes.formatted()) UTF-8 bytes."
+            )
+        }
+        guard format == .pcapng else {
+            return String(localized: "An additional capture comment needs PCAPNG. Clear the comment or choose PCAPNG.")
+        }
+        guard !anonymizesAddresses else {
+            return String(
+                localized: "Address-replaced exports omit comments and metadata. Clear the comment or turn off Replace addresses."
+            )
+        }
+        return nil
     }
 
     func selectFormat(_ format: FrameExportFormat) {
@@ -469,8 +547,24 @@ final class FrameExportAccessoryView: NSView {
         preserveCheckbox.isEnabled = context.sourceIsPcapng && format == .pcapng && !anonymizesAddresses
         notesCheckbox.isEnabled = format == .pcapng && !anonymizesAddresses
         namesCheckbox.isEnabled = format == .pcapng && !anonymizesAddresses
-        truncateField.isEnabled = truncateCheckbox.state == .on
-        shiftField.isEnabled = shiftCheckbox.state == .on
+        let commentIssue = captureCommentValidationIssue(format: format)
+        captureCommentStatusLabel.stringValue = commentIssue
+            ??
+            String(
+                localized: "Optional; written only to the new PCAPNG. Maximum \(FrameExportOptions.maximumCommentBytes.formatted()) UTF-8 bytes."
+            )
+        captureCommentStatusLabel.textColor = commentIssue == nil ? .secondaryLabelColor : .systemRed
+        let correctionEnabled = timeCorrectionControls.isEnabled
+        truncateField.isEnabled = truncateCheckbox.state == .on && !correctionEnabled
+        shiftField.isEnabled = shiftCheckbox.state == .on && !correctionEnabled
+        shiftCheckbox.isEnabled = !correctionEnabled
+        scopePopUp.isEnabled = !correctionEnabled
+        duplicatesCheckbox.isEnabled = !correctionEnabled
+        truncateCheckbox.isEnabled = !correctionEnabled
+        anonymizeCheckbox.isEnabled = !correctionEnabled
+        headersPopUp.isEnabled = !correctionEnabled
+        gzipCheckbox.isEnabled = !correctionEnabled
+        timeCorrectionControls.setAvailable(true)
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]
         if let frames = choice.frameEstimate {
             let bytes = Int64(frames) * Int64(context.averageFrameBytes + (format == .pcap ? 16 : 32))
@@ -479,6 +573,13 @@ final class FrameExportAccessoryView: NSView {
         } else {
             estimateLabel.stringValue = String(localized: "Frame count is determined while exporting.")
         }
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === captureCommentTextView else {
+            return
+        }
+        refreshEstimate(format: selectedFormat)
     }
 
     // MARK: Private
@@ -490,8 +591,16 @@ final class FrameExportAccessoryView: NSView {
     private let namesCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Include address names"), target: nil, action: nil
     )
+    private let captureCommentLabel =
+        NSTextField(labelWithString: String(localized: "Additional capture comment for this export:"))
+    private let captureCommentTextView = NSTextView(frame: .zero)
+    private let captureCommentScrollView = NSScrollView(frame: .zero)
+    private let captureCommentStatusLabel = NSTextField(labelWithString: "")
     private let duplicatesCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Remove duplicate frames"), target: nil, action: nil
+    )
+    private let ignoredFramesCheckbox = NSButton(
+        checkboxWithTitle: String(localized: "Exclude ignored frames"), target: nil, action: nil
     )
     private let truncateCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Keep at most"), target: nil, action: nil
@@ -501,6 +610,7 @@ final class FrameExportAccessoryView: NSView {
         checkboxWithTitle: String(localized: "Shift times by"), target: nil, action: nil
     )
     private let shiftField = NSTextField()
+    private let timeCorrectionControls = FrameTimeCorrectionControls(frame: .zero)
     private let formatLabel = NSTextField(labelWithString: String(localized: "Format:"))
     private let preserveCheckbox = NSButton(
         checkboxWithTitle: String(localized: "Preserve capture metadata"), target: nil, action: nil
@@ -519,11 +629,73 @@ final class FrameExportAccessoryView: NSView {
     private let endPicker = NSDatePicker()
     private var grid: NSGridView = .init(views: [])
 
-    /// "Shift times by [n] seconds": editcap `-t` and Wireshark's Time Shift.
+    private func configureIgnoredFramesCheckbox() {
+        ignoredFramesCheckbox.state = .off
+        ignoredFramesCheckbox.isHidden = context.ignoredFrameOrdinals.isEmpty
+        ignoredFramesCheckbox.setAccessibilityLabel(String(localized: "Exclude ignored frames"))
+        ignoredFramesCheckbox.toolTip = String(
+            localized: "Exclude the capture frame ordinals currently marked Ignore. This does not change which frames participate in analysis."
+        )
+        ignoredFramesCheckbox.target = self
+        ignoredFramesCheckbox.action = #selector(controlChanged)
+    }
+
+    private func configureTimeRangePickers() {
+        for picker in [startPicker, endPicker] {
+            picker.datePickerStyle = .textFieldAndStepper
+            picker.datePickerElements = [.yearMonthDay, .hourMinuteSecond]
+            picker.target = self
+            picker.action = #selector(controlChanged)
+            if let bounds = context.timeBounds {
+                picker.minDate = bounds.lowerBound
+                picker.maxDate = bounds.upperBound
+            }
+        }
+    }
+
+    private func configureCaptureCommentControls() -> NSStackView {
+        captureCommentTextView.isRichText = false
+        captureCommentTextView.allowsUndo = true
+        captureCommentTextView.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        captureCommentTextView.minSize = NSSize(width: 0, height: 0)
+        captureCommentTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude
+        )
+        captureCommentTextView.isVerticallyResizable = true
+        captureCommentTextView.isHorizontallyResizable = false
+        captureCommentTextView.textContainerInset = NSSize(width: 5, height: 4)
+        captureCommentTextView.delegate = self
+        captureCommentTextView.setAccessibilityLabel(String(localized: "Additional capture comment for exported file"))
+        captureCommentScrollView.documentView = captureCommentTextView
+        captureCommentScrollView.hasVerticalScroller = true
+        captureCommentScrollView.borderType = .bezelBorder
+        captureCommentScrollView.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        captureCommentScrollView.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        captureCommentStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        captureCommentStatusLabel.textColor = .secondaryLabelColor
+        captureCommentStatusLabel.maximumNumberOfLines = 2
+        captureCommentStatusLabel.lineBreakMode = .byWordWrapping
+        captureCommentStatusLabel.cell?.wraps = true
+        let stack = NSStackView(views: [
+            captureCommentLabel, captureCommentScrollView, captureCommentStatusLabel,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        return stack
+    }
+
+    private func configureEstimateLabel() {
+        estimateLabel.textColor = .secondaryLabelColor
+        estimateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        estimateLabel.setAccessibilityLabel(String(localized: "Estimate"))
+    }
+
+    /// Add one fixed offset to timestamps written in this export.
     private func makeShiftRow() -> NSStackView {
         shiftCheckbox.state = .off
         shiftCheckbox.toolTip = String(
-            localized: "As editcap -t and Wireshark's Time Shift: move every frame's time by this many seconds."
+            localized: "Add this fixed offset to timestamps in the exported frames. This does not edit the open capture."
         )
         shiftCheckbox.target = self
         shiftCheckbox.action = #selector(controlChanged)
@@ -561,7 +733,19 @@ final class FrameExportAccessoryView: NSView {
 
     @objc
     private func controlChanged() {
+        if timeCorrectionControls.isEnabled,
+           let allFramesIndex = context.scopes.firstIndex(where: {
+               if case .wholeCapture = $0.scope {
+                   true
+               } else {
+                   false
+               }
+           })
+        {
+            scopePopUp.selectItem(at: allFramesIndex)
+        }
         updateTimeRangeVisibility()
+        refreshEstimate(format: selectedFormat)
         onChange?()
     }
 }

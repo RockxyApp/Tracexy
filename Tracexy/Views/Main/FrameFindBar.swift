@@ -3,30 +3,29 @@ import SwiftUI
 // MARK: - FrameFindBar
 
 /// Find Packet for View ▸ All Frames, as Wireshark's find bar: a string, hex bytes or
-/// a regular expression, in each frame's bytes or its decoded details. Next and
-/// Previous step through the matching frames the list shows and wrap around.
+/// a regular expression in frame bytes or details, or a typed Frame Expression.
+/// Next and Previous step through the stable capture, paging the list when needed.
 struct FrameFindBar: View {
     // MARK: Internal
 
     @Bindable var coordinator: MainContentCoordinator
-    /// The frames the list shows, in order.
-    let rows: [CaptureFrameRow]
-    @Binding var selection: CaptureFrameRow.ID?
-    @Binding var revealToken: Int
 
+    let selection: CaptureFrameRow.ID?
+    let onSelect: (UInt64) -> Void
     let onClose: () -> Void
 
     var body: some View {
         HStack(spacing: Theme.Metrics.spacingS) {
-            Picker("Find", selection: $query.kind) {
-                Text("String").tag(FrameSearchQuery.Kind.string)
-                Text("Hex").tag(FrameSearchQuery.Kind.hex)
-                Text("Regex").tag(FrameSearchQuery.Kind.regex)
+            Picker("Find", selection: $mode) {
+                Text("String").tag(Mode.string)
+                Text("Hex").tag(Mode.hex)
+                Text("Regex").tag(Mode.regex)
+                Text("Expression").tag(Mode.expression)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .help("Find a string, hex bytes such as 16 03 01, or a regular expression")
+            .help("Find text, hex bytes, a regular expression, or a Tracexy Frame Expression")
             Picker("In", selection: $query.target) {
                 Text("Bytes").tag(FrameSearchQuery.Target.bytes)
                 Text("Details").tag(FrameSearchQuery.Target.details)
@@ -34,24 +33,38 @@ struct FrameFindBar: View {
             .fixedSize()
             .accessibilityLabel(Text("Look in"))
             .help("Look in each frame's bytes, or in its layers and fields as Layers shows them")
+            .disabled(mode == .expression)
+            if mode != .expression, query.kind == .string, query.target == .bytes {
+                Picker("String encoding", selection: $query.stringEncoding) {
+                    ForEach(FrameSearchQuery.StringEncoding.allCases, id: \.self) { encoding in
+                        Text(encoding.title).tag(encoding)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .accessibilityLabel(Text("String encoding"))
+                .help("Search UTF-8, UTF-16 little-endian, UTF-16 big-endian, or all three")
+            }
             TextField("Find in frames", text: $query.text, prompt: Text(prompt))
                 .textFieldStyle(.roundedBorder)
-                .font(query.kind == .string ? Theme.Typography.body : Theme.Typography.mono)
+                .font(mode == .string ? Theme.Typography.body : Theme.Typography.mono)
                 .frame(minWidth: 160)
                 .onSubmit { step(forward: true) }
             Toggle("Match Case", isOn: $query.caseSensitive)
                 .toggleStyle(.checkbox)
-                .disabled(query.kind == .hex)
+                .disabled(mode == .hex || mode == .expression)
             Button("Previous", systemImage: "chevron.up") { step(forward: false) }
                 .labelStyle(.iconOnly)
                 .help("Previous matching frame")
-                .disabled(isSearching)
+                .disabled(isSearching || coordinator.allFrames.isLoading)
             Button("Next", systemImage: "chevron.down") { step(forward: true) }
                 .labelStyle(.iconOnly)
                 .help("Next matching frame")
-                .disabled(isSearching)
+                .disabled(isSearching || coordinator.allFrames.isLoading)
                 .keyboardShortcut("g", modifiers: .command)
             Text(status)
+                .help(status)
+                .accessibilityLabel(Text(status))
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -63,42 +76,66 @@ struct FrameFindBar: View {
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingS)
-        .onDisappear { search?.cancel() }
-    }
-
-    /// The next matching frame after `current` among `rows` (before it when going
-    /// back), wrapping around; `nil` when none of the matches is shown.
-    static func step(
-        from current: UInt64?,
-        forward: Bool,
-        matches: Set<UInt64>,
-        rows: [CaptureFrameRow]
-    )
-        -> UInt64?
-    {
-        let shown = rows.map(\.ordinal).filter(matches.contains)
-        guard let first = shown.first, let last = shown.last else {
-            return nil
+        .onDisappear {
+            searchRequestID &+= 1
+            search?.cancel()
+            isSearching = false
         }
-        guard let current else {
-            return forward ? first : last
+        .onChange(of: query) { _, _ in resetSearch() }
+        .onChange(of: mode) { _, newMode in
+            switch newMode {
+            case .string: query.kind = .string
+            case .hex: query.kind = .hex
+            case .regex: query.kind = .regex
+            case .expression: break
+            }
+            resetSearch()
         }
-        return forward ? shown.first { $0 > current } ?? first : shown.last { $0 < current } ?? last
+        .onChange(of: coordinator.startGeneration) { _, _ in resetSearch() }
+        .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in resetSearch() }
+        .onChange(of: selection) { _, selected in
+            if mode == .expression, let selected, selected != lastAnchor {
+                lastAnchor = nil
+                searchRequestID &+= 1
+                search?.cancel()
+                search = nil
+                isSearching = false
+            }
+        }
     }
 
     // MARK: Private
 
+    private enum Mode: Hashable {
+        case string
+        case hex
+        case regex
+        case expression
+    }
+
+    private struct SearchSummary {
+        let query: FrameSearchQuery
+        let mode: Mode
+        let count: Int
+        let unknown: Int
+        let completeness: CaptureLoadCompleteness
+    }
+
+    @State private var mode = Mode.string
     @State private var query = FrameSearchQuery(kind: .string, target: .bytes, text: "")
-    @State private var matches: (query: FrameSearchQuery, frames: Set<UInt64>)?
+    @State private var lastResult: SearchSummary?
+    @State private var lastAnchor: UInt64?
     @State private var isSearching = false
     @State private var message: String?
     @State private var search: Task<Void, Never>?
+    @State private var searchRequestID = 0
 
     private var prompt: String {
-        switch query.kind {
+        switch mode {
         case .string: String(localized: "Text to find")
         case .hex: "16 03 01"
         case .regex: String(localized: "Regular expression")
+        case .expression: "dns.response or tcp.flags.reset"
         }
     }
 
@@ -109,59 +146,113 @@ struct FrameFindBar: View {
         if let message {
             return message
         }
-        guard let matches, matches.query == query else {
+        guard let lastResult, lastResult.query == query, lastResult.mode == mode else {
             return ""
         }
-        let shown = rows.map(\.ordinal).filter(matches.frames.contains)
-        guard !shown.isEmpty else {
-            return matches.frames.isEmpty ? String(localized: "No match")
-                : String(localized: "\(matches.frames.count.formatted()) found, none in this list")
+        let scope = lastResult.completeness == .complete
+            ? String(localized: "in capture") : String(localized: "in complete frames; truncated tail")
+        let matches = lastResult.count < 1 ? String(localized: "No match \(scope)")
+            : String(localized: "\(lastResult.count.formatted()) \(scope)")
+        guard lastResult.mode == .expression else {
+            return matches
         }
-        guard let selection, let index = shown.firstIndex(of: selection) else {
-            return shown
-                .count == 1 ? String(localized: "1 match") : String(localized: "\(shown.count.formatted()) matches")
-        }
-        return String(localized: "\(index + 1) of \(shown.count.formatted())")
+        return String(localized: "\(matches); \(lastResult.unknown.formatted()) unknown")
+    }
+
+    private func resetSearch() {
+        searchRequestID &+= 1
+        search?.cancel()
+        search = nil
+        isSearching = false
+        message = nil
+        lastAnchor = nil
+        lastResult = nil
     }
 
     private func step(forward: Bool) {
-        if let matches, matches.query == query {
-            move(forward: forward, in: matches.frames)
-            return
-        }
+        searchRequestID &+= 1
+        let requestID = searchRequestID
+        search?.cancel()
+        search = nil
+        let expression: FrameExpression?
         do {
-            _ = try query.matcher()
+            if mode == .expression {
+                var parser = FrameExpressionParser()
+                expression = try parser.parse(query.text)
+            } else {
+                _ = try query.matcher()
+                expression = nil
+            }
         } catch {
-            message = (error as? FrameSearchQuery.Invalid)?.message
+            isSearching = false
+            if let error = error as? FrameExpressionError {
+                message = String(localized: "Expression error at character \(error.position): \(error.reason)")
+            } else {
+                message = (error as? FrameSearchQuery.Invalid)?.message
+            }
             return
         }
         message = nil
         isSearching = true
         let asked = query
-        search?.cancel()
+        let askedMode = mode
+        let current = mode == .expression ? lastAnchor ?? selection : selection
+        let selected = selection
+        let listID = coordinator.allFrames.requestID
         search = Task {
-            defer { isSearching = false }
             do {
-                let frames = try await coordinator.findFrames(matching: asked)
-                guard !Task.isCancelled, asked == query else {
+                let ordinal: UInt64?
+                let count: Int
+                let unknown: Int
+                let completeness: CaptureLoadCompleteness
+                if let expression {
+                    let result = try await coordinator.findAdjacentFrame(
+                        matching: expression, after: current, forward: forward
+                    )
+                    ordinal = result.ordinal
+                    count = result.matchCount
+                    unknown = result.unknownCount
+                    completeness = result.completeness
+                } else {
+                    let result = try await coordinator.findAdjacentFrame(
+                        matching: asked, after: current, forward: forward
+                    )
+                    ordinal = result.ordinal
+                    count = result.matchCount
+                    unknown = 0
+                    completeness = result.completeness
+                }
+                guard requestID == searchRequestID else {
                     return
                 }
-                matches = (asked, Set(frames))
-                move(forward: forward, in: Set(frames))
+                isSearching = false
+                guard !Task.isCancelled, asked == query, askedMode == mode,
+                      askedMode != .expression || selected == selection,
+                      listID == coordinator.allFrames.requestID else
+                {
+                    return
+                }
+                lastResult = SearchSummary(
+                    query: asked, mode: askedMode, count: count, unknown: unknown, completeness: completeness
+                )
+                if let ordinal {
+                    if askedMode == .expression {
+                        lastAnchor = ordinal
+                    }
+                    onSelect(ordinal)
+                }
             } catch is CancellationError {
-                return
+                if requestID == searchRequestID {
+                    isSearching = false
+                }
             } catch {
+                guard requestID == searchRequestID else {
+                    return
+                }
+                isSearching = false
                 message = (error as? FrameSearchQuery.Invalid)?.message
                     ?? String(localized: "Couldn’t search the frames: \(error.localizedDescription)")
             }
         }
-    }
-
-    private func move(forward: Bool, in frames: Set<UInt64>) {
-        guard let next = Self.step(from: selection, forward: forward, matches: frames, rows: rows) else {
-            return
-        }
-        selection = next
-        revealToken &+= 1
     }
 }

@@ -5,14 +5,38 @@ import Foundation
 /// Off-main loading operation, injectable for deterministic cancellation tests.
 /// Production always uses the same bounded streaming parser.
 nonisolated struct SavedCaptureLoadOperation: Sendable {
-    static let streaming = Self { url, capacity, progress in
+    static let streaming = Self { url, capacity, timeCorrection, progress in
         try SavedCaptureStreamLoader(
             contentsOf: url,
-            configuration: .init(retainedCapacity: capacity)
+            configuration: .init(retainedCapacity: capacity, timeCorrection: timeCorrection)
         ).load(onProgress: progress)
     }
 
-    var run: @Sendable (URL, Int, @Sendable (PcapStreamProgress) -> Void) async throws -> SavedCaptureLoadResult
+    var run: @Sendable (
+        URL, Int, CaptureTimeCorrection?, @Sendable (PcapStreamProgress) -> Void
+    )
+        async throws -> SavedCaptureLoadResult
+}
+
+// MARK: - SavedCaptureReferenceProbe
+
+/// The potentially blocking reference-path probe runs in detached Library
+/// refresh or saved-open tasks. Injectable for deterministic source tests.
+nonisolated struct SavedCaptureReferenceProbe: Sendable {
+    static let live = Self { $0.currentAvailability() }
+
+    var run: @Sendable (CaptureReference) -> CaptureSourceAvailability
+}
+
+// MARK: - SavedCaptureOpeningOperations
+
+nonisolated struct SavedCaptureOpeningOperations: Sendable {
+    var load: SavedCaptureLoadOperation = .streaming
+    var probe: SavedCaptureReferenceProbe = .live
+    var refreshTask: Task<Void, Never>?
+    var refreshRequestID = 0
+    var activeProbeTask: Task<Void, Never>?
+    var activeProbeRequestID = 0
 }
 
 // MARK: - SavedCaptureOpenRequest
@@ -30,6 +54,7 @@ nonisolated struct SavedCaptureOpenRequest: Sendable {
     /// contains no session timestamps; it avoids fabricating a Unix-epoch capture.
     let historyOpenedAt: Date
     let capture: SavedCapture
+    let preservesCaptureLocalState: Bool
 }
 
 // MARK: - CoordinatorProgressRelay
@@ -108,12 +133,118 @@ nonisolated final class CoordinatorProgressRelay: @unchecked Sendable {
 
 @MainActor
 extension MainContentCoordinator {
+    /// Saved-opening activation uses the coordinator's shared engine reset while
+    /// optionally retaining capture-local state across an in-memory Time Shift.
+    func resetSessionEngineForSavedCapture(token: Int, preservingCaptureLocalTools: Bool = false) {
+        resetSessionEngine(token: token, preservingCaptureLocalTools: preservingCaptureLocalTools)
+    }
+
+    var canTimeShiftSavedCapture: Bool {
+        isViewingSavedCapture && activeSavedCapture != nil && adoptedSavedCaptureIdentity != nil
+            && !activeSavedCaptureChangedOnDisk && !isOpeningSavedCapture
+            && !isCaptureSourceHeld && timeShiftTask == nil
+    }
+
+    var canUndoTimeShift: Bool {
+        canTimeShiftSavedCapture && activeSavedCapture?.timeCorrection != nil
+    }
+
+    func presentTimeShiftSheet() {
+        guard canTimeShiftSavedCapture else {
+            return
+        }
+        timeShiftError = nil
+        isTimeShiftPresented = true
+    }
+
+    func cancelTimeShiftResolution() {
+        timeShiftRequestID &+= 1
+        timeShiftTask?.cancel()
+        timeShiftTask = nil
+        isTimeShiftPresented = false
+    }
+
+    func applyTimeShift(_ request: CaptureTimeCorrectionRequest) {
+        guard canTimeShiftSavedCapture,
+              let capture = activeSavedCapture,
+              let identity = adoptedSavedCaptureIdentity else
+        {
+            return
+        }
+        timeShiftRequestID &+= 1
+        let requestID = timeShiftRequestID
+        let generation = startGeneration
+        let projectID = activeRuntime.projectID
+        let worker = Task.detached(priority: .userInitiated) {
+            if case let .shiftBy(seconds) = request, let existing = capture.timeCorrection {
+                return try existing.addingShift(seconds)
+            }
+            return try request.resolved(in: capture.url, expectedIdentity: identity)
+        }
+        timeShiftTask = Task { @MainActor [weak self] in
+            defer {
+                if self?.timeShiftRequestID == requestID {
+                    self?.timeShiftTask = nil
+                }
+            }
+            do {
+                let correction = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard let self,
+                      self.timeShiftRequestID == requestID,
+                      self.startGeneration == generation,
+                      self.activeRuntime.projectID == projectID,
+                      self.activeSavedCapture?.id == capture.id,
+                      self.adoptedSavedCaptureIdentity?.matches(identity) == true else
+                {
+                    return
+                }
+                self.openSavedCapture(
+                    capture.withTimeCorrection(correction), preservingCaptureLocalState: true
+                )
+                self.isTimeShiftPresented = false
+                self.timeShiftError = nil
+            } catch is CancellationError {
+                // A newer source request retired this resolution.
+            } catch {
+                guard let self, self.timeShiftRequestID == requestID else {
+                    return
+                }
+                self.timeShiftError = error.localizedDescription
+            }
+        }
+    }
+
+    func undoTimeShift() {
+        guard canUndoTimeShift, let capture = activeSavedCapture else {
+            return
+        }
+        timeShiftRequestID &+= 1
+        timeShiftTask?.cancel()
+        timeShiftTask = nil
+        openSavedCapture(capture.withTimeCorrection(nil), preservingCaptureLocalState: true)
+        isTimeShiftPresented = false
+    }
+
+    var savedCaptureLoadOperation: SavedCaptureLoadOperation {
+        get { savedCaptureOpeningOperations.load }
+        set { savedCaptureOpeningOperations.load = newValue }
+    }
+
+    var savedCaptureReferenceProbe: SavedCaptureReferenceProbe {
+        get { savedCaptureOpeningOperations.probe }
+        set { savedCaptureOpeningOperations.probe = newValue }
+    }
+
     /// Opens a saved PCAP/PCAPNG as an off-main, final-only transaction.
     ///
     /// The current workspace remains usable while parsing. When live capture is
     /// active, the request waits behind its final drain; the loader cannot start
     /// until that boundary calls ``resumePendingSavedCaptureOpenAfterLiveDrain``.
-    func openSavedCapture(_ capture: SavedCapture) {
+    func openSavedCapture(_ capture: SavedCapture, preservingCaptureLocalState: Bool = false) {
         guard hasHydratedProjects, activeRuntime.projectID != nil else {
             captureError = "Load or repair Projects before opening capture data."
             return
@@ -133,23 +264,8 @@ extension MainContentCoordinator {
             captureError = held
             return
         }
-        // A reference whose file moved or changed is a distinct, recoverable state
-        // (Locate… / Reload), never an open attempt against stale bytes.
-        // Re-check a reference at open time rather than trusting the last Library
-        // refresh: the file may have moved since the list was built.
-        if let reference = capture.reference {
-            let availability = reference.currentAvailability()
-            guard availability.isReadable else {
-                refreshSavedCaptures()
-                unavailableReferencedCapture = savedCaptures.first { $0.id == capture.id } ?? capture
-                return
-            }
-            if availability != capture.availability {
-                // The file came back (or was restored) since the list was built:
-                // the badge follows what is true now.
-                refreshSavedCaptures()
-            }
-        }
+        // Recheck in the detached load task: opening a slow reference must not
+        // block the window before this request can show progress or be replaced.
         unavailableReferencedCapture = nil
         cancelFollowStream(clearResult: true)
         cancelSavedCaptureOpen(clearPublishedEvidence: false)
@@ -158,7 +274,8 @@ extension MainContentCoordinator {
             id: savedCaptureOpenRequestID,
             historyCaptureID: UUID(),
             historyOpenedAt: Date(),
-            capture: capture
+            capture: capture,
+            preservesCaptureLocalState: preservingCaptureLocalState
         )
         pendingSavedCaptureOpen = request
         isOpeningSavedCapture = true
@@ -178,6 +295,9 @@ extension MainContentCoordinator {
     /// `savedCaptures`, newest first. Each Project has its own Library folder, so
     /// saving or trashing a capture in one never changes another's list.
     func refreshSavedCaptures() {
+        savedCaptureOpeningOperations.refreshTask?.cancel()
+        savedCaptureOpeningOperations.refreshRequestID &+= 1
+        let requestID = savedCaptureOpeningOperations.refreshRequestID
         guard let directory = capturesDirectory(),
               let urls = try? FileManager.default.contentsOfDirectory(
                   at: directory,
@@ -188,6 +308,7 @@ extension MainContentCoordinator {
             return
         }
         var items: [SavedCapture] = []
+        var references: [(URL, CaptureReference)] = []
         for url in urls {
             let ext = url.pathExtension.lowercased()
             if CaptureImporter.libraryPathExtensions.contains(ext) {
@@ -210,12 +331,65 @@ extension MainContentCoordinator {
                     byteCount: Int(clamping: reference.identity.size),
                     reference: reference,
                     sidecarURL: url,
-                    availability: reference.currentAvailability()
+                    availability: .checking
                 ))
+                references.append((url, reference))
             }
         }
         savedCaptures = items.sorted { $0.date > $1.date }
         noteActiveSavedCaptureAvailability()
+        guard !references.isEmpty else {
+            savedCaptureOpeningOperations.refreshTask = nil
+            return
+        }
+        let originProjectID = activeRuntime.projectID
+        let probe = savedCaptureReferenceProbe
+        let candidates = references
+        savedCaptureOpeningOperations.refreshTask = Task.detached(priority: .utility) { [weak self] in
+            for (sidecar, reference) in candidates {
+                if Task.isCancelled {
+                    break
+                }
+                let availability = probe.run(reference)
+                if Task.isCancelled {
+                    break
+                }
+                await self?.publishSavedCaptureAvailability(
+                    availability, sidecar: sidecar, reference: reference,
+                    originProjectID: originProjectID, requestID: requestID
+                )
+            }
+            await self?.finishSavedCaptureAvailabilityRefresh(requestID: requestID)
+        }
+    }
+
+    func waitForSavedCaptureAvailabilityRefresh() async {
+        await savedCaptureOpeningOperations.refreshTask?.value
+    }
+
+    private func publishSavedCaptureAvailability(
+        _ availability: CaptureSourceAvailability,
+        sidecar: URL,
+        reference: CaptureReference,
+        originProjectID: UUID?,
+        requestID: Int
+    ) {
+        guard activeRuntime.projectID == originProjectID,
+              savedCaptureOpeningOperations.refreshRequestID == requestID,
+              let index = savedCaptures.firstIndex(where: { $0.id == sidecar }),
+              savedCaptures[index].reference == reference,
+              savedCaptures[index].availability == .checking else
+        {
+            return
+        }
+        savedCaptures[index] = savedCaptures[index].withAvailability(availability)
+    }
+
+    private func finishSavedCaptureAvailabilityRefresh(requestID: Int) {
+        guard savedCaptureOpeningOperations.refreshRequestID == requestID else {
+            return
+        }
+        savedCaptureOpeningOperations.refreshTask = nil
     }
 
     /// Test/diagnostic seam for the exact task handles; no timing sleeps needed.
@@ -318,6 +492,7 @@ extension MainContentCoordinator {
         if clearPublishedEvidence {
             savedCaptureEvidence = [:]
             savedCaptureEvidenceURL = nil
+            savedCaptureFileIdentity = nil
             selectedSessionEvidenceID = nil
             selectedSessionEvidenceBytes = []
         }
@@ -368,6 +543,7 @@ extension MainContentCoordinator {
         let retainedCapacity = CaptureSettingsResolver.retainCapacity(defaults: activeProjectDefaults)
         let originProjectID = activeRuntime.projectID
         let operation = savedCaptureLoadOperation
+        let referenceProbe = savedCaptureReferenceProbe
         let progressRelay = CoordinatorProgressRelay(
             coordinator: self,
             requestID: request.id
@@ -376,13 +552,42 @@ extension MainContentCoordinator {
         }
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let result = try await operation.run(request.capture.url, retainedCapacity) { progress in
+                var verifiedRequest = request
+                if let reference = request.capture.reference {
+                    let availability = referenceProbe.run(reference)
+                    try Task.checkCancellation()
+                    guard availability.isReadable else {
+                        await self?.finishUnavailableSavedCaptureOpen(
+                            request: request, availability: availability,
+                            originProjectID: originProjectID, expectedStartGeneration: expectedStartGeneration
+                        )
+                        return
+                    }
+                    verifiedRequest = SavedCaptureOpenRequest(
+                        id: request.id, historyCaptureID: request.historyCaptureID,
+                        historyOpenedAt: request.historyOpenedAt,
+                        capture: request.capture.withAvailability(.available),
+                        preservesCaptureLocalState: request.preservesCaptureLocalState
+                    )
+                }
+                let result = try await operation.run(
+                    request.capture.url, retainedCapacity, request.capture.timeCorrection
+                ) { progress in
                     progressRelay.submit(progress)
                 }
                 try Task.checkCancellation()
+                if let reference = request.capture.reference,
+                   !result.identity.matches(reference.identity)
+                {
+                    await self?.finishUnavailableSavedCaptureOpen(
+                        request: request, availability: .changed,
+                        originProjectID: originProjectID, expectedStartGeneration: expectedStartGeneration
+                    )
+                    return
+                }
                 await self?.adoptSavedCaptureResult(
                     result,
-                    request: request,
+                    request: verifiedRequest,
                     expectedStartGeneration: expectedStartGeneration,
                     originProjectID: originProjectID
                 )
@@ -396,6 +601,32 @@ extension MainContentCoordinator {
             }
         }
         savedCaptureOpenTask = task
+    }
+
+    private func finishUnavailableSavedCaptureOpen(
+        request: SavedCaptureOpenRequest,
+        availability: CaptureSourceAvailability,
+        originProjectID: UUID?,
+        expectedStartGeneration: Int
+    ) {
+        guard activeRuntime.projectID == originProjectID,
+              request.id == savedCaptureOpenRequestID else
+        {
+            return
+        }
+        guard startGeneration == expectedStartGeneration, !isCapturing, !isStarting else {
+            finishCancelledSavedCaptureOpen(requestID: request.id)
+            return
+        }
+        let capture = request.capture.withAvailability(availability)
+        if let index = savedCaptures.firstIndex(where: { $0.id == capture.id }) {
+            savedCaptures[index] = capture
+        }
+        unavailableReferencedCapture = capture
+        isOpeningSavedCapture = false
+        savedCaptureOpenProgress = nil
+        savedCaptureOpenTask = nil
+        pendingOpenExpression = nil
     }
 
     private func publishSavedCaptureProgress(_ progress: PcapStreamProgress, requestID: Int) {
@@ -448,13 +679,24 @@ extension MainContentCoordinator {
         // loading fails, the fully drained live snapshot remains eligible instead
         // of losing its final helper batch merely because an open was attempted.
         startGeneration &+= 1
-        resetSessionEngineForSavedCapture(token: startGeneration)
+        let frameReload: (shouldReload: Bool, firstOrdinal: Int)? = if request.preservesCaptureLocalState {
+            retireCaptureLocalToolsForTimeShift(
+                from: activeSavedCapture?.timeCorrection, to: request.capture.timeCorrection
+            )
+        } else {
+            nil
+        }
+        resetSessionEngineForSavedCapture(
+            token: startGeneration, preservingCaptureLocalTools: request.preservesCaptureLocalState
+        )
         currentLinkType = result.defaultLinkType
         captureStatistics = nil
         helperBufferDropCount = 0
         retainedFrames = result.retainedTail
-        clearCaptureLocalSessionMarks()
-        clearAllInvestigationQueries()
+        if !request.preservesCaptureLocalState {
+            clearCaptureLocalSessionMarks()
+            clearAllInvestigationQueries()
+        }
         sessions = result.sessions
         // Adopt the loader's connection snapshot *and* its exact connection and
         // datagram analyses atomically alongside the sessions, under the same
@@ -477,14 +719,21 @@ extension MainContentCoordinator {
         pendingChartBytes = 0
         isViewingSavedCapture = true
         activeSavedCapture = request.capture
+        if request.capture.isReferenced,
+           let index = savedCaptures.firstIndex(where: { $0.id == request.capture.id })
+        {
+            savedCaptures[index] = request.capture
+        }
         savedCaptureActivity = result.activity
         savedCaptureMetadata = result.metadata
         savedCaptureProperties = result.properties
+        savedCaptureNameResolutionRecords = result.nameResolutionRecords
         // The adopted result was read from the file as it is now.
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
         savedCaptureEvidence = result.evidence
         savedCaptureEvidenceURL = request.capture.url
+        savedCaptureFileIdentity = result.identity
         refreshInvestigationNoteScope()
         stoppedCaptureReadyGeneration = nil
         selectedSessionEvidenceBytes = []
@@ -503,14 +752,27 @@ extension MainContentCoordinator {
         savedCaptureOpenTask = nil
 
         for workspace in workspaces.workspaces {
-            workspace.selectedSessionID = nil
+            if request.preservesCaptureLocalState {
+                if let selected = workspace.selectedSessionID,
+                   !result.sessions.contains(where: { $0.id == selected })
+                {
+                    workspace.selectedSessionID = nil
+                }
+            } else {
+                workspace.selectedSessionID = nil
+            }
         }
-        selectSidebarItem(.sessions)
-        followLatestVisibleSession(acceptedSessionIDs: Set(sessions.map(\.id)))
+        if !request.preservesCaptureLocalState {
+            selectSidebarItem(.sessions)
+            followLatestVisibleSession(acceptedSessionIDs: Set(sessions.map(\.id)))
+        }
         loadSelectedSavedCaptureEvidence()
         // The auto-followed selection was set after `adoptInvestigation` above, so
         // rebuild the projection for whatever row Follow Live landed on.
         refreshSelectedSessionEvidenceProjection()
+        if let frameReload, frameReload.shouldReload {
+            loadAllFrames(force: true, retainedFrameStartOrdinal: frameReload.firstOrdinal)
+        }
 
         // The single saved History write hook: only after both the request and
         // start-generation guards above passed and the result was atomically
@@ -639,6 +901,7 @@ extension MainContentCoordinator {
         let applied = built
         let publishedSnapshot = snapshot.replacingSessions(with: applied)
         return Task { @MainActor in
+            let stoppedSourceHasFrames = expectedCaptureState ? false : await self.liveCaptureSpool.hasFrames()
             guard self.startGeneration == expectedGeneration,
                   self.isCapturing == expectedCaptureState else
             {
@@ -647,7 +910,7 @@ extension MainContentCoordinator {
             let previousIDs = Set(self.sessions.map(\.id))
             self.sessions = applied
             self.adoptInvestigation(publishedSnapshot)
-            self.stoppedCaptureReadyGeneration = expectedCaptureState ? nil : expectedGeneration
+            self.stoppedCaptureReadyGeneration = stoppedSourceHasFrames ? expectedGeneration : nil
             let acceptedSessionIDs = Set(applied.lazy.map(\.id).filter { !previousIDs.contains($0) })
             self.followLatestVisibleSession(acceptedSessionIDs: acceptedSessionIDs)
             // The single live History write hook: only after the accepted immutable
