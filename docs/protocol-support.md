@@ -13,7 +13,7 @@ below reflects what the decoder actually produces today.
 | Loopback / null (BSD) | 4-byte address-family header → IPv4 or IPv6 |
 | Tunnel / raw IP (utun, VPN) | Auto-detects bare IPv4/IPv6 or a 4-byte address-family prefix |
 | ARP | Operation (request/reply), sender/target MAC and IPv4; surfaced as a session |
-| IPv4 | Version, header length, total length, fragment flags/offset, TTL, protocol, addresses, **and option TLVs** |
+| IPv4 | Version, header length, total length, 16-bit Identification, Don’t Fragment / More Fragments flags and offset, TTL, protocol, addresses, **and option TLVs** |
 | IPv6 | Version, traffic class, flow label, next header, hop limit, addresses, **and the extension-header chain** (Hop-by-Hop, Routing, Fragment, AH, Destination Options, Mobility) |
 | ICMP / ICMPv6 | Type + code with named types (echo, unreachable, neighbor/router discovery); surfaced as a session |
 
@@ -46,10 +46,11 @@ link type.
 
 | Protocol | Support |
 |---|---|
-| TCP | Ports, sequence number, data offset, flags (SYN/ACK/PSH/FIN/RST), **and option TLVs** (MSS, Window Scale, SACK, SACK-permitted, Timestamps) |
+| TCP | Ports, sequence number, data offset, flags (SYN/ACK/PSH/FIN/RST), and option TLVs (MSS, Window Scale, SACK-permitted, Timestamps). SACK options expose up to four receiver-reported block ranges in wire order, plotted in the peer's relative sequence space at the citing ACK when both edges fit one unambiguous half-space; unplaceable ranges are counted. TCP Health plots each observed payload byte interval and its exclusive sequence edge alongside reached and acknowledged edges. The Throughput chart also derives receiver-reported Goodput from newly covered SACK and cumulative-ACK ranges, de-duplicating overlaps as the cumulative edge advances and excluding RFC 2883 D-SACK block patterns from new-byte credit. These marks and rates do not prove application consumption; D-SACK remains observation-only. TCP Health also plots wire throughput, Karn-safe RTT and receive-window evidence. The connection fold recognizes pure-ACK nonzero window updates at an unchanged sequence/acknowledgement edge, zero-window probe acknowledgements, and a one-byte window-reopening ACK without claiming later bytes. |
 | UDP | Source and destination ports |
+| SCTP | Common header, endpoints, verification tag, raw CRC32C, and at most 64 bounded chunk headers; DATA TSN and PPI. **View → Validate Checksums** checks CRC32C only when the IP-declared packet boundary is fully captured. Association and stream reconstruction are not implemented. |
 
-The TCP acknowledgement number, window, and checksum fields are not surfaced. A one-byte probe
+TCP acknowledgement, window, and checksum values are shown in the packet inspector. A one-byte probe
 sent exactly one sequence number behind the expected sequence is classified as a keep-alive, not a
 retransmission, and produces no finding.
 
@@ -60,7 +61,7 @@ field-by-field parse.
 
 | Protocol | Support | Not covered |
 |---|---|---|
-| DNS | Question name; answer records A, AAAA, CNAME, NS, PTR, MX, TXT, SRV, SOA (others shown by type); compression pointers; DNS-over-TCP length prefix | Full record-set decode; DNSSEC |
+| DNS | Transaction ID and TC flag from the fixed header; question name; answer records A, AAAA, CNAME, NS, PTR, MX, TXT, SRV, SOA (others shown by type); compression pointers; DNS-over-TCP length prefix; bounded Frame Expression equality on the observed transaction ID and filter on TC | Full record-set decode; DNSSEC; encrypted or stream-only DNS |
 | TLS | Record metadata for all coalesced records in a payload; ClientHello (offered version, cipher-suite count, **SNI**, **ALPN**) and ServerHello (chosen version and cipher); bounded per-direction TCP prefix recovery when the first record is segmented | **No decryption**; no certificate parsing; no application data; no general stream tracking |
 | HTTP/1 | **Request-line recognition only** — the first line (method / target / version) plus the `Host` header | Full header set, response/status parsing, bodies, chunked/compressed content |
 | STUN | Detected by the magic cookie (port-independent): message type, length, magic cookie, transaction ID, and a bounds-checked walk of the RFC 5389 attribute TLVs — attributes named where known (else an honest hex type), with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS **IPv4** reflexive `address:port` decoded when fully present | IPv6 reflexive addresses (metadata-only); attribute value bodies beyond addresses; ICE negotiation and TURN allocation state |

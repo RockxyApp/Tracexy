@@ -122,7 +122,81 @@ malformed input. Importing never overwrites: a capture whose name is already tak
 a unique name beside the existing one, and the original source on disk is never moved. Switching
 Projects while a panel is open cancels the open rather than filing the capture into the new Project.
 
-A referenced capture shows a link badge in the Library. If its file is moved or replaced the
+**File → Import Hex Dump…** brings packet bytes copied from a log or diagnostic into the active
+Project. Choose the text file and its link-layer format (Ethernet, Raw IP, Linux cooked v1 or v2).
+If each source packet contains a complete IPv4 or IPv6 packet but no link-layer bytes, choose
+**Ethernet** and **Add synthetic Ethernet to complete IP packets**. Tracexy checks each IP
+version and declared length, prepends a 14-byte Ethernet header with generated locally
+administered MAC addresses, and keeps the original IP bytes and timestamps unchanged. The
+managed filename includes `synthetic-ethernet` so the generated layer is apparent. An
+incomplete IP packet or a different selected link type refuses the whole import. This option
+does not create IP or transport headers from application payloads. To import bytes that are
+only a UDP payload, choose **IPv4 + UDP from payload** or **IPv6 + UDP from payload** under
+**Synthetic headers**, choose Ethernet or Raw IP frame format, and enter both IP addresses
+and UDP ports. Tracexy generates the IP/UDP lengths and checksums; inbound direction swaps
+the generated source and destination endpoints. The managed filename includes
+`synthetic-udp`. The original payload bytes stay at the end of each generated packet.
+This mode does not infer endpoints from application bytes or recreate a real captured
+header; supply endpoints that describe the intended synthetic context.
+For application bytes from a TCP stream, choose **IPv4 + TCP from payload** or
+**IPv6 + TCP from payload** and enter the same explicit endpoint fields. Tracexy
+generates IP/TCP checksums and starts synthetic sequence numbers at zero separately
+for each direction, advancing them by each payload's byte length. Generated packets
+carry payload bytes without fabricating a SYN, ACK, or handshake; connection lifecycle
+and timing evidence from them should be read as synthetic context, not observed traffic.
+The managed filename includes `synthetic-tcp`. TCP and UDP modes each accept Ethernet
+or Raw IP output.
+For existing SCTP chunk bytes, choose **IPv4/IPv6 + SCTP from chunks**, enter the
+endpoint fields and a decimal verification tag. Tracexy checks chunk boundaries and
+adds the SCTP common header, CRC32C, IP header and optional Ethernet header. For
+application bytes, choose **IPv4/IPv6 + SCTP DATA from payload** and enter a decimal
+payload protocol identifier (PPI). That mode adds one DATA chunk per input packet,
+with synthetic per-direction TSNs starting at zero and a zero verification tag.
+The generated headers do not establish an SCTP association or prove delivery;
+Tracexy currently exposes bounded SCTP frame fields but does not fold SCTP sessions
+or reassemble its streams. The managed filename includes `synthetic-sctp`.
+Choose the source's **Offset format**: hexadecimal (default), decimal, octal, or **No offsets (one frame)**.
+In the first three modes each row starts with an offset in that base; an offset of zero starts a new packet.
+No-offset mode joins all non-comment byte rows into exactly one frame. It accepts whitespace-separated
+hexadecimal byte tokens, with no offset tokens or ASCII columns. **Byte groups** defaults to
+**Single bytes**, requiring exactly two hex digits per token. Select **Network order (1–4 bytes)**
+for groups of 2, 4, 6 or 8 hex digits, or **Little endian (1–4 bytes)** to reverse the byte order
+within each group; groups never reverse the order of whole lines. Offset modes also accept Tracexy's
+own hex/ASCII rows. A gap, malformed byte or mismatched ASCII column refuses
+the whole import. The input is limited to 32 MiB, each packet to 1 MiB, and all packet
+bytes together to 16 MiB. Tracexy adds a managed PCAPNG under a unique name, leaves the text source
+untouched, and does not invent capture timestamps. For dumps that put one UTC ISO 8601 line before each
+packet's zero offset, select **Read UTC timestamp lines before each frame**. In no-offset mode, one
+UTC line may instead precede the first byte row. For example,
+`2026-10-24T10:30:01.250Z` on its own line precedes `000000 aa bb`. UTC timestamps can have
+one to six fractional digits, matching the PCAPNG writer's microsecond precision. Every packet must have exactly
+one timestamp; malformed, missing and orphan timestamps refuse the whole import. With the option off,
+timestamp lines are refused and frames remain untimed. With UTC timestamps enabled, select
+**Read I/O direction before each UTC timestamp** for optional `I` (inbound) or `O` (outbound)
+before a timestamp, such as `I 2026-10-24T10:30:01.250Z`. The marker describes capture-interface
+direction, not which endpoint began a conversation. A packet without a marker has unknown direction;
+Tracexy writes known direction to PCAPNG packet flags and refuses direction markers without real
+timestamps rather than inventing times. **View → All Frames** shows the interface-relative value
+in its **I/O** column (`I`, `O`, or `—` when unknown). For a text log, select
+**Extract packets with a regular expression** and choose **Regex match scope**. The default
+**One packet per line** needs a whole-line pattern. **Across the file** searches for nonoverlapping
+matches that can span lines; only whitespace and `#` comment lines may remain between matches,
+so other unmatched text refuses the import. Each match needs a `(?<data>...)` group. The optional
+`(?<time>...)` group accepts the same UTC ISO 8601 timestamps;
+`(?<dir>...)` recognizes `I`/`i`/`<` as inbound and `O`/`o`/`>` as outbound, and requires a valid time
+for known direction. Choose **Regex data encoding** independently of the offset-mode byte groups:
+hexadecimal accepts pairs of digits with optional whitespace or colons, octal uses three digits per
+byte, binary uses eight bits per byte, and Base64 requires canonical padding; each also accepts
+interspersed whitespace. Incomplete bytes or invalid symbols refuse the whole import. A line may
+also capture `(?<seqno>...)` as a positive decimal packet ID. It needs a real UTC
+time and is stored as `epb_packetid` in PCAPNG; classic PCAP cannot carry it.
+The one-line scope also refuses any unmatched nonblank, noncomment line. Regex mode ignores the
+offset, byte-group and timestamp controls above it; matching has a soft roughly half-second deadline
+per candidate and a 30-second import deadline. It does not synthesize protocol headers.
+
+A referenced capture shows a clock badge while Tracexy checks its file in the background; it is
+not treated as readable until the file identity is verified. The badge then becomes a link. Opening
+the row performs its own background recheck. If the file is moved or replaced the
 badge turns into a warning, and opening it shows an inline notice with **Locate…** (choose the
 moved file; Tracexy accepts only a file with the same size and leading bytes) or **Reload**
 (re-read the file now at that path). **Remove from Library** on a reference trashes only the
@@ -142,12 +216,79 @@ for Wireshark and other tools, conversion tradeoffs, supported artifacts, and re
 
 ### Export Packet Dissections…
 
-**File → Export Packet Dissections…** writes every frame's layers and fields — exactly what **Layers** shows —
-as plain text (a frame line, then each layer with its summary and indented fields, like tshark `-V`) or JSON (one
-object per frame: number, UTC time, captured and on-the-wire length, session, and nested layers). It covers the
-frames of the sessions in view, or the whole capture when nothing is filtered out. Packet bytes are not written;
-with Privacy protections on, Tracexy first confirms, since the decoded fields spell out addresses, names and URLs
-and IP masking is not applied. The file appears only once it is complete.
+**File → Export Packet Dissections…** offers plain text, Summary CSV, or JSON. For plain text, select any combination
+of packet summary lines, supported decoded details, and captured packet bytes. Details show the layers and fields in
+**Layers**; bytes use a hex and printable-ASCII view of the actual captured frame. At least one text section must stay
+selected. JSON writes one object per frame with number, UTC time, captured and on-the-wire length, session, and nested
+layers. For text exports, when **Captured packet bytes** is selected, the default-off **Include timestamp preamble**
+option adds each frame's UTC timestamp immediately before its hex dump (`unknown` when the frame has no timestamp).
+JSON normally writes each field's name and decoded value. Its default-off **Include raw field bytes** option
+adds a top-level `raw_field_bytes_included` marker; mapped fields also get `raw_hex`, `raw_byte_offset` and
+`raw_byte_length` for an exact contiguous range of the captured frame. It includes the full backing byte for bitfields and
+does not imply bit-mask extraction. Fields without
+a contiguous mapping, outside the captured frame, or beyond the 4 KiB per-field / 32 KiB captured-byte per-frame bounds have
+`raw_hex: null` and a `raw_hex_status` explaining why. Reassembled fields have no raw mapping. Summary CSV writes
+original number, UTC time when known, source, destination, protocol, captured length and Info; capture-derived cells
+are quoted and guarded against spreadsheet formulas. When the current Project has applied All Frames
+field columns, CSV offers a default-off **Include applied field columns** option; checked columns are
+inserted before Info in their configured order. Repeated field occurrences are comma-joined in one cell;
+each decoded value is capped at 200 characters as in the All Frames projection, and each added CSV field
+cell is capped at 8 KiB with an ellipsis for a longer joined value. These formats cover the frames of the
+sessions in view, or the whole capture when nothing is filtered out. Text with captured bytes requires a separate raw
+data acknowledgement, regardless of Privacy settings, since bytes can contain credentials and message content. JSON
+raw field bytes require the same acknowledgement. Other exports confirm when Privacy protections are on because decoded
+values can spell out unmasked addresses, names and URLs.
+When ignored frames exist, the save panel offers **Exclude ignored frames**, unchecked by default; it snapshots the
+current ignored frame numbers, applies the option only after the chosen packet scope matches, and reports how many
+frames it omitted. The decoder still reads every source frame in order. The file appears only once it is complete;
+if preparation fails, an existing file chosen in the save panel keeps its previous contents.
+
+**File → Export Capture Frame Range Dissections…** accepts original capture frame numbers such as `5,10-15,20-`.
+It scans the complete stable capture and exports only those frames in the same text, Summary CSV, or JSON formats.
+This range is capture-wide even when session filters are active. Invalid ranges stop before the save panel; a
+truncated capture stops the export without replacing a previous file.
+In All Frames, right-click a row and choose **Export This Frame’s Dissection…** to export only that original
+capture frame number in text, Summary CSV, or JSON. It also works for a frame that is not folded into a session;
+the standard ignored-frame option, privacy confirmation, and atomic file publication still apply.
+Choose **Export This Frame…** from the same menu to write that frame's captured bytes as a one-frame PCAP or
+PCAPNG capture. The regular capture-export format, metadata, ignored-frame and privacy controls still apply;
+the action does not export the current page or the selected session.
+**File → Export Marked Packet Dissections…** exports exactly the frame numbers marked in All Frames across the
+capture, regardless of session filters. The action is available once at least one frame is marked and uses the
+same format picker and privacy confirmation.
+**Export First to Last Marked Dissections…** includes every capture frame between the earliest and latest mark,
+including unmarked frames between them. It also ignores session filters.
+When a Frame Expression is applied in All Frames, **Export Matching Dissections…** scans the complete stable
+capture and writes only frames where the expression evaluates true. Unknown frames are omitted and counted in the
+result; the action is capture-wide and does not depend on the retained All Frames page or session visibility. It
+uses the same text, CSV and JSON formats, spreadsheet protection, privacy confirmation and atomic file publication.
+When a Frame Expression is applied, **All Frames → Print Matching Packet Views…** prints a summary, decoded
+dissection, or captured bytes for every matching frame in the complete stable capture. Frames whose expression
+result is unknown are excluded and counted in the outcome. This scope is capture-wide and does not use the current
+session visibility or retained All Frames page; captured bytes still require the raw-byte acknowledgement.
+
+**File → Print Packet Views → Custom Packet Views…** lets you combine summary lines, decoded details, and captured bytes
+for the sessions in view. Choose at least one section; selected sections appear in that order for each frame.
+When ignored frames exist, packet-view printing asks whether to **Exclude ignored frames**; the choice is off by default
+and applies only to frames in the selected print scope. The decoder still reads every source frame in order, and the
+print outcome reports omitted ignored frames.
+**Packet Summaries…** prints compact source, destination, protocol and Info lines with original
+frame numbers. **Packet Dissections…** prepares the supported decoded layers and fields for the sessions in view and
+opens the macOS print panel after the stable source has been checked. It requires a saved capture or a fully
+stopped live capture. Printing is limited to 8 MiB of decoded text and a bounded page-layout height; narrow
+the sessions in view or use the file export for a larger result. Summary and dissection print layouts omit packet bytes, but can contain
+unmasked addresses, names and URLs, so Privacy protections require a separate confirmation before preparing the print view.
+**Packet Bytes…** prints a hex and printable-ASCII view of each captured frame. It always asks for a separate
+raw-byte acknowledgement, since the print panel can send packet contents to a printer or save them as PDF.
+The **Marked Packet Summaries…**, **Marked Packet Dissections…**, and **Marked Packet Bytes…** actions print only frames marked in
+**View → All Frames**, retaining their capture frame numbers. The three **First to Last Marked…** actions include
+every frame between the earliest and latest mark. Every print layout uses the same stable-source check and
+8 MiB text limit. The three **Capture Frame Range…** actions accept original capture frame numbers such as
+`5,10-15,20-`; their scope is capture-wide, even when the Sessions view is filtered. The range stays compact in
+memory and is applied while scanning the stable source. Combined layouts that include captured bytes require the raw-byte acknowledgement.
+In **View → All Frames**, a frame's context menu also offers **Print This Frame** as a summary, dissection, or
+captured-byte view. This uses that frame's original capture number and the same source checks, text bound, and
+privacy confirmations as the File menu actions.
 
 ### File structure
 
@@ -156,8 +297,11 @@ capture file itself, block by block: every pcapng block — Section Header, Inte
 Packet, Name Resolution, Interface Statistics, Decryption Secrets, custom — or the pcap file header and each
 packet record, with its byte offset, length and key fields (version and byte order, link type and snap length,
 the frame number and captured/on-the-wire bytes). Decryption secrets are sized, never shown. Packet data is
-skipped, not read, so a large file lists quickly; the first 200,000 blocks are listed and all are counted,
-with a breakdown by block type in the footer's help. A file that ends mid-block says where it stopped. The
+skipped, not read, so a large file lists quickly; the first 200,000 blocks are listed and all successfully
+walked blocks are counted, with a breakdown by block type in the footer's help. **Block Type** filters that retained list; the footer
+shows the filtered count against the listed and total counts. An empty filtered list means no matching block
+was found in the listed prefix, not that none exists later in a larger capture. Filtering runs off the main
+thread and does not reopen or read packet data. A file that ends mid-block says where it stopped. The
 blocks and lengths match `tshark -X read_format:"MIME Files Format"`.
 
 ### Finder previews and Spotlight
@@ -178,8 +322,10 @@ time, elapsed span and time order; for PCAPNG, each section's hardware, OS, appl
 comments, and a sortable table of interfaces with name, description, link type, snapshot length,
 time resolution, capture filter, frame count and the received/dropped counters from Interface
 Statistics Blocks; a statistics group (frames, bytes, average frame size and rate, sessions);
-and an inventory of blocks Tracexy does not interpret — name resolution, decryption secrets
-(type and size only; the secrets are never read or used), custom and unknown blocks. **Compute
+and an inventory of blocks Tracexy does not interpret — decryption secrets
+(type and size only; the secrets are never read or used), custom and unknown blocks. PCAPNG
+Name Resolution Blocks show retained mappings and any mappings or oversized blocks omitted by
+the parser's memory bounds. **Compute
 SHA-256 and SHA-1** hashes the file on demand with progress and Cancel, and refuses if the file
 changed since it was opened. **Copy** puts every value on the clipboard as text. Strings written
 by the tool that created the file (comments, names, filters, application) appear only in this
@@ -224,16 +370,33 @@ written and stop the split. Frame comments are not carried over, and the status 
 **File → Export Frames…** (also in the toolbar Export menu, a session row's Export menu with the
 session preselected, and the Library row of the open capture) writes a new capture file from a
 scope: **Whole capture**, **Sessions in view** (filters, Focus Sets, Noise Control and removed
-rows applied), **Selected session**, or a **Time range** on the capture clock. The Save panel's
+rows applied), **Selected session**, a **Time range** on the capture clock, or **Frames matching the
+applied Frame Expression**. **Export Matching Frames…** in All Frames preselects that last scope.
+It reevaluates the accepted expression from a streaming decode of the complete capture; the current
+page's retained matches do not limit the export, and the Sessions in View and search controls do not
+change this explicitly named scope. When ignored frames exist, **Exclude ignored frames** is available
+as a separate, unchecked-by-default option for any export scope; it snapshots the currently ignored
+capture ordinals and reports the number excluded from the selected scope. The decoder still processes
+every source frame, so this output choice does not remove ignored frames from analysis. Unknown
+expression results are excluded and counted in the export status. The Save panel's
 Format pop-up offers PCAPNG (default) and classic PCAP; PCAP stays listed but disabled, with the
 reason, when the source mixes link types or holds untimed frames. **Preserve capture metadata**
-carries section hardware/OS/application and comments, interface names, descriptions, filters and
-each frame's own options (comments, flags, hashes) from a PCAPNG source; **Include my notes and frame
+carries section hardware/OS/application and comments, interface names, descriptions and filters from a PCAPNG source. Metadata beyond the bounded section/interface inventory is reported as potentially unavailable; section comments and text clipped by their individual bounds are reported as omitted or truncated.
+Complete PCAPNG per-frame option lists are copied verbatim only when the source is little-endian, the export
+keeps the complete frame sequence, and the packet bytes are unchanged. For selected/subset frames and other byte
+orders, independent packet comments are preserved; packet hashes are preserved only while the bytes stay
+unchanged; packet IDs and direction flags are reconstructed from typed source facts. Unsupported or
+sequence-dependent options are counted in the export status. Options tied to original bytes are not carried onto
+changed packets after header stripping, address replacement or truncation. **Include my notes and frame
 comments** (shown when the capture has notes or frame comments) writes the notes on the exported sessions into the PCAPNG
 section as capture comments, each naming its session (and finding), which Wireshark shows under Capture
 File Properties, and also puts each session's notes on that session's first exported frame as a packet
 comment (Wireshark's `frame.comment`), beside any comment the frame already carried, and writes each frame
-comment from View ▸ All Frames on its own frame; **Include address names** (shown when the capture's DNS or
+comment from View ▸ All Frames on its own frame. The panel's optional **Additional capture comment for this
+export** is written first among the investigator's section comments in the new PCAPNG, before included
+session/finding notes; it is limited to 16,000 UTF-8 bytes and is never saved to the source capture or Project.
+A nonempty comment blocks saving as classic PCAP or with **Replace addresses**, since those outputs cannot
+carry it safely. **Include address names** (shown when the capture's DNS or
 mDNS answers, or you, named addresses) writes those names into the PCAPNG file as a Name Resolution Block, so
 Wireshark shows the same host names without resolving them itself; **Replace addresses** writes a copy you can share more safely: every MAC, IPv4 and IPv6 address in
 the packet headers (including ARP and the header an ICMP error quotes) is replaced by a consistent stand-in
@@ -249,12 +412,25 @@ headers are the ones replaced). **Remove duplicate frames** leaves out a frame w
 the five frames before it exactly, and **Keep at most N bytes per frame** keeps only the first bytes of
 each frame while recording its original length, as `editcap -d` and `editcap -s` do; both are counted in the
 status. **Shift times by N seconds** moves every written frame's time, earlier with a negative number, as
-`editcap -t` and Wireshark's Time Shift do — to line up a capture taken on a machine whose clock was off; the
-scope still chooses frames by their original times. **Compress with gzip** writes a `.gz`. The export streams from the source with progress and **Cancel Export**, is
+`editcap -t` does. This is a fixed offset on the frames in the export; the open source capture is unchanged.
+For a saved capture, **Edit → Time Shift…** applies a whole-capture offset, one frame/time anchor, or two anchors
+for linear clock drift. The overlay includes ignored and filtered frames, and **Undo Time Shift** restores the
+source timestamps. Sessions and time-based evidence are recomputed together. **Save Capture** or a corrected
+PCAPNG export writes the shifted timestamps plus a bounded provenance comment into a new file; the original
+file remains unchanged. The capture retains PCAPNG microsecond timestamp precision. **Compress with gzip** writes a `.gz`. The export streams from the source with progress and **Cancel Export**, is
 published only after it completes and the source is verified unchanged, and reports anything it
 could not carry (for example frame comments from a big-endian section). Exporting raw packet
 formats while privacy protections are configured asks for the same acknowledgement as session
 export.
+
+To correct a capture clock, choose **Correct timestamps in exported copy** and set one frame to a known time
+for a fixed offset, or two frames to correct linear clock drift. Tracexy reads the source times for those
+1-based frame numbers, writes every frame to a new PCAPNG at microsecond precision, adds a section comment
+describing the correction, and opens the copy so sessions, evidence, findings, timelines and History are
+computed from the corrected file. Untimed frames remain untimed. The source file is not edited; correction
+requires the full capture scope and cannot be combined with packet-removal, byte-transform, gzip or classic
+PCAP options. History labels the result as corrected from its declared section comment. This creates a
+corrected copy; in-memory Apply/Undo and fractional-second anchor entry are not provided.
 
 Sessions, Overview and Flow name the active scope and show visible sessions against the
 capture total. **Reset Session Filters** clears the current workspace’s filters and sidebar
@@ -761,14 +937,26 @@ allowed during active live capture and is separate from Follow Stream's stable-s
 
 Above the hex dump in Layers and in the raw evidence view, **Find bytes** highlights every place a pattern
 occurs in that frame: hex byte pairs such as `16 03 01` (spaces, colons or dashes allowed) are a byte
-sequence, anything else is text matched without regard to case; the count says when there are more than
-256. **Copy Bytes** copies the frame — or, when a field is selected in the decode tree, just that field's
-bytes — as a hex dump, a hex stream, printable text, a C array, an escaped string or Base64.
+sequence, anything else searches the query's UTF-8 bytes. Text search ignores ASCII case by default;
+**Case Sensitive** compares those bytes exactly and does not change hex searches. Hex-only input such as
+`CAFE` is interpreted as two hex bytes, not literal text. The count says when there are more than 256.
+**Previous byte match** and **Next byte match** wrap through the retained hits, scroll the matching
+dump row into view and distinguish the active hit; if more than 256 matches exist, later hits are not
+retained or navigable. Changing the query, bytes or hex/bits style clears the active hit. **Copy Bytes** copies the frame — or, when a field is selected in the decode tree, just that field's
+bytes — as a hex dump, a hex stream, printable text, a C array, an escaped string, Base64 or raw binary (`application/octet-stream`).
 
-Each layer in the decode tree folds shut with the chevron beside its name; right-click a layer for
-**Expand Subtree**, **Expand All** or **Collapse All**. Click a row and the keyboard moves through the tree as Wireshark's
-packet details do: **↑** and **↓** step through the rows shown, **←** folds the selected layer or goes to the layer a
-field belongs to, **→** unfolds a layer or enters it, and **⌘→** / **⌘←** unfold or fold every layer. A folded protocol stays folded as you move between
+Right-click a layer and choose **Copy Visible Subtree** to copy its header, fields and expanded descendants as
+indented text. Folded descendants contribute only their header, and copied content follows the displayed tree
+projection; it does not restore fields hidden by a search. **Copy Layer Summary** remains available for just
+the selected header.
+
+Each layer in the decode tree folds shut with the chevron beside its name; right-click a layer for recursive
+**Expand Subtree** and **Collapse Subtree** actions, or **Expand All** / **Collapse All** for the displayed tree.
+Click a row and the keyboard moves through the tree as Wireshark's packet details do: **↑** and **↓** step through
+the rows shown, **←** folds the selected layer or goes to the layer a field belongs to, **→** unfolds a layer or
+enters it, **Return** toggles the selected layer, **⇧→** / **⇧←** expand/collapse the selected layer's whole subtree, and **⌘→** / **⌘←** unfold or fold
+every layer. Command-arrow takes precedence when modifiers are combined. Repeated layers with the same title share
+their folded state. A folded protocol stays folded as you move between
 packets, as in Wireshark, and clicking a byte that belongs to a folded layer unfolds it. Right-click a field
 whose value names sessions — an Ethernet or IP address, a TCP or UDP port, an HTTP method, status or Host, a TLS
 server name, a DNS query, a DHCP message type — or a layer's name, and choose **Apply as Filter** to filter the
@@ -787,8 +975,8 @@ eight bytes a row, as Wireshark's "…as Bits"; pointing and clicking work the s
 Project.
 
 **View → Validate Checksums** (off by default, per Project, as in Wireshark) checks the IPv4 header
-checksum and the TCP, UDP, ICMP and ICMPv6 checksums of the frame in Layers against its bytes, and writes
-the verdict after each Checksum value: `[correct]`, `[incorrect, should be 0x…]`, `[partial, likely
+checksum and the TCP, UDP, SCTP, ICMP and ICMPv6 checksums of the frame in Layers against its bytes.
+It writes the verdict after each Checksum value: `[correct]`, `[incorrect, should be 0x…]`, `[partial, likely
 checksum offload]` when the field holds only the pseudo-header sum, `[not present]` for a zero UDP
 checksum over IPv4, or `[unverified, not fully captured]`. Frames captured on the Mac that sent them often
 show offloaded or incorrect checksums because the network card fills them in after capture; that is not
@@ -814,25 +1002,67 @@ opening/starting/clearing a capture, or cancelling retires the selection-scoped 
 
 For UDP sessions the same facet offers **Follow Conversation**, which lists every datagram of the
 conversation in capture order under the same stable-source rules: sender and receiver by endpoint, the
-payload size (a datagram captured shorter than it was sent says so), its offset from the first datagram,
-and its bytes in Text or Hex. The payload ends where the UDP header says it ends, so Ethernet padding is
+payload size (a datagram captured shorter than it was sent says so), its signed offset from the first
+datagram when both timestamps are known (otherwise **Untimed** or **Offset unavailable**),
+the capture-time delta from the immediately preceding retained datagram when both timestamps are known,
+and its bytes in Text or Hex. A missing timestamp breaks the adjacent delta; a negative delta is kept for
+non-monotonic captures. This delta is capture-clock spacing, not network latency. The payload ends where the UDP header says it ends, so Ethernet padding is
 never shown as data. A DNS datagram is read instead of dumped in Text mode — the question, the response
 code and the answer records — and each response is paired with the query it answers, with the time
 between them; a retried or unanswered query stays visibly unpaired. The list keeps the first 4,096
 datagrams in capture order and counts the rest exactly.
 
-**Find in transcript** highlights every match of the typed text in what is drawn, case-insensitively,
-and counts the matches. Each TCP run and each datagram carries a **Frame** link that opens that exact
+**Save Conversation as YAML** writes both directions or one direction from the retained datagrams. Every packet
+record keeps its capture order, peer, per-peer index, frame ordinal, optional timestamp, retained and captured
+payload lengths, per-message omitted bytes and Base64 payload, so consecutive datagrams remain separate and
+empty payloads remain explicit. The conversation footer records omitted datagrams/bytes, source completeness
+and observed limitations. A confirmation explains that Base64 contains the original application bytes; the YAML excludes
+capture identity, source paths and frame locators. Output is bounded to 8 MiB and 4,096 datagrams.
+
+**Save Raw Payload** writes one direction or both by concatenating UDP application payloads in capture order.
+The binary output contains no UDP headers or datagram separators, so datagram boundaries are lost. Before saving,
+Tracexy confirms that the output may contain sensitive data and explains the boundary loss. It refuses when the
+source is truncated, datagrams or payload bytes were omitted or bounded, any selected payload is shorter than its
+declared length, or the output would exceed 8 MiB; use YAML to inspect retained datagrams and their limitations.
+Raw output covers only datagrams observed by the capture and cannot establish that the original network traffic
+was captured completely.
+
+**Transcript Direction** shows both directions or only one endpoint direction. It filters retained rows before
+the display-byte budget, search count, and previous/next matching-datagram navigation, while the summary's scanned
+and matched totals continue to cover the whole conversation. YAML and raw export keep their own direction choices.
+The **Δ** shown on a row remains the capture-time difference from the immediately preceding retained datagram in
+the complete conversation, so it can span a hidden opposite-direction row; it is not network latency.
+
+**Find in transcript** highlights matches in drawn TCP/UDP content, including the HTTP/1, HTTP/2 and
+WebSocket summaries. By default it ignores case and diacritics; turn on **Case Sensitive** to match
+uppercase and lowercase exactly, without case or diacritic folding. The bounded match total counts the
+TCP stream text or, for UDP, each displayed fragment separately; summary highlights use the same query
+policy but do not add to that total. UDP matches cannot cross fragment boundaries. In Follow UDP,
+**Previous matching datagram** and **Next matching datagram** move through retained rows with at least
+one match (one stop per datagram, even if it contains several occurrences); navigation wraps at either
+end and does not include omitted later datagrams. Each TCP run and each datagram carries a **Frame** link that opens that exact
 frame in Layers through the same guarded cited-frame path as the Evidence facet.
 
-Above the transcript a line counts each direction's frames and the stream's **turns** — consecutive bytes one
-side sent before the other spoke, split by the frame that first carried each byte and put in capture order, as
-Wireshark's Follow Stream does. **Save Stream** writes both directions or one of them as raw bytes, ASCII text,
-a hex dump (the second side indented), C arrays (`peer0_0`, `peer1_0`, … each noting its first frame) or YAML
-(the two peers, then every turn with its frame, time and base64 data), and copies the C arrays, YAML or hex
-dump. The turns agree with `tshark -z follow,tcp,raw`. Each run of bytes shows its offset from the stream's first frame
-(`+0.020000 s`), and **Filter Out This Stream** narrows the main window to every session except this one,
-as Wireshark's button does.
+Above the transcript a line counts each direction's frames and, when retained frame evidence proves the
+interleaving, the stream's **turns** — consecutive source chunks from one side before the other spoke, in
+capture order, as Wireshark's Follow Stream does. The source chunks keep their own frame and time attribution;
+same-direction packets are not merged in YAML. **Save Stream** writes both directions or one of them as raw
+bytes, ASCII text, a hex dump (the second side indented), C arrays (`peer0_0`, `peer1_0`, … each noting its
+frame, or saying frame unavailable) or YAML (the two peers, then each attributed source chunk with its per-peer
+index, frame, optional time and base64 data), and copies the C arrays, YAML or hex dump. If dropped provenance
+or contradictory frame attribution makes cross-direction order unknown, both-direction Save/Copy/Print is refused
+with a reason; saving one direction remains available in TCP sequence order and clearly marks unavailable frame
+metadata. The turns agree with `tshark -z follow,tcp,raw` when chronology is known. Each run of bytes shows its
+offset from the stream's first frame (`+0.020000 s`). In TCP and UDP Follow, **Filter Out This Stream** narrows the main window to every
+session except this conversation, using the existing Session Expression rather than a packet display filter.
+
+**Print Stream** prints the already-loaded snapshot in either direction or both, using ASCII, hex, C arrays or YAML.
+Raw bytes print as a hex dump so binary data is not decoded lossily. Before opening macOS's print panel, Tracexy
+asks you to confirm because the transcript may contain credentials or personal information and the panel can
+send it to a printer or save it as PDF. The print document names the selected endpoints, retained and omitted
+byte counts, source completeness, unknown-provenance byte count and observed stream limitations. Printing is refused when conservative
+format-expansion estimates exceed 8 MiB; save the stream to a file instead. This is a print view of the retained
+snapshot, not a claim that the conversation is complete.
 
 When a followed TCP stream carries plain HTTP/1.0 or HTTP/1.1, the facet lists its **requests and the
 responses that answered them**, paired in order as HTTP/1.1 requires: the method and target, the status,
@@ -955,20 +1185,44 @@ than estimated. A TLS session's hello exchange supersedes the generic request-to
 describe the same two frames. Capture-loss knowledge is stated once beneath the rows.
 
 **TCP Health** follows the response times with four charts of the same conversation, one at a time:
-**Sequence** plots how far each direction's data reached against the edge its peer acknowledged,
-**Throughput** the wire bytes per second each direction sent, **Round Trip** the interval from a
-segment to the acknowledgement that covered it, and **Window** the receive window offered to each
+**Sequence** plots each direction's observed payload byte interval as well as how far its sequence
+space reached, against the edge its peer acknowledged,
+**Throughput** plots both wire bytes sent per second and receiver-ACKed sequence bytes per second
+for each direction. Goodput combines newly reported SACK ranges with cumulative ACK advancement,
+counting overlapping ranges only once as the cumulative edge moves and excluding RFC 2883 D-SACK
+block patterns from new-byte credit. **Round Trip** is the interval
+from a segment to the acknowledgement that covered it, and **Window** is the receive window offered to each
 direction beside the bytes it had sent but not yet seen acknowledged. Each direction is named by the
 endpoint its frames came from, never "client" or "server". Every point is a frame that was retained:
-nothing is smoothed, averaged across a gap, or extrapolated, hovering reads the nearest point exactly
+ranges are shown as vertical payload or SACK intervals at the frame that carried them; sequence/window lines
+connect observed points linearly without smoothing, averaging across a gap, or extrapolating. Hovering reads the nearest point exactly
 rather than against the axis, and clicking the plot opens that frame in the evidence inspector. A
-segment that was retransmitted never produces a round-trip measurement, because the acknowledgement
-cannot say which copy it answered. Advertised windows are scaled only when both SYNs showed the
+pending round-trip candidate is removed under [Karn's algorithm (RFC 6298 §3)](https://www.rfc-editor.org/rfc/rfc6298#section-3)
+when a later observed sequence range overlaps it, because
+the acknowledgement cannot say which transmission it covered; the chart states how many candidates
+were excluded. A timed range starting below the observed high-water mark is conservatively not sampled
+because a first out-of-order copy cannot always be distinguished from a retransmission. Advertised
+The Round Trip chart keeps Karn-safe cumulative-ACK RTT separate from **SACK-reported RTT**. The latter
+uses the first retained SACK block that exactly matches one non-overlapping captured payload range,
+and cites both frames; repeated reports do not create extra samples. It describes receiver observation,
+not application delivery, and is a conservative Tracexy measurement rather than a claim of Wireshark
+algorithm parity. Windows are scaled only when both SYNs showed the
 RFC 7323 shift; when no SYN was captured for one side, the chart says the values are raw and the real
 window may be larger. Tracexy keeps a bounded run of each conversation's segments rather than the
 whole capture, so a long conversation states once which frames the charts cover and how many later
-segments were not retained. A session with no retained TCP segments — a UDP flow, for instance —
-shows no charts at all.
+segments were not retained. **Analyze Entire Conversation** rescans the complete stable source for the
+selected TCP conversation, up to 65,536 decoded segments; active capture is unavailable, and an
+incomplete source or an exceeded segment limit does not replace the retained-prefix charts with a partial
+full-scan result. Full-scan charts draw at most 1,024 observed points per line, preserving capture-order
+group endpoints and extrema, and state how many points are drawn out of the total. TCP SACK options show
+the receiver-reported left and exclusive right edges in wire order, as ranges relative to the peer's
+first observed sequence number when that base can be placed safely. Unplaceable ranges are counted.
+The Goodput line reflects receiver-reported sequence space and does not prove application consumption.
+The Sequence overlay gives [RFC 2883](https://www.rfc-editor.org/rfc/rfc2883.html) D-SACK ranges a distinct dashed style when the first block is wholly below
+that ACK's cumulative edge, or wholly above it and contained by the second SACK block. The label and chart caveat identify
+this as the receiver's report; Tracexy does not infer why the duplicate arrived or create a D-SACK finding.
+A session with
+no retained TCP segments — a UDP flow, for instance — shows no charts at all.
 
 Below it the dock uses compact two-column tables for assessment, connection/TLS/datagram evidence
 coverage, decoded layer facts, host baseline, related actions, findings, and grouping evidence. Its
@@ -1139,19 +1393,31 @@ Lengths), `phs` (Protocol Hierarchy; `io,phs` too), `expert` (Findings by kind),
 (IP Statistics), `http_seq` (HTTP Request Sequences), `sip,stat` (SIP), `rtp,streams` (RTP Streams) and
 `smb2,srt`, `ldap,srt`, `kerberos,srt`, `icmp,srt`, `icmpv6,srt` (Service Response Time) — as an aligned text table
 by default (trees keep their indentation), or CSV (formula-guarded) or JSON; repeat
-`--tap` for several, and `--expression` narrows the sessions first. `frames` prints the View ▸ All Frames
-list — number, time since the first frame, source, destination, protocol, length, Info and session id, plus any
+`--tap` for several, and `--expression` narrows the sessions first. `frames` prints the bounded View ▸ All Frames
+list — number, time since the first frame, source, destination, protocol, capture-interface direction
+(`inbound`, `outbound`, or `unknown`), length, Info and session id, plus any
 decode-tree field named with `--column Protocol:Field` (for example `--column TCP:Window`, like tshark's `-e`) — for
-every frame, or only the frames of the sessions `--expression` keeps; `--details` (or `-V`) prints each frame's whole
+frame in the capture, or only the frames of the sessions `--expression` keeps. The CLI spools these rows to a
+temporary file, validates the complete stable capture, then prints text, CSV or JSON with bounded row memory.
+Frame-derived statistics still use the 200,000-frame retained list and fail with an incomplete-coverage error if
+that limit is exceeded, except SRT taps, which use bounded capture-wide reducers and can be combined with
+session-only taps such as `conv,ipv4`. Other taps that need frame rows retain the 200,000-frame limit. A truncated
+final capture record fails before a frame table is printed. `--details` (or `-V`) prints each frame's whole
 decode tree instead, as text laid out like tshark `-V` or as JSON (one object per frame with its layers and fields,
-times in UTC with microseconds) — the same output as **File → Export Packet Dissections…**. `objects` lists the HTTP response bodies
+times in UTC with microseconds) — the same output as **File → Export Packet Dissections…**. Add
+`--frames 2,5-7` with `--details` to select original capture frame numbers; `--expression` can further narrow
+those frames by session. Dissection export rejects a truncated final capture record and rechecks source identity
+before reporting success. The app does not publish its staged file, and the CLI stages its output before writing
+stdout, when this happens. `objects` lists the HTTP response bodies
 (File ▸ Export Objects; tshark's `--export-objects`) with their frame, host, content type, size and
 file name — or, with `--type imf`, `tftp`, `ftp-data` or `x509af`, the email messages, TFTP or FTP files or
 certificates — and
 `--body 2` prints the second one's bytes (an HTTP body gzip or deflate decoded), so
 `tracexy objects capture.pcap --body 2 > page.html` saves it. `follow` prints the one TCP session the
 `--expression` names (for example `port == 50000`) in the Follow Stream formats; `--format raw` gives the same
-bytes as tshark's `-z follow,tcp,raw`. Both write only to standard output. `glossary` (no capture needed) lists every name a script can use — expression terms, protocol keywords, finding
+bytes as tshark's `-z follow,tcp,raw` when cross-direction order is known. The command reports an error instead
+of fabricating an interleave when both directions lack proven chronology. Both write only to standard output.
+`glossary` (no capture needed) lists every name a script can use — expression terms, protocol keywords, finding
 kinds, statistics taps and Export Objects types — as text or `--format json`. `info` is capinfos: the **File → Get
 Info** report — format, frames, first and last time, elapsed, each section and interface with its link type,
 snapshot length and statistics — with the file's SHA-256 and SHA-1, as text or as JSON key/value pairs. `select` is
@@ -1165,6 +1431,13 @@ on success, 1 when the capture cannot be read, 2 for a usage or expression error
 checked before the file is read), and 3 when `--fail-on` finds a finding of that severity or worse. A
 gzip- or LZ4-compressed capture is expanded into a temporary folder first, with the same limits as the app. **Settings → MCP & Assistant → Command Line** copies a
 command that links it into your PATH as `tracexy`; Tracexy never installs it itself.
+
+Decoding commands (`summary`, `sessions`, `findings`, `stats`, `frames`, `objects`, `follow` and `select`)
+also accept repeatable `--decode-as udp:5300:dns` rules (or `tcp:port:protocol`) to interpret a
+nonstandard service port for that command. Values must name a supported Tracexy protocol and
+transport; ports are 1–65535, selectors must be unique, and at most 64 rules are accepted.
+These rules apply only to that CLI invocation and are not saved to Project settings. The syntax
+is Tracexy's own and does not implement TShark's `-d` grammar.
 
 ## Software updates
 
@@ -1236,12 +1509,17 @@ context menu copies it. The same three fields work in **View ▸ Investigate Ses
 
 Tracexy recognizes most protocols by content (TLS, HTTP/1, STUN) or by their standard port (DNS 53, mDNS
 5353, NTP 123, DHCP 67/68, QUIC 443). **Capture ▸ Decode As…** adds rules for traffic on another port, as
-Wireshark's Decode As does: choose TCP or UDP, a port, and the protocol it decodes as — DNS, mDNS, NTP, DHCP,
-QUIC, STUN, TLS or HTTP/1 (the protocol list follows the transport). A rule applies to frames to or from that
-port, ahead of Tracexy's own detection; a rule that cannot apply (port 0, QUIC over TCP) is marked and ignored.
-Rules belong to the active Project and apply to every capture decoded after the change — live captures, files
-you open, frame lists, Follow and the command line — and **Decode Again** re-reads the open capture file with
-them (Wireshark's Redissect); the file itself is not changed.
+Wireshark's Decode As does: choose TCP or UDP, a port, and one of the protocols offered for that transport. A
+rule applies to frames to or from that port, ahead of Tracexy's own detection; a rule that cannot apply (port 0,
+QUIC over TCP) is marked and ignored. In **View ▸ All Frames**, right-click a TCP or UDP packet and choose a
+source or destination port under **Decode As…** to prefill a proposed rule. Review the port and protocol, then
+choose **Apply Rule**; the proposal does not change decoding until applied. You can also right-click a TCP or UDP
+layer in the packet-details tree. If that transport/port already has a rule, applying the proposal replaces it
+instead of adding a shadowed duplicate.
+Rules belong to the active Project and apply to captures decoded in the app after the change — live captures,
+files you open, frame lists and Follow — and **Decode Again** re-reads the open capture file with them
+(Wireshark's Redissect); the file itself is not changed. The command line is a separate, read-only invocation:
+pass `--decode-as` explicitly when needed; it does not load or change Project rules.
 
 **Capture ▸ Enabled Protocols…** (the second pane of the same window) switches recognition off, as Wireshark's
 Enabled Protocols does: uncheck a protocol and its traffic stays plain TCP or UDP data wherever it appears — by
@@ -1254,36 +1532,182 @@ Again** re-reads the open file with it.
 **View ▸ All Frames** (**Option-Command-A**) lists every frame of the open capture file (or a stopped live
 capture) the way Wireshark's packet list does: number, time, source, destination, protocol, length and an
 Info line — TCP flags with sequence, acknowledgement, window and length (raw sequence numbers; Wireshark shows
-them relative by default), TLS record types such as Client Hello or Application Data, DNS query or response
+them relative by default). **Relative TCP Seq/Ack** in the footer opts into an All Frames-only relative
+projection, using each direction's first observed sequence as its origin; an ACK stays `?` until the reverse
+direction has an observed origin. This display projection is bounded to 200,000 conversations and does not
+change raw decoder facts or Frame Expression matching. TLS record types such as Client Hello or Application Data, DNS query or response
 with its type and name, or the innermost layer's summary. IPv6 addresses are shown compressed. **Limit to
 Sessions in View** (on by default) keeps only the frames of the sessions the main window shows — the
-counterpart of Wireshark's displayed frames — and the search field matches Info, addresses and protocol.
-Type a number and choose **Go** to select and scroll to that frame. **Find in Frames** (the magnifying-glass
+counterpart of Wireshark's displayed frames — and the search field matches Info, addresses and protocol. When no frames match, **Show Frames Outside Sessions in View** removes only this session scope; search, Frame Expression, ignored-frame and decode-problem filters still apply, so the action does not promise every capture frame will become visible.
+The **Frame Expression** field filters individual listed frames using a small typed subset: `frame.len >= 128`
+(original frame length), `frame.cap_len < 128` (captured byte length), and `frame.truncated` (original length
+greater than captured length; this is a Tracexy-specific field), `ip.ttl <= 2`, `ipv6.hlim == 64`,
+`ip.flags.mf`, `ip.flags.df`, and `ip.frag_offset > 0`. TTL and hop-limit predicates support five numeric comparisons
+with values from 0 to 255; nested IP layers match when any corresponding decoded header meets the condition.
+While editing, the draft is syntax-checked and reports **Draft syntax valid** or the parser's character position
+and reason. This check does not evaluate frames or alter the active filter; choose **Apply** (or press Return)
+to run the filter. Editing a bad draft leaves the prior applied result in place.
+The IPv4 fragment offset uses bytes (0–65535); its comparison also matches any decoded IPv4 header.
+`ip.flags.mf` matches when any decoded IPv4 header has the More Fragments flag set. `ip.flags.df` matches when
+any decoded IPv4 header has Don’t Fragment set; write it as a bare predicate or `not ip.flags.df`. The two flags
+are evaluated independently. A fragment that could hide an inner IPv4 header remains unknown if no matching
+flag was observed; the DF bit alone does not establish an MTU problem or successful delivery. If decoding stops
+before the fields can disprove a match, the result is unknown, including under negation. Both length fields support
+`==`, `>`, `>=`, `<`, or `<=` and a decimal value from 0 to 4294967295. Other terms include `tcp.rst`,
+`tcp.syn`, `tcp.flags.fin`, `tcp.flags.syn`, `tcp.flags.reset`, `tcp.flags.push`, `tcp.flags.ack`,
+`tcp.flags.urg`, `tcp.flags.ece`, `tcp.flags.cwr`, `tcp.port == 443`,
+`tcp.window_size_value == 0` (the observed unscaled 16-bit TCP header value),
+`tcp.seq_raw == 1000` and `tcp.ack_raw == 2000` (the observed raw 32-bit TCP header values),
+`tcp.srcport == 50000`, `tcp.dstport == 443`, `udp.port == 53`, `udp.srcport == 53`,
+`udp.dstport == 5353`, `ip.addr == 192.0.2.10` (source or destination), `ip.src == 192.0.2.10`,
+`ip.dst == 198.51.100.7`, and `ip.id == 4660` (the observed unsigned IPv4 Identification, compared as a
+decimal value; it matches any decoded IPv4 header). A match does not establish reassembly or identify a
+unique datagram. **Identification** in the IPv4 decode tree is shown in hexadecimal and offers Apply/Prepare
+as Frame Filter only when the IP layer is unique; the action converts it to the decimal Frame Expression value.
+An unresolved fragment whose payload may contain an inner IPv4 header remains unknown when no matching ID
+was observed. IPv6 has no equivalent fixed-header Identification field. Other terms include `dns.response`,
+`dns.rcode == 3` (the observed 4-bit DNS response code), and
+`dns.id == 4660` (the observed unsigned 16-bit DNS transaction ID, including on a message whose later body
+does not decode). A matching ID does not establish that two frames are one query/response transaction;
+when a malformed/truncated decode or unresolved TCP/UDP fragment could hide DNS, the result stays unknown,
+including under negation. DNS predicates describe decoded per-frame messages, not encrypted or reassembled
+stream-only DNS. The decoded DNS, mDNS and LLMNR Transaction ID field offers **Apply as Frame Filter** and
+**Prepare as Frame Filter** only when that DNS-family layer is unique.
+The bare `dns.flags.truncated` predicate matches the observed DNS TC bit in query or response headers;
+the decoded **Truncated (TC)** field offers the same Apply/Prepare actions. TC is independent of
+`frame.truncated`, which means the captured frame bytes are shorter than the original frame. TC alone does
+not prove packet loss, resolver failure, or successful TCP fallback.
+Capture direction is available as `frame.capture_direction == inbound` or
+`frame.capture_direction == outbound`. This is direction relative to the recording interface, not
+client/server or endpoint direction. PCAPNG packet flags can provide it; classic PCAP or frames without
+direction metadata evaluate as unknown. Unknown remains unknown under `not`, so an absent flag is never
+assumed outbound. The same predicate applies in All Frames, Frame Find, I/O Graph comparisons, filtered
+frame export and dissection export.
+ICMP and ICMPv6 also support `icmp.type == 3`, `icmp.code == 3`, `icmpv6.type == 2`, and `icmpv6.code == 0`.
+These compare only the observed outer ICMP header's raw 8-bit type/code; they do not classify the message or inspect quoted-flow fields.
+The session inspector's decoded fields also offer **Apply as Frame Filter** and **Prepare as Frame Filter**
+for supported IP addresses, IPv4 Identification / TTL / Don’t Fragment / More Fragments / fragment offset, IPv6 hop limit,
+ICMP/ICMPv6 Type and Code, directional TCP/UDP source and destination ports, individual TCP FIN/SYN/RST/PSH/ACK/URG/ECE/CWR
+bits, and the observed TCP window, sequence, and acknowledgement values. TCP flag rows use distinct labels such as
+**Acknowledgment (ACK)** so they remain separate from the numeric **Ack** field. TCP actions require a unique TCP
+layer. IP, ICMP and ICMPv6 field actions are offered only when the corresponding decoded protocol layer is unique,
+avoiding ambiguous tunnel-layer selection.
+When a field has a supported, unambiguous Frame Expression term, its context menu offers **Highlight Matching
+Frames** and **Copy as Frame Filter**. Highlighting opens All Frames and applies the existing temporary,
+page-local highlight without changing the Frame Expression draft or applied filter; **Clear Highlight** removes it.
+Copy places the standalone term on the clipboard without changing either expression editor or opening All Frames.
+**Apply as Frame Filter** and **Prepare as Frame Filter** open **All Frames** and use its packet-level expression;
+they do not change the Session Expression. **Highlight Matching Frames** opens **All Frames** and applies the
+temporary highlight only. **Copy as Frame Filter** only places the standalone term on the clipboard.
+Directional port terms such as `tcp.srcport == 50000` retain which endpoint supplied the decoded field.
+TCP raw sequence and acknowledgement fields support equality only with a decimal value from 0 to 4294967295. They match the wire header values; the acknowledgement field is available even when the ACK flag is clear. Repeated values alone do not establish retransmission. The TCP window value supports the same five numeric comparisons with a decimal value from 0 to 65535;
+it does not infer a negotiated window scale from missing handshake packets. A raw zero value can also
+appear on SYN, FIN or RST packets; use the evidence-linked `zeroWindow` finding for Tracexy's
+flow-control evidence. Its events can include a receive-window update, zero-window advertisement, a probe, or an
+acknowledgement that repeats the probe edge or advances by the single observed probe byte. This
+does not infer acceptance of later bytes from repeated acknowledgements. If that one-byte ACK
+also reopens the advertised window, the captured byte is accounted for before Tracexy evaluates
+whether the ACK extends beyond observed sequence data.
+Use **Saved Frame Filters** to reuse named expressions within this Project. Choosing one fills the draft;
+it does not change the active result until you choose **Apply**. Manage Saved Frame Filters supports
+adding, editing and removing bounded presets. They are local to the Project's preference suite and are
+not included in `.tracexyproject` transfer. They use Tracexy's Frame Expression grammar, not Wireshark
+display-filter syntax or macros.
+**Recent Frame Expressions** keeps up to 12 distinct expressions accepted in the current capture
+session in memory. Selecting one fills the draft and still requires **Apply**; malformed expressions
+and cancelled or superseded evaluations are not recorded. The list clears when the capture or Project
+changes and is never written to disk.
+Choose **Highlight** to apply the draft as one temporary visual rule while keeping the packet list intact;
+it is independent of the applied filter and the matching expression appears beside the controls. Matching
+rows carry an orange dot in the frame-number column with an accessibility label. Unknown results remain
+untinted and are counted for the retained page. **Clear Highlight** removes the rule. Highlights are
+page-local, recalculated after a page rescan, and cleared when the capture or Project changes; they are not
+saved into Project settings, captures, History, exports or `.tracexyproject` files. This temporary highlight remains independent of Project coloring rules. **Coloring Rules** stores up to 32
+ordered rules in this Project. Each rule has a name, a Frame Expression, foreground and background colors, and an
+enabled switch. The first rule that evaluates yes wins. An unknown higher-priority rule blocks lower-priority
+colors so missing packet facts do not fabricate a match. Rules need at least 4.5:1 text/background contrast;
+selected and ignored rows keep their native selection/ignored treatment. **Duplicate** creates a new draft row after
+the source rule with a fresh identity, copied expression/colors/enabled state and an available name; it is disabled
+at the 32-rule limit. Save persists the edited draft, while Cancel discards it. Rules are evaluated off the main thread
+over retained frame rows and are not included in `.tracexyproject` transfer. **Import Wireshark Rules…** accepts
+`coloring_rules.jsonc` and legacy `colorfilters` files up to 1 MiB / 256 rules. It appends supported rules to the
+editable draft, preserving their order, colors and enabled state; existing names are kept and duplicates or
+unsupported filters are reported with reasons. Review the imported rows and choose **Save** to persist them.
+Import supports Tracexy's Frame Expression subset only; it does not import Wireshark profiles or provide
+Wireshark display-filter compatibility. Right-click a frame with a known session and choose **Color This
+Conversation** to assign the first free temporary color slot. Up to ten conversations can be distinguished at
+once; choose **Clear Conversation Color** on that conversation to free its slot, or use **Conversation Colors →
+Clear Conversation Colors** to clear all slots. Temporary conversation colors are capture-local, follow the stable
+session identity across All Frames paging, and override persistent coloring rules. Selected and ignored rows retain
+their native treatment. The palette uses dark text on light backgrounds; sessionless frames cannot receive a
+conversation color. Slots clear when the capture changes and are not saved into Project settings or capture exports.
+Combine terms with `and`, `or`, `not`, and parentheses, then choose **Apply**. **Clear** removes the
+expression. A frame whose truncated or unsupported decode cannot establish the expression is excluded
+from matches and counted as unknown; negation does not turn unknown into a match. An invalid expression
+shows the error position and keeps the last applied filter. This is separate from Session Expressions,
+which filter whole sessions; other packet field spellings and packet-filter macros are not supported.
+Type a number and choose **Go** to select and scroll to that frame. For a capture larger than the retained
+window, **Previous Page** and **Next Page** rescan the stable source to show another bounded range; Go loads
+the range containing the requested frame. After **Apply**, Frame Expression scans the complete stable
+capture: the footer counts all matches and unknown frames, while the table shows matches on the current
+range. **Previous Matching Page** and **Next Matching Page** skip ranges without a match. The toolbar
+search and **Limit to Sessions in View** narrow the currently listed range. **Find in Frames** (the magnifying-glass
 toolbar button) opens Wireshark's Find Packet bar: find a **String**, **Hex** bytes (`16 03 01`, `160301` or
 `16:03:01`) or a **Regex** in each frame's **Bytes**, or a string or regular expression in its **Details** — the
-layers and fields as Layers shows them — with **Match Case** for strings and expressions. **Next** (Command-G) and
-**Previous** step through the matching frames the list shows, wrapping around, and the bar counts them ("5 of 7").
-The capture is read once per search; byte searches find the same frames as tshark's `frame contains` and
-`frame matches`. Double-clicking a frame selects its
-session in the main window and loads that exact frame in Layers; a frame that belongs to no session (IGMP,
-for example) says so. The list is rescanned from the stable source on demand, up to 200,000 frames, with
-progress and Cancel; time follows **View ▸ Frame Time**.
+layers and fields as Layers shows them — with **Match Case** for strings and expressions. String searches in
+Bytes default to UTF-8 and can instead search UTF-16 little-endian, big-endian, or all three encodings. Case-insensitive
+UTF-16 search folds ASCII letters by 16-bit code unit; other code units match exactly. This setting does not change
+Hex, Regex or Details searches. **Next** (Command-G) and
+**Previous** step through matches across the stable capture, loading another page when needed and wrapping at
+the source boundary. The bar shows the capture-wide match count. Each step rescans the source while retaining
+only the adjacent match and count. If the capture ends in a truncated record, both Find and Frame Expression
+label their counts as complete frames before the truncated tail. UTF-8 string, hex and regex byte searches use the
+same captured bytes as tshark's `frame contains` and `frame matches`; UTF-16 string modes additionally search the
+chosen two-byte encoding. Double-clicking a frame selects its
+session in the main window and loads that exact frame in Layers; a frame that belongs to no session opens a
+frame-scoped packet-details and byte window from its exact captured bytes. It does not create a session for that
+frame. Each list range is rescanned from the stable source on demand, retaining up to
+200,000 frames, with progress and Cancel; time follows **View ▸ Frame Time**.
+**First on Page** and **Last on Page** select the first or last row currently shown by All Frames, including pinned
+time-reference rows. On large captures these actions stay within the retained page; they do not search other pages.
+**Back** and **Forward** step through up to 64 distinct frame selections in this capture, like a browser history.
+Selecting a new frame after going back starts a new history branch. If a history target is hidden by the current
+filters, All Frames reports that fact without changing the filters or moving the history position; targets on
+another retained page are loaded before selection.
 
 Selecting a frame in All Frames marks the other frames of its session, as Wireshark's related-packet marks do:
 a link beside each, and where the session's first and last frames are. **Previous** and **Next Frame in Session**
 (the chevrons in the toolbar, Control-comma and Control-period as in Wireshark's Go menu) step through that session's
-frames in the list. Right-click a frame in All Frames to
-**Mark** or **Ignore** it, as Wireshark's ⌘M and ⌘D do: a marked
+frames in the list. **First Displayed Frame in Session** and **Last Displayed Frame in Session** select its earliest
+or latest row in the current displayed result, including retained time-reference rows; paging and filters may hide
+the capture-wide endpoints. **Mark Selected Frame** / **Unmark Selected Frame** and
+**Ignore Selected Frame** / **Unignore Selected Frame** are also available in the toolbar for the selected
+row while it remains visible in the main list, including sessionless frames. Right-click a frame in All Frames to
+**Mark** or **Ignore** it, as Wireshark's context actions do: a marked
 frame shows a bookmark, an ignored one is hidden (or, with **Show Ignored**, dimmed and struck through).
-**Previous Mark** and **Next Mark** step between marks; **Export Marked…** opens File ▸ Export Frames with
+**Mark All Displayed** marks the rows currently shown after session scope, search, decode-problem,
+Frame Expression and ignore filters, including pinned time-reference rows. Existing marks outside that visible result stay marked.
+**Unmark All Displayed** clears marks only for those rows; **Ignore All Displayed** ignores only those shown rows;
+**Unignore Displayed** clears ignore only for rows in the current All Frames result, including retained time-reference rows from another page; filtered rows stay ignored, and the separate pinned strip is not included. With **Show Ignored** off, hidden ignored rows are not included. **Unignore All** clears every ignored frame. **Previous Mark** and **Next Mark** step
+between marks; **Export Marked…** opens File ▸ Export Frames with
 the **Marked frames** scope chosen. Marks and ignores belong to the open capture and are cleared when another
 one is opened; ignoring a frame hides it from the list, it does not change any finding. Right-click ▸
+**View Source Comments…** reads the selected frame's existing PCAPNG packet comments on demand and read-only;
+they remain separate from **Add Frame Comment…**, which writes your Tracexy note only into a later explicit PCAPNG export.
+Comments are bounded to 16 values and 256 displayed bytes each; truncation, invalid UTF-8 and omitted values are identified.
+Classic PCAP has no packet-comment options.
+Right-click ▸
 **Conversation Filter** ▸ Ethernet, IPv4 or IPv6, TCP or UDP filters the Sessions list to the frame's conversation at
 that layer (its two MAC addresses, its two IP addresses, or its two endpoints), as Wireshark's Conversation Filter
 does; **Tag** colors the frame's session, as Colorize Conversation does. Right-click ▸ **Copy**
 puts a frame's columns on the clipboard as Wireshark's Copy ▸ Summary does: **Summary as Text** (tab-separated),
 **…as CSV** (quoted), **…as YAML** (a list under a comment naming the frame's row and the capture) or **…as HTML**
 (a table row that pastes formatted into Mail, Pages or Notes, with the text alongside for plain-text editors).
+The nested **Bytes** menu copies the exact packet bytes as a hex dump, hex stream, printable text, C array,
+escaped string, Base64 or raw `application/octet-stream`; bytes are re-read from the stable local source and are
+never reconstructed from the displayed row.
+**Name Address** offers only the row's valid IP endpoints and adds, edits or removes their aliases in the active Project's address book.
+**Pin Row to Top** keeps up to 16 chosen frames in a separate strip above the list while you page or filter; click a pinned frame to select it, use its pin button to unpin it, or right-click a pinned row and choose **Unpin All Rows**. If the frame is excluded by the current filters, Tracexy reports that it is hidden; adjust the filters to reveal it. Navigation is unavailable while the frame list is scanning. Pins are capture-local and separate from marks and time references.
 
 **Add Frame Comment…** (right-click a frame) writes a comment for that frame, shown with a filled bubble in
 the Info column. When you export frames as PCAPNG with **Include my notes and frame comments**, each comment is written into its
@@ -1293,7 +1717,8 @@ the open capture until then; they are cleared when another capture is opened.
 A frame whose decoding stopped early is marked in the Info column with a warning sign and Wireshark's
 suffix: **[Malformed Packet]** when a header is invalid (for example an IPv4 header length below 20 bytes),
 or **[Packet size limited during capture]** when the capture's snapshot length cut the frame inside a
-header. With **View → Validate Checksums** on, a frame with a wrong IPv4, TCP, UDP or ICMP checksum is
+        header. With **View → Validate Checksums** on, a frame with a wrong IPv4, TCP, UDP, SCTP,
+        ICMP or ICMPv6 checksum is
 marked the same way and counted too (a partial, offloaded checksum is not). Hover the sign for the reason.
 **Only Decode Problems** in the footer, shown when there are any, lists just those frames. A decode problem is about the capture, not the network, so it never becomes a
 session finding.
@@ -1312,7 +1737,8 @@ a host, the content type, the size and the file name it saves under.
   at STARTTLS.
 - **FTP Data** — every file a RETR, STOR, STOU or APPE moved: the data connection the PASV or EPSV reply (or the
   PORT or EPRT command) set up, named by the command's argument, from the frame and sender of its first byte.
-  Directory listings are not files and are left out, as in Wireshark.
+  Bytes come from the command's sending direction in TCP sequence order. Directory listings are not files and
+  are left out, as in Wireshark. FTP control streams with unknown command/reply packet order are skipped and counted.
 - **SMB** — complete files reconstructed on demand from clear SMB2-family CREATE, READ/WRITE and CLOSE traffic.
   The request/reply must match within one unambiguous TCP connection; byte ranges must cover the complete file
   from offset zero to a capture-observed final size. Files with gaps, conflicting bytes, truncated evidence,
@@ -1341,7 +1767,8 @@ dissects directly, as Wireshark's Export PDUs to File does at the application la
 SSDP, NTP, DHCP, STUN or QUIC datagram's payload, and each reassembled turn of an HTTP, TLS, SMTP, FTP, IMAP,
 POP3, SSH or SIP stream, one packet each (link type 252, Wireshark Upper PDU) tagged with its protocol and its
 addresses and ports. The payload is unredacted, so a Project with privacy protections asks first, as Export
-Frames does. At most 200 TCP streams, 100,000 PDUs and 512 MB are read.
+Frames does. TCP streams whose retained frame evidence cannot prove the order between directions are skipped and
+counted. At most 200 TCP streams, 100,000 PDUs and 512 MB are read.
 
 ### Firewall rules
 
@@ -1439,17 +1866,27 @@ off **Limit to Sessions in View** to count the whole capture; Copy or save the t
 ### Service response time
 
 **Statistics ▸ Service Response Time** times how long servers took to answer, as Wireshark's SRT tables do, for
-**SMB2**, **LDAP** and **Kerberos**: each command or procedure with its paired replies (**Calls**) and their
-minimum, maximum, mean and total time in seconds. Replies are paired inside their session as Wireshark pairs them in
-one pass: an SMB2 reply with the request of its message ID once, waiting past an asynchronous STATUS_PENDING
-interim reply (Cancel and Oplock Break are left out); every LDAP reply to a message ID — a search counts each entry
-and its result — with that request; a Kerberos AS-REP or TGS-REP, or an error, with the request just before it.
+**SMB2**, **LDAP**, **Kerberos**, **ICMP** and **ICMPv6**: each command or procedure with its paired replies (**Calls**) and their
+minimum, maximum, mean and total time in seconds. Every service rescans the complete stable capture,
+independent of the All Frames page; **Limit to Sessions in View** restricts them to the sessions currently shown.
+Each SRT scan retains at most 200,000 unmatched requests or correlations. Echo scans also retain at most 200,000
+exact duration samples for median calculation; if either echo ceiling is exceeded or a decoded echo frame lacks a
+timestamp/session address, the scan fails visibly instead of reporting partial statistics. SMB2, LDAP and Kerberos
+report unmatched-request omissions in the window and CSV.
+Replies are paired inside their session as Wireshark
+pairs them in one pass: an SMB2 reply with the request of its message ID once, waiting past an asynchronous
+STATUS_PENDING interim reply (Cancel and Oplock Break are left out); every LDAP reply to a message ID — a search
+counts each entry and its result — with that request; a Kerberos AS-REP or TGS-REP, or an error, with the most recent
+tracked AS/TGS request. LDAP Search keeps its correlation through SearchResultDone. Unrelated Kerberos messages are
+ignored, and a mismatched tracked KDC reply consumes the pending request. LDAP decoding currently recognizes only the
+first message per segment, so the SRT scan does not reassemble multiple TCP PDUs.
 The tables read as `tshark -z smb2,srt`, `ldap,srt` and `kerberos,srt` print them. **ICMP** and **ICMPv6** time
 echo (ping) replies instead: the requests, the replies paired with them (once, by identifier, sequence and the
 checksum a matching reply carries), the requests left unanswered as a loss percentage, and the reply times in
 milliseconds — minimum, maximum, mean, median and sample standard deviation, with the frames of the fastest and
 slowest reply — as `tshark -z icmp,srt` and `icmpv6,srt` print them. **Limit to Sessions in View** works as in the
-other frame statistics; copy or save the result as CSV. `tracexy stats --tap smb2,srt` (or `ldap,srt`,
+other frame statistics; echo tables rescan the whole stable capture and copy or save the result as CSV.
+`tracexy stats --tap smb2,srt` (or `ldap,srt`,
 `kerberos,srt`, `icmp,srt`, `icmpv6,srt`) prints the same numbers.
 
 ### Value distribution
@@ -1498,21 +1935,53 @@ ticket or a chat.
 in the **Show Packet Bytes** window; **Show Body…** on an HTTP exchange in the Stream facet opens that
 response's body. **Decode as** undoes one encoding: Base64 (padding optional), gzip, zlib (HTTP
 `Content-Encoding: deflate`), raw deflate, percent-encoding, quoted-printable, ROT-13 or hex digits.
-**Show as** reads the result as UTF-8 text, pretty-printed JSON (shown as text, with a note, when it does
-not parse), a hex dump, a C array, or an image. The **Bytes** fields narrow the input to a range. For an
+**Show as** reads the result as UTF-8, UTF-16 LE, UTF-16 BE, pretty-printed JSON (shown as text, with a note, when it does
+not parse), a hex dump, a C array, or an image. UTF-16 odd trailing bytes and malformed surrogate pairs appear as U+FFFD.
+The **Bytes** fields narrow the input to a range. For an
 HTTP body the Content-Encoding and Content-Type choose the first decoding and view. A truncated compressed
 stream shows what inflated; decoding stops at 16 MiB of output. **Copy** copies the rendering; **Save As…**
-writes the decoded bytes exactly.
+writes the decoded bytes exactly. **Save Rendering…** saves the current text/JSON/hex/C-array view as UTF-8
+(`.json` for valid pretty JSON, `.txt` for text/UTF-16/hex or invalid-JSON fallback, `.c` for a C array), with an
+8 MiB output limit. It is unavailable for image views and refuses oversized inputs instead of truncating.
+For a selected frame's full protocol-details dump, narrowing the byte range switches to the range's own
+rendering so Copy and Save Rendering match the bytes shown.
+When the full frame-details tree is shown, **Filter Fields** searches layer titles and summaries, field names and
+values by case-insensitive substring. A layer-title or summary match keeps that layer's complete subtree; a field
+match keeps the matching ancestors and fields. **Clear field filter** restores the tree, and a no-results message
+appears in the tree pane while the adjacent bytes pane remains available. The query resets when the inspected
+frame changes. Clicking a byte opens the visible owning layer path and scrolls to its field. If **Filter Fields**
+hides that owner, the query stays in place and the tree says the field is hidden; clear the query and click the byte
+again to reveal it.
+Click a layer or field row to focus this tree. It supports the same **↑** / **↓**, **←** / **→**, **⇧←** / **⇧→**
+and **⌘←** / **⌘→** navigation described above; typing in **Filter Fields** keeps keyboard input in the search box.
 
 ### Frame time and time references
 
-**View ▸ Frame Time** chooses how the Frames facet shows each frame's time, with Wireshark's display
-formats: seconds since the session's first listed frame (the default), since the capture's first timed
-frame, or since the frame listed before it; the local or UTC date and time of day to the microsecond; or
-seconds since 1970. Choose a frame (select it in the Frames facet) and use **View ▸ Set Time Reference**
-(**Command-T**), or right-click a row, to make it time zero: its row reads `*REF*` and every later frame's
-relative time counts from it. The reference belongs to that session's frames and is cleared when another
-capture is opened; the format is remembered per Project. An untimed frame shows an em dash, never zero.
+**View ▸ Frame Time** chooses how the Frames facet shows each frame's time: seconds since the session's
+first listed frame (the default), since the first captured frame's timestamp, since the previous
+displayed frame, or since the previous captured frame; the local or UTC date and time of day; or seconds
+since 1970. **View ▸ Frame Time Precision** selects seconds, milliseconds or microseconds (the default)
+for every numeric and fractional date display; values round to the nearest selected unit, with exact ties
+rounded away from zero. This changes presentation only; it does not claim the capture clock had that
+accuracy. Previous displayed uses the visible rows in the current list page;
+when the preceding displayed row is outside that retained page or its time is unknown, the delta is an
+em dash. Previous captured follows capture order across pages. Choose a frame (select it in the Frames
+facet) and use **View ▸ Set Time Reference** (**Command-T**), or right-click a row, to mark a time
+reference. In All Frames, references are capture-wide: pinned rows remain visible when paging or when
+session, Frame Expression, ignored, decode-problem, or search filters would hide them. **Previous Time
+Reference** and **Next Time Reference** navigate among them. In the Session Frames facet, references
+remain session-scoped. Up to 16 references may be active across the capture; each reference row reads
+`*REF*`. In either since-start format, later frames count from the latest preceding applicable reference
+by capture order. Capture-wide references also apply in session tables; session-scoped references do not
+affect All Frames. Frames before the first applicable reference keep the current format's normal origin.
+References are temporary, in memory, and cleared when the capture or Project changes; they are not saved
+with the capture or Project preferences. An untimed frame shows an em dash and cannot be marked as a
+reference. When the limit is reached, remove a reference before adding another. The current format is
+remembered per Project. **Cumulative Bytes** in All Frames is an optional capture-wide column: it sums
+captured lengths (not on-the-wire lengths), includes the reference frame in the new total, and resets at
+the latest capture-wide reference. References on other pages and frames hidden by session/expression
+filters still affect the total; session-scoped references do not. It is calculated off the main thread and
+updates when capture-wide references change.
 
 ### Packet lengths
 
@@ -1533,6 +2002,33 @@ grows), so every value is exact: the interval's total divided by its width — a
 interval, never a peak. Pointing at a graph reads out that interval. Frames without a capture time are
 counted in the footer and plotted in no interval. **Save Chart As** saves both graphs as PNG or PDF, and
 **Save as CSV…** writes each interval's frames, bytes and both rates.
+
+Add up to four named **Frame Expression** series (for example `dns.response` and `tcp.flags.reset`) and
+choose **Apply Comparison** to compare them across the complete saved capture or fully stopped live
+capture. Every series uses the same bounded Tracexy grammar, time extent, interval and adaptive bucket
+resolution, independent of All Frames paging, search or session scope. Each series has a distinct color,
+symbol and line pattern. Drafts are applied atomically: invalid syntax leaves the previous comparison
+visible. **Show All Traffic** returns to the normal unfiltered graph, including live updates, while keeping
+the drafts for later. Starting a new live capture makes a comparison unavailable until it has stopped
+and finalized; Tracexy does not display a partial scan.
+
+In an applied comparison, choose a **Frame navigation series** and click a chart interval to select that
+series' highest-ordinal timed match in **View ▸ All Frames**. **Frame interval** can also be changed with
+the keyboard or VoiceOver, and each series exposes a **Show frame** action for that interval. All Frames
+applies its current filters and reports when the cited frame is hidden; orphan frames remain available
+through the existing All Frames row workflow. The request is rejected if the Project or capture source
+changed after the graph scan.
+
+The comparison retains the complete capture's time extent, including empty intervals before and after
+matches. No-match intervals are zero. Series count independently, so overlapping expressions can count
+the same frame more than once. Per-series coverage distinguishes matching, nonmatching, unknown and
+untimed matching frames; unknown evaluations are excluded from that series' rates, and untimed matches
+are never plotted. Saved-capture Time Shift is applied consistently. Changing **Interval** reprojects
+the retained bounded aggregates without rescanning the capture. **Save as CSV…** includes every enabled
+series' expression, interval values and coverage; **Save Chart As** includes the named series, expressions,
+coverage and both rate charts. A capture with no timed frames can export coverage as CSV without invented
+graph values. The comparison supports packet and byte rates; arbitrary field calculations, secondary
+axes and moving averages are not included.
 
 ### TCP completeness
 
@@ -1582,9 +2078,10 @@ Expression. Nothing here adds analysis: every row is a finding the session alrea
 
 ### Resolved addresses
 
-**Statistics ▸ Resolved Addresses** lists every name this capture's DNS and mDNS answers gave an address,
+**Statistics ▸ Resolved Addresses** lists names this capture's DNS and mDNS answers gave an address, names
+embedded in the opened PCAPNG capture's Name Resolution Blocks (**Capture file**),
 beside the names you gave addresses in this Project (**Named by you**). Each learned name shows where it
-came from and how many answers carried it; a warning mark says when answers gave the same address more
+came from; DNS/mDNS rows include how many answers carried it. A warning mark says when answers gave the same address more
 than one name, so a session to it may be labelled with another. **Show Sessions** (or a double-click)
 narrows the main window to that address; **Show Answering Session** selects the DNS or mDNS session whose
 answer gave the name, narrowing to its host when the current scope hides it (Back to Previous Scope
@@ -1598,9 +2095,17 @@ narrows to `ip in` the block, and the context menu or the Delete key renames or 
 **Statistics ▸ Endpoints**, IPv4, **Group by Named Subnet** adds the addresses of each named block into one row
 (a session between two of its addresses counts once); other addresses keep their own rows.
 
+Choose **Import Hosts…** to select a standard or Wireshark `hosts` text file. Tracexy reads only that file
+and adds names for addresses this Project does not already name; existing Project labels are left untouched.
+Each line contributes its first hostname, extra aliases are counted and skipped, and the last repeated
+address in the selected file supplies its imported hostname. The import is bounded to 256 KiB, 10,000 lines
+and 500 addresses; names longer than 60 characters are shortened and counted. It reports malformed lines,
+ignored aliases, duplicate addresses and any address-book limit reached. It does not search Wireshark
+profile folders or perform external DNS lookups.
+
 **View ▸ Name Resolution ▸ Resolve Network Addresses** (off by default, per Project, as in Wireshark) shows
-names instead of addresses in the All Frames list: the name you gave an address, else the first name the capture's
-own DNS or mDNS answers gave it, else its named subnet's form. Pointing at a name shows the address. Tracexy never
+names instead of addresses in the All Frames list: the name you gave an address, else the first name from the
+capture's DNS/mDNS answers, else its PCAPNG Name Resolution Block, else its named subnet's form. Pointing at a name shows the address. Tracexy never
 looks a name up on the network — only names the Project or the capture already hold are used, as tshark does
 with `-N dn`.
 
