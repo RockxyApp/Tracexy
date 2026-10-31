@@ -176,7 +176,126 @@ struct SCTPDecodeTests {
         #expect(packet.decodeStop == .malformed("Invalid SCTP chunk length"))
     }
 
+    @Test("exactly 64 chunks are all retained and claim no omission")
+    func chunkRetentionLimitExactlyMet() throws {
+        let bytes = frame(chunks: Array(repeating: Self.shutdownChunk, count: 64))
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        let facts = try #require(packet.sctpFacts)
+        #expect(facts.chunkTypes.count == 64)
+        #expect(!facts.chunksOmitted)
+        #expect(packet.decodeStop == nil)
+    }
+
+    @Test("an ABORT as the 64th chunk is retained, so the session can read it")
+    func abortAtTheRetentionLimitIsRetained() throws {
+        var chunks = Array(repeating: Self.shutdownChunk, count: 63)
+        chunks.append(Self.abortChunk)
+        let bytes = frame(chunks: chunks)
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        let facts = try #require(packet.sctpFacts)
+        #expect(facts.chunkTypes.count == 64)
+        #expect(!facts.chunksOmitted)
+        #expect(facts.containsAbort)
+    }
+
+    @Test("a 65th chunk is flagged as omitted and never claimed as a type")
+    func chunkPastTheRetentionLimitIsFlaggedNotClaimed() throws {
+        var chunks = Array(repeating: Self.shutdownChunk, count: 64)
+        chunks.append(Self.abortChunk)
+        let bytes = frame(chunks: chunks)
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        let facts = try #require(packet.sctpFacts)
+        #expect(facts.chunkTypes.count == 64)
+        #expect(facts.chunksOmitted)
+        // The ABORT sat past the limit, so nothing may report it as observed.
+        #expect(!facts.containsAbort)
+        #expect(packet.decodeStop == nil)
+    }
+
+    @Test("a 65th DATA chunk shorter than its fixed header is malformed, not an omission")
+    func shortDataChunkPastTheLimitIsMalformed() throws {
+        var chunks = Array(repeating: Self.shutdownChunk, count: 64)
+        chunks.append([0, 0, 0, 8, 0, 0, 0, 1])
+        let bytes = frame(chunks: chunks)
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        let facts = try #require(packet.sctpFacts)
+        #expect(!facts.chunksOmitted)
+        #expect(packet.decodeStop == .malformed("SCTP DATA chunk is shorter than its fixed header"))
+    }
+
+    @Test("a DATA chunk shorter than its fixed header stops decoding before the limit")
+    func shortDataChunkIsMalformed() {
+        let bytes = frame(chunks: [[0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 0]])
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        #expect(packet.decodeStop == .malformed("SCTP DATA chunk is shorter than its fixed header"))
+        #expect(packet.sctpFacts?.chunkTypes.isEmpty == true)
+    }
+
+    @Test("a minimal four-byte non-DATA chunk decodes with no DATA fields")
+    func minimalNonDataChunkDecodes() throws {
+        let bytes = frame(chunks: [Self.shutdownCompleteChunk])
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        let facts = try #require(packet.sctpFacts)
+        #expect(facts.chunkTypes == [SCTPChunkType.shutdownComplete])
+        #expect(packet.decodeStop == nil)
+        let layer = try #require(packet.layers.first(where: { $0.proto == .sctp }))
+        #expect(!layer.fields.contains(where: { $0.name == "DATA TSN" }))
+    }
+
+    @Test("SCTP over IPv6 carries the same endpoints and chunk facts")
+    func ipv6SCTPDecodes() {
+        let bytes = frame(chunks: [Self.shutdownChunk], ipv6: true)
+        let packet = PacketDecoder.decode(
+            PacketBuffer(bytes), linkType: LinkType.ethernet, timestamp: nil, originalLength: bytes.count
+        )
+        #expect(packet.transport == .sctp)
+        #expect(packet.sourceEndpoint?.port == 5_000)
+        #expect(packet.destinationEndpoint?.port == 5_001)
+        #expect(packet.sctpFacts?.chunkTypes == [SCTPChunkType.shutdown])
+        #expect(packet.fiveTuple != nil)
+        #expect(packet.decodeStop == nil)
+    }
+
     // MARK: Private
+
+    /// SHUTDOWN with its cumulative TSN: eight bytes, no padding needed.
+    private static let shutdownChunk: [UInt8] = [7, 0, 0, 8, 0, 0, 0, 1]
+    private static let abortChunk: [UInt8] = [6, 0, 0, 4]
+    private static let shutdownCompleteChunk: [UInt8] = [14, 0, 0, 4]
+
+    /// A frame carrying exactly the chunks given, with a valid CRC32C.
+    private func frame(chunks: [[UInt8]], ipv6: Bool = false) -> [UInt8] {
+        let source: [UInt8] = ipv6
+            ? [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+            : [192, 0, 2, 1]
+        let destination: [UInt8] = ipv6
+            ? [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
+            : [192, 0, 2, 2]
+        var sctp = SyntheticIPPacketEnvelope.word(5_000)
+            + SyntheticIPPacketEnvelope.word(5_001)
+            + SyntheticIPPacketEnvelope.doubleWord(0x12345678)
+            + [0, 0, 0, 0]
+            + chunks.flatMap { $0 }
+        let checksum = SCTPChecksum.value(sctp)
+        sctp.replaceSubrange(8 ..< 12, with: SyntheticIPPacketEnvelope.doubleWord(checksum))
+        let ip = SyntheticIPPacketEnvelope.ipHeader(
+            source: source, destination: destination,
+            transportLength: sctp.count, protocolNumber: 132, ipv6: ipv6
+        )
+        return SyntheticIPPacketEnvelope.ethernetHeader(inbound: false, ipv6: ipv6) + ip + sctp
+    }
 
     private func frame() -> [UInt8] {
         let source = [UInt8]([192, 0, 2, 1])
