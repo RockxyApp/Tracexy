@@ -67,6 +67,7 @@ nonisolated enum DissectionExporter {
         includeRawFieldBytes: Bool = false,
         appliedFieldColumns: [FieldKey] = [],
         includeTimestampPreamble: Bool = false,
+        timeCorrection: CaptureTimeCorrection? = nil,
         isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled },
         to sink: (Data) throws -> Void
     )
@@ -116,8 +117,15 @@ nonisolated enum DissectionExporter {
                 break walk
             }
             ordinal += 1
+            // A saved capture's Time Shift is an overlay on the source bytes, so
+            // every exported or printed time has to carry it exactly as the frame
+            // list and the graphs do. Without this, corrected evidence would be
+            // read back with the times the correction exists to disown.
+            let correctedTimestamp = try timeCorrection
+                .map { try $0.apply(event.reference.timestamp, frameOrdinal: UInt64(ordinal)) }
+                ?? event.reference.timestamp
             let frame = CapturedFrame(
-                bytes: event.bytes, timestamp: event.reference.timestamp,
+                bytes: event.bytes, timestamp: correctedTimestamp,
                 originalLength: event.reference.originalLength, capturedLength: event.reference.capturedLength,
                 linkType: event.reference.linkType
             )

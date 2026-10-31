@@ -28,6 +28,7 @@ nonisolated enum DissectionExportFileWriter {
         includeRawFieldBytes: Bool = false,
         appliedFieldColumns: [FieldKey] = [],
         includeTimestampPreamble: Bool = false,
+        timeCorrection: CaptureTimeCorrection? = nil,
         to output: URL
     )
         throws -> DissectionExporter.Summary
@@ -51,7 +52,8 @@ nonisolated enum DissectionExportFileWriter {
                 frameOrdinals: frameOrdinals, frameSelection: frameSelection,
                 frameExpression: frameExpression, excludedFrameOrdinals: excludedFrameOrdinals, format: format,
                 textLayout: textLayout, includeRawFieldBytes: includeRawFieldBytes,
-                appliedFieldColumns: appliedFieldColumns, includeTimestampPreamble: includeTimestampPreamble
+                appliedFieldColumns: appliedFieldColumns, includeTimestampPreamble: includeTimestampPreamble,
+                timeCorrection: timeCorrection
             ) { try handle.write(contentsOf: $0) }
             try handle.synchronize()
             try handle.close()

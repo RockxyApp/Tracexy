@@ -420,7 +420,7 @@ status. **Shift times by N seconds** moves every written frame's time, earlier w
 `editcap -t` does. This is a fixed offset on the frames in the export; the open source capture is unchanged.
 For a saved capture, **Edit → Time Shift…** applies a whole-capture offset, one frame/time anchor, or two anchors
 for linear clock drift. The overlay includes ignored and filtered frames, and **Undo Time Shift** restores the
-source timestamps. Sessions and time-based evidence are recomputed together. **Save Capture** or a corrected
+source timestamps. Sessions and time-based evidence are recomputed together, and exported or printed packet dissections carry the corrected times too. **Save Capture** or a corrected
 PCAPNG export writes the shifted timestamps plus a bounded provenance comment into a new file; the original
 file remains unchanged. The capture retains PCAPNG microsecond timestamp precision. **Compress with gzip** writes a `.gz`. The export streams from the source with progress and **Cancel Export**, is
 published only after it completes and the source is verified unchanged, and reports anything it

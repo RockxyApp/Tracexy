@@ -115,6 +115,9 @@ final class DissectionExportController {
         let savedURL = coordinator.isViewingSavedCapture ? coordinator.savedCaptureEvidenceURL : nil
         let savedIdentity = coordinator.adoptedSavedCaptureIdentity
         let spool = coordinator.liveCaptureSpool
+        // A Time Shift belongs to the saved file it was resolved against; a live
+        // spool has none, so the overlay is taken only when a saved source is read.
+        let timeCorrection = savedURL == nil ? nil : coordinator.activeSavedCapture?.timeCorrection
         coordinator.setSessionExporting(true)
         let ignored = coordinator.allFrames.ignored
         guard let excludedFrameOrdinals = Self.chooseIgnoredFrameExclusion(ignored) else {
@@ -164,7 +167,7 @@ final class DissectionExportController {
                         frameOrdinals: markedFrames, frameRange: markedRange,
                         frameSelection: frameSelection, frameExpression: frameExpression,
                         excludedFrameOrdinals: excludedFrameOrdinals, format: .text,
-                        textLayout: layout
+                        textLayout: layout, timeCorrection: timeCorrection
                     ) { chunk in
                         let maximumTextBytes = 8 * 1_024 * 1_024
                         guard chunk.count <= maximumTextBytes,
@@ -438,6 +441,9 @@ final class DissectionExportController {
         let savedURL = coordinator.isViewingSavedCapture ? coordinator.savedCaptureEvidenceURL : nil
         let savedIdentity = coordinator.adoptedSavedCaptureIdentity
         let spool = coordinator.liveCaptureSpool
+        // A Time Shift belongs to the saved file it was resolved against; a live
+        // spool has none, so the overlay is taken only when a saved source is read.
+        let timeCorrection = savedURL == nil ? nil : coordinator.activeSavedCapture?.timeCorrection
         let appliedFieldColumns = Array(
             coordinator.packetDetailOptions.frameColumns.prefix(PacketDetailOptions.maximumFrameColumns)
         )
@@ -537,7 +543,8 @@ final class DissectionExportController {
                             excludedFrameOrdinals: excludedFrameOrdinals, format: format,
                             textLayout: textLayout, includeRawFieldBytes: includeRawFieldBytes,
                             appliedFieldColumns: includeAppliedFieldColumns ? appliedFieldColumns : [],
-                            includeTimestampPreamble: includeTimestampPreamble, to: output
+                            includeTimestampPreamble: includeTimestampPreamble,
+                            timeCorrection: timeCorrection, to: output
                         )
                     }.value
                 didWrite = true

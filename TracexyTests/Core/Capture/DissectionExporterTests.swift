@@ -21,6 +21,48 @@ struct DissectionExporterTests {
         #expect(text.components(separatedBy: "\nFrame ").count == 2)
     }
 
+    @Test("A saved capture's Time Shift reaches exported and printed times")
+    func timeCorrectionReachesExportedTimes() throws {
+        let url = try Self.capture(ports: [53, 443])
+        defer { try? FileManager.default.removeItem(at: url) }
+        let correction = try CaptureTimeCorrection(shiftBy: -3_600)
+
+        var uncorrected = Data()
+        _ = try DissectionExporter.export(from: url, format: .text) { uncorrected += $0 }
+        let original = try #require(String(bytes: uncorrected, encoding: .utf8))
+        #expect(original.contains("2027-01-15T08:00:00.000000Z"))
+
+        var corrected = Data()
+        _ = try DissectionExporter.export(
+            from: url, format: .text, timeCorrection: correction
+        ) { corrected += $0 }
+        let text = try #require(String(bytes: corrected, encoding: .utf8))
+        #expect(text.contains("2027-01-15T07:00:00.000000Z"))
+        #expect(!text.contains("2027-01-15T08:00:00.000000Z"))
+
+        var summaries = Data()
+        _ = try DissectionExporter.export(
+            from: url, format: .text, textLayout: .summary, timeCorrection: correction
+        ) { summaries += $0 }
+        let summaryText = try #require(String(bytes: summaries, encoding: .utf8))
+        #expect(summaryText.contains("2027-01-15T07:00:00.000000Z"))
+
+        var json = Data()
+        _ = try DissectionExporter.export(
+            from: url, format: .json, timeCorrection: correction
+        ) { json += $0 }
+        let jsonText = try #require(String(bytes: json, encoding: .utf8))
+        #expect(jsonText.contains("2027-01-15T07:00:00.000000Z"))
+        #expect(!jsonText.contains("2027-01-15T08:00:00.000000Z"))
+
+        var csv = Data()
+        _ = try DissectionExporter.export(
+            from: url, format: .csv, timeCorrection: correction
+        ) { csv += $0 }
+        let csvText = try #require(String(bytes: csv, encoding: .utf8))
+        #expect(csvText.contains("2027-01-15T07:00:00.000000Z"))
+    }
+
     @Test
     func jsonIsOneObjectPerFrame() throws {
         let url = try Self.capture(ports: [53, 443, 80])
