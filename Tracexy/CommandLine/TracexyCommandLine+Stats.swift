@@ -35,6 +35,7 @@ enum StatisticsTap: Equatable {
         case "ipv6": .ipv6
         case "tcp": .tcp
         case "udp": .udp
+        case "sctp": .sctp
         default: nil
         }
         if let tree = Self.ipTree(parts.first ?? "") {
@@ -72,13 +73,14 @@ enum StatisticsTap: Equatable {
 
     // MARK: Internal
 
-    static let names = "conv,ipv4|ipv6|tcp|udp, endpoints,ipv4|ipv6|tcp|udp, plen, phs, expert, dns, http, "
+    static let names = "conv,ipv4|ipv6|tcp|udp|sctp, endpoints,ipv4|ipv6|tcp|udp|sctp, plen, phs, expert, "
+        + "dns, http, "
         + "smb2,srt, ldap,srt, kerberos,srt, icmp,srt, icmpv6,srt, ip_hosts|ptype|ip_srcdst|dests|ip_ttl (and "
         + "ipv6_hosts|ipv6_ptype|ipv6_srcdst|ipv6_dests|ipv6_hop), http_seq, sip,stat, rtp,streams"
 
     /// Every tap name `--tap` accepts, one each.
     static var allNames: [String] {
-        let kinds = ["ipv4", "ipv6", "tcp", "udp"]
+        let kinds = ["ipv4", "ipv6", "tcp", "udp", "sctp"]
         let ip = IPStatistics.Tree.allCases.map(\.tapName)
             + ["ipv6_hosts", "ipv6_ptype", "ipv6_srcdst", "ipv6_dests", "ipv6_hop"]
         return kinds.map { "conv,\($0)" } + kinds.map { "endpoints,\($0)" }

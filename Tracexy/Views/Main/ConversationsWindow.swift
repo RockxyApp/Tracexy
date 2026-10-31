@@ -19,7 +19,7 @@ struct TrafficKindPicker: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
-        .help("Network addresses (IPv4, IPv6) or addresses with their port (TCP, UDP)")
+        .help("Network addresses (IPv4, IPv6) or addresses with their port (TCP, UDP, SCTP)")
     }
 }
 

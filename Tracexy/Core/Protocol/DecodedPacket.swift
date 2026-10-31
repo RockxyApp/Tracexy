@@ -228,6 +228,10 @@ nonisolated struct DecodedPacket {
     /// Typed ICMP/ICMPv6 family/type/code facts. `nil` for non-ICMP packets or when
     /// both fixed bytes were not present. Family is the already-known IP protocol.
     var icmpFacts: ICMPMessageFacts?
+    /// Typed SCTP common-header and chunk-type facts (RFC 4960). `nil` for non-SCTP
+    /// packets and when the fixed 12-byte common header was not fully captured.
+    /// Session logic reads control chunks from here, never from a rendered field.
+    var sctpFacts: SCTPFacts?
     /// Neutral, decode-derived TLS record facts, one per recognized record in this
     /// packet's coalesced TLS payload. Bounded to the same 32-record walk as the
     /// renderer; these are numeric wire facts only — no policy label, SNI, or payload.

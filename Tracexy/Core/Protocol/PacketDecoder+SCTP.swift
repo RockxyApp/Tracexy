@@ -48,6 +48,7 @@ extension PacketDecoder {
         var offset = 12
         var chunkCount = 0
         var omittedChunks = false
+        var chunkTypes: [UInt8] = []
         while offset < buf.length {
             guard buf.length - offset >= 4 else {
                 packet.decodeStop = incompleteStop("SCTP packet ends with an incomplete chunk header")
@@ -87,6 +88,7 @@ extension PacketDecoder {
                 try fields.append(ranged("DATA PPI", "\(buf.u32(offset + 12))", in: buf, at: offset + 12, 4))
             }
             chunkCount += 1
+            chunkTypes.append(chunkType)
             let paddedLength = (chunkLength + 3) & ~3
             // The last chunk may omit final padding; its declared length still
             // excludes padding, and no padding byte is treated as a new chunk.
@@ -105,6 +107,24 @@ extension PacketDecoder {
         packet.transport = .sctp
         packet.sourceEndpoint = IPEndpoint(ip: src, port: sourcePort)
         packet.destinationEndpoint = IPEndpoint(ip: dst, port: destinationPort)
+        // The tuple is what makes an SCTP flow a session rather than a frame that
+        // can only be inspected: endpoints, bytes and duration then fold exactly as
+        // they do for TCP and UDP. It claims no association — the verification tag
+        // identifies one, and a tag is not an endpoint pair — so a path that
+        // reuses the same port pair for a new association folds into the same
+        // session, like a reused TCP port pair without a SYN.
+        packet.fiveTuple = FiveTuple(
+            proto: .sctp,
+            source: IPEndpoint(ip: src, port: sourcePort),
+            destination: IPEndpoint(ip: dst, port: destinationPort)
+        )
+        packet.sctpFacts = SCTPFacts(
+            sourcePort: sourcePort,
+            destinationPort: destinationPort,
+            verificationTag: verificationTag,
+            chunkTypes: chunkTypes,
+            chunksOmitted: omittedChunks
+        )
         if omittedChunks {
             fields.append(DecodedField(name: "Chunks Omitted", value: "At least 1 (retention limit: 64)"))
         }
