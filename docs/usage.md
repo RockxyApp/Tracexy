@@ -154,7 +154,7 @@ payload protocol identifier (PPI). That mode adds one DATA chunk per input packe
 with synthetic per-direction TSNs starting at zero and a zero verification tag.
 The generated headers do not establish an SCTP association or prove delivery.
 SCTP flows do fold into sessions on their endpoint pair, with directional packets and
-bytes and an SCTP tab in **View → Conversations** and **View → Endpoints**; an observed
+bytes and an SCTP tab in **Statistics → Conversations** and **Statistics → Endpoints**; an observed
 INIT chunk names the side that opened the association and an observed ABORT marks the
 session as an error. Sessions are keyed on the endpoint pair rather than the
 verification tag, so successive associations between the same ports share one session,

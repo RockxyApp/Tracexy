@@ -66,8 +66,8 @@ packets or History; see [Projects](usage.md#projects).
 
 ## Recover from an import problem
 
-- **Unsupported compression:** Tracexy expands gzip only. For zstd, lz4 or another
-  container, expand it locally or save a separate PCAPNG in the source app.
+- **Unsupported compression:** Tracexy expands gzip and LZ4 frames. For zstd, bzip2 or
+  another container, expand it locally or save a separate PCAPNG in the source app.
 - **Session archive rejected:** open it in TCP Viewer and export PCAPNG. Tracexy
   accepts only the observed schema-1 `TCPViewerSession` layout and refuses newer,
   ambiguous, encrypted, ZIP64, multi-disk or unsafe archives instead of guessing.
