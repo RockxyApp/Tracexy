@@ -726,7 +726,7 @@ lowers the confidence and shows the competing names rather than silently guessin
 
 The control area above the session list has two rounded surfaces. The first combines the stable command
 cluster with search; the second owns the **protocol/category pills**, which narrow by
-protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN — HTTP/2 where the switch is visible: the
+protocol (DNS, TCP, UDP, TLS, HTTP, HTTP/2, QUIC, WebSocket, STUN, SCTP — HTTP/2 where the switch is visible: the
 cleartext connection preface, a `101` agreeing to `Upgrade: h2c`, or a TLS 1.2 ServerHello choosing ALPN
 `h2` (TLS 1.3 encrypts that choice);
 WebSocket where an HTTP/1 `Upgrade: websocket` is seen), by evidence-backed **Findings**,

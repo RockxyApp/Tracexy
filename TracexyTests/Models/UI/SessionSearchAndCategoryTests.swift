@@ -123,6 +123,23 @@ struct SessionCategoryFilterTests {
         #expect(!MainContentCoordinator.categoryFilterMatches(icmp, categories: categories))
     }
 
+    @Test("The SCTP chip selects SCTP sessions and nothing else")
+    func sctpChipSelectsSCTPSessions() {
+        let categories: Set<SessionFilterCategory> = [.sctp]
+        let sctp = makeSession(protocols: [.ipv4, .sctp])
+        let udp = makeSession(protocols: [.ipv4, .udp])
+        #expect(MainContentCoordinator.categoryFilterMatches(sctp, categories: categories))
+        #expect(!MainContentCoordinator.categoryFilterMatches(udp, categories: categories))
+    }
+
+    @Test("SCTP is an offered protocol chip with its own title and kind")
+    func sctpIsAnOfferedProtocolChip() {
+        #expect(SessionFilterCategory.protocolFilters.contains(.sctp))
+        #expect(SessionFilterCategory.sctp.title == "SCTP")
+        #expect(SessionFilterCategory.sctp.protocolKind == .sctp)
+        #expect(!SessionFilterCategory.sctp.isInvestigationFilter)
+    }
+
     @Test("A protocol chip and Errors combine with AND")
     func protocolAndErrors() {
         let categories: Set<SessionFilterCategory> = [.tcp, .errors]
