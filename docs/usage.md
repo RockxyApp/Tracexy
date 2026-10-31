@@ -152,9 +152,14 @@ adds the SCTP common header, CRC32C, IP header and optional Ethernet header. For
 application bytes, choose **IPv4/IPv6 + SCTP DATA from payload** and enter a decimal
 payload protocol identifier (PPI). That mode adds one DATA chunk per input packet,
 with synthetic per-direction TSNs starting at zero and a zero verification tag.
-The generated headers do not establish an SCTP association or prove delivery;
-Tracexy currently exposes bounded SCTP frame fields but does not fold SCTP sessions
-or reassemble its streams. The managed filename includes `synthetic-sctp`.
+The generated headers do not establish an SCTP association or prove delivery.
+SCTP flows do fold into sessions on their endpoint pair, with directional packets and
+bytes and an SCTP tab in **View → Conversations** and **View → Endpoints**; an observed
+INIT chunk names the side that opened the association and an observed ABORT marks the
+session as an error. Sessions are keyed on the endpoint pair rather than the
+verification tag, so successive associations between the same ports share one session,
+and SCTP streams are neither reassembled nor available to Follow.
+The managed filename includes `synthetic-sctp`.
 Choose the source's **Offset format**: hexadecimal (default), decimal, octal, or **No offsets (one frame)**.
 In the first three modes each row starts with an offset in that base; an offset of zero starts a new packet.
 No-offset mode joins all non-comment byte rows into exactly one frame. It accepts whitespace-separated
@@ -838,7 +843,8 @@ are under **Copy ▸ As Session Expression**, for pasting into a saved expressio
 
 **Saved ▸ Import Wireshark Display Filters…** reads a Wireshark `dfilters` file and saves each filter that
 has a session meaning as a Session Expression under its own name: addresses (`ip.addr`, `ip.src`,
-`ipv6.dst`, CIDR and sets), ports (`tcp.port`, `udp.dstport`, ranges and sets, kept to their protocol),
+`ipv6.dst`, CIDR and sets), ports (`tcp.port`, `udp.dstport`, `sctp.port`, ranges and sets, kept to their
+protocol),
 protocol names (`ssl` becomes `tls`, `bootp` becomes `dhcp`), `http.request.method`, `http.response.code`,
 the names a session is known by (`http.host`, the TLS server name, `dns.qry.name`), and the TCP, DNS, ICMP
 and TLS conditions Tracexy reports as findings (`tcp.analysis.retransmission` becomes
@@ -1387,7 +1393,7 @@ the window, and prints to standard output: `summary` gives frames, sessions and 
 sessions the `--expression` matches (for example `finding == retransmission and port == 443`). It never
 captures, never writes a file and never touches a Project, History, Library or setting. `stats` prints the
 Statistics windows — the counterparts of tshark's `-z` taps, and tshark's spellings are accepted:
-`conv,ipv4|ipv6|tcp|udp` (Conversations; `conv,ip` too), `endpoints,…` (Endpoints), `plen` (Packet
+`conv,ipv4|ipv6|tcp|udp|sctp` (Conversations; `conv,ip` too), `endpoints,…` (Endpoints), `plen` (Packet
 Lengths), `phs` (Protocol Hierarchy; `io,phs` too), `expert` (Findings by kind), `dns` (DNS Lookups),
 `http` (Message Counts), `ip_hosts`, `ptype`, `ip_srcdst`, `dests`, `ip_ttl` and their `ipv6_…` / `ipv6_hop` forms
 (IP Statistics), `http_seq` (HTTP Request Sequences), `sip,stat` (SIP), `rtp,streams` (RTP Streams) and
@@ -1559,7 +1565,9 @@ before the fields can disprove a match, the result is unknown, including under n
 `tcp.window_size_value == 0` (the observed unscaled 16-bit TCP header value),
 `tcp.seq_raw == 1000` and `tcp.ack_raw == 2000` (the observed raw 32-bit TCP header values),
 `tcp.srcport == 50000`, `tcp.dstport == 443`, `udp.port == 53`, `udp.srcport == 53`,
-`udp.dstport == 5353`, `ip.addr == 192.0.2.10` (source or destination), `ip.src == 192.0.2.10`,
+`udp.dstport == 5353`, `sctp.port == 2905`, `sctp.srcport == 50000`, `sctp.dstport == 2905`
+(read from the SCTP common header, so a frame cut before its ports were captured is unknown rather than
+no match), `ip.addr == 192.0.2.10` (source or destination), `ip.src == 192.0.2.10`,
 `ip.dst == 198.51.100.7`, and `ip.id == 4660` (the observed unsigned IPv4 Identification, compared as a
 decimal value; it matches any decoded IPv4 header). A match does not establish reassembly or identify a
 unique datagram. **Identification** in the IPv4 decode tree is shown in hexadecimal and offers Apply/Prepare
@@ -1857,7 +1865,7 @@ window to a stream; Copy and Save as CSV write Wireshark's columns.
 
 **Statistics ▸ IP Statistics** prints Wireshark's IPv4 and IPv6 Statistics trees for the frames in view. Pick
 IPv4 or IPv6 and one of five trees: **All Addresses** (every source or destination address), **Protocol
-Types** (TCP, UDP or NONE), **Source and Destination Addresses**, **Destinations and Ports** (each destination
+Types** (TCP, UDP, SCTP or NONE), **Source and Destination Addresses**, **Destinations and Ports** (each destination
 under its protocol and port) and **TTLs** or **Hop Limits** (each source under the value it arrived with, and
 each destination under that). Counts are IP headers as Wireshark counts them — a GRE, VXLAN, IP-in-IP or 6in4 packet counts
 once per IP header, under its innermost addresses (so 6in4 lists IPv6 addresses in the IPv4 trees) — and rows with equal counts keep Wireshark's order, so the tree reads as `tshark -z ip_hosts,tree` and its siblings do. Turn
@@ -2045,8 +2053,9 @@ stage that happened before capture began is simply absent.
 **Statistics ▸ Conversations** lists the traffic between each pair of addresses in the sessions in view;
 **Statistics ▸ Endpoints** lists each address on its own. A segmented control in the toolbar switches
 between Ethernet (MAC addresses from each session's representative frame, ARP included), IPv4 and IPv6
-(addresses only) and TCP and UDP (address and port), each labelled with its row count; Ethernet rows narrow
-the main window with `mac == …`.
+(addresses only) and TCP, UDP and SCTP (address and port), each labelled with its row count; Ethernet rows
+narrow the main window with `mac == …`. An SCTP row covers one endpoint pair, not one association: the
+verification tag is decoded in the frame but is not part of session identity.
 Conversations show frames and bytes in both directions — A is the side that started the first session
 between the two — with the relative start (seconds from the capture's first timed frame), duration and mean
 bit rate per direction. Endpoints show frames and bytes sent (Tx) and received (Rx), how many sessions
