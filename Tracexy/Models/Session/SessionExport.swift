@@ -127,7 +127,12 @@ nonisolated enum SessionExportError: LocalizedError {
     /// no snap length yields "captured nothing of a longer frame", so the lengths
     /// cannot be preserved exactly.
     case untimedFrameNotRepresentable
+    case untimedPacketIDNotRepresentable
+    case untimedDirectionNotRepresentable
+    case directionRequiresPcapng
+    case packetIDRequiresPcapng
     case timestampNotRepresentable
+    case correctedTimeRequiresProvenanceFormat
 
     // MARK: Internal
 
@@ -160,12 +165,32 @@ nonisolated enum SessionExportError: LocalizedError {
             String(
                 localized: "This capture contains a time outside the range supported by this export format. Save the original capture to preserve it."
             )
+        case .correctedTimeRequiresProvenanceFormat:
+            String(
+                localized: "A time-corrected session needs the native session document or PCAPNG to preserve correction provenance."
+            )
         case .untimedFrameNotRepresentable:
             String(
                 localized: """
                 This session contains an untimed frame whose captured length can’t be preserved in pcapng. \
                 Export the original capture file instead, which keeps its bytes untouched.
                 """
+            )
+        case .untimedPacketIDNotRepresentable:
+            String(
+                localized: "An untimed frame has a packet ID, but a pcapng Simple Packet Block cannot store it. Keep the original capture or supply real capture times."
+            )
+        case .untimedDirectionNotRepresentable:
+            String(
+                localized: "An untimed frame has capture direction, but a pcapng Simple Packet Block cannot store that direction. Add real timestamps or keep the original capture."
+            )
+        case .directionRequiresPcapng:
+            String(
+                localized: "This capture includes interface direction, which classic pcap cannot represent. Use pcapng to preserve it."
+            )
+        case .packetIDRequiresPcapng:
+            String(
+                localized: "This capture includes packet IDs, which classic pcap cannot represent. Use pcapng to preserve them."
             )
         }
     }
@@ -204,11 +229,19 @@ nonisolated enum SessionExporter {
     /// prior record, exactly as opening the file does.
     static func frames(
         matching sessionID: SessionSummary.ID,
-        streamingFrom url: URL
+        streamingFrom url: URL,
+        expectedIdentity: PcapFileIdentity? = nil,
+        timeCorrection: CaptureTimeCorrection? = nil
     )
         throws -> (linkType: UInt32, frames: [CapturedFrame])
     {
-        let reader = try CaptureStreamReader(contentsOf: url)
+        let reader = try CaptureStreamReader(
+            contentsOf: url,
+            configuration: .init(timestampTransform: timeCorrection?.streamTransform)
+        )
+        guard expectedIdentity.map({ reader.identity.matches($0) }) ?? true else {
+            throw FollowStreamError.identityMismatch
+        }
         var matched: [(ordinal: UInt64, frame: CapturedFrame)] = []
         var sequential = SequentialFrameDecoder(retainsFragmentFrames: true)
         var ordinal: UInt64 = 0
@@ -247,7 +280,8 @@ nonisolated enum SessionExporter {
         defaultLinkType: UInt32,
         format: SessionExportFormat,
         privacy: SessionExportPrivacyPolicy = .none,
-        notes: [SessionExportNote] = []
+        notes: [SessionExportNote] = [],
+        timeCorrectionProvenance: String? = nil
     )
         throws -> SessionExportArtifact
     {
@@ -263,9 +297,13 @@ nonisolated enum SessionExporter {
                 frames: frames,
                 defaultLinkType: defaultLinkType,
                 privacy: privacy,
-                notes: notes
+                notes: notes,
+                timeCorrectionProvenance: timeCorrectionProvenance
             )
         case .pcap:
+            guard timeCorrectionProvenance == nil else {
+                throw SessionExportError.correctedTimeRequiresProvenanceFormat
+            }
             // Raw formats emit unmodified on-wire bytes; we cannot honor a
             // privacy policy in place, so refuse rather than silently leak.
             guard !privacy.hasProtections else {
@@ -280,7 +318,9 @@ nonisolated enum SessionExporter {
             guard !privacy.hasProtections else {
                 throw SessionExportError.rawExportRequiresAcknowledgement
             }
-            data = try PcapngWriter.data(defaultLinkType: defaultLinkType, frames: frames)
+            data = try PcapngWriter.data(
+                defaultLinkType: defaultLinkType, frames: frames, comment: timeCorrectionProvenance
+            )
         }
 
         return SessionExportArtifact(
@@ -304,6 +344,7 @@ nonisolated enum SessionExporter {
         /// The investigator's notes on this session and its findings. The key is
         /// absent when there are none, so a document without notes is unchanged.
         let notes: [SessionExportNote]?
+        let timeCorrectionProvenance: String?
     }
 
     /// Protected native document. Omits the `bytes` key entirely and carries
@@ -319,6 +360,7 @@ nonisolated enum SessionExporter {
         /// as written: masking and stripping apply to decoded evidence, not to them,
         /// and ``PrivacyMetadata/includesInvestigationNotes`` says so.
         let notes: [SessionExportNote]?
+        let timeCorrectionProvenance: String?
     }
 
     /// Machine-readable record of the applied protections. `includesRawFrameBytes`
@@ -419,7 +461,8 @@ nonisolated enum SessionExporter {
         frames: [CapturedFrame],
         defaultLinkType: UInt32,
         privacy: SessionExportPrivacyPolicy,
-        notes: [SessionExportNote]
+        notes: [SessionExportNote],
+        timeCorrectionProvenance: String?
     )
         throws -> Data
     {
@@ -450,7 +493,8 @@ nonisolated enum SessionExporter {
                         bytes: Data(frame.bytes)
                     )
                 },
-                notes: exportedNotes
+                notes: exportedNotes,
+                timeCorrectionProvenance: timeCorrectionProvenance
             )
             return try encoder.encode(document)
         }
@@ -475,7 +519,8 @@ nonisolated enum SessionExporter {
                     processName: frame.processName
                 )
             },
-            notes: exportedNotes
+            notes: exportedNotes,
+            timeCorrectionProvenance: timeCorrectionProvenance
         )
         return try encoder.encode(document)
     }

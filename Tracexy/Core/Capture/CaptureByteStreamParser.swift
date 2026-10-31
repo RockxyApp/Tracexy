@@ -215,12 +215,52 @@ nonisolated struct CaptureByteStreamParser {
         guard captured <= body.upperBound - start else {
             throw Failure(message: "The pipe sent a packet longer than its block.")
         }
+        let optionsStart = start + (captured + 3) / 4 * 4
+        guard optionsStart <= body.upperBound else {
+            throw Failure(message: "The pipe sent a packet with truncated padding.")
+        }
+        var direction: CaptureDirection = .unknown
+        var sawFlags = false
+        var packetID: UInt64?
+        var option = optionsStart
+        while option + 4 <= body.upperBound {
+            let code = u16(at: option)
+            let size = Int(u16(at: option + 2))
+            option += 4
+            guard size <= body.upperBound - option,
+                  (size + 3) / 4 * 4 <= body.upperBound - option else
+            {
+                throw Failure(message: "The pipe sent an option longer than its packet block.")
+            }
+            if code == 0 {
+                guard size == 0 else {
+                    throw Failure(message: "The pipe sent a malformed option terminator.")
+                }
+                break
+            }
+            if code == 2 {
+                guard size == 4, !sawFlags else {
+                    throw Failure(message: "The pipe sent invalid or duplicate packet direction flags.")
+                }
+                direction = CaptureDirection(epbFlags: u32(at: option, little: littleEndian))
+                sawFlags = true
+            } else if code == 5 {
+                guard size == 8, packetID == nil else {
+                    throw Failure(message: "The pipe sent an invalid or duplicate packet ID.")
+                }
+                let first = UInt64(u32(at: option, little: littleEndian))
+                let second = UInt64(u32(at: option + 4, little: littleEndian))
+                packetID = littleEndian ? (second << 32 | first) : (first << 32 | second)
+            }
+            option += (size + 3) / 4 * 4
+        }
         let ticks = high << 32 | low
         let time = Double(ticks / interface.ticksPerSecond)
             + Double(ticks % interface.ticksPerSecond) / Double(interface.ticksPerSecond)
         let frame = CapturedFrame(
             bytes: Array(buffer[start ..< start + captured]), timestamp: Date(timeIntervalSince1970: time),
-            originalLength: max(original, captured), linkType: interface.linkType
+            originalLength: max(original, captured), linkType: interface.linkType,
+            direction: direction, packetID: packetID
         )
         return Step(value: Frame(frame: frame, linkType: interface.linkType))
     }

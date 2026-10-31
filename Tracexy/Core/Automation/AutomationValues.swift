@@ -68,6 +68,8 @@ nonisolated enum AutomationCaptureTimeBasis: String, Codable, Sendable, Equatabl
     case captured
     case opened
     case legacy
+    case correctedCaptured
+    case openedCorrected
 
     // MARK: Lifecycle
 
@@ -76,6 +78,8 @@ nonisolated enum AutomationCaptureTimeBasis: String, Codable, Sendable, Equatabl
         case .captured: self = .captured
         case .opened: self = .opened
         case .legacy: self = .legacy
+        case .correctedCaptured: self = .correctedCaptured
+        case .openedCorrected: self = .openedCorrected
         }
     }
 }

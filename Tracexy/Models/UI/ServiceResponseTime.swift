@@ -51,6 +51,20 @@ nonisolated enum ServiceResponseTime {
         }
     }
 
+    enum ScanError: LocalizedError {
+        case sourceUnavailable(String)
+        case incomplete
+
+        // MARK: Internal
+
+        var errorDescription: String? {
+            switch self {
+            case let .sourceUnavailable(reason): reason
+            case .incomplete: String(localized: "The capture ended before the complete response-time scan finished.")
+            }
+        }
+    }
+
     struct Row: Identifiable, Hashable, Sendable {
         let index: Int
         let procedure: String
@@ -68,8 +82,216 @@ nonisolated enum ServiceResponseTime {
         }
     }
 
+    /// Capture-order SMB2 SRT reducer. It retains only unmatched request timestamps
+    /// and per-command aggregates, so large captures do not need a frame-row array.
+    struct StreamingSMB2Accumulator: Sendable {
+        // MARK: Lifecycle
+
+        init(maximumPendingRequests: Int = Self.maximumPendingRequests) {
+            self.maximumPendingRequests = min(max(maximumPendingRequests, 0), Self.maximumPendingRequests)
+        }
+
+        // MARK: Internal
+
+        struct Result: Sendable {
+            let rows: [Row]
+            let omittedRequests: Int
+        }
+
+        static let maximumPendingRequests = 200_000
+
+        private(set) var omittedRequests = 0
+
+        mutating func record(_ row: CaptureFrameRow) {
+            guard let session = row.sessionID, let time = row.provenance.timestamp,
+                  case let .smb2(messageID, command, isResponse, isInterim) = row.srt else
+            {
+                return
+            }
+            guard command != 0x0C, command != 0x12 else {
+                return
+            }
+            let key = RequestKey(session: session, messageID: messageID)
+            if !isResponse {
+                if pending[key] != nil {
+                    pending[key] = time
+                } else if pending.count < maximumPendingRequests {
+                    pending[key] = time
+                } else {
+                    omittedRequests += 1
+                }
+            } else if !isInterim, let start = pending.removeValue(forKey: key) {
+                let duration = microseconds(from: start, to: time)
+                var aggregate = aggregates[command, default: Aggregate()]
+                aggregate.calls += 1
+                aggregate.minimum = min(aggregate.minimum, duration)
+                aggregate.maximum = max(aggregate.maximum, duration)
+                aggregate.sum += duration
+                aggregates[command] = aggregate
+            }
+        }
+
+        func result() -> Result {
+            let rows = aggregates.keys.sorted().compactMap { command -> Row? in
+                guard let aggregate = aggregates[command], aggregate.calls > 0 else {
+                    return nil
+                }
+                return Row(
+                    index: command, procedure: procedureName(.smb2, command), calls: aggregate.calls,
+                    minimum: aggregate.minimum / 1e6, maximum: aggregate.maximum / 1e6,
+                    sum: aggregate.sum / 1e6
+                )
+            }
+            return Result(rows: rows, omittedRequests: omittedRequests)
+        }
+
+        // MARK: Private
+
+        private struct RequestKey: Hashable, Sendable {
+            let session: UUID
+            let messageID: UInt64
+        }
+
+        private struct Aggregate {
+            var calls = 0
+            var minimum = Double.infinity
+            var maximum = -Double.infinity
+            var sum = 0.0
+        }
+
+        private var pending: [RequestKey: Date] = [:]
+        private var aggregates: [Int: Aggregate] = [:]
+        private let maximumPendingRequests: Int
+    }
+
+    /// Bounded capture-order LDAP/Kerberos reducer. LDAP Search keeps its request
+    /// correlation through every entry/reference/intermediate reply; Kerberos only
+    /// retains the latest AS/TGS request per session.
+    struct StreamingAccumulator: Sendable {
+        // MARK: Lifecycle
+
+        init(service: Service, maximumCorrelations: Int = Self.maximumCorrelations) {
+            self.service = service
+            self.maximumCorrelations = min(max(maximumCorrelations, 0), Self.maximumCorrelations)
+        }
+
+        // MARK: Internal
+
+        struct Result: Sendable {
+            let rows: [Row]
+            let omittedCorrelations: Int
+        }
+
+        static let maximumCorrelations = 200_000
+
+        private(set) var omittedCorrelations = 0
+
+        mutating func record(_ row: CaptureFrameRow) {
+            guard let session = row.sessionID, let time = row.provenance.timestamp, let fact = row.srt else {
+                return
+            }
+            switch (service, fact) {
+            case let (.ldap, .ldap(messageID, operation)):
+                recordLDAP(session: session, time: time, messageID: messageID, operation: operation)
+            case let (.kerberos, .kerberos(type)):
+                recordKerberos(session: session, time: time, type: type)
+            default:
+                break
+            }
+        }
+
+        func result() -> Result {
+            let rows = aggregates.keys.sorted().compactMap { index -> Row? in
+                guard let aggregate = aggregates[index], aggregate.calls > 0 else {
+                    return nil
+                }
+                return Row(
+                    index: index, procedure: procedureName(service, index), calls: aggregate.calls,
+                    minimum: aggregate.minimum / 1e6, maximum: aggregate.maximum / 1e6,
+                    sum: aggregate.sum / 1e6
+                )
+            }
+            return Result(rows: rows, omittedCorrelations: omittedCorrelations)
+        }
+
+        // MARK: Private
+
+        private struct RequestKey: Hashable, Sendable {
+            let session: UUID
+            let messageID: Int
+        }
+
+        private struct Request: Sendable {
+            let time: Date
+            let procedure: Int
+        }
+
+        private struct Aggregate: Sendable {
+            var calls = 0
+            var minimum = Double.infinity
+            var maximum = -Double.infinity
+            var sum = 0.0
+        }
+
+        private let service: Service
+        private let maximumCorrelations: Int
+        private var ldapRequests: [RequestKey: Request] = [:]
+        private var kerberosRequests: [UUID: (Date, Int)] = [:]
+        private var aggregates: [Int: Aggregate] = [:]
+
+        private mutating func recordLDAP(session: UUID, time: Date, messageID: Int, operation: Int) {
+            let key = RequestKey(session: session, messageID: messageID)
+            if ldapProcedures[operation] != nil {
+                if ldapRequests[key] != nil || ldapRequests.count < maximumCorrelations {
+                    ldapRequests[key] = Request(time: time, procedure: operation)
+                } else {
+                    omittedCorrelations += 1
+                }
+                return
+            }
+            guard ldapResponses.contains(operation), let request = ldapRequests[key] else {
+                return
+            }
+            addSample(request.procedure, microseconds(from: request.time, to: time))
+            // Search requests finish only at SearchResultDone. IntermediateResponse
+            // is never terminal for a request.
+            if request.procedure == 3 ? operation == 5 : operation != 25 {
+                ldapRequests.removeValue(forKey: key)
+            }
+        }
+
+        private mutating func recordKerberos(session: UUID, time: Date, type: Int) {
+            guard [10, 11, 12, 13, 30].contains(type) else {
+                return
+            }
+            if type == 10 || type == 12 {
+                if kerberosRequests[session] != nil || kerberosRequests.count < maximumCorrelations {
+                    kerberosRequests[session] = (time, type)
+                } else {
+                    omittedCorrelations += 1
+                }
+                return
+            }
+            guard let (start, request) = kerberosRequests.removeValue(forKey: session),
+                  let index = kerberosIndex(request: request, reply: type) else
+            {
+                return
+            }
+            addSample(index, microseconds(from: start, to: time))
+        }
+
+        private mutating func addSample(_ index: Int, _ duration: Double) {
+            var aggregate = aggregates[index, default: Aggregate()]
+            aggregate.calls += 1
+            aggregate.minimum = min(aggregate.minimum, duration)
+            aggregate.maximum = max(aggregate.maximum, duration)
+            aggregate.sum += duration
+            aggregates[index] = aggregate
+        }
+    }
+
     static func table(_ service: Service, rows: [CaptureFrameRow]) -> [Row] {
-        var samples: [Int: [Int64]] = [:]
+        var samples: [Int: [Double]] = [:]
         let frames = rows.compactMap { row -> (UUID, Date, SRTFrameFact)? in
             guard let session = row.sessionID, let time = row.provenance.timestamp, let fact = row.srt else {
                 return nil
@@ -83,11 +305,12 @@ nonisolated enum ServiceResponseTime {
                 guard case let .smb2(messageID, command, isResponse, isInterim) = fact else {
                     continue
                 }
+                guard command != 0x0C, command != 0x12 else {
+                    continue
+                }
                 if !isResponse {
                     pending[session, default: [:]][messageID] = time
-                } else if !isInterim, let start = pending[session]?.removeValue(forKey: messageID),
-                          command != 0x0C, command != 0x12
-                {
+                } else if !isInterim, let start = pending[session]?.removeValue(forKey: messageID) {
                     samples[command, default: []].append(microseconds(from: start, to: time))
                 }
             }
@@ -101,6 +324,9 @@ nonisolated enum ServiceResponseTime {
                     requests[session, default: [:]][messageID] = (time, operation)
                 } else if ldapResponses.contains(operation), let (start, request) = requests[session]?[messageID] {
                     samples[request, default: []].append(microseconds(from: start, to: time))
+                    if request == 3 ? operation == 5 : operation != 25 {
+                        requests[session]?.removeValue(forKey: messageID)
+                    }
                 }
             }
         case .kerberos:
@@ -109,10 +335,18 @@ nonisolated enum ServiceResponseTime {
                 guard case let .kerberos(type) = fact else {
                     continue
                 }
-                if let (start, request) = previous[session], let index = kerberosIndex(request: request, reply: type) {
+                guard [10, 11, 12, 13, 30].contains(type) else {
+                    continue
+                }
+                if type == 10 || type == 12 {
+                    previous[session] = (time, type)
+                    continue
+                }
+                if let (start, request) = previous.removeValue(forKey: session),
+                   let index = kerberosIndex(request: request, reply: type)
+                {
                     samples[index, default: []].append(microseconds(from: start, to: time))
                 }
-                previous[session] = (time, type)
             }
         case .icmp,
              .icmpv6:
@@ -124,7 +358,7 @@ nonisolated enum ServiceResponseTime {
             }
             return Row(
                 index: index, procedure: procedureName(service, index), calls: times.count,
-                minimum: Double(low) / 1e6, maximum: Double(high) / 1e6, sum: Double(times.reduce(0, +)) / 1e6
+                minimum: low / 1e6, maximum: high / 1e6, sum: times.reduce(0, +) / 1e6
             )
         }
     }
@@ -134,13 +368,18 @@ nonisolated enum ServiceResponseTime {
         String(format: "%.6f", value)
     }
 
-    static func csv(_ service: Service, _ rows: [Row]) -> String {
+    static func csv(_ service: Service, _ rows: [Row], omittedRequests: Int = 0) -> String {
         let header = ["Index", service.procedureTitle, "Calls", "Min SRT", "Max SRT", "Avg SRT", "Sum SRT"]
-        let lines = rows.map { row in
-            [
+            + (omittedRequests > 0 ? [service == .smb2 ? "Omitted pending requests" : "Omitted correlations"] : [])
+        var lines = rows.map { row in
+            let cells = [
                 String(row.index), row.procedure, String(row.calls), seconds(row.minimum), seconds(row.maximum),
                 seconds(row.average), seconds(row.sum),
             ]
+            return omittedRequests > 0 ? cells + [String(omittedRequests)] : cells
+        }
+        if lines.isEmpty, omittedRequests > 0 {
+            lines.append(["", "No paired replies", "0", "", "", "", "", String(omittedRequests)])
         }
         return ([header] + lines).map { $0.map(csvField).joined(separator: ",") }
             .joined(separator: "\r\n") + "\r\n"
@@ -160,10 +399,11 @@ nonisolated enum ServiceResponseTime {
         "SetInfo", "Break",
     ]
 
-    /// Whole microseconds between two frame times — the resolution of a pcap time —
-    /// so sums do not drift.
-    private static func microseconds(from start: Date, to end: Date) -> Int64 {
-        Int64((end.timeIntervalSince(start) * 1e6).rounded())
+    /// Whole microseconds between two frame times — the resolution of a pcap time.
+    /// Keep the bounded wire-time range in Double so distant, valid PCAPNG times do
+    /// not trap while narrowing to Int64 or summing multiple service samples.
+    private static func microseconds(from start: Date, to end: Date) -> Double {
+        (end.timeIntervalSince(start) * 1e6).rounded()
     }
 
     private static func csvField(_ text: String) -> String {
@@ -206,25 +446,35 @@ nonisolated struct EchoResponseTime: Equatable, Sendable {
     // MARK: Lifecycle
 
     init(rows: [CaptureFrameRow], ipv6: Bool) {
-        var pending: [UUID: [UInt64: Date]] = [:]
+        var pending: [EchoResponseTimePendingKey: Date] = [:]
         var requests = 0
         var times: [(milliseconds: Double, frame: UInt64)] = []
         for row in rows {
             guard case let .echo(isV6, isRequest, key) = row.srt, isV6 == ipv6, let session = row.sessionID,
-                  let time = row.provenance.timestamp else
+                  let time = row.provenance.timestamp, let ip = row.ip else
             {
                 continue
             }
+            let pendingKey = EchoResponseTimePendingKey(
+                session: session,
+                echoKey: key,
+                source: isRequest ? ip.source : ip.destination,
+                destination: isRequest ? ip.destination : ip.source
+            )
             if isRequest {
                 requests += 1
-                pending[session, default: [:]][key] = time
-            } else if let start = pending[session]?.removeValue(forKey: key) {
+                pending[pendingKey] = time
+            } else if let start = pending.removeValue(forKey: pendingKey) {
                 let microseconds = (time.timeIntervalSince(start) * 1e6).rounded()
                 times.append((microseconds / 1e3, row.ordinal))
             }
         }
+        self.init(requests: requests, replies: times.count, times: times)
+    }
+
+    fileprivate init(requests: Int, replies: Int, times: [(milliseconds: Double, frame: UInt64)]) {
         self.requests = requests
-        replies = times.count
+        self.replies = replies
         let sorted = times.map(\.milliseconds).sorted()
         let low = sorted.first ?? 0
         let high = sorted.last ?? 0
@@ -285,4 +535,106 @@ nonisolated struct EchoResponseTime: Equatable, Sendable {
     static func milliseconds(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
+}
+
+// MARK: - EchoResponseTimeStreamingAccumulator
+
+/// Capture-order echo SRT reducer. It keeps only request timestamps and paired
+/// durations, never frame rows. Both collections have hard ceilings so a very
+/// large or adversarial capture fails explicitly instead of exhausting RAM.
+nonisolated struct EchoResponseTimeStreamingAccumulator: Sendable {
+    // MARK: Lifecycle
+
+    init(ipv6: Bool) {
+        self.ipv6 = ipv6
+    }
+
+    // MARK: Internal
+
+    enum Failure: LocalizedError, Equatable, Sendable {
+        case pendingLimit
+        case sampleLimit
+        case incompleteEchoFacts
+
+        // MARK: Internal
+
+        var errorDescription: String? {
+            switch self {
+            case .pendingLimit:
+                String(localized: "ICMP SRT cannot track more than 200,000 pending echo requests.")
+            case .sampleLimit:
+                String(localized: "ICMP SRT cannot retain more than 200,000 reply-time samples.")
+            case .incompleteEchoFacts:
+                String(localized: "ICMP SRT is unavailable because an echo frame lacks a timestamp or session address.")
+            }
+        }
+    }
+
+    static let maximumRecords = 200_000
+
+    private(set) var requests = 0
+    private(set) var replies = 0
+    private(set) var failure: Failure?
+
+    mutating func record(_ row: CaptureFrameRow) {
+        guard failure == nil else {
+            return
+        }
+        guard case let .echo(isV6, isRequest, key) = row.srt, isV6 == ipv6 else {
+            return
+        }
+        guard let session = row.sessionID, let time = row.provenance.timestamp, let ip = row.ip else {
+            failure = .incompleteEchoFacts
+            return
+        }
+        let pendingKey = EchoResponseTimePendingKey(
+            session: session,
+            echoKey: key,
+            source: isRequest ? ip.source : ip.destination,
+            destination: isRequest ? ip.destination : ip.source
+        )
+        if isRequest {
+            requests += 1
+            if pending[pendingKey] != nil {
+                pending[pendingKey] = time
+            } else if pendingCount < Self.maximumRecords {
+                pending[pendingKey] = time
+                pendingCount += 1
+            } else {
+                failure = .pendingLimit
+            }
+            return
+        }
+        guard let start = pending.removeValue(forKey: pendingKey) else {
+            return
+        }
+        pendingCount -= 1
+        replies += 1
+        guard times.count < Self.maximumRecords else {
+            failure = .sampleLimit
+            return
+        }
+        let milliseconds = (time.timeIntervalSince(start) * 1e6).rounded() / 1e3
+        times.append((milliseconds, row.ordinal))
+    }
+
+    func result() -> EchoResponseTime {
+        EchoResponseTime(requests: requests, replies: replies, times: times)
+    }
+
+    // MARK: Private
+
+    private let ipv6: Bool
+    private var pending: [EchoResponseTimePendingKey: Date] = [:]
+    private var pendingCount = 0
+    private var times: [(milliseconds: Double, frame: UInt64)] = []
+}
+
+// MARK: - EchoResponseTimePendingKey
+
+private struct EchoResponseTimePendingKey: Hashable, Sendable {
+    let session: UUID
+    let echoKey: UInt64
+    let source: String
+    let destination: String
 }

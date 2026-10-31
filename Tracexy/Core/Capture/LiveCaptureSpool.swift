@@ -232,7 +232,9 @@ actor LiveCaptureSpool {
     /// fails as stale before any offset is read.
     func readCurrentSource(_ locator: SessionEvidenceLocator, capturedLength: Int) throws -> [UInt8] {
         if let closed = closedSegments.first(where: { $0.token == locator.sourceToken }) {
-            return try Self.read(locator, capturedLength: capturedLength, from: closed.url)
+            return try Self.read(
+                locator, capturedLength: capturedLength, from: closed.url, expectedIdentity: closed.identity
+            )
         }
         if rotatedOutTokens.contains(locator.sourceToken) {
             throw Failure.rotatedOut
@@ -256,8 +258,12 @@ actor LiveCaptureSpool {
         // Flush the append handle so a read handle opened now sees every byte
         // written so far, then bound the read against the synchronized size.
         try handle.synchronize()
+        let ownedIdentity = PcapFileIdentity.snapshot(of: handle)
         let readHandle = try FileHandle(forReadingFrom: url)
         defer { try? readHandle.close() }
+        guard PcapFileIdentity.snapshot(of: readHandle).matches(ownedIdentity) else {
+            throw Failure.invalidEvidence("the current spool path no longer names its owned file")
+        }
         let size = try readHandle.seekToEnd()
         guard end <= size else {
             throw Failure.invalidEvidence("evidence overruns the current spool file")
@@ -275,6 +281,17 @@ actor LiveCaptureSpool {
         }
         guard collected.count == capturedLength else {
             throw Failure.invalidEvidence("short read of selected evidence")
+        }
+        guard PcapFileIdentity.snapshot(of: handle).matches(ownedIdentity),
+              PcapFileIdentity.snapshot(of: readHandle).matches(ownedIdentity) else
+        {
+            throw Failure.invalidEvidence("the spool file changed during the read")
+        }
+        let pathHandle = try FileHandle(forReadingFrom: url)
+        let pathIdentity = PcapFileIdentity.snapshot(of: pathHandle)
+        try pathHandle.close()
+        guard pathIdentity.matches(ownedIdentity) else {
+            throw Failure.invalidEvidence("the spool path changed during the read")
         }
         return [UInt8](collected)
     }
@@ -350,6 +367,27 @@ actor LiveCaptureSpool {
         !closedSegments.isEmpty
     }
 
+    /// Whether a stopped capture source contains frames, including completed
+    /// file-set members after rotation. Used to gate source-wide actions that do
+    /// not require session folding (for example, exporting an SCTP-only capture).
+    func hasFrames() -> Bool {
+        frameCount > 0 || !closedSegments.isEmpty
+    }
+
+    /// Number of frames preceding the current spool member in the merged export
+    /// source, after applying the configured keep limit.
+    func currentSegmentFrameOrdinalOffset() -> UInt64? {
+        var total: UInt64 = 0
+        for segment in closedSegments {
+            let (next, overflow) = total.addingReportingOverflow(UInt64(segment.frameCount))
+            guard !overflow else {
+                return nil
+            }
+            total = next
+        }
+        return total
+    }
+
     /// Non-nil means the file is a valid recoverable prefix, not a complete
     /// capture. Callers keep this warning visible after an explicit save/export.
     func incompletenessReason() -> String? {
@@ -363,6 +401,8 @@ actor LiveCaptureSpool {
     private struct ClosedSegment: Sendable {
         let url: URL
         let token: UUID
+        let frameCount: Int
+        let identity: PcapFileIdentity
     }
 
     /// Byte length of an enhanced packet block's fixed prefix before the captured
@@ -463,7 +503,14 @@ actor LiveCaptureSpool {
         return published || staging
     }
 
-    private static func read(_ locator: SessionEvidenceLocator, capturedLength: Int, from url: URL) throws -> [UInt8] {
+    private static func read(
+        _ locator: SessionEvidenceLocator,
+        capturedLength: Int,
+        from url: URL,
+        expectedIdentity: PcapFileIdentity
+    )
+        throws -> [UInt8]
+    {
         guard capturedLength >= 0, capturedLength <= CapturedFrame.maxReasonableLength else {
             throw Failure.invalidEvidence("captured length \(capturedLength) out of bounds")
         }
@@ -474,6 +521,10 @@ actor LiveCaptureSpool {
             throw Failure.rotatedOut
         }
         defer { try? readHandle.close() }
+        let identity = PcapFileIdentity.snapshot(of: readHandle)
+        guard identity.matches(expectedIdentity) else {
+            throw Failure.invalidEvidence("the file-set path no longer names its captured file")
+        }
         let size = try readHandle.seekToEnd()
         let (end, overflow) = locator.offset.addingReportingOverflow(UInt64(capturedLength))
         guard !overflow, end <= size else {
@@ -483,6 +534,15 @@ actor LiveCaptureSpool {
         let data = try readHandle.read(upToCount: capturedLength) ?? Data()
         guard data.count == capturedLength else {
             throw Failure.invalidEvidence("short read of selected evidence")
+        }
+        guard PcapFileIdentity.snapshot(of: readHandle).matches(expectedIdentity) else {
+            throw Failure.invalidEvidence("the file-set member changed during the read")
+        }
+        let pathHandle = try FileHandle(forReadingFrom: url)
+        let pathIdentity = PcapFileIdentity.snapshot(of: pathHandle)
+        try pathHandle.close()
+        guard pathIdentity.matches(expectedIdentity) else {
+            throw Failure.invalidEvidence("the file-set path changed during the read")
         }
         return [UInt8](data)
     }
@@ -510,12 +570,30 @@ actor LiveCaptureSpool {
             return
         }
         try handle?.synchronize()
-        try handle?.close()
-        handle = nil
+        guard let openHandle = handle else {
+            throw Failure.unavailable("The local capture spool is unavailable.")
+        }
+        let identity = PcapFileIdentity.snapshot(of: openHandle)
+        let sourcePathHandle = try FileHandle(forReadingFrom: url)
+        let sourcePathIdentity = PcapFileIdentity.snapshot(of: sourcePathHandle)
+        try sourcePathHandle.close()
+        guard sourcePathIdentity.matches(identity) else {
+            throw Failure.invalidEvidence("the spool path no longer names its owned file")
+        }
+        try openHandle.close()
+        self.handle = nil
         let destination = try nextSetMemberURL(in: fileSet)
         try FileManager.default.moveItem(at: url, to: destination)
+        let movedHandle = try FileHandle(forReadingFrom: destination)
+        let movedIdentity = PcapFileIdentity.snapshot(of: movedHandle)
+        try movedHandle.close()
+        guard movedIdentity.size == identity.size else {
+            throw Failure.unavailable("The moved capture file changed size during rotation.")
+        }
         segmentSequence += 1
-        closedSegments.append(ClosedSegment(url: destination, token: token))
+        closedSegments.append(ClosedSegment(
+            url: destination, token: token, frameCount: frameCount, identity: movedIdentity
+        ))
         // The open file counts as one of the kept files.
         while fileSet.keepFiles > 0, closedSegments.count >= fileSet.keepFiles {
             let oldest = closedSegments.removeFirst()

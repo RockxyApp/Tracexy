@@ -177,6 +177,8 @@ nonisolated enum SessionEvidenceCopy {
         case .spuriousRetransmission: "Spurious retransmission observed"
         case .zeroWindow: "Zero window advertised"
         case .zeroWindowProbe: "Zero window probe observed"
+        case .zeroWindowProbeAcknowledgement: "Zero window probe acknowledged"
+        case .windowUpdate: "Receive window updated"
         case .windowFull: "Receive window full"
         case .ackedUnseenSegment: "Acknowledged bytes the capture did not see"
         case .cleartextCredential: "Credentials sent without encryption"

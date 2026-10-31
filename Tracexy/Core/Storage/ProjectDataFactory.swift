@@ -204,12 +204,22 @@ enum ProjectSettingsSeeding {
             ProjectScopedSettingsKeys.investigationNotes: Data("[]".utf8),
             ProjectScopedSettingsKeys.recentSessionExpressions: [String](),
             ProjectScopedSettingsKeys.savedSessionExpressions: Data("[]".utf8),
+            ProjectScopedSettingsKeys
+                .savedFrameFilters: Data(
+                    "{\"formatVersion\":1,\"grammarID\":\"tracexy.frame-expression\",\"grammarVersion\":1,\"filters\":[]}"
+                        .utf8
+                ),
+            ProjectScopedSettingsKeys.savedFrameColorRules: Data(
+                "{\"formatVersion\":1,\"grammarID\":\"tracexy.frame-expression\",\"grammarVersion\":1,\"rules\":[]}"
+                    .utf8
+            ),
             ProjectScopedSettingsKeys.sessionTableColumns: Data(),
             ProjectScopedSettingsKeys.addressNames: Data("{}".utf8),
             ProjectScopedSettingsKeys.subnetNames: Data("{}".utf8),
             ProjectScopedSettingsKeys.investigationViewStates: Data("{}".utf8),
             ProjectScopedSettingsKeys.sessionTimeFormat: SessionTimeFormat.timeOfDay.rawValue,
             ProjectScopedSettingsKeys.frameTimeFormat: FrameTimeFormat.sinceSessionStart.rawValue,
+            ProjectScopedSettingsKeys.frameTimePrecision: FrameTimePrecision.microseconds.rawValue,
             ProjectScopedSettingsKeys.validateChecksums: false,
             ProjectScopedSettingsKeys.packetTextZoom: 0,
             ProjectScopedSettingsKeys.byteDumpStyle: ByteDumpStyle.hex.rawValue,

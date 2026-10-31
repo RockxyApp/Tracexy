@@ -225,6 +225,12 @@ nonisolated enum CaptureImporter {
         return try publish(temporary, as: managedName, in: directory)
     }
 
+    /// Publishes a fully written generated PCAPNG through the same exclusive
+    /// no-overwrite path used for ordinary capture imports.
+    static func publishGeneratedPcapng(_ temporary: URL, as managedName: String, in directory: URL) throws -> URL {
+        try publish(temporary, as: managedName, in: directory)
+    }
+
     // MARK: Private
 
     /// The immutable facts a source must still satisfy when the copy ends. The

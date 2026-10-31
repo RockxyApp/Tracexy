@@ -47,7 +47,8 @@ nonisolated enum CaptureEvidenceReader {
     static func read(
         _ reference: CaptureEvidenceReference,
         from url: URL,
-        maxCapturedLength: Int = CapturedFrame.maxReasonableLength
+        maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
+        afterRead: () throws -> Void = {}
     )
         throws -> [UInt8]
     {
@@ -91,6 +92,16 @@ nonisolated enum CaptureEvidenceReader {
         }
         guard collected.count == reference.capturedLength else {
             throw PacketError.malformed("evidence: short read of selected frame")
+        }
+        try afterRead()
+        guard PcapFileIdentity.snapshot(of: handle).matches(reference.identity) else {
+            throw PacketError.malformed("evidence: file identity changed during the read")
+        }
+        let pathHandle = try FileHandle(forReadingFrom: url)
+        let pathIdentity = PcapFileIdentity.snapshot(of: pathHandle)
+        try pathHandle.close()
+        guard pathIdentity.matches(reference.identity) else {
+            throw PacketError.malformed("evidence: source path changed during the read")
         }
         return [UInt8](collected)
     }
@@ -207,6 +218,8 @@ nonisolated struct SavedCaptureLoadResult: Sendable {
     /// and their options, statistics blocks, comments, secrets-block presence and
     /// unknown-block counts. Folded by the reader in the same single pass.
     let properties: CaptureFileProperties
+    /// Bounded IPv4/IPv6 host mappings carried by the opened PCAPNG file.
+    let nameResolutionRecords: [CaptureNameResolutionRecord]
     let completeness: CaptureLoadCompleteness
     /// Total frames accepted (independent of the retained-tail window size).
     let totalFrames: Int
@@ -242,6 +255,7 @@ nonisolated final class SavedCaptureStreamLoader {
             contentsOf: url,
             configuration: .init(
                 maxCapturedLength: configuration.maxCapturedLength,
+                timestampTransform: configuration.timeCorrection?.streamTransform,
                 isCancelled: configuration.isCancelled
             )
         )
@@ -259,6 +273,7 @@ nonisolated final class SavedCaptureStreamLoader {
             activityBucketCap: Int = CaptureActivityBuilder.defaultBucketCap,
             progressStride: Int = 256,
             connectionConfiguration: ConnectionTable.Configuration = ConnectionTable.Configuration(),
+            timeCorrection: CaptureTimeCorrection? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength
@@ -266,6 +281,7 @@ nonisolated final class SavedCaptureStreamLoader {
             self.activityBucketCap = activityBucketCap
             self.progressStride = max(1, progressStride)
             self.connectionConfiguration = connectionConfiguration
+            self.timeCorrection = timeCorrection
             self.isCancelled = isCancelled
         }
 
@@ -281,6 +297,8 @@ nonisolated final class SavedCaptureStreamLoader {
         let progressStride: Int
         /// Bounds for the folded connection table, injectable for bounds tests.
         let connectionConfiguration: ConnectionTable.Configuration
+        /// Saved-file-only timestamp overlay applied before every derived fold.
+        let timeCorrection: CaptureTimeCorrection?
         let isCancelled: @Sendable () -> Bool
     }
 
@@ -357,6 +375,12 @@ nonisolated final class SavedCaptureStreamLoader {
              .partialBody: .incompleteTruncatedTail(completion.reason)
         }
 
+        var metadataSummary = metadata.summary()
+        metadataSummary.hasTimestampCorrectionMarker = reader.fileProperties.sections.contains { section in
+            section.comments.values.contains {
+                $0.text.hasPrefix(CaptureTimeCorrectionRequest.provenanceCommentPrefix)
+            }
+        }
         return SavedCaptureLoadResult(
             format: reader.format,
             identity: reader.identity,
@@ -373,8 +397,9 @@ nonisolated final class SavedCaptureStreamLoader {
             evidence: evidence,
             retainedTail: tail,
             activity: activity.activity(),
-            metadata: metadata.summary(),
+            metadata: metadataSummary,
             properties: reader.fileProperties,
+            nameResolutionRecords: reader.nameResolutionRecords,
             completeness: completeness,
             totalFrames: totalFrames,
             finalProgress: completion.progress

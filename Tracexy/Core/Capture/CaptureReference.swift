@@ -166,6 +166,8 @@ nonisolated struct CaptureReference: Codable, Sendable, Hashable {
 nonisolated enum CaptureSourceAvailability: Sendable, Equatable {
     /// A managed copy inside the Project Library.
     case managed
+    /// A referenced file whose path and identity are still being checked.
+    case checking
     /// A referenced file whose identity still matches.
     case available
     /// A referenced file that is not at its recorded path.
@@ -180,7 +182,8 @@ nonisolated enum CaptureSourceAvailability: Sendable, Equatable {
         switch self {
         case .managed,
              .available: true
-        case .missing,
+        case .checking,
+             .missing,
              .changed: false
         }
     }

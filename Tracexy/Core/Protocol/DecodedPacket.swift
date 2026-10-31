@@ -51,6 +51,7 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
         self.fields = fields
         self.children = children
         self.byteRange = byteRange
+        decodeAsTargets = DecodeAsPacketTargets.from(proto: proto, fields: fields)
     }
 
     // MARK: Internal
@@ -63,6 +64,9 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
     var children: [DecodedLayer]
     /// Absolute byte range of this whole layer within the frame's `rawBytes`.
     var byteRange: Range<Int>?
+    /// Port selectors from the complete decode, retained when a display projection
+    /// hides unrelated fields such as source and destination ports.
+    let decodeAsTargets: [DecodeAsPacketTarget]
 
     /// Identity is the decoded content, not the per-instance `id`. Two decodes of
     /// the same bytes produce structurally equal layers with *different* random
@@ -75,6 +79,7 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
             && lhs.summary == rhs.summary
             && lhs.fields == rhs.fields
             && lhs.children == rhs.children
+            && lhs.decodeAsTargets == rhs.decodeAsTargets
     }
 
     func hash(into hasher: inout Hasher) {
@@ -83,6 +88,7 @@ nonisolated struct DecodedLayer: Hashable, Identifiable, Sendable {
         hasher.combine(summary)
         hasher.combine(fields)
         hasher.combine(children)
+        hasher.combine(decodeAsTargets)
     }
 }
 
@@ -246,6 +252,9 @@ nonisolated struct DecodedPacket {
     var udpDeclaredPayloadLength: Int?
     /// How many tunnels (GRE, VXLAN) this frame was unwrapped through; bounds nesting.
     var tunnelDepth = 0
+    /// True when a recognized IP tunnel could not be unwrapped because the depth
+    /// limit was reached, so inner-header filters must retain unknown semantics.
+    var undecodedInnerIPHeader = false
     /// Set when this frame is one fragment of a larger IP datagram. Decoding stops
     /// at the IP layer for every fragment — the first one too, since its transport
     /// payload is incomplete — and the fragment's payload range is kept for the

@@ -92,6 +92,7 @@ final class ProjectRuntimeState {
     /// same link-type/untimed/undecodable coverage it had when it was parked.
     var savedCaptureMetadata: CaptureMetadataSummary?
     var savedCaptureProperties: CaptureFileProperties?
+    var savedCaptureNameResolutionRecords: [CaptureNameResolutionRecord] = []
     var savedCaptureWarning: String?
     var savedCaptureEvidence: [UUID: CaptureEvidenceReference] = [:]
     var savedCaptureEvidenceURL: URL?

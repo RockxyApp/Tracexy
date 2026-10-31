@@ -327,6 +327,7 @@ enum Theme {
              .icmpv6: .pink
         case .tcp: .blue
         case .udp: .indigo
+        case .sctp: .purple
         case .dns: .cyan
         case .tls: .purple
         case .http: .green

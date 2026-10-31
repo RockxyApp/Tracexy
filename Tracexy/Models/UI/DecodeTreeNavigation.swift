@@ -10,13 +10,23 @@ import Foundation
 nonisolated enum DecodeTreeNavigation {
     // MARK: Internal
 
-    enum Key: Sendable {
+    enum Key: Sendable, Equatable {
+        case up
+        case down
+        case toggleLayer
+        case left
+        case right
+        case expandSubtree
+        case collapseSubtree
+        case expandAll
+        case collapseAll
+    }
+
+    enum Arrow: Sendable {
         case up
         case down
         case left
         case right
-        case expandAll
-        case collapseAll
     }
 
     struct Row: Equatable, Sendable {
@@ -31,6 +41,15 @@ nonisolated enum DecodeTreeNavigation {
     struct Outcome: Equatable, Sendable {
         let selection: Range<Int>?
         let collapsed: Set<String>
+    }
+
+    static func key(for arrow: Arrow, command: Bool, shift: Bool) -> Key {
+        switch arrow {
+        case .up: .up
+        case .down: .down
+        case .left: command ? .collapseAll : (shift ? .collapseSubtree : .left)
+        case .right: command ? .expandAll : (shift ? .expandSubtree : .right)
+        }
     }
 
     /// The rows shown, top to bottom.
@@ -57,6 +76,28 @@ nonisolated enum DecodeTreeNavigation {
     {
         let shown = rows(layers, collapsed: collapsed)
         switch key {
+        case .toggleLayer:
+            guard let row = shown.first(where: { $0.range == selection }),
+                  let layer = row.layer else
+            {
+                return nil
+            }
+            let updated = collapsed.contains(layer)
+                ? collapsed.subtracting([layer])
+                : collapsed.union([layer])
+            return Outcome(selection: selection, collapsed: updated)
+        case .expandSubtree,
+             .collapseSubtree:
+            guard let row = shown.first(where: { $0.range == selection }), row.layer != nil,
+                  let layer = layer(with: row.range, in: layers) else
+            {
+                return nil
+            }
+            let subtreeTitles = titles([layer])
+            let updated = key == .expandSubtree
+                ? collapsed.subtracting(subtreeTitles)
+                : collapsed.union(subtreeTitles)
+            return Outcome(selection: selection, collapsed: updated)
         case .expandAll:
             return Outcome(selection: selection, collapsed: [])
         case .collapseAll:
@@ -110,5 +151,17 @@ nonisolated enum DecodeTreeNavigation {
             result.insert(layer.title)
             result.formUnion(titles(layer.children))
         }
+    }
+
+    private static func layer(with range: Range<Int>, in layers: [DecodedLayer]) -> DecodedLayer? {
+        for layer in layers {
+            if layer.byteRange == range {
+                return layer
+            }
+            if let child = Self.layer(with: range, in: layer.children) {
+                return child
+            }
+        }
+        return nil
     }
 }

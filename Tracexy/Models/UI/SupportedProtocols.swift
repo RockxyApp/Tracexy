@@ -68,6 +68,11 @@ nonisolated enum SupportedProtocols {
                 String(localized: "Flags, sequence, window and options; connection analysis")
             ),
             (.udp, "User Datagram Protocol", String(localized: "Ports, length and checksum")),
+            (
+                .sctp,
+                "Stream Control Transmission Protocol",
+                String(localized: "Common header, bounded chunks and CRC32C; no association or stream reconstruction")
+            ),
             (.gre, "Generic Routing Encapsulation", String(localized: "The tunnel and the packet inside it")),
             (.vxlan, "Virtual Extensible LAN", String(localized: "The network identifier and the frame inside it")),
             (.dns, "Domain Name System", String(localized: "Questions, answers and response codes")),

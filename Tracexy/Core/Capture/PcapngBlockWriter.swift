@@ -40,12 +40,28 @@ nonisolated enum PcapngBlockWriter {
         append32(UInt32(event.reference.capturedLength), to: &body)
         append32(UInt32(max(event.reference.originalLength, event.reference.capturedLength)), to: &body)
         body.append(contentsOf: event.bytes)
+        if event.reference.direction != .unknown || event.reference.packetID != nil {
+            while body.count % 4 != 0 {
+                body.append(0)
+            }
+            if event.reference.direction != .unknown {
+                var flags = Data()
+                append32(event.reference.direction.rawValue, to: &flags)
+                appendOption(code: 2, value: Array(flags), to: &body)
+            }
+            if let packetID = event.reference.packetID {
+                var value = Data()
+                append64(packetID, to: &value)
+                appendOption(code: 5, value: Array(value), to: &body)
+            }
+            append32(0, to: &body)
+        }
         return block(type: 0x00000006, body: body)
     }
 
     /// An Enhanced Packet Block for bytes Tracexy built (Export PDUs), captured whole.
-    static func enhancedPacket(bytes: [UInt8], interfaceID: UInt32, time: Date?) throws -> Data {
-        let micros = try time.map(CaptureTimestampEncoding.microseconds) ?? 0
+    static func enhancedPacket(bytes: [UInt8], interfaceID: UInt32, time: Date) throws -> Data {
+        let micros = try CaptureTimestampEncoding.microseconds(time)
         var body = Data(capacity: 20 + bytes.count)
         append32(interfaceID, to: &body)
         append32(UInt32(micros >> 32), to: &body)
@@ -54,6 +70,18 @@ nonisolated enum PcapngBlockWriter {
         append32(UInt32(bytes.count), to: &body)
         body.append(contentsOf: bytes)
         return block(type: 0x00000006, body: body)
+    }
+
+    /// An untimed, complete packet. A Simple Packet Block carries no timestamp;
+    /// its captured length is derived from interface 0's snap length.
+    static func simplePacket(bytes: [UInt8]) -> Data {
+        var body = Data(capacity: 4 + bytes.count + 3)
+        append32(UInt32(bytes.count), to: &body)
+        body.append(contentsOf: bytes)
+        while body.count % 4 != 0 {
+            body.append(0)
+        }
+        return block(type: 0x00000003, body: body)
     }
 
     static func interfaceDescription(linkType: UInt32, name: String?, fileName: String) -> Data {

@@ -223,3 +223,96 @@ nonisolated struct TrafficRateGraph: Equatable, Sendable {
         return ([header] + lines).joined(separator: "\n")
     }
 }
+
+// MARK: - FilteredTrafficTimeline
+
+/// A complete capture scan with one applied Frame Expression. Unknown evaluations
+/// are excluded and counted; untimed matches remain in totals, never graph buckets.
+nonisolated struct FilteredTrafficTimeline: Equatable, Sendable {
+    enum ScanError: LocalizedError {
+        case sourceUnavailable(String)
+        case incomplete
+
+        // MARK: Internal
+
+        var errorDescription: String? {
+            switch self {
+            case let .sourceUnavailable(reason): reason
+            case .incomplete: String(localized: "The capture ended before the complete I/O Graph scan finished.")
+            }
+        }
+    }
+
+    let timeline: TrafficTimeline
+    let scannedFrames: Int
+    let matchedFrames: Int
+    let unknownFrames: Int
+    let untimedCaptureFrames: Int
+
+    var coverageDescription: String {
+        String(
+            localized: "\(matchedFrames.formatted()) of \(scannedFrames.formatted()) frames match; \(unknownFrames.formatted()) unknown; \(timeline.untimedFrameCount.formatted()) matching frames have no time (\(untimedCaptureFrames.formatted()) untimed in capture)"
+        )
+    }
+
+    /// Keep one rectangular CSV table and carry the applied scope on every data row.
+    func csv(graph: TrafficRateGraph, expression: String) -> String {
+        let lines = graph.csv().components(separatedBy: "\n")
+        let header = (lines.first ?? "")
+            + ",Frame Expression,Scanned frames,Matched frames,Unknown frames,Untimed capture frames,Untimed matching frames"
+        let quoted = "\"" + expression.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        let metadata = [
+            quoted, String(scannedFrames), String(matchedFrames), String(unknownFrames),
+            String(untimedCaptureFrames), String(timeline.untimedFrameCount)
+        ].joined(separator: ",")
+        let rows = lines.count > 1 ? Array(lines.dropFirst()) : [",,,,"]
+        return ([header] + rows.map { $0 + "," + metadata }).joined(separator: "\r\n") + "\r\n"
+    }
+}
+
+// MARK: - FilteredTrafficTimelineAccumulator
+
+/// Streams typed per-frame facts into bounded buckets without retaining frame rows.
+nonisolated struct FilteredTrafficTimelineAccumulator: Sendable {
+    // MARK: Lifecycle
+
+    init(expression: FrameExpression, maxBuckets: Int = TrafficTimelineAccumulator.defaultBucketCap) {
+        self.expression = expression
+        accumulator = TrafficTimelineAccumulator(maxBuckets: maxBuckets, maxSessionEntries: 0)
+    }
+
+    // MARK: Internal
+
+    mutating func record(_ row: CaptureFrameRow) {
+        scannedFrames += 1
+        if row.provenance.timestamp == nil {
+            untimedCaptureFrames += 1
+        }
+        let truth = expression.evaluate(row.filterFacts)
+        if truth == .yes {
+            matchedFrames += 1
+        } else if truth == .unknown {
+            unknownFrames += 1
+        }
+        accumulator.add(
+            timestamp: row.provenance.timestamp, originalLength: row.provenance.originalLength,
+            direction: .unattributed, includesTraffic: truth == .yes
+        )
+    }
+
+    func result() -> FilteredTrafficTimeline {
+        FilteredTrafficTimeline(
+            timeline: accumulator.timeline(), scannedFrames: scannedFrames, matchedFrames: matchedFrames,
+            unknownFrames: unknownFrames, untimedCaptureFrames: untimedCaptureFrames
+        )
+    }
+
+    // MARK: Private
+
+    private let expression: FrameExpression
+    private var accumulator: TrafficTimelineAccumulator
+    private var scannedFrames = 0
+    private var matchedFrames = 0
+    private var unknownFrames = 0
+    private var untimedCaptureFrames = 0
+}

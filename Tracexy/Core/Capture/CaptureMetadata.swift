@@ -53,6 +53,9 @@ nonisolated struct CaptureMetadataSummary: Equatable, Sendable {
     let totalFrames: Int
     var firstTimedAt: Date?
     var lastTimedAt: Date?
+    /// True when a reviewed Tracexy correction marker is present in a PCAPNG
+    /// section comment; timestamps in this derived file are not original times.
+    var hasTimestampCorrectionMarker = false
 
     /// Whether more than one link type was observed, so a classic single-link-type
     /// representation cannot describe the whole capture.
