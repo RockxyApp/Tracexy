@@ -205,25 +205,24 @@ final class DissectionExportController {
                 {
                     isPrinting = false
                     coordinator?.setSessionExporting(false)
+                    // Preparation can finish after the capture moved on. Printing
+                    // the stale text would be wrong, but so is dropping the user's
+                    // request without a word, so the same Project hears why.
+                    coordinator?.reportCaptureIOOutcome(
+                        failure: String(
+                            localized: "The capture changed while the packet views were being prepared. Print again."
+                        ),
+                        warning: nil, didWrite: false,
+                        originProjectID: originProjectID, originGeneration: originGeneration
+                    )
                     return
                 }
                 let (printedText, unknownFrameCount, excludedIgnoredFrameCount) = printResult
                 if try Self.printPreparedText(printedText) {
-                    let warningParts = [
-                        unknownFrameCount > 0
-                            ?
-                            String(
-                                localized: "\(unknownFrameCount.formatted()) frame(s) could not be evaluated and were left out."
-                            )
-                            : nil,
-                        excludedIgnoredFrameCount > 0
-                            ?
-                            String(
-                                localized: "\(excludedIgnoredFrameCount.formatted()) ignored frame(s) were excluded."
-                            )
-                            : nil,
-                    ].compactMap { $0 }
-                    warning = warningParts.isEmpty ? nil : warningParts.joined(separator: " ")
+                    warning = Self.printWarning(
+                        unknownFrameCount: unknownFrameCount,
+                        excludedIgnoredFrameCount: excludedIgnoredFrameCount
+                    )
                 }
             } catch is CancellationError {
                 // No print panel is shown when preparation is cancelled.
@@ -570,6 +569,22 @@ final class DissectionExportController {
 // MARK: - Confirmation
 
 private extension DissectionExportController {
+    /// What a completed print left out, or nil when it carried everything.
+    static func printWarning(unknownFrameCount: Int, excludedIgnoredFrameCount: Int) -> String? {
+        let parts = [
+            unknownFrameCount > 0
+                ?
+                String(
+                    localized: "\(unknownFrameCount.formatted()) frame(s) could not be evaluated and were left out."
+                )
+                : nil,
+            excludedIgnoredFrameCount > 0
+                ? String(localized: "\(excludedIgnoredFrameCount.formatted()) ignored frame(s) were excluded.")
+                : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
     static func printPreparedText(_ printedText: String) throws -> Bool {
         let panel = NSPrintPanel()
         guard panel.runModal(with: NSPrintInfo.shared) != NSCancelButton else {

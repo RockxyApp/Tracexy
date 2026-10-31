@@ -193,13 +193,23 @@ extension MainContentCoordinator {
                 } onCancel: {
                     worker.cancel()
                 }
-                guard let self,
-                      self.timeShiftRequestID == requestID,
-                      self.startGeneration == generation,
+                // A newer request owning the sheet is not this one's business, so
+                // it retires in silence.
+                guard let self, self.timeShiftRequestID == requestID else {
+                    return
+                }
+                // Still the current request, but the capture moved while it
+                // resolved. Applying the correction would retime a file nobody
+                // asked about; leaving the sheet open with a re-enabled Apply and
+                // no message is what used to happen.
+                guard self.startGeneration == generation,
                       self.activeRuntime.projectID == projectID,
                       self.activeSavedCapture?.id == capture.id,
                       self.adoptedSavedCaptureIdentity?.matches(identity) == true else
                 {
+                    self.timeShiftError = String(
+                        localized: "The capture changed while the time shift was being resolved. Try again."
+                    )
                     return
                 }
                 self.openSavedCapture(

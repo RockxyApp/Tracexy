@@ -962,6 +962,11 @@ private extension FollowConversationView {
             return
         }
         guard isCurrent() else {
+            // The user confirmed the privacy alert and chose a path, so the save
+            // cannot just evaporate. `streamActionError` is scoped to the
+            // conversation on screen and is cleared the moment it changes, so the
+            // Project hears this instead.
+            reportAbandonedDatagramSave(originProjectID: originProjectID, originGeneration: originGeneration)
             return
         }
 
@@ -976,6 +981,9 @@ private extension FollowConversationView {
                 }.value
                 guard isCurrent() else {
                     isSavingDatagrams = false
+                    reportAbandonedDatagramSave(
+                        originProjectID: originProjectID, originGeneration: originGeneration
+                    )
                     return
                 }
                 try await Task.detached(priority: .utility) {
@@ -1008,6 +1016,18 @@ private extension FollowConversationView {
             }
             isSavingDatagrams = false
         }
+    }
+
+    /// Says, at Project scope, that a confirmed datagram save was abandoned
+    /// because the conversation it belonged to is no longer the one on screen.
+    private func reportAbandonedDatagramSave(originProjectID: UUID?, originGeneration: Int) {
+        coordinator.reportCaptureIOOutcome(
+            failure: String(
+                localized: "The conversation changed while the save was being prepared, so nothing was written. Save again."
+            ),
+            warning: nil, didWrite: false,
+            originProjectID: originProjectID, originGeneration: originGeneration
+        )
     }
 
     private func datagramExportIsCurrent(
