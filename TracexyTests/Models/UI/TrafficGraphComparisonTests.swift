@@ -223,27 +223,31 @@ struct TrafficGraphComparisonTests {
         #expect(result.series[0].graph.axis == result.series[1].graph.axis)
     }
 
-    @Test("One comparison series agrees with the existing filtered graph fold")
-    func singleSeriesCompatibility() throws {
-        let configuration = try configuration([("Selected", "frame.len >= 100")])
-        var comparison = TrafficGraphComparisonAccumulator(configuration: configuration)
-        var existing = FilteredTrafficTimelineAccumulator(
-            expression: configuration.series[0].expression,
-            maxBuckets: 2_000
+    @Test("One series counts each frame into exactly one coverage bucket")
+    func singleSeriesCoverageIsExhaustive() throws {
+        var accumulator = try TrafficGraphComparisonAccumulator(
+            configuration: configuration([("Selected", "frame.len >= 100")])
         )
-        let rows = [
-            row(1, time: at(0.1), length: 100), row(2, time: at(7.1), length: 20),
-            row(3, time: nil, length: 200), row(4, time: at(12.1), length: 300, known: false),
-        ]
-        for row in rows {
-            comparison.record(row)
-            existing.record(row)
-        }
-        let expected = existing.result()
-        let result = comparison.result(requestedInterval: 5)
-        #expect(result.series[0].graph == TrafficRateGraph.compute(from: expected.timeline, requestedInterval: 5))
-        #expect(result.series[0].coverage?.matchedFrames == expected.matchedFrames)
-        #expect(result.series[0].coverage?.unknownFrames == expected.unknownFrames)
+        accumulator.record(row(1, time: at(0.1), length: 100))
+        accumulator.record(row(2, time: at(7.1), length: 20))
+        accumulator.record(row(3, time: nil, length: 200))
+        accumulator.record(row(4, time: at(12.1), length: 300, known: false))
+        let result = accumulator.result(requestedInterval: 5)
+        let series = try #require(result.series.first)
+        let coverage = try #require(series.coverage)
+
+        #expect(result.scannedFrames == 4)
+        #expect(result.untimedCaptureFrames == 1)
+        #expect(coverage.matchedFrames == 2, "The timed 100-byte frame and the untimed 200-byte frame match")
+        #expect(coverage.nonmatchingFrames == 1)
+        #expect(coverage.unknownFrames == 1, "An undecoded frame is unknown, never a nonmatch")
+        #expect(coverage.matchedFrames + coverage.nonmatchingFrames + coverage.unknownFrames == 4)
+        #expect(coverage.untimedMatchingFrames == 1)
+        #expect(coverage.matchedBytes == 300, "Coverage bytes include the untimed match")
+        #expect(series.graph.totalFrames == 1, "Only the timed match reaches a graph bucket")
+        #expect(series.graph.totalBytes == 100)
+        #expect(series.graph.untimedFrameCount == 1)
+        #expect(try #require(result.axis).interval == 5)
     }
 
     @Test("CSV quotes and formula-guards labels while retaining expressions and untimed coverage")
