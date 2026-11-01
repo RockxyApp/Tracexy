@@ -6,7 +6,7 @@ import SQLite3
 /// A pure, actor-isolated SQLite substrate for terminal capture history. It owns
 /// exactly one connection, enables and verifies foreign keys (and, for a writable
 /// file, WAL) before installing or upgrading to the current schema in one immediate
-/// transaction (v1 and v2 databases are migrated in place, never reset), and exposes
+/// transaction (v1, v2 and v3 databases are migrated in place, never reset), and exposes
 /// only atomic whole-capture replacement, bounded keyset reads and whole-group
 /// retention. It never reads settings, touches `@MainActor`, converts a
 /// `SessionSummary`/`Finding` (callers hand it neutral records), retains raw bytes,
