@@ -111,7 +111,7 @@ nonisolated enum DisplayFilterTranslator {
 
     private static let protocols: [String: String] = [
         "ip": "ipv4", "ipv6": "ipv6", "arp": "arp", "icmp": "icmp", "icmpv6": "icmpv6", "tcp": "tcp",
-        "udp": "udp", "dns": "dns", "tls": "tls", "ssl": "tls", "http": "http", "http2": "http2",
+        "udp": "udp", "sctp": "sctp", "dns": "dns", "tls": "tls", "ssl": "tls", "http": "http", "http2": "http2",
         "quic": "quic", "websocket": "websocket", "stun": "stun", "mdns": "mdns", "dhcp": "dhcp",
         "bootp": "dhcp", "ntp": "ntp", "gre": "gre", "vxlan": "vxlan",
     ]

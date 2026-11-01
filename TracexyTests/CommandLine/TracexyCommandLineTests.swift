@@ -301,8 +301,17 @@ struct TracexyCommandLineTests {
         #expect(parsed.taps == [.conversations(.ipv4), .protocolHierarchy, .packetLengths])
         #expect(parsed.format == .text, "stats print text unless a format is named")
         #expect(throws: TracexyCommandLine.UsageError.self) { try TracexyCommandLine.parse(["stats", "a.pcap"]) }
+        // SCTP folds into sessions, so its conversation and endpoint taps are
+        // named like the other transports. A link-layer tap is still refused,
+        // because Tracexy does not fold Ethernet conversations.
+        #expect(try TracexyCommandLine.parse([
+            "stats", "a.pcap", "--tap", "conv,sctp"
+        ]).taps == [.conversations(.sctp)])
+        #expect(try TracexyCommandLine.parse([
+            "stats", "a.pcap", "-z", "endpoints,sctp"
+        ]).taps == [.endpoints(.sctp)])
         #expect(throws: TracexyCommandLine.UsageError.self) {
-            try TracexyCommandLine.parse(["stats", "a.pcap", "--tap", "conv,sctp"])
+            try TracexyCommandLine.parse(["stats", "a.pcap", "--tap", "conv,eth"])
         }
         #expect(try TracexyCommandLine.parse([
             "stats",

@@ -14,6 +14,7 @@ struct DisplayFilterTranslatorTests {
         ("tcp.port == 443 && ip.src == 192.0.2.10", "(tcp and port == 443) and source.ip == 192.0.2.10"),
         ("!(arp || dns)", "not (arp or dns)"),
         ("udp.dstport >= 1024", "(udp and destination.port in 1024..65535)"),
+        ("sctp", "sctp"),
         ("sctp.port == 2905", "(sctp and port == 2905)"),
         ("sctp.srcport == 50000", "(sctp and source.port == 50000)"),
         ("sctp.dstport in {2905 3868}", "(sctp and destination.port in {2905, 3868})"),

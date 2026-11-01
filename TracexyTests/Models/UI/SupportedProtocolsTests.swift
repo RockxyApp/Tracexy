@@ -13,7 +13,7 @@ struct SupportedProtocolsTests {
         #expect(rows.count == ProtocolKind.allCases.count - 1)
         #expect(rows.first { $0.kind == .smb }?.keywords == ["smb", "smb2"])
         #expect(rows.first { $0.kind == .pop3 }?.keywords == ["pop"])
-        #expect(rows.first { $0.kind == .sctp }?.keywords.isEmpty == true)
+        #expect(rows.first { $0.kind == .sctp }?.keywords == ["sctp"])
         // Outer framing has no keyword, by the grammar's design.
         #expect(rows.first { $0.kind == .ethernet }?.keywords.isEmpty == true)
         for row in rows {
