@@ -86,6 +86,41 @@ struct ReplayEquivalenceTests {
         }
     }
 
+    // MARK: SCTP cross-path equivalence
+
+    @Test
+    func sctpAssociationAgreesAcrossBatchLiveAndSaved() async throws {
+        let frames = ReplayCorpus.sctpAssociationCapturedFrames()
+        // A dropped synthetic frame would otherwise weaken every count below.
+        #expect(frames.count == 2)
+        let batch = SessionBuilder.build(from: frames, linkType: LinkType.ethernet)
+        let batchSnapshots = SessionSnapshot.snapshots(batch)
+
+        // Live, one frame per ingest, then varied batch groupings.
+        let liveOne = await liveSnapshots(chunks: frames.map { [$0] })
+        #expect(liveOne == batchSnapshots)
+        let liveVaried = await liveSnapshots(chunks: Self.variedChunks(frames))
+        #expect(liveVaried == batchSnapshots)
+
+        // Saved file over the same ordered frames, bytes restored from evidence.
+        try ReplayCorpus.withTemporaryFile(
+            ReplayCorpus.classicPcapBytes(ReplayCorpus.sctpAssociationFrames())
+        ) { url in
+            let saved = try savedRestoredSnapshots(from: url)
+            #expect(saved == batchSnapshots)
+        }
+
+        // Not vacuous: one SCTP session keyed on the port pair, carrying both
+        // directions — the fold that makes `sctp` a Session Expression term.
+        #expect(batch.count == 1)
+        let session = try #require(batch.first)
+        #expect(session.protocolStack.contains(ProtocolKind.sctp))
+        #expect(session.sourceEndpointValue?.port == 5_000)
+        #expect(session.destinationEndpointValue?.port == 5_001)
+        #expect(session.bytesUp > 0)
+        #expect(session.bytesDown > 0)
+    }
+
     // MARK: Format corpus — classic variants and pcapng
 
     @Test
