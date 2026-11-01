@@ -1115,29 +1115,6 @@ struct AllFramesWindow: View {
         notice = nil
     }
 
-    private func loadPage(containing ordinal: UInt64) {
-        let pageSize = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
-        let start = ((Int(ordinal) - 1) / pageSize) * pageSize + 1
-        coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: start)
-    }
-
-    private func selectFoundFrame(_ ordinal: UInt64) {
-        let state = coordinator.allFrames
-        cancelExternalSelectionForManualSelection()
-        let visible = state.visibleRows(sessionsInView: Set(coordinator.visibleSessions.map(\.id)))
-        if visible.contains(where: { $0.ordinal == ordinal }) {
-            selection = ordinal
-            revealToken &+= 1
-            notice = nil
-        } else if state.list?.rows.contains(where: { $0.ordinal == ordinal }) == true {
-            notice = String(localized: "Frame \(ordinal.formatted()) is hidden by the current filters.")
-        } else if let list = state.list, ordinal <= UInt64(list.scannedFrameCount) {
-            loadPage(containing: ordinal)
-            state.pendingTableSelection = ordinal
-            notice = nil
-        }
-    }
-
     private func open(_ row: CaptureFrameRow) {
         if coordinator.revealFrame(row) {
             notice = nil

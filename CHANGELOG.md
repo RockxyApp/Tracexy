@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - A Frame Expression typed in All Frames applies when you press Return, and the field shows its grammar in a tooltip again.
 - Exported and printed packet dissections carry a saved capture's Time Shift, so their times match All Frames instead of the uncorrected source.
+- Go to Packet on a pinned frame now says when that frame is outside the capture in view, instead of doing nothing.
 
 ### Changed
 

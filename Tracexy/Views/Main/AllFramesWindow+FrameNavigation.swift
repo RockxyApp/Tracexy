@@ -89,6 +89,36 @@ extension AllFramesWindow {
         notice = nil
     }
 
+    /// Load the retained page that holds `ordinal`, leaving selection to the
+    /// pending-selection resolver once the scan returns.
+    func loadPage(containing ordinal: UInt64) {
+        let pageSize = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
+        let start = ((Int(ordinal) - 1) / pageSize) * pageSize + 1
+        coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: start)
+    }
+
+    /// Navigate to a frame named by another surface — the pinned shelf or a find
+    /// result. Every outcome is reported, including an ordinal this capture cannot
+    /// hold, so an enabled Go to Packet never looks inert.
+    func selectFoundFrame(_ ordinal: UInt64) {
+        let state = coordinator.allFrames
+        cancelExternalSelectionForManualSelection()
+        let visible = state.visibleRows(sessionsInView: Set(coordinator.visibleSessions.map(\.id)))
+        if visible.contains(where: { $0.ordinal == ordinal }) {
+            selection = ordinal
+            revealToken &+= 1
+            notice = nil
+        } else if state.list?.rows.contains(where: { $0.ordinal == ordinal }) == true {
+            notice = String(localized: "Frame \(ordinal.formatted()) is hidden by the current filters.")
+        } else if let list = state.list, ordinal <= UInt64(list.scannedFrameCount) {
+            loadPage(containing: ordinal)
+            state.pendingTableSelection = ordinal
+            notice = nil
+        } else {
+            notice = String(localized: "Frame \(ordinal.formatted()) is outside this capture.")
+        }
+    }
+
     func goToFrame(_ rows: [CaptureFrameRow]) {
         guard let number = UInt64(goTo.trimmingCharacters(in: .whitespaces)) else {
             notice = String(localized: "Type a frame number.")
