@@ -481,8 +481,10 @@ Each Project owns, separately from every other Project:
   size, auto-start), its privacy settings (payload redaction, credential stripping, IP masking,
   History Auto-clear), and its pins, Focus Sets, muted noise, hidden sources, and default view.
 
-Appearance, byte units, quit confirmation, workspace restoration, the selected Settings tab, the
-"Local only" posture, analytics, updates, and the privileged helper stay application-wide. The
+Appearance, byte units, quit confirmation, workspace restoration, the selected Settings tab,
+updates, and the privileged helper stay application-wide. Keeping data on this Mac is not a
+setting: Tracexy has no upload path, and the Privacy pane states that and the absence of usage
+analytics rather than offering switches for either. The
 Settings window shows the Project name beside the panes it edits, and it reopens against the new
 Project when you switch, so an editor left open cannot apply one Project's draft to another.
 

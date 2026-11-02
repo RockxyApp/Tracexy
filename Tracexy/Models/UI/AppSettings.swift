@@ -42,9 +42,7 @@ enum SettingsKeys {
     static let redactBodies = key("settings.redactBodies")
     static let stripCredentials = key("settings.stripCredentials")
     static let maskIPs = key("settings.maskIPs")
-    static let localOnly = key("settings.localOnly")
     static let autoClear = key("settings.autoClear")
-    static let shareAnalytics = key("settings.shareAnalytics")
 
     /// The validated loopback base address of the local model endpoint, and the
     /// model chosen from what that endpoint advertised. Application-scoped: a
