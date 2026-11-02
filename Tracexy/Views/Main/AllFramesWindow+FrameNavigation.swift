@@ -1,5 +1,26 @@
 import SwiftUI
 
+// MARK: - FoundFrameOutcome
+
+/// What activating a frame named by another surface should do, kept separate from
+/// the view so the decision is testable and every case is handled explicitly.
+enum FoundFrameOutcome: Equatable {
+    /// The frame is on the current page and passes the applied filters.
+    case select
+    /// Retained on this page but filtered out of view.
+    case hiddenByFilters
+    /// Within the scanned capture but on another page.
+    case loadPage
+    /// No page is listed yet, so this ordinal's page is listed optimistically.
+    /// The find bar searches the capture, not the page, so it can name a frame
+    /// while the window still offers List Frames.
+    case loadPageBeforeAnyScan
+    /// Past the scanned frame count: this capture cannot hold it.
+    case outsideCapture
+}
+
+// MARK: - Frame navigation
+
 @MainActor
 extension AllFramesWindow {
     func resolveFrameSelections() {
@@ -104,19 +125,57 @@ extension AllFramesWindow {
         let state = coordinator.allFrames
         cancelExternalSelectionForManualSelection()
         let visible = state.visibleRows(sessionsInView: Set(coordinator.visibleSessions.map(\.id)))
-        if visible.contains(where: { $0.ordinal == ordinal }) {
+        switch Self.foundFrameOutcome(
+            ordinal: ordinal,
+            isVisible: visible.contains { $0.ordinal == ordinal },
+            isRetained: state.list?.rows.contains { $0.ordinal == ordinal } == true,
+            scannedFrameCount: state.list?.scannedFrameCount
+        ) {
+        case .select:
             selection = ordinal
             revealToken &+= 1
             notice = nil
-        } else if state.list?.rows.contains(where: { $0.ordinal == ordinal }) == true {
+        case .hiddenByFilters:
             notice = String(localized: "Frame \(ordinal.formatted()) is hidden by the current filters.")
-        } else if let list = state.list, ordinal <= UInt64(list.scannedFrameCount) {
+        case .loadPage:
             loadPage(containing: ordinal)
             state.pendingTableSelection = ordinal
             notice = nil
-        } else {
+        case .loadPageBeforeAnyScan:
+            loadPage(containing: ordinal)
+            state.pendingTableSelection = ordinal
+            notice = String(localized: "Listing the page that would hold frame \(ordinal.formatted())…")
+        case .outsideCapture:
             notice = String(localized: "Frame \(ordinal.formatted()) is outside this capture.")
         }
+    }
+
+    /// What Go to Packet does for `ordinal`, decided from list state alone.
+    ///
+    /// Pure and static so every branch is provable without a window, including
+    /// the two that only another surface can reach: a pinned row naming a frame
+    /// off the current page, and a capture-wide find result arriving before any
+    /// page has been listed.
+    static func foundFrameOutcome(
+        ordinal: UInt64, isVisible: Bool, isRetained: Bool, scannedFrameCount: Int?
+    )
+        -> FoundFrameOutcome
+    {
+        if isVisible {
+            return .select
+        }
+        if isRetained {
+            return .hiddenByFilters
+        }
+        // Find searches the capture while the window may still show No Frames
+        // Listed, so an ordinal can arrive with no list behind it. With no
+        // scanned count there is nothing to place it against, and calling it
+        // outside the capture would be a verdict this view cannot support: list
+        // the page that would hold it and let the pending resolver select it.
+        guard let scannedFrameCount else {
+            return .loadPageBeforeAnyScan
+        }
+        return ordinal <= UInt64(scannedFrameCount) ? .loadPage : .outsideCapture
     }
 
     func goToFrame(_ rows: [CaptureFrameRow]) {
