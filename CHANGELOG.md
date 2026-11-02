@@ -33,12 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - A Frame Expression typed in All Frames applies when you press Return, and the field shows its grammar in a tooltip again.
 - Exported and printed packet dissections carry a saved capture's Time Shift, so their times match All Frames instead of the uncorrected source.
-- Go to Packet on a pinned frame now says when that frame is outside the capture in view, instead of doing nothing.
+- Go to Packet on a pinned frame now says when that frame is outside the capture in view, instead of doing nothing. A frame named by Find before any page has been listed now lists the page that would hold it rather than being refused.
 
 ### Changed
 
 - TCP acknowledgement, window and checksum values, IPv4 Identification and fragment flags, and DNS transaction ID and TC flags now appear in the packet inspector and can be filtered.
 - All Frames pages through a stable capture with a stated retained-row limit, so Frame Expression match counts describe the whole capture while toolbar search stays page-local.
+- Settings → Privacy now states that all data stays on this Mac and that no usage analytics are collected, in place of two checkboxes that could not change either: Tracexy has no upload path and ships no analytics collection.
 
 ## [0.9.2] - 2026-10-21
 
