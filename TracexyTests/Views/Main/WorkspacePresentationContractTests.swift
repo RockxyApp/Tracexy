@@ -37,7 +37,28 @@ struct WorkspacePresentationContractTests {
         #expect(app.contains("cacheRoot: demoRoot.appendingPathComponent"))
         #expect(app.contains("applicationDefaults: Self.applicationDefaults"))
         #expect(settings.contains("GeneralSettingsView(applicationDefaults: applicationDefaults)"))
-        #expect(settings.contains("applicationDefaults: applicationDefaults,"))
+        // A pane keeps its application-wide keys out of a Synthetic Project only
+        // if every key it pins to `.standard` for previews is rebound to the
+        // injected store in `init`. Matching one call site's argument text could
+        // not see a key that was pinned and never rebound, which is the leak
+        // this test exists to prevent.
+        for (path, source) in try productionViewSources() {
+            let pinned = Self.keysPinnedToTheSharedDomain(in: source)
+            guard !pinned.isEmpty else {
+                continue
+            }
+            let injection = Self.initializerBody(of: source)
+            #expect(
+                injection.contains("store: applicationDefaults"),
+                "\(path) pins \(pinned.joined(separator: ", ")) to .standard but injects no store"
+            )
+            for key in pinned {
+                #expect(
+                    injection.contains("SettingsKeys.\(key)"),
+                    "\(path) pins SettingsKeys.\(key) to .standard without rebinding it"
+                )
+            }
+        }
     }
 
     @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
@@ -509,6 +530,33 @@ struct WorkspacePresentationContractTests {
 
     private enum ResolveError: Error {
         case rootNotFound
+    }
+
+    /// The `SettingsKeys` members a source pins to the shared domain, which it
+    /// does so previews and direct construction still resolve. Declarations are
+    /// one line each, as every pane writes them today.
+    private static func keysPinnedToTheSharedDomain(in source: String) -> [String] {
+        source.split(separator: "\n").compactMap { line in
+            guard line.contains("store: .standard"),
+                  let tail = line.components(separatedBy: "SettingsKeys.").dropFirst().first else
+            {
+                return nil
+            }
+            return String(tail.prefix { $0.isLetter || $0.isNumber })
+        }
+    }
+
+    /// A view's initializer, where an injected store is bound over the pinned
+    /// default. Rebinding happens nowhere else.
+    private static func initializerBody(of source: String) -> String {
+        guard let start = source.range(of: "init(") else {
+            return ""
+        }
+        let rest = source[start.upperBound...]
+        guard let end = rest.range(of: "// MARK: Internal") else {
+            return String(rest)
+        }
+        return String(rest[..<end.lowerBound])
     }
 
     private func readProjectFile(_ relativePath: String) throws -> String {
