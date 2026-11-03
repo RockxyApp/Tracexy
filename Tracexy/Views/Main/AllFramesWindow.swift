@@ -321,8 +321,18 @@ struct AllFramesWindow: View {
 
     /// Each shown row's predecessor in this displayed page. A predecessor outside
     /// the retained page is unknown until the same full display scope is scanned.
+    ///
+    /// The one exception is the row that opens a later page. The scan that built
+    /// the page also recorded the frame immediately before it, so that boundary
+    /// delta is authoritative rather than guessed. It applies only when the first
+    /// shown row really is the page's first retained frame: a filtered page whose
+    /// opening frame is hidden, or a pinned row from another page sorted ahead of
+    /// it, has some other predecessor and stays unknown.
     static func previousDisplayedFrames(
-        _ rows: [CaptureFrameRow], retainedOrdinals: Set<UInt64>
+        _ rows: [CaptureFrameRow],
+        retainedOrdinals: Set<UInt64>,
+        firstRetainedOrdinal: Int = 1,
+        precedingRetainedFrameTimestamp: Date? = nil
     )
         -> [UInt64: FrameTimePredecessor]
     {
@@ -335,11 +345,31 @@ struct AllFramesWindow: View {
                     && retainedOrdinals.contains(row.ordinal)
                     ? previousRow.provenance.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
                     : .unknown
+            } else if row.ordinal == 1 {
+                result[row.ordinal] = .none
+            } else if row.ordinal == UInt64(max(1, firstRetainedOrdinal)),
+                      retainedOrdinals.contains(row.ordinal),
+                      let precedingRetainedFrameTimestamp
+            {
+                result[row.ordinal] = .timestamp(precedingRetainedFrameTimestamp)
             } else {
-                result[row.ordinal] = row.ordinal == 1 ? FrameTimePredecessor.none : .unknown
+                result[row.ordinal] = .unknown
             }
         }
         return result
+    }
+
+    /// Resolves the predecessor map for the shown rows from the loaded page,
+    /// passing the boundary frame the scan recorded so a later page's first row
+    /// shows a real delta instead of an unknown one.
+    func previousDisplayedFrames(_ rows: [CaptureFrameRow]) -> [UInt64: FrameTimePredecessor] {
+        let page = coordinator.allFrames.list
+        return Self.previousDisplayedFrames(
+            rows,
+            retainedOrdinals: Set(page?.rows.map(\.ordinal) ?? []),
+            firstRetainedOrdinal: page?.firstRetainedOrdinal ?? 1,
+            precedingRetainedFrameTimestamp: page?.precedingRetainedFrameTimestamp
+        )
     }
 
     // MARK: Private
@@ -574,8 +604,7 @@ struct AllFramesWindow: View {
     private func table(_ rows: [CaptureFrameRow]) -> some View {
         let name = coordinator.packetDetailOptions.resolvesNetworkAddresses ? coordinator
             .resolvedFrameAddressName : { $0 }
-        let retainedOrdinals = Set(coordinator.allFrames.list?.rows.map(\.ordinal) ?? [])
-        let previous = Self.previousDisplayedFrames(rows, retainedOrdinals: retainedOrdinals)
+        let previous = previousDisplayedFrames(rows)
         let captureStart = coordinator.allFrames.list?.captureStartTimestamp
         let format = coordinator.sessionTimeDisplay.frameFormat
         let captureReferences = coordinator.sessionTimeDisplay.captureReferences()
