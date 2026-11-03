@@ -774,8 +774,8 @@ nonisolated struct FrameExpressionParser {
         case "tcp.flags.cwr": return .tcpFlag(.cwr)
         case "dns.response": return .dnsResponse
         case "dns.flags.truncated": return .dnsTruncated
-        case "dns.id": return try parseDNSIdentifier(field: field)
-        case "ip.id": return try parseIPv4Identification(field: field)
+        case "dns.id": return try parseDNSIdentifier()
+        case "ip.id": return try parseIPv4Identification()
         case "ip.flags.df": return .ipv4DontFragment
         case "icmp.type",
              "icmp.code",
@@ -887,7 +887,7 @@ nonisolated struct FrameExpressionParser {
         }
     }
 
-    private mutating func parseDNSIdentifier(field: Token) throws -> FrameExpression.Predicate {
+    private mutating func parseDNSIdentifier() throws -> FrameExpression.Predicate {
         guard consume("==") else {
             throw FrameExpressionError(position: position, reason: "Expected ==")
         }
@@ -918,7 +918,7 @@ nonisolated struct FrameExpressionParser {
         return .ipv4FragmentOffset(comparison, value)
     }
 
-    private mutating func parseIPv4Identification(field: Token) throws -> FrameExpression.Predicate {
+    private mutating func parseIPv4Identification() throws -> FrameExpression.Predicate {
         guard consume("==") else {
             throw FrameExpressionError(position: position, reason: "Expected ==")
         }

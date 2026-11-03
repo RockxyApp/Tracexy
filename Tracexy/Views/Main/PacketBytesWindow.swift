@@ -186,7 +186,7 @@ struct PacketBytesWindow: View {
                             guard press.modifiers.isEmpty else {
                                 return .ignored
                             }
-                            return navigate(.toggleLayer, layers: layers, proxy: proxy)
+                            return navigate(.toggleLayer, layers: layers)
                         }
                     }
                 }
@@ -423,7 +423,7 @@ struct PacketBytesWindow: View {
     }
 
     private func navigate(
-        _ key: DecodeTreeNavigation.Key, layers: [DecodedLayer], proxy: ScrollViewProxy
+        _ key: DecodeTreeNavigation.Key, layers: [DecodedLayer]
     )
         -> KeyPress.Result
     {
