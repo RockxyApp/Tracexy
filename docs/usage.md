@@ -35,7 +35,7 @@ the packet count but not the time limit.
 **Settings → Capture → Save as a file set** writes a long capture as a set of PCAPNG files: a new file
 every 10 MB, 100 MB or 1 GB, and/or every minute, 10 minutes or hour, whichever comes first. The set goes
 to its own folder, `Captures/File Sets/Capture <date and time>`, in the active Project, with names like
-`capture_00001_20270115080000.pcapng` that **File → Next File in Set** walks. When the capture ends the
+`capture_00001_20270115080000.pcapng` that **File ▸ File Set ▸ Next File** walks. When the capture ends the
 last file joins the set, the toolbar status says how many files were written, and **File → Show File Set
 in Finder** reveals them. **Keep newest 5 / 20 / 100** deletes older files of that set as the capture runs
 (nothing is ever deleted with **Keep every file**); a finding or evidence row that cites a deleted file says
@@ -168,8 +168,8 @@ hexadecimal byte tokens, with no offset tokens or ASCII columns. **Byte groups**
 for groups of 2, 4, 6 or 8 hex digits, or **Little endian (1–4 bytes)** to reverse the byte order
 within each group; groups never reverse the order of whole lines. Offset modes also accept Tracexy's
 own hex/ASCII rows. A gap, malformed byte or mismatched ASCII column refuses
-the whole import. The input is limited to 32 MiB, each packet to 1 MiB, and all packet
-bytes together to 16 MiB. Tracexy adds a managed PCAPNG under a unique name, leaves the text source
+the whole import. The input is limited to 32 MiB, each packet to 1 MiB, all packet
+bytes together to 16 MiB, and the import to 100,000 frames. Tracexy adds a managed PCAPNG under a unique name, leaves the text source
 untouched, and does not invent capture timestamps. For dumps that put one UTC ISO 8601 line before each
 packet's zero offset, select **Read UTC timestamp lines before each frame**. In no-offset mode, one
 UTC line may instead precede the first byte row. For example,
@@ -769,9 +769,9 @@ one HelloRetryRequest in one direction, and a ClientHello with no reply of any k
 alert's level and description are read only when the record carries them in the clear — an encrypted
 alert stays opaque and produces no finding — and `close_notify` and `user_canceled` are an orderly
 shutdown, never a finding. A ClientHello answered by an alert reports the alert, not an unanswered
-handshake, and "unanswered" is stated only for a flow whose TLS evidence was complete. No SNI,
-certificate, key or decrypted payload is read: certificate-chain and SNI/ALPN checks are deliberately
-absent, and a selected cipher suite stays an observed fact in the evidence rows rather than a
+handshake, and "unanswered" is stated only for a flow whose TLS evidence was complete. No finding is derived from
+SNI, a certificate, a key or a decrypted payload: certificate-chain and SNI/ALPN checks are
+deliberately absent from the finding set, and a selected cipher suite stays an observed fact in the evidence rows rather than a
 verdict. "Unanswered" describes the capture window only — it never
 claims that no answer existed — a refused open and an abort after data are each reported once, not
 also as a generic reset, a retried SYN is reported as an unanswered handshake rather than also as a
@@ -1179,8 +1179,9 @@ record-layer version and record length. A ClientHello or ServerHello is enriched
 ALPN, negotiated version, and cipher suite. A bounded 16 KiB, per-direction TCP prefix reassembler in
 the session layer recovers this metadata when a first TLS record, HTTP header, or DNS-over-TCP message
 is split across nearby segments; it handles gaps, overlap, retransmission, and sequence wrap without
-retaining an unbounded stream. Tracexy still does **not** decrypt payloads, parse certificates, or offer
-a general connection/reassembly engine. When a record remains incomplete, its captured and declared
+retaining an unbounded stream. Tracexy still does **not** decrypt payloads or offer
+a general connection/reassembly engine; certificates are parsed only in the on-demand Follow Stream
+facet, never on the automatic session path. When a record remains incomplete, its captured and declared
 lengths are labelled honestly, for example "4096 declared, 40 captured (fragment)". Encrypted TLS
 records carry no plaintext exchange, so a TLS-only session offers no requests facet.
 
@@ -1381,13 +1382,18 @@ Tracexy.app/Contents/MacOS/Tracexy summary  <capture> [--json]
 Tracexy.app/Contents/MacOS/Tracexy sessions <capture> [--expression <text>] [--format csv|json]
 Tracexy.app/Contents/MacOS/Tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning]
 Tracexy.app/Contents/MacOS/Tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json]
-Tracexy.app/Contents/MacOS/Tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details]
-Tracexy.app/Contents/MacOS/Tracexy objects  <capture> [--expression <text>] [--format text|csv|json] [--body <n>]
+Tracexy.app/Contents/MacOS/Tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details [--frames 2,5-7]] [--column Proto:Field]
+Tracexy.app/Contents/MacOS/Tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>] [--format text|csv|json] [--body <n>]
 Tracexy.app/Contents/MacOS/Tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml]
 Tracexy.app/Contents/MacOS/Tracexy info     <capture> [--format text|json]
-Tracexy.app/Contents/MacOS/Tracexy select   <capture> [--frames 1-100,250] [--expression <text>] [--dedupe] [--snaplen <n>] [--comment <text>] > out.pcapng
+Tracexy.app/Contents/MacOS/Tracexy select   <capture> [--frames 1-100,250] [--expression <text>] [--dedupe] [--snaplen <n>] [--time-shift <seconds>] [--comment <text>] > out.pcapng
 Tracexy.app/Contents/MacOS/Tracexy merge    <capture> <capture>… > merged.pcapng
+Tracexy.app/Contents/MacOS/Tracexy glossary [--format text|json]
 ```
+
+Every decoding command also accepts repeatable `--decode-as transport:port:protocol` rules (at most 64),
+which apply only to that invocation. Exit status: 0 ok, 1 unreadable capture, 2 usage or expression
+error, 3 `--fail-on` matched.
 
 It reads one PCAP or PCAPNG file with the same fold, findings, Session Expression and export code as
 the window, and prints to standard output: `summary` gives frames, sessions and findings by title;
@@ -1418,8 +1424,8 @@ those frames by session. Dissection export rejects a truncated final capture rec
 before reporting success. The app does not publish its staged file, and the CLI stages its output before writing
 stdout, when this happens. `objects` lists the HTTP response bodies
 (File ▸ Export Objects; tshark's `--export-objects`) with their frame, host, content type, size and
-file name — or, with `--type imf`, `tftp`, `ftp-data` or `x509af`, the email messages, TFTP or FTP files or
-certificates — and
+file name — or, with `--type imf`, `smb`, `tftp`, `ftp-data` or `x509af`, the email messages, SMB or TFTP or FTP
+files or certificates — and
 `--body 2` prints the second one's bytes (an HTTP body gzip or deflate decoded), so
 `tracexy objects capture.pcap --body 2 > page.html` saves it. `follow` prints the one TCP session the
 `--expression` names (for example `port == 50000`) in the Follow Stream formats; `--format raw` gives the same
@@ -1769,7 +1775,7 @@ repeated name becomes `name(1)`; a character a file name cannot hold, such as `/
 or `%3a`, as tshark writes it), and a double-click selects the object's session. The saved files match
 `tshark --export-objects http|imf|smb|tftp|ftp-data|x509af`. SMB files contain captured file data; save and share
 them only when that disclosure is intended. Tracexy reads the streams of the open capture (or a stopped
-live capture's copy) on demand, at most 200 streams, 2,000 objects and 256 MB; the footer says when a bound was
+live capture's copy) on demand, at most 200 streams, 2,000 objects and 256 MiB; the footer says when a bound was
 reached. Nothing is opened or run.
 
 **File → Export PDUs…** writes the application messages of the sessions in view to a PCAPNG that Wireshark
@@ -1778,7 +1784,7 @@ SSDP, NTP, DHCP, STUN or QUIC datagram's payload, and each reassembled turn of a
 POP3, SSH or SIP stream, one packet each (link type 252, Wireshark Upper PDU) tagged with its protocol and its
 addresses and ports. The payload is unredacted, so a Project with privacy protections asks first, as Export
 Frames does. TCP streams whose retained frame evidence cannot prove the order between directions are skipped and
-counted. At most 200 TCP streams, 100,000 PDUs and 512 MB are read.
+counted. At most 200 TCP streams, 100,000 PDUs and 512 MiB are read.
 
 ### Firewall rules
 
@@ -1870,7 +1876,7 @@ IPv4 or IPv6 and one of five trees: **All Addresses** (every source or destinati
 Types** (TCP, UDP, SCTP or NONE), **Source and Destination Addresses**, **Destinations and Ports** (each destination
 under its protocol and port) and **TTLs** or **Hop Limits** (each source under the value it arrived with, and
 each destination under that). Counts are IP headers as Wireshark counts them — a GRE, VXLAN, IP-in-IP or 6in4 packet counts
-once per IP header, under its innermost addresses (so 6in4 lists IPv6 addresses in the IPv4 trees) — and rows with equal counts keep Wireshark's order, so the tree reads as `tshark -z ip_hosts,tree` and its siblings do. Turn
+once per IP header, under its innermost addresses (so 6in4 lists IPv6 addresses in the IPv4 trees) — and rows with equal counts keep Wireshark's order, so the tree's ordering and nesting follow `tshark -z ip_hosts,tree` and its siblings. Turn
 off **Limit to Sessions in View** to count the whole capture; Copy or save the tree as CSV.
 
 ### Service response time

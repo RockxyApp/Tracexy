@@ -1,6 +1,6 @@
 # Tracexy Competitor Comparison
 
-Last reviewed: 2026-08-30. Source release: Tracexy 0.5.0, build 10.
+Last reviewed: 2026-11-03. Source release: Tracexy 0.9.2, build 17.
 
 This matrix is the repository-owned comparison for Tracexy as a native,
 session-first macOS Network Intelligence Platform. It mirrors the public
@@ -56,7 +56,7 @@ resolve ownership. Missing ownership is shown as unknown rather than invented.
 | Follow stream / reassembly | Explicit bounded Follow Stream for saved or fully stopped sources; no active-live growing-spool reads; no general always-on stream analyzer | Mature stream-follow workflow | Not a native GUI workflow | Terminal-oriented stream/field analysis depends on command usage | closed source or no public information | closed source or no public information |
 | Evidence handoff | Decoded fields, raw hex, capture exports, protected `.tracexysession` export, local History summaries | Packet/protocol artifacts and export formats | Capture artifacts for scripts and incident collection | Machine-readable terminal output | Visual/export scope requires vendor verification | Trace/export scope requires vendor verification |
 | Privacy model | Local-first; no automatic upload of capture payloads; protected session export omits raw frames and sensitive decoded metadata | Local analysis by default unless the user chooses external flows | Local CLI capture by default | Local CLI analysis by default | closed source or no public information | closed source or no public information |
-| Automation fit | Native desktop investigation plus a bounded read-only History automation core; no executable target or network transport today | GUI with supporting command-line tools | Strong for scripts and remote hosts | Strong for shell pipelines and CI-style output | Desktop-first; automation requires vendor verification | Desktop-first; automation requires vendor verification |
+| Automation fit | Native desktop investigation, a read-only `tracexy` command line in the same binary, and a bounded read-only History automation core; no network transport | GUI with supporting command-line tools | Strong for scripts and remote hosts | Strong for shell pipelines and CI-style output | Desktop-first; automation requires vendor verification | Desktop-first; automation requires vendor verification |
 | Best aligned user | Mac developer/support/security workflow that needs app-aware packet evidence without decrypting traffic | Protocol engineer or analyst needing maximum dissector depth | Operator collecting traffic quickly on a terminal or remote system | Analyst automating Wireshark-style dissection | Mac user wanting a friendly traffic view | Mac user wanting a native packet/trace analyzer |
 
 ## Tracexy Current Features
@@ -68,10 +68,12 @@ These are current source claims:
 | Capture | Live interface capture through the helper; interface discovery; snap length, promiscuous mode, and BPF settings; PCAP and PCAPNG read/write |
 | Protocol | Bounds-checked packet buffer and direct decoder for current L2-L4 and selected application metadata |
 | Sessions | Canonical five-tuple grouping, endpoint projections, timing/byte summaries, bounded connection evidence |
-| Findings | Selected evidence-linked TCP and datagram findings; no general durable security-analysis engine |
+| Findings | Selected evidence-linked TCP, TLS, DNS and ICMP findings, each citing the frames it was read from; no general durable security-analysis engine |
 | Follow Stream | On-demand bounded TCP follow for identity-checked saved or fully stopped sources |
 | History | Local terminal capture/session summaries in SQLite with boundary-triggered Auto-clear; no raw packet persistence |
-| Automation | Read-only bounded History projection to deterministic JSON or spreadsheet-safe CSV; no listener, provider, executable target, or MCP server |
+| Automation | Read-only bounded History projection to deterministic JSON or spreadsheet-safe CSV, plus a bundled read-only MCP stdio tool; no listener and no network port |
+| Command line | The app binary doubles as a read-only `tracexy` CLI over a saved capture; nothing is captured, written or sent |
+| MCP & Assistant | Bundled read-only stdio MCP tool and a local, credential-free loopback AI Assistant, both off until explicitly granted |
 | Exports | Raw PCAP/PCAPNG stays byte-preserving; protected `.tracexysession` export omits raw frames and sensitive decoded metadata |
 
 ## Not Current Claims
@@ -81,12 +83,11 @@ Do not present these as shipped:
 - HTTP/2 inside encrypted TLS, or HTTP/2 frames outside Follow Stream;
 - deep HTTP/3 or QUIC frame/payload decoding;
 - WebSocket decoding outside Follow Stream, or inside encrypted TLS (wss);
-- TLS analysis or decrypted HTTPS payload visibility;
+- decrypted HTTPS payload visibility;
 - general always-on TCP stream or record reassembly;
 - user-visible connection/TLS evidence navigation beyond current views;
 - a periodic background History retention scheduler;
 - production replay UI/runner;
-- CLI transport, TracexyMCP, or AI data transport; and
 - packet-rewriting redaction for raw PCAP or PCAPNG.
 
 ## Source Ledger

@@ -4,7 +4,7 @@ Choose the destination Project, then use **File → Open… (⌘O)** to open a c
 is (a reference is added to the Project's Library; nothing is copied), or **File → Import
 into Library… (⌥⌘O)** / the sidebar's Import action to keep a managed copy. Tracexy accepts
 **PCAP** and **PCAPNG** by content, including captures with a different filename extension.
-It also expands gzip captures and the capture payload from the observed TCP Viewer schema-1
+It also expands gzip and LZ4 captures and the capture payload from the observed TCP Viewer schema-1
 `.tcpviewsession` format; those are always expanded into a managed capture. Import leaves
 the original source unchanged and adds a managed capture to the Project's Library. Direct PCAP/PCAPNG imports copy the
 source bytes. For gzip and TCP Viewer archives, the managed item is the validated,
@@ -45,7 +45,7 @@ For a direct PCAP/PCAPNG import, the Library copy retains the source capture byt
 including container metadata Tracexy does not interpret. For gzip and TCP Viewer
 archives, the Library contains only the validated, extracted PCAP/PCAPNG payload;
 outer container metadata and TCP Viewer sidecars are not copied into the Project
-Library. In either case, preserving capture bytes does **not** mean Wireshark applies
+Library. In either case, preserving capture bytes does **not** mean Tracexy applies
 annotations or name-resolution records the way Wireshark would. **File → Get Info (⌘I)**
 shows what the container states — section hardware/OS/application, comments, interface
 names, descriptions, filters and statistics, and the presence of name-resolution,
@@ -89,11 +89,11 @@ boundaries; see [Usage](usage.md).
 
 In **Settings → Capture → Filter**, choose **Import Capture Filter…**, then choose a capture-filter list such as Wireshark’s `cfilters`. Select a named entry, review its full BPF expression, and choose **Use Filter**. This replaces the active Project’s custom capture expression and selects Custom mode. It applies to the next capture you start.
 
-While the Capture filter is **Custom (BPF)**, Tracexy checks the expression as you type with libpcap's own compiler — without opening an interface or asking for privileges — and shows either **Valid filter** or libpcap's reason for refusing it. The check compiles for Ethernet, the link type of almost every Mac interface; the capture start compiles it again for the interface actually chosen. **Save Filter…** keeps a valid expression under a name in the active Project, and **Saved Filters** puts one back (up to 30 per Project).
+While the Capture filter is **Custom (BPF)**, Tracexy checks the expression as you type with libpcap's own compiler — without opening an interface or asking for privileges — and shows **Valid filter**, libpcap's reason for refusing it, or — when libpcap cannot be loaded for the check — that the expression will be checked at capture start instead. The check compiles for Ethernet, the link type of almost every Mac interface; the capture start compiles it again for the interface actually chosen. **Save Filter…** keeps a valid expression under a name in the active Project, and **Saved Filters** puts one back (up to 30 per Project).
 
 Reading, cancelling, or a failed import leaves your existing settings intact. The importer accepts UTF-8 lists up to 256 KiB and 256 entries; names are limited to 128 characters and expressions to 1,024. A malformed row rejects the list with its line number. Duplicate names remain separate choices.
 
-This transfers one capture expression. Wireshark display filters, coloring rules, protocol settings, and profile archives are separate formats and are not converted. See [Wireshark’s configuration-file reference](https://www.wireshark.org/docs/wsug_html_chunked/ChAppFilesConfigurationSection.html).
+This transfers one capture expression. A Wireshark `dfilters` list is converted separately, by **Import Wireshark Display Filters…** in the Session Expression library: filters that describe sessions become saved Session Expressions, and the rest are refused with a reason. Coloring rules, protocol settings and profile archives are separate formats and are not converted. See [Wireshark’s configuration-file reference](https://www.wireshark.org/docs/wsug_html_chunked/ChAppFilesConfigurationSection.html).
 
 ## Missing capture times and link coverage
 

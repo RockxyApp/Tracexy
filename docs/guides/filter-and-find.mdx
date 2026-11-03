@@ -9,4 +9,4 @@ Use a **BPF capture filter** before live capture to choose incoming packets. In 
 
 **Session Expressions** evaluate bounded, typed facts about whole sessions. They are not Wireshark display filters: packet-field syntax such as `ip.addr` and `tcp.port` is intentionally different. The editor reports unsupported expressions instead of silently broadening results. Wireshark `dfilters` can be imported as saved entries where supported, but import does not promise full expression compatibility.
 
-For a particular frame, use **All Frames** and **Find Packet** to search packet text, hex bytes, or supported fields. See the [full usage reference](https://github.com/RockxyApp/Tracexy/blob/develop/docs/usage.md) for grammar and keyboard details.
+For a particular frame, use **All Frames** and **Find in Frames** to search a string, hex bytes, a regular expression, or a Frame Expression, looking in packet bytes or decoded details. See the [full usage reference](https://github.com/RockxyApp/Tracexy/blob/develop/docs/usage.md) for grammar and keyboard details.

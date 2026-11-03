@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A Frame Expression typed in All Frames applies when you press Return, and the field shows its grammar in a tooltip again.
 - Exported and printed packet dissections carry a saved capture's Time Shift, so their times match All Frames instead of the uncorrected source.
 - Go to Packet on a pinned frame now says when that frame is outside the capture in view, instead of doing nothing. A frame named by Find before any page has been listed now lists the page that would hold it rather than being refused.
+- The first frame on a later All Frames page shows its real time delta from the frame before it, taken from the same scan that built the page, instead of an unknown delta. A filtered page whose opening frame is hidden, and a time reference pinned from another page, still report unknown rather than borrowing that time.
+- Split Capture and the capture file-set settings now name the menu that walks a file set correctly, File ▸ File Set ▸ Next File, in English and Vietnamese. The old text named an item that does not exist.
 
 ### Changed
 
