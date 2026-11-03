@@ -223,6 +223,8 @@ nonisolated struct TrafficGraphComparison: Equatable, Sendable {
         let coverage: TrafficGraphSeriesCoverage?
         let retainedBucketCount: Int
 
+        /// Test seam: the retained bound as the projection actually built it,
+        /// so a drift from ``retainedBucketCount`` fails rather than hides.
         var retainedRepresentativeBucketCount: Int {
             representativeBuckets.count
         }

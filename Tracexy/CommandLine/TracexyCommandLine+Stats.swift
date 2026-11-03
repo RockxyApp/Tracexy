@@ -641,8 +641,15 @@ extension TracexyCommandLine {
         }
     }
 
-    /// `tracexy frames`: the All Frames list as a table — tshark's `-T fields` over the
-    /// columns Tracexy lists — limited to the sessions an `--expression` keeps.
+    /// The All Frames list as a materialized table, over the columns Tracexy lists
+    /// and limited to the sessions an `--expression` keeps.
+    ///
+    /// `tracexy frames` no longer calls this: it streams through ``streamFrames``
+    /// so a large capture never has to be held in memory at once. What remains is
+    /// the parity oracle for that renderer — the frame-stream test compares every
+    /// streamed text/CSV cell against this table, which is why a dead-code scan
+    /// finds no product caller. Retiring it means moving it into the test target,
+    /// not deleting it, or the streaming renderer loses its only comparison.
     static func framesTable(
         file original: URL,
         sessions: [SessionSummary],

@@ -2,9 +2,11 @@ import Foundation
 
 // MARK: - SCTPChunkType
 
-/// The RFC 4960 §3.2 chunk type values session logic names. Only the types a fold
-/// actually reasons about are listed; every other type still reaches
-/// ``SCTPFacts/chunkTypes`` as its raw byte, so nothing is silently dropped.
+/// The RFC 4960 §3.2 chunk type values session logic names. `initiation` and
+/// `abort` are the two a fold reasons about today; the rest are named so a
+/// decoded chunk reads as itself rather than as a bare number. Every type,
+/// named or not, still reaches ``SCTPFacts/chunkTypes`` as its raw byte, so
+/// nothing is silently dropped.
 nonisolated enum SCTPChunkType {
     static let data: UInt8 = 0
     static let initiation: UInt8 = 1
