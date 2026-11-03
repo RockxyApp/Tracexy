@@ -61,6 +61,23 @@ struct WorkspacePresentationContractTests {
         }
     }
 
+    @Test("No production view hardcodes a UserDefaults key")
+    func viewsDeriveEveryDefaultsKeyFromTheNamespace() throws {
+        // A key written as a literal is namespaced by nothing and, outside the
+        // Settings window, lands in the shared domain rather than the active
+        // Project's suite. The isolation test above cannot see one, because it
+        // matches lines carrying `store: .standard`, which a literal lacks.
+        for (path, source) in try productionViewSources() {
+            for line in source.split(separator: "\n") where line.contains("@AppStorage(\"") {
+                Issue.record("\(path) hardcodes a defaults key: \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        #expect(
+            try readProjectFile("Tracexy/Views/Overview/OverviewView.swift")
+                .contains("store: coordinator.activeProjectDefaults")
+        )
+    }
+
     @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
     func monitorOrder() {
         #expect(SidebarSection.monitor.items == [.overview, .sessions, .flow, .history])
