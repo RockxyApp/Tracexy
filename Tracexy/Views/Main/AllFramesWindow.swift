@@ -346,7 +346,10 @@ struct AllFramesWindow: View {
                     ? previousRow.provenance.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
                     : .unknown
             } else if row.ordinal == 1 {
-                result[row.ordinal] = .none
+                // Spelled out: a dictionary's subscript setter takes `Value?`, so a
+                // bare `.none` is `Optional.none` and removes the key instead of
+                // storing the case that says this frame has no predecessor.
+                result[row.ordinal] = FrameTimePredecessor.none
             } else if row.ordinal == UInt64(max(1, firstRetainedOrdinal)),
                       retainedOrdinals.contains(row.ordinal),
                       let precedingRetainedFrameTimestamp
