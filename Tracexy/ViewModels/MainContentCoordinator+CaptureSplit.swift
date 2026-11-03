@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 /// File ▸ Split Capture…: write the open saved capture as a file set — a new file
 /// every N frames or N seconds, optionally time-shifted — then open its first file,
-/// where File ▸ Next File in Set walks the rest. The source is only read.
+/// where File ▸ File Set ▸ Next File walks the rest. The source is only read.
 @MainActor
 extension MainContentCoordinator {
     var canSplitCapture: Bool {
@@ -32,7 +32,7 @@ extension MainContentCoordinator {
         save.nameFieldStringValue = base + "-part"
         save
             .message =
-            String(localized: "Each file is named prefix_00001_date.pcapng, so File ▸ Next File in Set walks them.")
+            String(localized: "Each file is named prefix_00001_date.pcapng, so File ▸ File Set ▸ Next File walks them.")
         guard save.runModal() == .OK, let chosen = save.url else {
             return
         }

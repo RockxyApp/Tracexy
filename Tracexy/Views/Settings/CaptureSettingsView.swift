@@ -177,7 +177,7 @@ struct CaptureSettingsView: View {
                 SettingsIndented {
                     SettingsFootnote(
                         "While capturing, Tracexy starts a new file at whichever limit comes first and keeps the set in "
-                            + "this Project’s Captures folder, named so File ▸ Next File in Set walks it. Keeping only the "
+                            + "this Project’s Captures folder, named so File ▸ File Set ▸ Next File walks it. Keeping only the "
                             + "newest files deletes older ones as the capture runs; a finding that cites a deleted file "
                             + "says so. Follow and Frames read the newest file; Save Capture keeps every file still kept."
                     )
