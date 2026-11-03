@@ -17,7 +17,7 @@ struct CaptureFrameListSummaryView: View {
                 if list.omittedFrameCount > 0 {
                     let last = list.rows.last?.ordinal ?? UInt64(list.firstRetainedOrdinal)
                     Text(
-                        "Showing \(shown.formatted()) of frames \(list.firstRetainedOrdinal.formatted())–\(last.formatted()) of \(list.scannedFrameCount.formatted())"
+                        "Showing \(shown.formatted()) of frames \(list.firstRetainedOrdinal.formatted())–\(last.formatted()), \(list.scannedFrameCount.formatted()) scanned"
                     )
                 } else {
                     Text("Showing \(shown.formatted()) of \(list.scannedFrameCount.formatted()) frames")

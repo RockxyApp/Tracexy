@@ -17264,6 +17264,16 @@
         }
       }
     },
+    "Showing %@ of frames %@–%@, %@ scanned": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang hiện %@ trong các khung %@–%@, đã quét %@"
+          }
+        }
+      }
+    },
     "Showing %@ of %@ frames": {
       "localizations": {
         "vi": {
