@@ -112,6 +112,10 @@ enum ProjectScopedSettingsKeys {
     static let geoIPDatabases = key("enrichment.geoipDatabases.v1")
     /// The Sessions table's shown/hidden columns and their order (JSON `TableColumnCustomization`).
     static let sessionTableColumns = key("workspace.sessionTableColumns")
+    /// Overview ▸ Activity: whether the traffic chart plots bytes, packets or bit rate.
+    static let overviewTrafficMeasure = key("overview.trafficMeasure")
+    /// Overview: whether the small time chart shows sessions started or retransmissions.
+    static let overviewTimeSeries = key("overview.timeSeries")
     /// Names the investigator gave to addresses (JSON `[address: name]`).
     static let addressNames = key("names.addresses")
     /// Names the investigator gave to IPv4 blocks (JSON `[cidr: name]`).
