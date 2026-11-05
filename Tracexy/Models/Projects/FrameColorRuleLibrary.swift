@@ -37,7 +37,11 @@ nonisolated struct FrameColorRuleEvaluation: Sendable {
     let ruleByOrdinal: [UInt64: UUID]
     let unknownOrdinals: Set<UInt64>
 
-    static func evaluate(_ rules: [FrameColorRule], rows: [CaptureFrameRow]) -> Self {
+    /// Nil means the task was cancelled mid-pass. Up to 200,000 rows times 32
+    /// rules is 6.4M evaluations, and paging cancels and restarts this, so a pass
+    /// that ignored cancellation would keep a core busy for a page nobody is
+    /// looking at any more.
+    static func evaluate(_ rules: [FrameColorRule], rows: [CaptureFrameRow]) -> Self? {
         var parser = FrameExpressionParser()
         let parsed = rules.compactMap { rule -> (UUID, FrameExpression)? in
             guard rule.isEnabled, FrameColorRuleLibrary.isValid(rule),
@@ -49,7 +53,10 @@ nonisolated struct FrameColorRuleEvaluation: Sendable {
         }
         var matches: [UInt64: UUID] = [:]
         var unknown = Set<UInt64>()
-        for row in rows {
+        for (index, row) in rows.enumerated() {
+            if index.isMultiple(of: 1_024), Task.isCancelled {
+                return nil
+            }
             for (id, expression) in parsed {
                 switch expression.evaluate(row.filterFacts) {
                 case .yes:

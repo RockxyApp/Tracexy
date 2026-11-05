@@ -8,7 +8,7 @@ struct FrameColorRuleLibraryTests {
     // MARK: Internal
 
     @Test
-    func evaluationUsesFirstMatchAndUnknownBlocksLowerPriority() {
+    func evaluationUsesFirstMatchAndUnknownBlocksLowerPriority() throws {
         let first = FrameColorRule(
             name: "First",
             expression: "tcp.flags.syn",
@@ -27,13 +27,13 @@ struct FrameColorRuleLibraryTests {
             headerLength: 20, payloadSequence: 2, payloadLength: 0, options: TCPOptionFacts()
         )
         let matching = row(1, facts: FrameFilterFacts(packet: packet))
-        let matched = FrameColorRuleEvaluation.evaluate([first, second], rows: [matching])
+        let matched = try #require(FrameColorRuleEvaluation.evaluate([first, second], rows: [matching]))
         #expect(matched.ruleByOrdinal[1] == first.id)
 
         packet.tcpFacts = nil
         packet.decodeStop = .cutShort
         let undecidable = row(2, facts: FrameFilterFacts(packet: packet))
-        let unknown = FrameColorRuleEvaluation.evaluate([first, second], rows: [undecidable])
+        let unknown = try #require(FrameColorRuleEvaluation.evaluate([first, second], rows: [undecidable]))
         #expect(unknown.ruleByOrdinal[2] == nil)
         #expect(unknown.unknownOrdinals == [2])
     }

@@ -460,8 +460,9 @@ final class CaptureFrameListState {
         let rules = frameColorRuleLibrary.rules
         isEvaluatingFrameColorRules = true
         frameColorRuleTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let result = FrameColorRuleEvaluation.evaluate(rules, rows: rows)
-            guard !Task.isCancelled else {
+            guard let result = FrameColorRuleEvaluation.evaluate(rules, rows: rows),
+                  !Task.isCancelled else
+            {
                 return
             }
             await MainActor.run {
