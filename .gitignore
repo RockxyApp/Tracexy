@@ -100,3 +100,4 @@ signatures/
 # Tooling
 *.log
 .swiftformat.lock
+hands-off.md
