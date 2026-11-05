@@ -22,6 +22,7 @@ extension MainContentCoordinator {
             return
         }
         state.lists[kind] = nil
+        state.unreadKinds.remove(kind)
         if let reason = allFramesUnavailableReason {
             state.error = reason
             return
@@ -103,6 +104,7 @@ extension MainContentCoordinator {
             exportObjects.isLoading = false
             exportObjects.progress = nil
             exportObjects.task = nil
+            exportObjects.unreadKinds.insert(kind)
             return
         }
         exportObjects.isLoading = false
@@ -110,5 +112,10 @@ extension MainContentCoordinator {
         exportObjects.task = nil
         exportObjects.lists[kind] = list
         exportObjects.error = error
+        // A cancelled read reports neither a list nor an error; it must not leave
+        // the window asserting that the capture carries no objects of this kind.
+        if list == nil, error == nil {
+            exportObjects.unreadKinds.insert(kind)
+        }
     }
 }

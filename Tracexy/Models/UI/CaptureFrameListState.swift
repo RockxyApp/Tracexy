@@ -430,6 +430,9 @@ final class CaptureFrameListState {
         isEvaluatingFrameHighlight = true
         frameHighlightTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let result = FrameExpressionSelection.evaluate(highlightedFrameExpression, rows: rows) else {
+                // A retired evaluation still owns the progress flag it set, or the
+                // view keeps reporting work that will never finish.
+                await self?.finishEvaluatingFrameHighlight(requestID: highlightID)
                 return
             }
             await MainActor.run {
@@ -463,6 +466,7 @@ final class CaptureFrameListState {
             guard let result = FrameColorRuleEvaluation.evaluate(rules, rows: rows),
                   !Task.isCancelled else
             {
+                await self?.finishEvaluatingFrameColorRules(requestID: ruleRequestID)
                 return
             }
             await MainActor.run {
@@ -658,6 +662,32 @@ final class CaptureFrameListState {
     @ObservationIgnored private var frameColorRuleTask: Task<Void, Never>?
     @ObservationIgnored private var frameColorRuleRequestID = 0
 
+    /// Releases the progress flag a retired evaluation set, but only while it is
+    /// still the current request — a newer one owns its own flag.
+    private func finishEvaluatingFrameExpression(requestID: Int) {
+        guard frameExpressionRequestID == requestID else {
+            return
+        }
+        isEvaluatingFrameExpression = false
+        frameExpressionTask = nil
+    }
+
+    private func finishEvaluatingFrameHighlight(requestID: Int) {
+        guard frameHighlightRequestID == requestID else {
+            return
+        }
+        isEvaluatingFrameHighlight = false
+        frameHighlightTask = nil
+    }
+
+    private func finishEvaluatingFrameColorRules(requestID: Int) {
+        guard frameColorRuleRequestID == requestID else {
+            return
+        }
+        isEvaluatingFrameColorRules = false
+        frameColorRuleTask = nil
+    }
+
     private func installFrameHighlight(_ expression: FrameExpression, text: String) {
         highlightedFrameExpression = expression
         highlightedFrameExpressionText = text
@@ -687,6 +717,7 @@ final class CaptureFrameListState {
         isEvaluatingFrameExpression = true
         frameExpressionTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let result = FrameExpressionSelection.evaluate(expression, rows: rows) else {
+                await self?.finishEvaluatingFrameExpression(requestID: expressionID)
                 return
             }
             await MainActor.run {

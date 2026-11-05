@@ -218,7 +218,7 @@ struct AllFramesWindow: View {
             if old != new {
                 state.clearCaptureTimeReferenceColumnValues()
                 state.clearPinnedFrameColumnValues()
-                coordinator.loadAllFrames(force: true)
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
             }
         }
         .onChange(of: coordinator.packetDetailOptions.validateChecksums, initial: true) { _, validate in
@@ -290,7 +290,7 @@ struct AllFramesWindow: View {
                     expression: state.frameExpressionDraft,
                     expectedProjectID: presetProjectID
                 )
-                notice = saved ? "Frame filter saved to this Project." : "Could not save this Frame Filter. Choose a valid name and expression."
+                notice = frameFilterSaveNotice(saved)
             }
         } message: {
             Text("Saved Frame Filters are local to this Project. Saving does not apply the filter.")
@@ -958,7 +958,7 @@ struct AllFramesWindow: View {
                     .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
                     .help("Print supported packet views for every frame matching the applied Frame Expression")
                 }
-                Button("Rescan") { coordinator.loadAllFrames(force: true) }
+                Button("Rescan") { rescan(coordinator, state) }
                     .disabled(state.isLoading || coordinator.allFramesUnavailableReason != nil)
             }
         }
@@ -1116,6 +1116,11 @@ struct AllFramesWindow: View {
             coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: start)
             state.pendingTableSelection = next
             notice = nil
+        } else {
+            // The mark survives a rescan but the list does not, so the page that
+            // holds this frame cannot be resolved yet. Say so rather than letting
+            // an enabled button do nothing.
+            notice = String(localized: "Frame \(next.formatted()) can’t be shown until the list is rescanned.")
         }
     }
 
@@ -1249,4 +1254,28 @@ extension AllFramesWindow {
             content()
         }
     }
+}
+
+// MARK: - Page retention
+
+/// The page a reload should come back to: the one the window is showing, or the
+/// first page before anything has been listed. A forced rescan that drops this
+/// throws the user back to frame 1 from wherever they were reading.
+private func retainedStart(_ state: CaptureFrameListState) -> Int {
+    state.list?.firstRetainedOrdinal ?? 1
+}
+
+/// Re-lists the frames the window is showing, on the page it is showing. A forced
+/// rescan that drops the page throws the user back to frame 1 from wherever they
+/// were reading.
+@MainActor
+private func rescan(_ coordinator: MainContentCoordinator, _ state: CaptureFrameListState) {
+    coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
+}
+
+/// Confirms or explains a Frame Filter save, localized like every other notice.
+private func frameFilterSaveNotice(_ saved: Bool) -> String {
+    saved
+        ? String(localized: "Frame filter saved to this Project.")
+        : String(localized: "Could not save this Frame Filter. Choose a valid name and expression.")
 }

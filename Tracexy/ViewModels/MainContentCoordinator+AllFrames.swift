@@ -632,6 +632,8 @@ extension MainContentCoordinator {
         if let reason = allFramesUnavailableReason {
             throw FrameSearchQuery.Invalid(message: reason)
         }
+        let generation = startGeneration
+        let projectID = projectStore.activeProjectID
         let savedURL = isViewingSavedCapture ? savedCaptureEvidenceURL : nil
         let savedIdentity = adoptedSavedCaptureIdentity
         let spool = liveCaptureSpool
@@ -642,16 +644,36 @@ extension MainContentCoordinator {
             let source = try await Self.frameToolSource(
                 savedURL: savedURL, savedIdentity: savedIdentity, spool: spool, temporaryURL: temporaryURL
             )
-            return try FrameContentSearch.adjacentMatch(
+            let result = try FrameContentSearch.adjacentMatch(
                 in: source.url, expectedIdentity: source.identity, query: query,
                 after: current, forward: forward
             )
+            return (result, source.token)
         }
-        return try await withTaskCancellationHandler {
+        let (result, sourceToken) = try await withTaskCancellationHandler {
             try await worker.value
         } onCancel: {
             worker.cancel()
         }
+        // An ordinal is only meaningful in the source it was counted in. Without
+        // this the expression overload's guard was here and this one's was not, so
+        // a capture replaced mid-search paged the new source to the old frame.
+        if savedURL == nil {
+            let currentToken = await spool.currentSourceToken()
+            guard liveCaptureSpool === spool, currentToken == sourceToken else {
+                throw CancellationError()
+            }
+        }
+        guard !Task.isCancelled,
+              generation == startGeneration,
+              projectID == projectStore.activeProjectID,
+              savedURL == (isViewingSavedCapture ? savedCaptureEvidenceURL : nil),
+              savedIdentity == adoptedSavedCaptureIdentity,
+              allFramesUnavailableReason == nil else
+        {
+            throw CancellationError()
+        }
+        return result
     }
 
     /// Go to frame `ordinal` as a click on its All Frames row would, listing the

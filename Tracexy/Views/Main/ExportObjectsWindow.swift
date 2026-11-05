@@ -35,6 +35,12 @@ struct ExportObjectsWindow: View {
                 ContentUnavailableView(
                     "Objects Unavailable", systemImage: "doc.on.doc", description: Text(error)
                 )
+            } else if state.unreadKinds.contains(state.kind) {
+                ContentUnavailableView(
+                    "Objects Not Read",
+                    systemImage: "doc.on.doc",
+                    description: Text("This read stopped before it finished. Rescan to list these objects.")
+                )
             } else if objects.isEmpty {
                 ContentUnavailableView(
                     "No Objects",

@@ -189,6 +189,7 @@ struct FrameFindBar: View {
                 message = String(localized: "Expression error at character \(error.position): \(error.reason)")
             } else {
                 message = (error as? FrameSearchQuery.Invalid)?.message
+                    ?? String(localized: "Couldn’t search the frames: \(error.localizedDescription)")
             }
             return
         }
@@ -230,6 +231,12 @@ struct FrameFindBar: View {
                       askedMode != .expression || selected == selection,
                       listID == coordinator.allFrames.requestID else
                 {
+                    // What was searched is no longer what is on screen, so the
+                    // count would describe a list the user is not looking at.
+                    // Say that rather than clearing the status to nothing.
+                    if requestID == searchRequestID, listID != coordinator.allFrames.requestID {
+                        message = String(localized: "The frame list changed. Search again.")
+                    }
                     return
                 }
                 lastResult = SearchSummary(
