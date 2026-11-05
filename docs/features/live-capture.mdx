@@ -12,6 +12,8 @@ Capture traffic on a chosen macOS interface and keep the evidence local.
 
 Choose an interface in the toolbar, inspect Capture Readiness, then press **Start** — or use **Capture → Start Capture** (⌘E). Approve the signed helper in macOS when prompted. **Stop Capture** (the same ⌘E) finishes the session fold and writes its summary to History.
 
+When traffic is routed over a VPN, the physical interface (`en0`) carries only the encrypted tunnel packets, so those requests appear as their inner conversations only when you capture the tunnel itself. Pick the `utun…` interface under **Tunnels**. Tracexy reports what each interface actually observes and does not synthesize inner requests from encrypted outer traffic.
+
 The **Capture** menu also offers **Restart Capture** (⇧⌘R), **Refresh Interfaces**, and **Manage Interfaces…**.
 
 ## What you can see
