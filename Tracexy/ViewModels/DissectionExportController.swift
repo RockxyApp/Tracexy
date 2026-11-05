@@ -13,6 +13,8 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 final class DissectionExportController {
+    // MARK: Internal
+
     static let shared = DissectionExportController()
 
     private(set) var isExporting = false
@@ -72,6 +74,18 @@ final class DissectionExportController {
         return String(
             localized: "\(summary.unknownExpressionFrameCount.formatted()) frame(s) could not be evaluated and were left out."
         )
+    }
+
+    /// Cancels a dissection export in progress. The detached worker reads the
+    /// exporter's default `isCancelled` (`Task.isCancelled`), so cancelling it
+    /// stops the capture scan rather than only abandoning its result.
+    func cancelExport() {
+        exportTask?.cancel()
+    }
+
+    /// Cancels packet-view print preparation in progress.
+    func cancelPrint() {
+        printTask?.cancel()
     }
 
     /// Print the chosen bounded packet view for the sessions currently in view.
@@ -147,11 +161,11 @@ final class DissectionExportController {
             return
         }
         isPrinting = true
-        Task { [weak coordinator] in
+        printTask = Task { [weak coordinator] in
             var failure: String?
             var warning: String?
             do {
-                let printResult = try await Task.detached(priority: .userInitiated) {
+                let printWorker = Task.detached(priority: .userInitiated) {
                     () throws -> (String, Int, Int) in
                     let temporary = FileManager.default.temporaryDirectory
                         .appendingPathComponent("tracexy-print-dissections-\(UUID().uuidString)")
@@ -196,7 +210,12 @@ final class DissectionExportController {
                         throw PrintError.invalidText
                     }
                     return (text, summary.unknownExpressionFrameCount, summary.excludedIgnoredFrameCount)
-                }.value
+                }
+                let printResult = try await withTaskCancellationHandler {
+                    try await printWorker.value
+                } onCancel: {
+                    printWorker.cancel()
+                }
                 guard coordinator?.activeRuntime.projectID == originProjectID,
                       coordinator?.startGeneration == originGeneration,
                       coordinator?.isProjectBoundaryBusy == false,
@@ -520,12 +539,12 @@ final class DissectionExportController {
             return
         }
         isExporting = true
-        Task { [weak coordinator] in
+        exportTask = Task { [weak coordinator] in
             var failure: String?
             var warning: String?
             var didWrite = false
             do {
-                let summary = try await Task
+                let exportWorker = Task
                     .detached(priority: .userInitiated) { () throws -> DissectionExporter.Summary in
                         let temporary = FileManager.default.temporaryDirectory
                             .appendingPathComponent("tracexy-dissections-\(UUID().uuidString)")
@@ -545,7 +564,12 @@ final class DissectionExportController {
                             includeTimestampPreamble: includeTimestampPreamble,
                             timeCorrection: timeCorrection, to: output
                         )
-                    }.value
+                    }
+                let summary = try await withTaskCancellationHandler {
+                    try await exportWorker.value
+                } onCancel: {
+                    exportWorker.cancel()
+                }
                 didWrite = true
                 warning = Self.dissectionExportWarning(
                     summary: summary, markedOnly: markedOnly,
@@ -564,6 +588,12 @@ final class DissectionExportController {
             )
         }
     }
+
+    // MARK: Private
+
+    private var exportTask: Task<Void, Never>?
+
+    private var printTask: Task<Void, Never>?
 }
 
 // MARK: - Confirmation

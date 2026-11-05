@@ -60,8 +60,6 @@ extension PacketDecoder {
                 packet.decodeStop = .malformed("Invalid SCTP chunk length")
                 break
             }
-            fields.append(ranged("Chunk \(chunkCount + 1) Type", "\(chunkType)", in: buf, at: offset, 1))
-            fields.append(ranged("Chunk \(chunkCount + 1) Length", "\(chunkLength) bytes", in: buf, at: offset + 2, 2))
             guard chunkLength <= buf.length - offset else {
                 packet.decodeStop = incompleteStop("Invalid SCTP chunk length")
                 break
@@ -79,6 +77,8 @@ extension PacketDecoder {
                 }
                 break
             }
+            fields.append(ranged("Chunk \(chunkCount + 1) Type", "\(chunkType)", in: buf, at: offset, 1))
+            fields.append(ranged("Chunk \(chunkCount + 1) Length", "\(chunkLength) bytes", in: buf, at: offset + 2, 2))
             if chunkType == 0 {
                 guard chunkLength >= 16 else {
                     packet.decodeStop = .malformed("SCTP DATA chunk is shorter than its fixed header")
