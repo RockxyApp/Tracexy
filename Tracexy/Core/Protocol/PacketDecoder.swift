@@ -29,6 +29,9 @@ nonisolated enum PacketDecoder {
         let isComplete: Bool
     }
 
+    /// IPv6 extension-header protocol numbers (RFC 8200 order).
+    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+
     /// Decode one frame. `timestamp` is the source's capture time, or `nil` when the
     /// source carried none; decoding never invents one.
     static func decode(
@@ -504,10 +507,75 @@ nonisolated enum PacketDecoder {
         ))
     }
 
-    // MARK: Private
+    /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
+    /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
+    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
+        switch proto {
+        case 44: 8 // Fragment header is fixed-size
+        case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
+        default: try (Int(buf.u8(offset + 1)) + 1) * 8
+        }
+    }
 
-    /// IPv6 extension-header protocol numbers (RFC 8200 order).
-    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+    static func ipv6ExtensionName(_ proto: UInt8) -> String {
+        switch proto {
+        case 0: "Hop-by-Hop Options"
+        case 43: "Routing"
+        case 44: "Fragment"
+        case 51: "Authentication Header"
+        case 60: "Destination Options"
+        case 135: "Mobility"
+        default: "Extension"
+        }
+    }
+
+    // MARK: Transport layer
+
+    static func transport(
+        _ buf: PacketBuffer,
+        proto: UInt8,
+        src: String,
+        dst: String,
+        into packet: inout DecodedPacket
+    )
+        throws
+    {
+        switch proto {
+        case 6: try tcp(buf, src: src, dst: dst, into: &packet)
+        case 17: try udp(buf, src: src, dst: dst, into: &packet)
+        case 1: try icmp(buf, src: src, dst: dst, isV6: false, into: &packet)
+        case 58: try icmp(buf, src: src, dst: dst, isV6: true, into: &packet)
+        case 47: try gre(buf, into: &packet)
+        case 4,
+             41: try ipInIP(buf, version: proto == 4 ? 4 : 6, into: &packet)
+        default: break
+        }
+    }
+
+    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
+        DecodedLayer(
+            proto: layer.proto,
+            title: layer.title,
+            summary: layer.summary,
+            fields: layer.fields.map { DecodedField(name: $0.name, value: $0.value) },
+            children: layer.children.map(withoutByteRanges)
+        )
+    }
+
+    static func ipProtoName(_ proto: UInt8) -> String {
+        switch proto {
+        case 6: "TCP (6)"
+        case 17: "UDP (17)"
+        case 1: "ICMP (1)"
+        case 58: "ICMPv6 (58)"
+        case 4: "IPIP (4)"
+        case 41: "IPv6 (41)"
+        case 47: "GRE (47)"
+        default: "\(proto)"
+        }
+    }
+
+    // MARK: Private
 
     /// STUN magic cookie (RFC 5389 §6): the fixed value at header offset 4 that
     /// disambiguates STUN from other UDP payloads regardless of port.
@@ -607,51 +675,6 @@ nonisolated enum PacketDecoder {
         case 20: "Router Alert"
         case 2: "Security"
         default: "type \(type)"
-        }
-    }
-
-    /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
-    /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
-    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
-        switch proto {
-        case 44: 8 // Fragment header is fixed-size
-        case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
-        default: try (Int(buf.u8(offset + 1)) + 1) * 8
-        }
-    }
-
-    static func ipv6ExtensionName(_ proto: UInt8) -> String {
-        switch proto {
-        case 0: "Hop-by-Hop Options"
-        case 43: "Routing"
-        case 44: "Fragment"
-        case 51: "Authentication Header"
-        case 60: "Destination Options"
-        case 135: "Mobility"
-        default: "Extension"
-        }
-    }
-
-    // MARK: Transport layer
-
-    static func transport(
-        _ buf: PacketBuffer,
-        proto: UInt8,
-        src: String,
-        dst: String,
-        into packet: inout DecodedPacket
-    )
-        throws
-    {
-        switch proto {
-        case 6: try tcp(buf, src: src, dst: dst, into: &packet)
-        case 17: try udp(buf, src: src, dst: dst, into: &packet)
-        case 1: try icmp(buf, src: src, dst: dst, isV6: false, into: &packet)
-        case 58: try icmp(buf, src: src, dst: dst, isV6: true, into: &packet)
-        case 47: try gre(buf, into: &packet)
-        case 4,
-             41: try ipInIP(buf, version: proto == 4 ? 4 : 6, into: &packet)
-        default: break
         }
     }
 
@@ -1190,16 +1213,6 @@ nonisolated enum PacketDecoder {
         return false
     }
 
-    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
-        DecodedLayer(
-            proto: layer.proto,
-            title: layer.title,
-            summary: layer.summary,
-            fields: layer.fields.map { DecodedField(name: $0.name, value: $0.value) },
-            children: layer.children.map(withoutByteRanges)
-        )
-    }
-
     /// Conservative QUIC long-header recognition. A high bit by itself is far
     /// too weak on busy UDP/443 traffic, so require the complete clear-text
     /// prefix and RFC-bounded connection IDs. Non-zero versions also carry the
@@ -1270,19 +1283,6 @@ nonisolated enum PacketDecoder {
             offset += 1 + Int(len)
         }
         return (labels.joined(separator: "."), next < 0 ? offset : next)
-    }
-
-    static func ipProtoName(_ proto: UInt8) -> String {
-        switch proto {
-        case 6: "TCP (6)"
-        case 17: "UDP (17)"
-        case 1: "ICMP (1)"
-        case 58: "ICMPv6 (58)"
-        case 4: "IPIP (4)"
-        case 41: "IPv6 (41)"
-        case 47: "GRE (47)"
-        default: "\(proto)"
-        }
     }
 
     /// Human-readable TLS record content-type name (RFC 8446 §5.1). Only 20…24 are
