@@ -15,7 +15,7 @@ struct ConnectionValidatorAuditTokenTests {
 
     @Test("Local Xcode products include the routed DerivedData cache")
     func localBuildProductPathsAreConstrained() {
-        let defaultProduct = "/Users/developer/Library/Developer/Xcode/DerivedData/Tracexy-abc/Build/Products/Debug/Tracexy.app"
+        let defaultProduct = "/example/developer/Library/Developer/Xcode/DerivedData/Tracexy-abc/Build/Products/Debug/Tracexy.app"
         let routedProduct = "/example/caches/xcode/Tracexy-sync-0123456789ab/DerivedData/Build/Products/Debug/Tracexy.app"
         let unrelated = "/tmp/DerivedData/Build/Products/Debug/Tracexy.app"
         let wrongCache = "/tmp/caches/xcode/Tracexy-sync-not-a-hash/DerivedData/Build/Products/Debug/Tracexy.app"
