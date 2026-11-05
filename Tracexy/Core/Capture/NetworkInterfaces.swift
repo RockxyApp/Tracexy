@@ -104,6 +104,12 @@ struct InterfaceGroup: Identifiable {
 enum NetworkInterfaces {
     // MARK: Internal
 
+    /// AWDL and low-latency Wi-Fi carry specialized traffic, not the Mac's
+    /// ordinary Wi-Fi internet connection even when their flags say RUNNING.
+    static func isSpecialPurposeWiFi(_ id: String) -> Bool {
+        id.hasPrefix("awdl") || id.hasPrefix("llw")
+    }
+
     static func available() -> [NetworkInterface] {
         let scNames = systemConfigurationNames()
         var byName: [String: (ipv4: String?, isUp: Bool, isLoopback: Bool)] = [:]

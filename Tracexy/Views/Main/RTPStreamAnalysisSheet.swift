@@ -158,11 +158,7 @@ struct RTPStreamAnalysisSheet: View {
                     ForEach(series) { item in
                         if visibleSeries.contains(seriesID(analysis, key: item.key)) {
                             ForEach(analysis.packets) { packet in
-                                LineMark(
-                                    x: .value("Time (s)", (analysis.start + packet.time - origin) / 1_000),
-                                    y: .value("ms", packet[keyPath: item.value])
-                                )
-                                .foregroundStyle(by: .value("Series", "\(directionName(analysis)) · \(item.name)"))
+                                graphLineMark(analysis: analysis, packet: packet, series: item, origin: origin)
                             }
                         }
                     }
@@ -311,6 +307,21 @@ struct RTPStreamAnalysisSheet: View {
 
     private static func decimal(_ value: Double, _ digits: Int) -> String {
         String(format: "%.*f", digits, value)
+    }
+
+    private func graphLineMark(
+        analysis: RTPStreamAnalysis,
+        packet: RTPStreamAnalysis.Packet,
+        series: GraphSeries,
+        origin: Double
+    )
+        -> some ChartContent
+    {
+        let time = (analysis.start + packet.time - origin) / 1_000
+        let value = packet[keyPath: series.value]
+        let label = "\(directionName(analysis)) · \(series.name)"
+        return LineMark(x: .value("Time (s)", time), y: .value("ms", value))
+            .foregroundStyle(by: .value("Series", label))
     }
 
     private func synchronizeVisibleSeries() {

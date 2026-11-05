@@ -87,6 +87,18 @@ struct SessionCenterView: View {
         return parts.joined(separator: ", ")
     }
 
+    static func waitingForPacketsMessage(interfaceID: String, hasCaptureFilter: Bool) -> String {
+        if NetworkInterfaces.isSpecialPurposeWiFi(interfaceID) {
+            return String(
+                localized: "This interface carries specialized Wi-Fi traffic. Choose your connected Wi-Fi or Ethernet interface for internet sessions."
+            )
+        }
+        if hasCaptureFilter {
+            return String(localized: "Waiting for packets matching the capture filter…")
+        }
+        return String(localized: "Waiting for packets…")
+    }
+
     // MARK: Private
 
     private struct VisibilityFingerprint: Equatable {
@@ -245,7 +257,10 @@ struct SessionCenterView: View {
             ContentUnavailableView {
                 Label("Capturing on \(coordinator.captureSourceName)", systemImage: "dot.radiowaves.left.and.right")
             } description: {
-                Text("Waiting for packets…")
+                Text(Self.waitingForPacketsMessage(
+                    interfaceID: coordinator.captureInterface,
+                    hasCaptureFilter: coordinator.readinessCaptureConfiguration.bpf != nil
+                ))
             }
         } else if coordinator.isViewingSavedCapture {
             ContentUnavailableView {
