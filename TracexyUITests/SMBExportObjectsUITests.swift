@@ -60,6 +60,12 @@ final class SMBExportObjectsUITests: XCTestCase {
         let saveButton = window.buttons["exportObjects.saveSelected"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
         saveButton.click()
+        // Object bodies are application data, so saving asks first.
+        let acknowledgement = app.dialogs.firstMatch
+        XCTAssertTrue(acknowledgement.waitForExistence(timeout: 10), app.debugDescription)
+        let proceed = acknowledgement.buttons["Export Raw Capture"]
+        XCTAssertTrue(proceed.waitForExistence(timeout: 5), acknowledgement.debugDescription)
+        proceed.click()
         let savePanel = app.dialogs.firstMatch
         XCTAssertTrue(savePanel.waitForExistence(timeout: 10), app.debugDescription)
         let save = savePanel.buttons["Save"]
