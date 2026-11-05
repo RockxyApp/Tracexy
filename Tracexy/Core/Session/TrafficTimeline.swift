@@ -323,7 +323,15 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         }
         let cap = max(1, maxCount)
         var shift = 0
-        while (maximumKey >> shift) - (minimumKey >> shift) + 1 > Int64(cap), shift < 62 {
+        // `key(for:)` deliberately clamps an absurd instant to `Int64.max`/`.min`
+        // rather than trapping on the conversion. Subtracting those two directly
+        // would trap here instead, undoing that choice, so widen the window until
+        // the span is both representable and small enough.
+        while shift < 62 {
+            let (span, overflowed) = (maximumKey >> shift).subtractingReportingOverflow(minimumKey >> shift)
+            if !overflowed, span != Int64.max, span + 1 <= Int64(cap) {
+                break
+            }
             shift += 1
         }
         return (shift, minimumKey >> shift, maximumKey >> shift, bucketWidth * Double(1 << shift))
