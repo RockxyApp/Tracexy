@@ -52,6 +52,18 @@ struct SidebarFilterCommands: Commands {
     @FocusedValue(\.focusSidebarFilter) private var focusSidebarFilter: SidebarFilterFocusAction?
 }
 
+// MARK: - SidebarMenuCommands
+
+/// The View menu's sidebar commands as one element. `.commands` is built with
+/// `CommandsBuilder`, which takes at most ten children, so sibling groups that
+/// belong together are composed here rather than listed separately.
+struct SidebarMenuCommands: Commands {
+    var body: some Commands {
+        SidebarCommands()
+        SidebarFilterCommands()
+    }
+}
+
 // MARK: - TracexyApp
 
 /// Started from `main.swift`, which first gives the built-in command line a chance
@@ -554,12 +566,10 @@ struct TracexyApp: App {
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
-            SidebarCommands()
-
-            // View ▸ Filter Sidebar (⌥⌘J). The sidebar's filter field was
-            // pointer-only; this is its keyboard and menu-bar route, matching
-            // Xcode's own ⌥⌘J for the navigator filter.
-            SidebarFilterCommands()
+            // Bundled: the sidebar toggle plus View ▸ Filter Sidebar (⌥⌘J), which
+            // gives the pointer-only filter field a keyboard and menu-bar route,
+            // matching Xcode's own ⌥⌘J for the navigator filter.
+            SidebarMenuCommands()
 
             // Edit ▸ Find (⌘F). Reuses the standard Find placement so the shortcut
             // reads as native, then routes to the Sessions search box the app
