@@ -74,6 +74,19 @@ nonisolated struct CaptureByteStreamParser {
         buffer.count - head
     }
 
+    /// The smallest a block of each type can be and still hold the fields the
+    /// parser reads from it. Mirrors `PcapngReader` and `PcapngStreamReader`; a
+    /// flat minimum would let a short block drive a read past the buffer.
+    private static func minimumLength(forType type: UInt32) -> Int {
+        switch type {
+        case 0x0A0D0D0A: 28
+        case 1: 20
+        case 6: 32
+        case 3: 16
+        default: 12
+        }
+    }
+
     private mutating func nextFrame() throws -> Step? {
         guard let format else {
             try readHeader()
@@ -150,7 +163,9 @@ nonisolated struct CaptureByteStreamParser {
         }
         let type = u32(at: head, little: littleEndian)
         let length = Int(u32(at: head + 4, little: littleEndian))
-        guard length >= 12, length % 4 == 0, length <= Self.maximumRecordLength else {
+        guard length >= Self.minimumLength(forType: type), length % 4 == 0,
+              length <= Self.maximumRecordLength else
+        {
             throw Failure(message: "The pipe sent a pcapng block of an impossible length (\(length) bytes).")
         }
         guard available >= length else {
@@ -162,7 +177,9 @@ nonisolated struct CaptureByteStreamParser {
         case 0x0A0D0D0A:
             interfaces = []
         case 1:
-            interfaces.append(interface(in: body))
+            if interfaces.count < CaptureSection.maxInterfaces {
+                interfaces.append(interface(in: body))
+            }
         case 6:
             return try enhancedPacket(in: body)
         case 3:

@@ -169,6 +169,50 @@ struct PipeCaptureTests {
         }
     }
 
+    @Test
+    func shortPcapngBlocksAreRefusedRatherThanRead() throws {
+        // A pipe carries untrusted bytes. An Interface Description Block needs 20
+        // to hold the link type and snap length the parser reads from it; a flat
+        // 12-byte minimum let a shorter one through, and the snap-length read then
+        // went past the buffered bytes or picked up the next block's first word.
+        for shortBody in [[], [UInt8](repeating: 0, count: 4)] {
+            var parser = CaptureByteStreamParser()
+            let bytes = Self.sectionHeader() + Self.block(type: 1, body: shortBody)
+            #expect(throws: CaptureByteStreamParser.Failure.self) {
+                _ = try parser.append(bytes)
+            }
+        }
+
+        // A well-formed interface block of exactly the minimum still parses, so
+        // the guard refuses the short ones without refusing the legitimate case.
+        var parser = CaptureByteStreamParser()
+        var valid = Self.sectionHeader()
+        valid += Self.interfaceBlock(linkType: 1, tsresol: nil)
+        valid += Self.enhancedPacket(interface: 0, ticks: 1_800_000_000_250_000, data: Self.frame(1))
+        let frames = try parser.append(valid)
+        #expect(frames.count == 1)
+        #expect(frames[0].linkType == 1)
+    }
+
+    @Test
+    func describedInterfacesStopAtTheRetentionCap() throws {
+        // A file is bounded by its own length; a pipe is not, so the interface
+        // list needs the ceiling the capture-properties model already uses. Past
+        // it a block is dropped, and a packet naming it is refused by name rather
+        // than read against another interface's link type.
+        var parser = CaptureByteStreamParser()
+        var bytes = Self.sectionHeader()
+        for _ in 0 ... CaptureSection.maxInterfaces {
+            bytes += Self.interfaceBlock(linkType: 1, tsresol: nil)
+        }
+        _ = try parser.append(bytes)
+        #expect(throws: CaptureByteStreamParser.Failure.self) {
+            _ = try parser.append(Self.enhancedPacket(
+                interface: UInt32(CaptureSection.maxInterfaces), ticks: 1, data: Self.frame(2)
+            ))
+        }
+    }
+
     // MARK: Private
 
     private final class Received: @unchecked Sendable {
