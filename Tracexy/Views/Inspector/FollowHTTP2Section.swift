@@ -9,6 +9,7 @@ struct FollowHTTP2Section: View {
 
     let http2: FollowHTTP2Presentation
     let query: String
+    let caseSensitive: Bool
     /// Opens a captured frame in Layers.
     let openFrame: (SessionFrameProvenance) -> Void
 
@@ -60,7 +61,7 @@ struct FollowHTTP2Section: View {
                     .font(Theme.Typography.monoMicro)
                     .foregroundStyle(.secondary)
                     .help("Stream identifier")
-                Text(FollowTranscriptSearch.highlighted(row.request, query: query))
+                Text(FollowTranscriptSearch.highlighted(row.request, query: query, caseSensitive: caseSensitive))
                     .font(Theme.Typography.monoSmall)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -124,11 +125,15 @@ struct FollowHTTP2Section: View {
                     .font(Theme.Typography.captionMedium)
                     .foregroundStyle(.secondary)
                 ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
-                    Text(FollowTranscriptSearch.highlighted("\(header.name): \(header.value)", query: query))
-                        .font(Theme.Typography.monoMicro)
-                        .lineLimit(3)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
+                    Text(FollowTranscriptSearch.highlighted(
+                        "\(header.name): \(header.value)",
+                        query: query,
+                        caseSensitive: caseSensitive
+                    ))
+                    .font(Theme.Typography.monoMicro)
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
                 }
             }
             .padding(.leading, Theme.Metrics.spacingL)

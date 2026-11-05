@@ -87,6 +87,10 @@ struct SessionLadder: Equatable {
                 case .zeroWindow:
                     label = "Zero window"
                     attention = true
+                case .zeroWindowProbeAcknowledgement:
+                    label = "Probe ACK"
+                case .windowUpdate:
+                    label = "Window update"
                 case .keepAlive: label = "Keep-alive"
                 default: label = nil
                 }

@@ -9,12 +9,25 @@ import Foundation
 /// nothing is ever looked up on the network.
 @MainActor
 enum FrameAddressNames {
-    static func resolver(sessions: [SessionSummary], book: AddressNameBook) -> (String) -> String {
+    static func resolver(
+        sessions: [SessionSummary], book: AddressNameBook,
+        captureFileRecords: [CaptureNameResolutionRecord] = []
+    )
+        -> (String) -> String
+    {
         var learned: [String: String] = [:]
         for row in ResolvedAddresses.rows(sessions: sessions, namedAddresses: [:])
             where learned[row.address] == nil
         {
             learned[row.address] = row.name
+        }
+        for record in captureFileRecords {
+            guard let address = IPAddressValue(parsing: record.address)?.compressedText,
+                  learned[address] == nil, !record.name.text.isEmpty else
+            {
+                continue
+            }
+            learned[address] = record.name.text
         }
         return { address in
             book.name(for: address) ?? learned[address] ?? book.displayName(for: address) ?? address

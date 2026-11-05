@@ -23,6 +23,8 @@ nonisolated struct SessionFrameReference: Sendable, Equatable, Identifiable {
     let interfaceID: Int
     let tcpFlags: TCPFlags?
     let hasComment: Bool
+    /// The immediately preceding capture packet's timestamp, even when it belongs to another session.
+    let previousCapturedFrame: FrameTimePredecessor
     /// The innermost decoded layer's title and summary, bounded.
     let summary: String
     /// Seconds since the first matched frame; `nil` when either is untimed.
@@ -89,6 +91,7 @@ nonisolated final class SessionFrameScanner {
             contentsOf: url,
             configuration: .init(
                 maxCapturedLength: configuration.maxCapturedLength,
+                timestampTransform: configuration.timeCorrection?.streamTransform,
                 isCancelled: configuration.isCancelled
             )
         )
@@ -108,11 +111,13 @@ nonisolated final class SessionFrameScanner {
             maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
             maxRetainedFrames: Int = Configuration.defaultMaxRetainedFrames,
             progressStride: Int = 512,
+            timeCorrection: CaptureTimeCorrection? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength
             self.maxRetainedFrames = min(Configuration.defaultMaxRetainedFrames, max(1, maxRetainedFrames))
             self.progressStride = max(1, progressStride)
+            self.timeCorrection = timeCorrection
             self.isCancelled = isCancelled
         }
 
@@ -123,6 +128,7 @@ nonisolated final class SessionFrameScanner {
         let maxCapturedLength: Int
         let maxRetainedFrames: Int
         let progressStride: Int
+        let timeCorrection: CaptureTimeCorrection?
         let isCancelled: @Sendable () -> Bool
     }
 
@@ -131,6 +137,7 @@ nonisolated final class SessionFrameScanner {
         var matched = 0
         var frames: [SessionFrameReference] = []
         var firstTimestamp: Date?
+        var previousCapturedFrame: FrameTimePredecessor = .none
         var sequential = SequentialFrameDecoder()
         let completion: CaptureStreamCompletion
         walk: while true {
@@ -138,13 +145,18 @@ nonisolated final class SessionFrameScanner {
             case let .frame(event):
                 scanned += 1
                 if let reference = match(
-                    event, ordinal: scanned, firstTimestamp: &firstTimestamp, sequential: &sequential
+                    event,
+                    ordinal: scanned,
+                    previousCapturedFrame: previousCapturedFrame,
+                    firstTimestamp: &firstTimestamp,
+                    sequential: &sequential
                 ) {
                     matched += 1
                     if frames.count < configuration.maxRetainedFrames {
                         frames.append(reference)
                     }
                 }
+                previousCapturedFrame = event.reference.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
                 if scanned % configuration.progressStride == 0 {
                     onProgress(event.progress)
                 }
@@ -197,6 +209,7 @@ nonisolated final class SessionFrameScanner {
     private func match(
         _ event: CaptureFrameEvent,
         ordinal: Int,
+        previousCapturedFrame: FrameTimePredecessor,
         firstTimestamp: inout Date?,
         sequential: inout SequentialFrameDecoder
     )
@@ -247,6 +260,7 @@ nonisolated final class SessionFrameScanner {
             interfaceID: event.reference.interfaceID,
             tcpFlags: packet.tcpFacts?.flags,
             hasComment: event.reference.hasComment,
+            previousCapturedFrame: previousCapturedFrame,
             summary: Self.summary(of: packet),
             relativeTime: relative
         )

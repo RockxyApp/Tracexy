@@ -73,6 +73,55 @@ struct PDUExporterTests {
             == [["198.51.100.7"]])
     }
 
+    @Test
+    func untimedPDUExportRemainsUntimedAndEpochZeroRemainsKnown() throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("pdu-untimed-in-\(UUID()).pcapng")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("pdu-untimed-out-\(UUID()).pcapng")
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: output)
+        }
+        let query: [UInt8] = [0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0x74, 4]
+            + Array("test".utf8) + [0, 0, 1, 0, 1]
+        let sourceBytes = PacketBuilder.ethernetIPv4(
+            proto: 17, src: "10.0.0.5", dst: "192.0.2.53",
+            payload: PacketBuilder.udp(srcPort: 53_000, dstPort: 53, payload: query)
+        )
+        let sourceEndpoint = IPEndpoint(ip: "10.0.0.5", port: 53_000)
+        let destinationEndpoint = IPEndpoint(ip: "192.0.2.53", port: 53)
+        let tuple = FiveTuple(proto: .udp, source: sourceEndpoint, destination: destinationEndpoint)
+        let sessionID = SessionBuilder.sessionID(for: tuple)
+
+        func export(timestamp: Date?) throws -> CaptureFrameEvent {
+            let capture = try PcapngWriter.data(defaultLinkType: LinkType.ethernet, frames: [
+                CapturedFrame(
+                    bytes: sourceBytes, timestamp: timestamp, originalLength: sourceBytes.count,
+                    linkType: LinkType.ethernet
+                ),
+            ])
+            try capture.write(to: source, options: .atomic)
+            let identity = try CaptureStreamReader(contentsOf: source).identity
+            _ = try PDUExporter.export(
+                from: source, expectedIdentity: identity, streams: [], datagramSessions: [sessionID], to: output
+            )
+            let reader = try CaptureStreamReader(contentsOf: output)
+            guard case let .frame(event) = try reader.next() else {
+                Issue.record("The PDU export did not contain a packet")
+                throw CancellationError()
+            }
+            return event
+        }
+
+        let untimed = try export(timestamp: nil)
+        #expect(untimed.reference.timestamp == nil)
+        #expect(untimed.bytes == PDUExporter.packet(
+            name: "dns", source: sourceEndpoint, destination: destinationEndpoint, tcp: false, payload: query
+        ))
+
+        let epochZero = try export(timestamp: Date(timeIntervalSince1970: 0))
+        #expect(epochZero.reference.timestamp == Date(timeIntervalSince1970: 0))
+    }
+
     // MARK: Private
 
     private static func frames() -> [[UInt8]] {

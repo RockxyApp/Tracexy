@@ -176,6 +176,7 @@ nonisolated extension PacketDecoder {
         result.rawBytes = packet.rawBytes
         result.processName = packet.processName
         result.tunnelDepth = packet.tunnelDepth
+        result.undecodedInnerIPHeader = packet.undecodedInnerIPHeader
         result.ipFragment = packet.ipFragment
         result.reassembly = IPReassemblyFacts(version: fragment.version, length: datagram.count, frames: frames)
         // The datagram's payload is not in this frame's bytes: hand it over as bytes.

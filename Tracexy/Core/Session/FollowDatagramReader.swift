@@ -164,6 +164,7 @@ nonisolated final class FollowDatagramReader {
             contentsOf: url,
             configuration: .init(
                 maxCapturedLength: configuration.maxCapturedLength,
+                timestampTransform: configuration.timeCorrection?.streamTransform,
                 isCancelled: configuration.isCancelled
             )
         )
@@ -184,6 +185,7 @@ nonisolated final class FollowDatagramReader {
             maxPayloadBytesPerMessage: Int = Configuration.defaultMaxPayloadBytesPerMessage,
             maxRetainedPayloadBytes: Int = Configuration.defaultMaxRetainedPayloadBytes,
             progressStride: Int = 256,
+            timeCorrection: CaptureTimeCorrection? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = min(max(0, maxCapturedLength), CapturedFrame.maxReasonableLength)
@@ -195,6 +197,7 @@ nonisolated final class FollowDatagramReader {
                 max(0, maxRetainedPayloadBytes), Self.ceilingMaxRetainedPayloadBytes
             )
             self.progressStride = max(1, progressStride)
+            self.timeCorrection = timeCorrection
             self.isCancelled = isCancelled
         }
 
@@ -216,6 +219,7 @@ nonisolated final class FollowDatagramReader {
         let maxPayloadBytesPerMessage: Int
         let maxRetainedPayloadBytes: Int
         let progressStride: Int
+        let timeCorrection: CaptureTimeCorrection?
         let isCancelled: @Sendable () -> Bool
     }
 

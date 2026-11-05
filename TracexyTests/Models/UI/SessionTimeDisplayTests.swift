@@ -13,11 +13,10 @@ struct SessionTimeDisplayTests {
         #expect(SessionTimeFormat.utc.string(for: later, captureStart: start) == "08:01:23")
         #expect(SessionTimeFormat.sinceCaptureStart.string(for: later, captureStart: start) == "83.457")
         #expect(SessionTimeFormat.sinceCaptureStart.string(for: start, captureStart: start) == "0.000")
+        #expect(SessionTimeFormat.sinceCaptureStart
+            .string(for: start.addingTimeInterval(-1), captureStart: start) == "-1.000")
         // No timed frame to count from: the time of day, never an invented origin.
-        #expect(
-            SessionTimeFormat.sinceCaptureStart.string(for: later, captureStart: nil)
-                == SessionTimeFormat.timeOfDay.string(for: later, captureStart: nil)
-        )
+        #expect(SessionTimeFormat.sinceCaptureStart.string(for: later, captureStart: nil) == "—")
         #expect(SessionTimeFormat.allCases.map(\.columnTitle) == ["Time", "UTC", "Since Start"])
     }
 

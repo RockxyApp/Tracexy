@@ -37,7 +37,69 @@ struct WorkspacePresentationContractTests {
         #expect(app.contains("cacheRoot: demoRoot.appendingPathComponent"))
         #expect(app.contains("applicationDefaults: Self.applicationDefaults"))
         #expect(settings.contains("GeneralSettingsView(applicationDefaults: applicationDefaults)"))
-        #expect(settings.contains("applicationDefaults: applicationDefaults,"))
+        // A pane keeps its application-wide keys out of a Synthetic Project only
+        // if every key it pins to `.standard` for previews is rebound to the
+        // injected store in `init`. Matching one call site's argument text could
+        // not see a key that was pinned and never rebound, which is the leak
+        // this test exists to prevent.
+        for (path, source) in try productionViewSources() {
+            let pinned = Self.keysPinnedToTheSharedDomain(in: source)
+            // The matcher reads one-line declarations. If a file pins more keys to
+            // the shared domain than it can parse, the difference would otherwise
+            // skip the file without a word — which is how an unrebound key hides.
+            let declared = source.components(separatedBy: "store: .standard").count - 1
+            if declared != pinned.count {
+                Issue.record(
+                    "\(path) pins \(declared) keys to .standard, but only \(pinned.count) are readable here"
+                )
+            }
+            guard !pinned.isEmpty else {
+                continue
+            }
+            let injection = Self.initializerBody(of: source)
+            #expect(
+                injection.contains("store: applicationDefaults"),
+                "\(path) pins \(pinned.joined(separator: ", ")) to .standard but injects no store"
+            )
+            for key in pinned {
+                #expect(
+                    injection.contains("SettingsKeys.\(key)"),
+                    "\(path) pins SettingsKeys.\(key) to .standard without rebinding it"
+                )
+            }
+        }
+    }
+
+    @Test("No product source hardcodes a defaults key or sends a Project key to the shared domain")
+    func productSourceDerivesEveryDefaultsKeyFromTheNamespace() throws {
+        // Two ways a preference escapes its Project, and this test exists because
+        // one of them shipped. A key written as a literal is namespaced by nothing;
+        // a Project-scoped key written straight to `UserDefaults.standard` lands in
+        // the shared domain however well it is named. Neither carries
+        // `store: .standard`, so the isolation test above cannot see either, and
+        // the whole product tree is scanned rather than `Tracexy/Views` alone —
+        // scenes, view models and models hold storage-bearing code too.
+        for (path, source) in try productionSources(under: "Tracexy") {
+            for (number, line) in source.split(separator: "\n").enumerated() {
+                let text = line.trimmingCharacters(in: .whitespaces)
+                let at = "\(path):\(number + 1)"
+                // The attribute form, `@AppStorage("literal")`.
+                if line.contains("@AppStorage(\"") || line.contains("@SceneStorage(\"") {
+                    Issue.record("\(at) hardcodes a defaults key: \(text)")
+                }
+                // The initializer form, which is what the codebase prefers when a
+                // view rebinds a store, so a literal hides there just as easily.
+                if line.contains("AppStorage("), !line.contains("@AppStorage("),
+                   line.contains("\"")
+                {
+                    Issue.record("\(at) builds AppStorage with a literal key: \(text)")
+                }
+                // A Project-owned key has no business in the shared domain.
+                if line.contains("UserDefaults.standard"), line.contains("ProjectScopedSettingsKeys.") {
+                    Issue.record("\(at) writes a Project key to the shared domain: \(text)")
+                }
+            }
+        }
     }
 
     @Test("Monitor navigation is exactly Overview, Sessions, Flow Map, History, in that order")
@@ -511,9 +573,59 @@ struct WorkspacePresentationContractTests {
         case rootNotFound
     }
 
+    /// The `SettingsKeys` members a source pins to the shared domain, which it
+    /// does so previews and direct construction still resolve. Declarations are
+    /// one line each, as every pane writes them today.
+    private static func keysPinnedToTheSharedDomain(in source: String) -> [String] {
+        source.split(separator: "\n").compactMap { line in
+            guard line.contains("store: .standard"),
+                  let tail = line.components(separatedBy: "SettingsKeys.").dropFirst().first else
+            {
+                return nil
+            }
+            return String(tail.prefix { $0.isLetter || $0.isNumber })
+        }
+    }
+
+    /// A view's initializer, where an injected store is bound over the pinned
+    /// default. Rebinding happens nowhere else.
+    private static func initializerBody(of source: String) -> String {
+        // `.init(` is a call, not a declaration; matching it would validate a
+        // pinned key against whatever initializer happened to appear first.
+        guard let start = source.range(of: "\n    init(") ?? source.range(of: "\ninit(") else {
+            return ""
+        }
+        let rest = source[start.upperBound...]
+        guard let end = rest.range(of: "// MARK: Internal") else {
+            return String(rest)
+        }
+        return String(rest[..<end.lowerBound])
+    }
+
     private func readProjectFile(_ relativePath: String) throws -> String {
         let root = try resolveProjectRoot()
         return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    /// Every Swift file under a product subtree. `productionViewSources` stays
+    /// scoped to `Tracexy/Views` because its callers assert about views; a rule
+    /// that applies to all product source needs the wider walk.
+    private func productionSources(under subpath: String) throws -> [(path: String, source: String)] {
+        let root = try resolveProjectRoot()
+        let directory = root.appendingPathComponent(subpath, isDirectory: true)
+        let enumerator = try #require(FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ))
+        return try enumerator.compactMap { item in
+            guard let url = item as? URL, url.pathExtension == "swift" else {
+                return nil
+            }
+            return try (
+                path: url.path.replacingOccurrences(of: root.path + "/", with: ""),
+                source: String(contentsOf: url, encoding: .utf8)
+            )
+        }
     }
 
     private func productionViewSources() throws -> [(path: String, source: String)] {

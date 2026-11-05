@@ -5,8 +5,8 @@ import SQLite3
 
 /// A pure, actor-isolated SQLite substrate for terminal capture history. It owns
 /// exactly one connection, enables and verifies foreign keys (and, for a writable
-/// file, WAL) before installing or upgrading to schema v3 in one immediate
-/// transaction (v1 and v2 databases are migrated in place, never reset), and exposes
+/// file, WAL) before installing or upgrading to the current schema in one immediate
+/// transaction (v1, v2 and v3 databases are migrated in place, never reset), and exposes
 /// only atomic whole-capture replacement, bounded keyset reads and whole-group
 /// retention. It never reads settings, touches `@MainActor`, converts a
 /// `SessionSummary`/`Finding` (callers hand it neutral records), retains raw bytes,
@@ -167,7 +167,7 @@ extension SessionStore {
 
 private extension SessionStore {
     /// The current schema version this build owns.
-    static let currentSchemaVersion: Int64 = 3
+    static let currentSchemaVersion: Int64 = 4
 
     /// The exact schema v2 DDL for a fresh database. Installed atomically;
     /// `user_version` is bumped in the same transaction.
@@ -214,7 +214,7 @@ private extension SessionStore {
     );
     CREATE INDEX idx_captures_ended ON captures(ended_at, id);
     """ + findingsTableSQL + """
-    PRAGMA user_version = 3;
+    PRAGMA user_version = 4;
     """
 
     /// Schema v3's one addition: each stored capture's evidence-linked findings, in
@@ -278,7 +278,7 @@ private extension SessionStore {
     UPDATE captures SET time_basis = 2 WHERE source_kind = 1;
     """
 
-    /// Configure the connection and bring it to schema v3, returning the version it
+    /// Configure the connection and bring it to schema v4, returning the version it
     /// reads.
     ///
     /// Every handle sets and verifies `foreign_keys = ON` before any transaction —
@@ -319,6 +319,7 @@ private extension SessionStore {
             }
             try upgradeV1ToV2(database, configuration: configuration)
             try upgradeV2ToV3(database, faultHook: configuration.faultInjection)
+            try upgradeV3ToV4(database, faultHook: configuration.faultInjection)
         case 2:
             // v3 only adds a table, so a read-only reader (the MCP server) can still
             // read a v2 file's captures and sessions; it reports findings as not
@@ -327,6 +328,14 @@ private extension SessionStore {
                 return 2
             }
             try upgradeV2ToV3(database, faultHook: configuration.faultInjection)
+            try upgradeV3ToV4(database, faultHook: configuration.faultInjection)
+        case 3:
+            // Read-only v3 files have the same tables and can be used until a
+            // writable app opens them. v4 adds only stable time-basis values.
+            guard !configuration.readOnly else {
+                return 3
+            }
+            try upgradeV3ToV4(database, faultHook: configuration.faultInjection)
         default:
             throw HistoryStoreError.unsupportedSchema(version: Int(clamping: version))
         }
@@ -346,6 +355,23 @@ private extension SessionStore {
             }
             try checkFault(faultHook, .migrationCommit)
             try database.execute("PRAGMA user_version = 3;")
+            try database.execute("COMMIT;")
+        } catch {
+            try? database.execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    /// v4 adds corrected timestamp provenance values to the persisted integer
+    /// basis enum. The column is already present; bump the version atomically so
+    /// older app builds fail closed as an unsupported schema instead of treating
+    /// a new basis value as corrupt data.
+    static func upgradeV3ToV4(_ database: SQLiteDatabase, faultHook: FaultHook?) throws {
+        try checkFault(faultHook, .migrationBegin)
+        try database.execute("BEGIN IMMEDIATE;")
+        do {
+            try checkFault(faultHook, .migrationCommit)
+            try database.execute("PRAGMA user_version = 4;")
             try database.execute("COMMIT;")
         } catch {
             try? database.execute("ROLLBACK;")

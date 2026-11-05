@@ -7,6 +7,9 @@ import Observation
 struct PacketBytesSubject: Equatable {
     let title: String
     let bytes: [UInt8]
+    /// Decoded protocol layers for a complete captured frame, when this is also
+    /// acting as its packet-details view.
+    var layers: [DecodedLayer] = []
     /// The decode step the source suggests (a `Content-Encoding: gzip` body → gzip).
     var suggestedDecoding: PacketBytesDecoding = .none
     var suggestedPresentation: PacketBytesPresentation = .text

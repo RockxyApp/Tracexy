@@ -13,17 +13,31 @@ extension TracexyCommandLine {
     /// "1-100,250,300-310" as frame numbers; `nil` for an empty, reversed or
     /// unreadable list, or one naming more than ten million frames.
     static func frameList(_ text: String) -> Set<UInt64>? {
+        let maxFrames = 10_000_000
         var frames = Set<UInt64>()
-        for part in text.split(separator: ",") {
+        for part in text.split(separator: ",", omittingEmptySubsequences: false) {
             let bounds = part.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-            guard let low = UInt64(bounds[0].trimmingCharacters(in: .whitespaces)), low > 0 else {
+            guard let first = bounds.first,
+                  let low = UInt64(first.trimmingCharacters(in: .whitespaces)), low > 0 else
+            {
                 return nil
             }
             let high = bounds.count == 2 ? UInt64(bounds[1].trimmingCharacters(in: .whitespaces)) : low
-            guard let high, high >= low, frames.count + Int(high - low) < 10_000_000 else {
+            guard let high, high >= low else {
                 return nil
             }
-            frames.formUnion(low ... high)
+            let span = high - low
+            guard span < UInt64(maxFrames), frames.count < maxFrames - Int(span) else {
+                return nil
+            }
+            var ordinal = low
+            while true {
+                frames.insert(ordinal)
+                if ordinal == high {
+                    break
+                }
+                ordinal += 1
+            }
         }
         return frames.isEmpty ? nil : frames
     }

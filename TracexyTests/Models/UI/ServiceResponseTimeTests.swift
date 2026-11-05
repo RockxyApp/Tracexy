@@ -52,6 +52,137 @@ struct ServiceResponseTimeTests {
         }
     }
 
+    @Test("Large but representable corrected times do not overflow SRT arithmetic")
+    func distantCorrectedTimesRemainFinite() {
+        let session = UUID()
+        let requestTime = Date(timeIntervalSince1970: 1)
+        let responseTime = Date(timeIntervalSince1970: 10_000_000_000_000)
+        var request = CaptureFrameRow(
+            provenance: SessionFrameProvenance(
+                ordinal: FrameOrdinal(rawValue: 1), timestamp: requestTime,
+                capturedLength: 0, originalLength: 0, linkType: LinkType.ethernet
+            ),
+            source: "", destination: "", protocolName: "SMB2", info: "", sessionID: session,
+            interfaceID: 0, hasComment: false
+        )
+        request.srt = .smb2(messageID: 42, command: 0, isResponse: false, isInterim: false)
+        var response = CaptureFrameRow(
+            provenance: SessionFrameProvenance(
+                ordinal: FrameOrdinal(rawValue: 2), timestamp: responseTime,
+                capturedLength: 0, originalLength: 0, linkType: LinkType.ethernet
+            ),
+            source: "", destination: "", protocolName: "SMB2", info: "", sessionID: session,
+            interfaceID: 0, hasComment: false
+        )
+        response.srt = .smb2(messageID: 42, command: 0, isResponse: true, isInterim: false)
+
+        let row = ServiceResponseTime.table(.smb2, rows: [request, response]).first
+        #expect(row?.calls == 1)
+        #expect(row?.maximum.isFinite == true)
+        #expect(row?.sum.isFinite == true)
+        #expect(abs((row?.sum ?? 0) - responseTime.timeIntervalSince(requestTime)) < 1)
+    }
+
+    @Test("Streaming SMB2 SRT pairs requests and stays within its pending bound")
+    func streamingSMB2AccumulatorIsBounded() {
+        let session = UUID()
+        func frame(
+            _ ordinal: UInt64, _ id: UInt64, _ time: TimeInterval, command: Int = 8, response: Bool
+        )
+            -> CaptureFrameRow
+        {
+            var row = CaptureFrameRow(
+                provenance: SessionFrameProvenance(
+                    ordinal: FrameOrdinal(rawValue: ordinal), timestamp: Date(timeIntervalSince1970: time),
+                    capturedLength: 0, originalLength: 0, linkType: LinkType.ethernet
+                ),
+                source: "", destination: "", protocolName: "SMB2", info: "", sessionID: session,
+                interfaceID: 0, hasComment: false
+            )
+            row.srt = .smb2(messageID: id, command: command, isResponse: response, isInterim: false)
+            return row
+        }
+
+        var accumulator = ServiceResponseTime.StreamingSMB2Accumulator(maximumPendingRequests: 1)
+        accumulator.record(frame(1, 10, 100, response: false))
+        accumulator.record(frame(2, 10, 100.05, command: 0x0C, response: false))
+        accumulator.record(frame(3, 11, 101, response: false))
+        accumulator.record(frame(4, 10, 100.125, response: true))
+        let result = accumulator.result()
+        #expect(result.omittedRequests == 1)
+        #expect(result.rows.count == 1)
+        #expect(result.rows.first?.calls == 1)
+        #expect(abs((result.rows.first?.sum ?? 0) - 0.125) < 0.000001)
+        #expect(ServiceResponseTime.table(.smb2, rows: [
+            frame(1, 10, 100, response: false),
+            frame(2, 10, 100.05, command: 0x0C, response: false),
+            frame(4, 10, 100.125, response: true),
+        ]).first?.sum == 0.125)
+        let csv = ServiceResponseTime.csv(.smb2, result.rows, omittedRequests: result.omittedRequests)
+        #expect(csv.contains("Omitted pending requests"))
+        #expect(csv.contains(",1\r\n"))
+    }
+
+    @Test("Streaming LDAP and Kerberos preserve bounded request/reply semantics")
+    func streamingLDAPAndKerberosAccumulators() {
+        func row(_ ordinal: UInt64, _ session: UUID, _ time: TimeInterval, _ fact: SRTFrameFact) -> CaptureFrameRow {
+            var row = CaptureFrameRow(
+                provenance: SessionFrameProvenance(
+                    ordinal: FrameOrdinal(rawValue: ordinal), timestamp: Date(timeIntervalSince1970: time),
+                    capturedLength: 0, originalLength: 0, linkType: LinkType.ethernet
+                ),
+                source: "", destination: "", protocolName: "", info: "", sessionID: session,
+                interfaceID: 0, hasComment: false
+            )
+            row.srt = fact
+            return row
+        }
+
+        let session = UUID()
+        var ldap = ServiceResponseTime.StreamingAccumulator(service: .ldap, maximumCorrelations: 1)
+        ldap.record(row(1, session, 1, .ldap(messageID: 7, operation: 3)))
+        ldap.record(row(2, session, 1.1, .ldap(messageID: 7, operation: 4)))
+        ldap.record(row(3, session, 1.2, .ldap(messageID: 7, operation: 19)))
+        ldap.record(row(4, session, 1.3, .ldap(messageID: 7, operation: 25)))
+        ldap.record(row(5, session, 1.4, .ldap(messageID: 7, operation: 5)))
+        ldap.record(row(6, session, 1.5, .ldap(messageID: 8, operation: 3)))
+        let ldapResult = ldap.result()
+        #expect(ldapResult.omittedCorrelations == 0)
+        #expect(ldapResult.rows.first?.calls == 4)
+        #expect(abs((ldapResult.rows.first?.sum ?? 0) - 1.0) < 0.000001)
+
+        var boundedLDAP = ServiceResponseTime.StreamingAccumulator(service: .ldap, maximumCorrelations: 1)
+        boundedLDAP.record(row(1, session, 1, .ldap(messageID: 7, operation: 3)))
+        boundedLDAP.record(row(2, session, 1.1, .ldap(messageID: 7, operation: 4)))
+        boundedLDAP.record(row(3, session, 1.2, .ldap(messageID: 8, operation: 3)))
+        #expect(boundedLDAP.result().omittedCorrelations == 1)
+
+        var kerberos = ServiceResponseTime.StreamingAccumulator(service: .kerberos, maximumCorrelations: 1)
+        kerberos.record(row(1, session, 2, .kerberos(type: 10)))
+        kerberos.record(row(2, session, 2.01, .kerberos(type: 14))) // Unrelated AP request is ignored.
+        kerberos.record(row(3, session, 2.1, .kerberos(type: 11)))
+        kerberos.record(row(4, session, 2.2, .kerberos(type: 12)))
+        kerberos.record(row(5, session, 2.3, .kerberos(type: 30)))
+        kerberos.record(row(6, session, 2.4, .kerberos(type: 10)))
+        kerberos.record(row(7, session, 2.5, .kerberos(type: 13))) // A mismatched tracked reply consumes the request.
+        kerberos.record(row(8, session, 2.6, .kerberos(type: 11)))
+        kerberos.record(row(9, session, 2.7, .kerberos(type: 10)))
+        kerberos.record(row(10, session, 2.8, .kerberos(type: 10))) // Duplicate replaces its timestamp.
+        kerberos.record(row(11, session, 2.9, .kerberos(type: 30)))
+        let kerberosResult = kerberos.result()
+        #expect(kerberosResult.omittedCorrelations == 0)
+        #expect(kerberosResult.rows.map(\.index) == [0, 1, 3])
+        #expect(kerberosResult.rows.map(\.calls) == [1, 1, 1])
+        #expect(abs((kerberosResult.rows.first(where: { $0.index == 0 })?.sum ?? 0) - 0.1) < 0.000001)
+        #expect(abs((kerberosResult.rows.first(where: { $0.index == 1 })?.sum ?? 0) - 0.1) < 0.000001)
+        #expect(abs((kerberosResult.rows.first(where: { $0.index == 3 })?.sum ?? 0) - 0.1) < 0.000001)
+
+        var boundedKerberos = ServiceResponseTime.StreamingAccumulator(service: .kerberos, maximumCorrelations: 1)
+        boundedKerberos.record(row(1, session, 3, .kerberos(type: 10)))
+        boundedKerberos.record(row(2, UUID(), 3, .kerberos(type: 12)))
+        #expect(boundedKerberos.result().omittedCorrelations == 1)
+    }
+
     /// ICMP and ICMPv6 echo: four requests, one unanswered and one answered twice, as
     /// `tshark -z icmp,srt` and `icmpv6,srt` print them.
     @Test
@@ -91,6 +222,63 @@ struct ServiceResponseTimeTests {
         }
     }
 
+    @Test
+    func echoRequestsWithSameKeyInOppositeDirectionsRemainDistinct() throws {
+        var frames: [(TimeInterval, [UInt8])] = []
+        for (isV6, offset) in [(false, 0.0), (true, 10.0)] {
+            frames += [
+                (offset, Self.echo(isV6: isV6, request: true, sequence: 9)),
+                (offset + 0.005, Self.echo(isV6: isV6, request: true, sequence: 9, reverseFlow: true)),
+                (offset + 0.008, Self.echo(isV6: isV6, request: false, sequence: 9)),
+                (offset + 0.010, Self.echo(isV6: isV6, request: false, sequence: 9, reverseFlow: true)),
+            ]
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("echo-directions-\(UUID().uuidString).pcap")
+        try PcapWriter.write(linkType: LinkType.ethernet, frames: frames.map { time, bytes in
+            CapturedFrame(
+                bytes: bytes, timestamp: Date(timeIntervalSince1970: 1_800_000_000 + time), originalLength: bytes.count
+            )
+        }, to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let identity = try CaptureStreamReader(contentsOf: url).identity
+        let rows = try CaptureFrameListScanner(contentsOf: url, expectedIdentity: identity, sourceToken: UUID()).scan()
+            .rows
+
+        for (isV6, expectedFrames) in [(false, [4, 3]), (true, [8, 7])] {
+            let batch = EchoResponseTime(rows: rows, ipv6: isV6)
+            let frameColumns = isV6 ? ["8", "7"] : ["4", "3"]
+            #expect(batch.values == ["2", "2", "0", "0.0", "5.000", "8.000", "6.500", "6.500", "2.121"] + frameColumns)
+            #expect(batch.minimumFrame == UInt64(expectedFrames[0]))
+            #expect(batch.maximumFrame == UInt64(expectedFrames[1]))
+
+            var streaming = EchoResponseTimeStreamingAccumulator(ipv6: isV6)
+            for row in rows {
+                streaming.record(row)
+            }
+            #expect(streaming.failure == nil)
+            #expect(streaming.result() == batch)
+        }
+
+        let observed = try #require(rows.first { $0.srt != nil })
+        var untimed = CaptureFrameRow(
+            provenance: SessionFrameProvenance(
+                ordinal: observed.provenance.ordinal, timestamp: nil,
+                capturedLength: observed.provenance.capturedLength,
+                originalLength: observed.provenance.originalLength,
+                linkType: observed.provenance.linkType
+            ),
+            source: observed.source, destination: observed.destination, protocolName: observed.protocolName,
+            info: observed.info, sessionID: observed.sessionID, interfaceID: observed.interfaceID,
+            hasComment: observed.hasComment
+        )
+        untimed.ip = observed.ip
+        untimed.srt = observed.srt
+        var untimedAccumulator = EchoResponseTimeStreamingAccumulator(ipv6: false)
+        untimedAccumulator.record(untimed)
+        #expect(untimedAccumulator.failure == .incompleteEchoFacts)
+    }
+
     // MARK: Private
 
     private static let client = "192.0.2.10"
@@ -117,13 +305,14 @@ struct ServiceResponseTimeTests {
 
     /// An echo request or reply between 192.0.2.10 and 198.51.100.1 (or their IPv6
     /// counterparts), identifier 0x1234, eight bytes of data, with a correct checksum.
-    private static func echo(isV6: Bool, request: Bool, sequence: UInt16) -> [UInt8] {
+    private static func echo(isV6: Bool, request: Bool, sequence: UInt16, reverseFlow: Bool = false) -> [UInt8] {
         let type: UInt8 = isV6 ? (request ? 128 : 129) : (request ? 8 : 0)
         var message: [UInt8] = [type, 0, 0, 0, 0x12, 0x34, UInt8(sequence >> 8), UInt8(sequence & 0xFF)]
             + Array("abcdefgh".utf8)
         let client: [UInt16] = [0x2001, 0xDB8, 0, 0, 0, 0, 0, 0x10]
         let server: [UInt16] = [0x2001, 0xDB8, 0, 0, 0, 0, 0, 0x1]
-        let (source, destination) = request ? (client, server) : (server, client)
+        let sourceIsClient = request != reverseFlow
+        let (source, destination) = sourceIsClient ? (client, server) : (server, client)
         var summed = message
         if isV6 {
             // The ICMPv6 checksum covers a pseudo-header of both addresses, length and 58.
@@ -144,7 +333,8 @@ struct ServiceResponseTimeTests {
             return PacketBuilder.ethernetIPv6(nextHeader: 58, src: source, dst: destination, payload: message)
         }
         return PacketBuilder.ethernetIPv4(
-            proto: 1, src: request ? "192.0.2.10" : "198.51.100.1", dst: request ? "198.51.100.1" : "192.0.2.10",
+            proto: 1, src: sourceIsClient ? "192.0.2.10" : "198.51.100.1",
+            dst: sourceIsClient ? "198.51.100.1" : "192.0.2.10",
             payload: message
         )
     }

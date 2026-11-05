@@ -146,7 +146,6 @@ struct SettingsView: View {
         case .capture: CaptureSettingsView()
         case .helper: HelperSettingsView()
         case .privacy: PrivacySettingsView(
-                applicationDefaults: applicationDefaults,
                 historyRetentionError: historyRetentionError,
                 isHistoryDemoMode: isHistoryDemoMode,
                 onAutoClearChange: onAutoClearChange

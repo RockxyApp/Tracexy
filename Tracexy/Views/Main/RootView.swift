@@ -92,6 +92,9 @@ struct RootView: View {
         .sheet(isPresented: $coordinator.isSplitCapturePresented) {
             SplitCaptureSheet(coordinator: coordinator)
         }
+        .sheet(isPresented: $coordinator.isTimeShiftPresented) {
+            FrameTimeShiftSheet(coordinator: coordinator)
+        }
         // Changing Projects while a capture runs is an explicit, reversible choice.
         // Cancel leaves the outgoing Project untouched; Stop and Switch waits for
         // the helper's final drain, fold and History write before anything moves.

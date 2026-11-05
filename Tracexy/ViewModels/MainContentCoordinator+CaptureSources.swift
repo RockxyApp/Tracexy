@@ -332,22 +332,60 @@ extension MainContentCoordinator {
     /// Re-check whether the open saved capture still matches the identity it was
     /// read with. Called on Library refresh and app activation.
     func noteActiveSavedCaptureAvailability() {
-        guard isViewingSavedCapture, let capture = activeSavedCapture,
-              let handle = try? FileHandle(forReadingFrom: capture.url) else
-        {
-            activeSavedCaptureChangedOnDisk = isViewingSavedCapture && activeSavedCapture != nil
+        savedCaptureOpeningOperations.activeProbeTask?.cancel()
+        savedCaptureOpeningOperations.activeProbeRequestID &+= 1
+        let requestID = savedCaptureOpeningOperations.activeProbeRequestID
+        guard isViewingSavedCapture, let capture = activeSavedCapture else {
+            activeSavedCaptureChangedOnDisk = false
+            savedCaptureOpeningOperations.activeProbeTask = nil
             return
         }
-        defer { try? handle.close() }
-        let current = PcapFileIdentity.snapshot(of: handle)
-        let reference = savedCaptureEvidence.values.first?.identity
-        if let reference {
-            activeSavedCaptureChangedOnDisk = !current.matches(reference)
-        } else if let stored = capture.reference?.identity {
-            activeSavedCaptureChangedOnDisk = !current.matches(stored)
-        } else {
-            activeSavedCaptureChangedOnDisk = false
+        let expectedIdentity = savedCaptureEvidence.values.first?.identity
+            ?? savedCaptureFileIdentity ?? capture.reference?.identity
+        let originProjectID = activeRuntime.projectID
+        let originGeneration = startGeneration
+        savedCaptureOpeningOperations.activeProbeTask = Task.detached(priority: .utility) { [weak self] in
+            let currentIdentity: PcapFileIdentity?
+            if let handle = try? FileHandle(forReadingFrom: capture.url) {
+                currentIdentity = PcapFileIdentity.snapshot(of: handle)
+                try? handle.close()
+            } else {
+                currentIdentity = nil
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.publishActiveSavedCaptureAvailability(
+                changed: currentIdentity.map { current in
+                    expectedIdentity.map { !current.matches($0) } ?? false
+                } ?? true,
+                captureID: capture.id, originProjectID: originProjectID,
+                originGeneration: originGeneration, requestID: requestID
+            )
         }
+    }
+
+    func waitForActiveSavedCaptureAvailability() async {
+        await savedCaptureOpeningOperations.activeProbeTask?.value
+    }
+
+    private func publishActiveSavedCaptureAvailability(
+        changed: Bool,
+        captureID: URL,
+        originProjectID: UUID?,
+        originGeneration: Int,
+        requestID: Int
+    ) {
+        guard savedCaptureOpeningOperations.activeProbeRequestID == requestID,
+              activeRuntime.projectID == originProjectID,
+              startGeneration == originGeneration,
+              isViewingSavedCapture,
+              activeSavedCapture?.id == captureID else
+        {
+            return
+        }
+        activeSavedCaptureChangedOnDisk = changed
+        savedCaptureOpeningOperations.activeProbeTask = nil
     }
 
     // MARK: Recents

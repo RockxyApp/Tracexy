@@ -9,6 +9,7 @@ struct FollowWebSocketSection: View {
 
     let webSocket: FollowWebSocketPresentation
     let query: String
+    let caseSensitive: Bool
     /// Opens a captured frame in Layers.
     let openFrame: (SessionFrameProvenance) -> Void
 
@@ -65,7 +66,7 @@ struct FollowWebSocketSection: View {
             Text(row.kind)
                 .font(Theme.Typography.monoMicro)
                 .frame(width: 52, alignment: .leading)
-            Text(FollowTranscriptSearch.highlighted(row.content, query: query))
+            Text(FollowTranscriptSearch.highlighted(row.content, query: query, caseSensitive: caseSensitive))
                 .font(Theme.Typography.monoSmall)
                 .lineLimit(1)
                 .truncationMode(.tail)

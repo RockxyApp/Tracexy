@@ -42,9 +42,7 @@ enum SettingsKeys {
     static let redactBodies = key("settings.redactBodies")
     static let stripCredentials = key("settings.stripCredentials")
     static let maskIPs = key("settings.maskIPs")
-    static let localOnly = key("settings.localOnly")
     static let autoClear = key("settings.autoClear")
-    static let shareAnalytics = key("settings.shareAnalytics")
 
     /// The validated loopback base address of the local model endpoint, and the
     /// model chosen from what that endpoint advertised. Application-scoped: a
@@ -106,10 +104,18 @@ enum ProjectScopedSettingsKeys {
     static let filterButtons = key("investigation.filterButtons.v1")
     /// Named expression macros (JSON `[ExpressionMacro]`).
     static let expressionMacros = key("investigation.expressionMacros.v1")
+    /// Named, versioned Tracexy Frame Expressions, isolated to the active Project.
+    static let savedFrameFilters = key("investigation.frameFilters.v1")
+    /// Ordered, named packet coloring rules (JSON `FrameColorRuleEnvelope`).
+    static let savedFrameColorRules = key("investigation.frameColorRules.v1")
     /// Bookmarks of the GeoIP/ASN database files the Project uses, in lookup order.
     static let geoIPDatabases = key("enrichment.geoipDatabases.v1")
     /// The Sessions table's shown/hidden columns and their order (JSON `TableColumnCustomization`).
     static let sessionTableColumns = key("workspace.sessionTableColumns")
+    /// Overview ▸ Activity: whether the traffic chart plots bytes, packets or bit rate.
+    static let overviewTrafficMeasure = key("overview.trafficMeasure")
+    /// Overview: whether the small time chart shows sessions started or retransmissions.
+    static let overviewTimeSeries = key("overview.timeSeries")
     /// Names the investigator gave to addresses (JSON `[address: name]`).
     static let addressNames = key("names.addresses")
     /// Names the investigator gave to IPv4 blocks (JSON `[cidr: name]`).
@@ -120,6 +126,7 @@ enum ProjectScopedSettingsKeys {
     static let sessionTimeFormat = key("workspace.sessionTimeFormat")
     /// View ▸ Frame Time: how frame lists show each frame's time.
     static let frameTimeFormat = key("workspace.frameTimeFormat")
+    static let frameTimePrecision = key("workspace.frameTimePrecision")
     /// View ▸ Validate Checksums: note each header checksum's status in the decode tree.
     static let validateChecksums = key("packetDetail.validateChecksums")
     /// View ▸ Zoom In / Out: points added to packet text (hex, decode tree, streams).

@@ -77,7 +77,7 @@ struct HistoryFindingsStoreTests {
         }
 
         let writer = try SessionStore(configuration: .init(location: .file(url)))
-        #expect(await writer.schemaVersion == 3)
+        #expect(await writer.schemaVersion == 4)
         #expect(try await writer.sessions(captureID: captureID, after: nil, limit: 10).sessions.map(\.sessionID)
             == [sessionID])
         #expect(try await writer.findings(captureID: captureID, after: nil, limit: 10).findings.isEmpty)

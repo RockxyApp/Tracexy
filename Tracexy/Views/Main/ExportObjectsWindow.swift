@@ -185,6 +185,10 @@ struct ExportObjectsWindow: View {
         if list.skippedStreamCount > 0 {
             text += String(localized: "; \(list.skippedStreamCount.formatted()) more streams not read")
         }
+        if list.ambiguousStreamCount > 0 {
+            text +=
+                String(localized: "; \(list.ambiguousStreamCount.formatted()) FTP streams lacked a proven packet order")
+        }
         if list.omittedObjectCount > 0 {
             text += String(localized: "; \(list.omittedObjectCount.formatted()) objects past the size limit")
         }
@@ -207,6 +211,9 @@ struct ExportObjectsWindow: View {
     }
 
     private func save(_ object: CaptureObject) {
+        guard coordinator.presentRawExportAcknowledgement(formatName: "Object body") else {
+            return
+        }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = CaptureObjectScanner.savableName(object.fileName)
         panel.canCreateDirectories = true
@@ -230,6 +237,9 @@ struct ExportObjectsWindow: View {
     }
 
     private func saveAll(_ objects: [CaptureObject]) {
+        guard coordinator.presentRawExportAcknowledgement(formatName: "Object body") else {
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

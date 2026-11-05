@@ -85,6 +85,7 @@ nonisolated final class FollowStreamReader {
             contentsOf: url,
             configuration: .init(
                 maxCapturedLength: configuration.maxCapturedLength,
+                timestampTransform: configuration.timeCorrection?.streamTransform,
                 isCancelled: configuration.isCancelled
             )
         )
@@ -109,6 +110,7 @@ nonisolated final class FollowStreamReader {
             maxRunsPerDirection: Int = 256,
             trackerConfiguration: TCPSequenceTracker.Configuration = TCPSequenceTracker.Configuration(),
             progressStride: Int = 256,
+            timeCorrection: CaptureTimeCorrection? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = min(max(0, maxCapturedLength), CapturedFrame.maxReasonableLength)
@@ -118,6 +120,7 @@ nonisolated final class FollowStreamReader {
             self.maxRunsPerDirection = min(max(1, maxRunsPerDirection), Self.maximumRunsPerDirection)
             self.trackerConfiguration = trackerConfiguration
             self.progressStride = max(1, progressStride)
+            self.timeCorrection = timeCorrection
             self.isCancelled = isCancelled
         }
 
@@ -139,6 +142,7 @@ nonisolated final class FollowStreamReader {
         /// Emit a coalesced progress callback at most once per this many scanned
         /// frames (plus one final callback at the terminal).
         let progressStride: Int
+        let timeCorrection: CaptureTimeCorrection?
         let isCancelled: @Sendable () -> Bool
     }
 

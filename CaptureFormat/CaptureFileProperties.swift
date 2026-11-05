@@ -92,6 +92,15 @@ nonisolated struct CaptureBoundedTextList: Sendable, Equatable {
     }
 }
 
+// MARK: - CaptureNameResolutionRecord
+
+/// One host mapping carried by a PCAPNG Name Resolution Block. The file reader
+/// validates the address bytes and bounds each retained UTF-8 display name.
+nonisolated struct CaptureNameResolutionRecord: Sendable, Equatable, Hashable {
+    let address: String
+    let name: CaptureBoundedText
+}
+
 // MARK: - CaptureContainerFacts
 
 /// Container-level facts that only the on-disk format can state.
@@ -212,6 +221,9 @@ nonisolated struct CaptureBlockInventory: Sendable, Equatable {
     static let maxDecryptionSecrets = 32
 
     var nameResolutionBlockCount = 0
+    var nameResolutionMappingCount = 0
+    var nameResolutionMappingOmittedCount = 0
+    var oversizedNameResolutionBlockCount = 0
     var interfaceStatisticsBlockCount = 0
     var decryptionSecrets: [CaptureSecretsBlockSummary] = []
     var decryptionSecretsOmittedCount = 0
@@ -273,8 +285,7 @@ nonisolated struct CaptureSection: Sendable, Equatable, Identifiable {
 /// frames. Folded once during the streaming read; never requires a second pass.
 ///
 /// Everything here is either a small fixed value or bounded by the caps on the
-/// nested types. No packet bytes, secrets, name-resolution records, or per-frame
-/// history are retained.
+/// nested types. No packet bytes, secrets, or per-frame history are retained.
 nonisolated struct CaptureFileProperties: Sendable, Equatable {
     static let maxSections = 16
 
@@ -344,6 +355,9 @@ nonisolated struct CaptureFileProperties: Sendable, Equatable {
     var blockInventory: CaptureBlockInventory {
         sections.reduce(into: CaptureBlockInventory()) { total, section in
             total.nameResolutionBlockCount += section.blocks.nameResolutionBlockCount
+            total.nameResolutionMappingCount += section.blocks.nameResolutionMappingCount
+            total.nameResolutionMappingOmittedCount += section.blocks.nameResolutionMappingOmittedCount
+            total.oversizedNameResolutionBlockCount += section.blocks.oversizedNameResolutionBlockCount
             total.interfaceStatisticsBlockCount += section.blocks.interfaceStatisticsBlockCount
             for secrets in section.blocks.decryptionSecrets {
                 total.noteSecrets(secrets)

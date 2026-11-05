@@ -15,13 +15,19 @@ import Foundation
 nonisolated enum PcapngWriter {
     // MARK: Internal
 
-    static func data(defaultLinkType: UInt32, frames: [CapturedFrame]) throws -> Data {
+    static func data(defaultLinkType: UInt32, frames: [CapturedFrame], comment: String? = nil) throws -> Data {
+        guard !frames.contains(where: { $0.timestamp == nil && $0.direction != .unknown }) else {
+            throw SessionExportError.untimedDirectionNotRepresentable
+        }
+        guard !frames.contains(where: { $0.timestamp == nil && $0.packetID != nil }) else {
+            throw SessionExportError.untimedPacketIDNotRepresentable
+        }
         // Known-only output is byte-for-byte what it has always been: one section,
         // one IDB per distinct link type, then one EPB per frame.
         guard frames.contains(where: { $0.timestamp == nil }) else {
-            return try timedOnlyData(defaultLinkType: defaultLinkType, frames: frames)
+            return try timedOnlyData(defaultLinkType: defaultLinkType, frames: frames, comment: comment)
         }
-        return try mixedTimingData(defaultLinkType: defaultLinkType, frames: frames)
+        return try mixedTimingData(defaultLinkType: defaultLinkType, frames: frames, comment: comment)
     }
 
     static func write(defaultLinkType: UInt32, frames: [CapturedFrame], to url: URL) throws {
@@ -62,7 +68,11 @@ nonisolated enum PcapngWriter {
         }
     }
 
-    private static func timedOnlyData(defaultLinkType: UInt32, frames: [CapturedFrame]) throws -> Data {
+    private static func timedOnlyData(
+        defaultLinkType: UInt32, frames: [CapturedFrame], comment: String?
+    )
+        throws -> Data
+    {
         let linkTypes = orderedLinkTypes(defaultLinkType: defaultLinkType, frames: frames)
         guard linkTypes.allSatisfy({ $0 <= UInt32(UInt16.max) }) else {
             throw SessionExportError.unsupportedLinkType
@@ -74,12 +84,7 @@ nonisolated enum PcapngWriter {
         }
 
         var output = Data()
-        appendBlock(type: 0x0A0D0D0A, to: &output) { body in
-            append32(0x1A2B3C4D, to: &body)
-            append16(1, to: &body)
-            append16(0, to: &body)
-            append64(UInt64.max, to: &body)
-        }
+        appendSectionHeader(comment: comment, to: &output)
 
         for linkType in linkTypes {
             appendBlock(type: 0x00000001, to: &output) { body in
@@ -108,7 +113,11 @@ nonisolated enum PcapngWriter {
     /// captured length is `snapLength == 0 ? origLen : min(origLen, snapLength)`;
     /// the required interface-0 snap length is therefore derived exactly from the
     /// frame's own lengths and never guessed.
-    private static func mixedTimingData(defaultLinkType: UInt32, frames: [CapturedFrame]) throws -> Data {
+    private static func mixedTimingData(
+        defaultLinkType: UInt32, frames: [CapturedFrame], comment: String?
+    )
+        throws -> Data
+    {
         var output = Data()
         var section: SectionState?
 
@@ -121,7 +130,7 @@ nonisolated enum PcapngWriter {
             if frame.timestamp == nil {
                 let required = try simplePacketInterface(for: frame, linkType: linkType)
                 if section?.interfaceZero != required {
-                    section = beginSection(interfaceZero: required, to: &output)
+                    section = beginSection(interfaceZero: required, comment: comment, to: &output)
                 }
                 appendSimplePacket(frame, to: &output)
                 continue
@@ -130,6 +139,7 @@ nonisolated enum PcapngWriter {
             if section == nil {
                 section = beginSection(
                     interfaceZero: Interface(linkType: linkType, snapLength: PcapWriter.snapLength),
+                    comment: comment,
                     to: &output
                 )
             }
@@ -151,6 +161,7 @@ nonisolated enum PcapngWriter {
             // needs a section and an interface to be readable at all.
             _ = beginSection(
                 interfaceZero: Interface(linkType: defaultLinkType, snapLength: PcapWriter.snapLength),
+                comment: comment,
                 to: &output
             )
         }
@@ -182,15 +193,27 @@ nonisolated enum PcapngWriter {
         return Interface(linkType: linkType, snapLength: UInt32(captured))
     }
 
-    private static func beginSection(interfaceZero: Interface, to output: inout Data) -> SectionState {
-        appendBlock(type: 0x0A0D0D0A, to: &output) { body in
-            append32(0x1A2B3C4D, to: &body)
-            append16(1, to: &body)
-            append16(0, to: &body)
-            append64(UInt64.max, to: &body)
-        }
+    private static func beginSection(
+        interfaceZero: Interface, comment: String?, to output: inout Data
+    )
+        -> SectionState
+    {
+        appendSectionHeader(comment: comment, to: &output)
         appendInterface(interfaceZero, to: &output)
         return SectionState(interfaceZero: interfaceZero, interfaces: [interfaceZero])
+    }
+
+    private static func appendSectionHeader(comment: String?, to output: inout Data) {
+        guard let comment else {
+            appendBlock(type: 0x0A0D0D0A, to: &output) { body in
+                append32(0x1A2B3C4D, to: &body)
+                append16(1, to: &body)
+                append16(0, to: &body)
+                append64(UInt64.max, to: &body)
+            }
+            return
+        }
+        output.append(PcapngBlockWriter.sectionHeader(comment: comment))
     }
 
     private static func appendInterface(_ interface: Interface, to output: inout Data) {
@@ -219,6 +242,22 @@ nonisolated enum PcapngWriter {
             append32(UInt32(frame.bytes.count), to: &body)
             append32(UInt32(max(frame.originalLength, frame.bytes.count)), to: &body)
             body.append(contentsOf: frame.bytes)
+            if frame.direction != .unknown || frame.packetID != nil {
+                while body.count % 4 != 0 {
+                    body.append(0)
+                }
+                if frame.direction != .unknown {
+                    append16(2, to: &body) // epb_flags
+                    append16(4, to: &body)
+                    append32(frame.direction.rawValue, to: &body)
+                }
+                if let packetID = frame.packetID {
+                    append16(5, to: &body) // epb_packetid
+                    append16(8, to: &body)
+                    append64(packetID, to: &body)
+                }
+                append32(0, to: &body) // end of options
+            }
         }
     }
 

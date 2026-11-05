@@ -3,14 +3,20 @@ import SwiftUI
 
 // MARK: - FollowTranscriptSearch
 
-/// Case- and diacritic-insensitive find inside a rendered follow transcript. It
+/// Bounded find inside a rendered follow transcript. It
 /// searches the text exactly as drawn, so a match is always something the reader
 /// can see, and it is bounded so a one-letter query over 64 KiB stays cheap.
 nonisolated enum FollowTranscriptSearch {
     static let maximumMatches = 2_000
 
     /// The ranges of `query` in `text`, in order, at most ``maximumMatches``.
-    static func matches(of query: String, in text: String) -> [Range<String.Index>] {
+    static func matches(
+        of query: String,
+        in text: String,
+        caseSensitive: Bool = false
+    )
+        -> [Range<String.Index>]
+    {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty, !text.isEmpty else {
             return []
@@ -20,7 +26,7 @@ nonisolated enum FollowTranscriptSearch {
         while ranges.count < maximumMatches,
               let found = text.range(
                   of: needle,
-                  options: [.caseInsensitive, .diacriticInsensitive],
+                  options: caseSensitive ? [] : [.caseInsensitive, .diacriticInsensitive],
                   range: searchStart ..< text.endIndex
               )
         {
@@ -32,8 +38,8 @@ nonisolated enum FollowTranscriptSearch {
 
     /// `text` with every match marked for display. Without a query the text is
     /// returned unchanged.
-    static func highlighted(_ text: String, query: String) -> AttributedString {
-        let ranges = matches(of: query, in: text)
+    static func highlighted(_ text: String, query: String, caseSensitive: Bool = false) -> AttributedString {
+        let ranges = matches(of: query, in: text, caseSensitive: caseSensitive)
         guard !ranges.isEmpty else {
             return AttributedString(text)
         }
@@ -64,6 +70,8 @@ nonisolated struct FollowDatagramRowPresentation: Identifiable, Equatable, Senda
     let frameLabel: String
     /// Offset from the first datagram, or "Untimed".
     let timeLabel: String
+    /// Delta from the immediately preceding retained datagram's capture time.
+    let deltaLabel: String?
     let sizeLabel: String
     /// DNS reading headline ("Query A www.example.test", "Response NXDOMAIN").
     let dnsHeadline: String?
@@ -77,6 +85,28 @@ nonisolated struct FollowDatagramRowPresentation: Identifiable, Equatable, Senda
     let hiddenByteCount: Int
 }
 
+// MARK: - FollowDatagramDirectionScope
+
+nonisolated enum FollowDatagramDirectionScope: String, CaseIterable, Identifiable, Sendable {
+    case both
+    case aToB
+    case bToA
+
+    // MARK: Internal
+
+    var id: String {
+        rawValue
+    }
+
+    func includes(_ direction: ConnectionDirection) -> Bool {
+        switch self {
+        case .both: true
+        case .aToB: direction == .aToB
+        case .bToA: direction == .bToA
+        }
+    }
+}
+
 // MARK: - FollowDatagramPresentation
 
 /// The UDP transcript: rows in capture order under one display bound, with the
@@ -87,6 +117,7 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
     init(
         result: FollowDatagramResult,
         mode: FollowStreamDisplayMode,
+        direction: FollowDatagramDirectionScope = .both,
         maxDisplayBytes: Int = maximumDisplayBytes
     ) {
         var remaining = min(max(0, maxDisplayBytes), Self.maximumDisplayBytes)
@@ -95,6 +126,10 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
         rows.reserveCapacity(result.messages.count)
         var hidden = 0
         for (index, message) in result.messages.enumerated() {
+            guard direction.includes(message.direction) else {
+                continue
+            }
+            let previousTime = index > 0 ? result.messages[index - 1].provenance.timestamp : nil
             let showsPayload = message.dns == nil || mode == .hex
             let shown = showsPayload ? min(message.payload.count, remaining, Self.maximumBytesPerRow) : 0
             remaining -= shown
@@ -108,6 +143,7 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
                 route: Self.route(message.direction, tuple: result.tuple),
                 frameLabel: "Frame \(message.provenance.ordinal.rawValue.formatted())",
                 timeLabel: Self.timeLabel(message.provenance.timestamp, since: firstTime),
+                deltaLabel: Self.deltaLabel(message.provenance.timestamp, from: previousTime),
                 sizeLabel: Self.sizeLabel(message),
                 dnsHeadline: message.dns.map(Self.dnsHeadline),
                 dnsAnswers: message.dns.map(Self.dnsAnswers) ?? [],
@@ -131,6 +167,13 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
     /// Retained payload bytes the transcript does not draw (display bound only).
     let viewOmittedByteCount: Int
 
+    static func deltaLabel(_ timestamp: Date?, from previous: Date?) -> String? {
+        guard let timestamp, let previous else {
+            return nil
+        }
+        return String(format: "Δ %+.3f s", timestamp.timeIntervalSince(previous))
+    }
+
     static func responseCodeName(_ code: UInt8) -> String {
         switch code {
         case 0: "NOERROR"
@@ -143,6 +186,26 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
         }
     }
 
+    static func timeLabel(_ time: Date?, since first: Date?) -> String {
+        guard let time else {
+            return "Untimed"
+        }
+        guard let first else {
+            return "Offset unavailable"
+        }
+        return String(format: "%+.3f s", time.timeIntervalSince(first))
+    }
+
+    func matchingRowIDs(query: String, caseSensitive: Bool) -> [Int] {
+        rows.compactMap { row in
+            matchCount(in: row, query: query, caseSensitive: caseSensitive) > 0 ? row.id : nil
+        }
+    }
+
+    func matchCount(query: String, caseSensitive: Bool) -> Int {
+        rows.reduce(0) { $0 + matchCount(in: $1, query: query, caseSensitive: caseSensitive) }
+    }
+
     // MARK: Private
 
     private static func route(_ direction: ConnectionDirection, tuple: FiveTuple) -> String {
@@ -150,13 +213,6 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
         case .aToB: "\(tuple.a.display) → \(tuple.b.display)"
         case .bToA: "\(tuple.b.display) → \(tuple.a.display)"
         }
-    }
-
-    private static func timeLabel(_ time: Date?, since first: Date?) -> String {
-        guard let time, let first else {
-            return "Untimed"
-        }
-        return String(format: "+%.3f s", time.timeIntervalSince(first))
     }
 
     private static func sizeLabel(_ message: FollowDatagramMessage) -> String {
@@ -217,6 +273,12 @@ nonisolated struct FollowDatagramPresentation: Equatable, Sendable {
             return String(format: "Answers frame %@ after %.1f ms", frame, milliseconds)
         }
         return "Answers frame \(frame)"
+    }
+
+    private func matchCount(in row: FollowDatagramRowPresentation, query: String, caseSensitive: Bool) -> Int {
+        ([row.dnsHeadline ?? ""] + row.dnsAnswers + [row.payload]).reduce(0) {
+            $0 + FollowTranscriptSearch.matches(of: query, in: $1, caseSensitive: caseSensitive).count
+        }
     }
 }
 

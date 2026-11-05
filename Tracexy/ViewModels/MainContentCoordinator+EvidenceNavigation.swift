@@ -210,11 +210,11 @@ extension MainContentCoordinator {
         await task?.value
     }
 
-    /// The adopted saved file's identity, derived from any retained evidence
-    /// reference (all share the one opened file's identity). `nil` for live/idle
-    /// sources, so a cited-frame source-token validation cannot pass off-source.
+    /// The opened saved file's identity, retained even when it produces no
+    /// sessions or representative evidence. `nil` for live/idle sources, so a
+    /// cited-frame source-token validation cannot pass off-source.
     var adoptedSavedCaptureIdentity: PcapFileIdentity? {
-        savedCaptureEvidence.values.first?.identity
+        savedCaptureFileIdentity
     }
 
     // MARK: Internal publication

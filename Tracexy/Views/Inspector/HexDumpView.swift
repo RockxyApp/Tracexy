@@ -14,6 +14,8 @@ struct HexDumpView: View {
     var highlight: Range<Int>?
     /// Find matches, tinted differently from the selected field.
     var matches: [Range<Int>] = []
+    /// The current Find hit, tinted separately while it is navigated.
+    var activeMatch: Range<Int>?
     /// The byte under the pointer, or `nil` when the pointer leaves the bytes.
     var onHoverByte: ((Int?) -> Void)?
     /// A click on a byte (hex or ASCII column).
@@ -66,11 +68,17 @@ struct HexDumpView: View {
         String((0 ..< 8).map { byte & (0x80 >> $0) == 0 ? "0" : "1" })
     }
 
+    static func rowID(forByte byte: Int, style: ByteDumpStyle) -> String {
+        let rowStart = max(0, byte) / style.bytesPerRow * style.bytesPerRow
+        return "packet-bytes-row-\(rowStart)"
+    }
+
     // MARK: Private
 
     private enum Tint {
         case field
         case match
+        case activeMatch
     }
 
     @Environment(\.packetTextZoom) private var zoom
@@ -87,6 +95,7 @@ struct HexDumpView: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(rowStarts, id: \.self) { start in
                 Text(row(start: start))
+                    .id(Self.rowID(forByte: start, style: style))
                     .font(Theme.Typography.zoomed(.subheadline, zoom: zoom, monospaced: true))
                     .fixedSize(horizontal: true, vertical: false)
                     .onContinuousHover { phase in
@@ -166,12 +175,16 @@ struct HexDumpView: View {
         switch highlighted {
         case .field: piece.backgroundColor = Color.accentColor.opacity(0.35)
         case .match: piece.backgroundColor = Color.yellow.opacity(0.45)
+        case .activeMatch: piece.backgroundColor = Color.orange.opacity(0.7)
         case nil: break
         }
         return piece
     }
 
     private func isHighlighted(_ index: Int) -> Tint? {
+        if let activeMatch, activeMatch.contains(index) {
+            return .activeMatch
+        }
         if let highlight, highlight.contains(index) {
             return .field
         }

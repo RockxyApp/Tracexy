@@ -351,6 +351,12 @@ nonisolated enum ConnectionEventKind: Hashable, Sendable {
     /// A one-byte segment sent at this direction's edge while the peer's last
     /// advertised window was zero (a zero-window probe).
     case zeroWindowProbe
+    /// A zero-window ACK immediately following the peer's probe, repeating its
+    /// edge or acknowledging that probe's single byte.
+    case zeroWindowProbeAcknowledgement
+    /// A pure ACK advertised a changed nonzero receive window at the current
+    /// sequence and acknowledgement edges.
+    case windowUpdate
     /// A data segment ended exactly at the peer's acknowledged edge plus its
     /// scaled advertised window (the receive window is full).
     case windowFull

@@ -70,8 +70,10 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
         static let fastRetransmission = Observations(rawValue: 1 << 4)
         static let spuriousRetransmission = Observations(rawValue: 1 << 5)
         static let ackedUnseenSegment = Observations(rawValue: 1 << 6)
+        static let zeroWindowProbeAcknowledgement = Observations(rawValue: 1 << 7)
+        static let windowUpdate = Observations(rawValue: 1 << 8)
 
-        let rawValue: UInt8
+        let rawValue: UInt16
     }
 
     /// Fold one segment travelling in `direction`. `keepAlive` is the direction's
@@ -124,6 +126,29 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
             observations.insert(.zeroWindow)
         }
 
+        let probeAcknowledgementEdge = reverse.lastZeroWindowProbeSequence
+        let repeatsOrAcceptsProbeByte = probeAcknowledgementEdge.map { probeSequence in
+            facts.acknowledgementNumber == probeSequence || facts.acknowledgementNumber == probeSequence &+ 1
+        } ?? false
+        let repeatsPriorAcknowledgement = forward.lastAcknowledgement.map { previous in
+            facts.acknowledgementNumber == previous || facts.acknowledgementNumber == previous &+ 1
+        } ?? false
+        if controlFree, acknowledging, facts.payloadLength == 0,
+           facts.windowSize == 0, forward.lastWindow == 0,
+           forward.nextSequence == facts.sequenceNumber,
+           repeatsOrAcceptsProbeByte, repeatsPriorAcknowledgement
+        {
+            observations.insert(.zeroWindowProbeAcknowledgement)
+            // A receiver may accept the one probe byte. Move only to the edge of
+            // that observed byte; later ACKs cannot infer additional unseen data.
+            if let probeAcknowledgementEdge,
+               facts.acknowledgementNumber == probeAcknowledgementEdge &+ 1
+            {
+                reverse.nextSequence = facts.acknowledgementNumber
+            }
+            self[direction.opposite] = reverse
+        }
+
         let carriesData = facts.payloadLength > 0 && !flags.contains(.syn)
             && !observations.contains(.zeroWindowProbe)
         if carriesData, reverse.duplicateAcknowledgementRun >= 2, !reverse.fastRetransmissionAnswered,
@@ -139,13 +164,37 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
             observations.insert(.spuriousRetransmission)
         }
 
+        let pureAcknowledgement = controlFree && acknowledging && facts.payloadLength == 0
+        // Wireshark also advances the observed sequence edge when the first ACK
+        // after a zero-window probe both accepts its byte and reopens the window.
+        // Keep this separate from ZeroWindowProbeAck: the nonzero window is a
+        // window-update observation, while the sequence evidence still prevents
+        // that single captured byte being called unseen.
+        let reopensWindowAfterProbe = pureAcknowledgement
+            && facts.windowSize > 0 && forward.lastWindow == 0
+            && forward.nextSequence == facts.sequenceNumber
+            && reverse.lastZeroWindowProbeSequence.map { probeSequence in
+                facts.acknowledgementNumber == probeSequence &+ 1
+            } == true
+            && forward.lastAcknowledgement.map { previous in
+                facts.acknowledgementNumber == previous &+ 1
+            } == true
+        let repeatsAcknowledgementWithWindowChange = pureAcknowledgement
+            && facts.windowSize > 0 && facts.windowSize != forward.lastWindow
+            && forward.nextSequence == facts.sequenceNumber
+            && forward.lastAcknowledgement == facts.acknowledgementNumber
+        if reopensWindowAfterProbe || repeatsAcknowledgementWithWindowChange {
+            observations.insert(.windowUpdate)
+        }
+        if reopensWindowAfterProbe {
+            reverse.nextSequence = facts.acknowledgementNumber
+            self[direction.opposite] = reverse
+        }
         if acknowledging, let peerEdge = reverse.nextSequence,
            Int32(bitPattern: facts.acknowledgementNumber &- peerEdge) > 0
         {
             observations.insert(.ackedUnseenSegment)
         }
-
-        let pureAcknowledgement = controlFree && acknowledging && facts.payloadLength == 0
         // A keep-alive is answered exactly once: the ACK that answers it consumes
         // the marker, so an identical ACK with no probe in between is a genuine
         // duplicate acknowledgement again.
@@ -158,7 +207,8 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
         // A repeated zero-window advertisement is a window statement, not the
         // "a segment is missing" signal a duplicate acknowledgement carries, so the
         // zero window supersedes it and the frame is reported once.
-        if pureAcknowledgement, !keepAlive, !answersKeepAlive, !observations.contains(.zeroWindow),
+        if pureAcknowledgement, !keepAlive, !answersKeepAlive,
+           !observations.contains(.zeroWindow), !observations.contains(.zeroWindowProbeAcknowledgement),
            let lastAcknowledgement = forward.lastAcknowledgement,
            lastAcknowledgement == facts.acknowledgementNumber,
            forward.lastWindow == facts.windowSize,
@@ -195,6 +245,7 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
         // A resent probe byte sits one behind the sequence tracker's edge and so
         // looks like a keep-alive to it; the probe verdict wins here too.
         forward.lastWasKeepAlive = keepAlive && !observations.contains(.zeroWindowProbe)
+        forward.lastZeroWindowProbeSequence = observations.contains(.zeroWindowProbe) ? facts.sequenceNumber : nil
         self[direction] = forward
         return observations
     }
@@ -215,6 +266,9 @@ nonisolated struct TCPFlowControlTracker: Equatable, Sendable {
         /// when its SYN carried no Window Scale option (or was not observed).
         var offeredWindowShift: UInt8?
         var lastWasKeepAlive = false
+        /// The latest one-byte zero-window probe sent in this direction. A reply
+        /// may repeat its ACK edge or accept only this exact byte.
+        var lastZeroWindowProbeSequence: UInt32?
         /// How many duplicate acknowledgements have repeated `lastAcknowledgement`,
         /// and whether a fast retransmission already answered that edge.
         var duplicateAcknowledgementRun = 0

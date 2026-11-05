@@ -3,9 +3,8 @@ import SwiftUI
 
 // MARK: - ServiceResponseTimeWindow
 
-/// Statistics ▸ Service Response Time: Wireshark's SRT tables for SMB2, LDAP and
-/// Kerberos over the frames the All Frames list shows — each procedure's paired
-/// replies and their minimum, maximum, mean and total time.
+/// Statistics ▸ Service Response Time. Every protocol is rescanned across the stable
+/// capture, independently of All Frames paging.
 struct ServiceResponseTimeWindow: View {
     // MARK: Internal
 
@@ -13,18 +12,30 @@ struct ServiceResponseTimeWindow: View {
 
     var body: some View {
         @Bindable var frames = coordinator.allFrames
-        let inView = Set(coordinator.visibleSessions.map(\.id))
-        let visible = frames.visibleRows(sessionsInView: inView)
-        let rows = ServiceResponseTime.table(service, rows: visible)
-        let echo = service.isEcho ? EchoResponseTime(rows: visible, ipv6: service == .icmpv6) : nil
+        let smb2Result = smb2ScanResult
+        let rows: [ServiceResponseTime.Row] = switch service {
+        case .smb2: smb2Result?.rows ?? []
+        case .ldap,
+             .kerberos: correlatedScanResult?.rows ?? []
+        case .icmp,
+             .icmpv6: []
+        }
+        let omittedCorrelations = switch service {
+        case .smb2: smb2Result?.omittedRequests ?? 0
+        case .ldap,
+             .kerberos: correlatedScanResult?.omittedCorrelations ?? 0
+        case .icmp,
+             .icmpv6: 0
+        }
+        let echo = service.isEcho ? echoScanResult : nil
         Group {
-            if frames.isLoading {
-                ProgressView("Listing frames…")
+            if smb2ScanIsLoading {
+                ProgressView("Scanning capture for response times…")
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = frames.error {
+            } else if let smb2ScanError {
                 ContentUnavailableView(
-                    "Service Response Time Unavailable", systemImage: "stopwatch", description: Text(error)
+                    "Service Response Time Unavailable", systemImage: "stopwatch", description: Text(smb2ScanError)
                 )
             } else if let echo, echo.requests > 0 {
                 echoSummary(echo)
@@ -33,8 +44,8 @@ struct ServiceResponseTimeWindow: View {
                     "No Paired Replies",
                     systemImage: "stopwatch",
                     description: Text(service.isEcho
-                        ? "No \(service.title) echo request is in view."
-                        : "No \(service.title) reply in view could be paired with its request.")
+                        ? "No \(service.title) echo request is in this capture scope."
+                        : "No \(service.title) reply in this capture scope could be paired with its request.")
                 )
             } else {
                 table(rows)
@@ -63,15 +74,33 @@ struct ServiceResponseTimeWindow: View {
             .padding(.vertical, Theme.Metrics.spacingS)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .tracexySafeAreaBar(edge: .bottom) { footer(rows, echo: echo) }
+        .tracexySafeAreaBar(edge: .bottom) {
+            footer(rows, echo: echo, omittedCorrelations: omittedCorrelations)
+        }
         .frame(minWidth: 640, minHeight: 320)
         .onAppear { coordinator.loadAllFrames() }
+        .task(id: scanKey) { await loadCaptureWideSRT() }
     }
 
     // MARK: Private
 
     @State private var service = ServiceResponseTime.Service.smb2
     @State private var notice: String?
+    @State private var smb2ScanResult: ServiceResponseTime.StreamingSMB2Accumulator.Result?
+    @State private var correlatedScanResult: ServiceResponseTime.StreamingAccumulator.Result?
+    @State private var echoScanResult: EchoResponseTime?
+    @State private var smb2ScanError: String?
+    @State private var smb2ScanIsLoading = false
+    @State private var smb2ScanRequestID = 0
+
+    private var scanKey: String {
+        let frames = coordinator.allFrames
+        let scope = frames.limitToSessionsInView
+            ? coordinator.visibleSessions.map(\.id.uuidString).sorted().joined(separator: ",")
+            : "all-sessions"
+        let availability = coordinator.allFramesUnavailableReason ?? "available"
+        return "\(service.rawValue)|\(coordinator.projectStore.activeProjectID.uuidString)|\(coordinator.startGeneration)|\(availability)|\(frames.limitToSessionsInView)|\(scope)"
+    }
 
     private func table(_ rows: [ServiceResponseTime.Row]) -> some View {
         Table(rows) {
@@ -137,15 +166,20 @@ struct ServiceResponseTimeWindow: View {
         .formStyle(.grouped)
     }
 
-    private func footer(_ rows: [ServiceResponseTime.Row], echo: EchoResponseTime?) -> some View {
+    private func footer(
+        _ rows: [ServiceResponseTime.Row], echo: EchoResponseTime?, omittedCorrelations: Int
+    )
+        -> some View
+    {
         let calls = echo?.replies ?? rows.reduce(0) { $0 + $1.calls }
-        let csv = echo?.csv ?? ServiceResponseTime.csv(service, rows)
-        let isEmpty = echo.map { $0.requests == 0 } ?? rows.isEmpty
+        let csv = echo?.csv ?? ServiceResponseTime.csv(service, rows, omittedRequests: omittedCorrelations)
+        let isEmpty = (echo.map { $0.requests == 0 } ?? rows.isEmpty) && omittedCorrelations == 0
+        let summary = omittedCorrelations > 0
+            ? String(localized: "\(omittedCorrelations.formatted()) correlations omitted at the 200,000-record limit")
+            : calls == 1 ? String(localized: "1 reply timed") : String(localized: "\(calls.formatted()) replies timed")
         return HStack(spacing: Theme.Metrics.spacingM) {
-            Text(notice ?? (calls == 1 ? String(localized: "1 reply timed") : String(
-                localized: "\(calls.formatted()) replies timed"
-            )))
-            .lineLimit(1)
+            Text(notice ?? summary)
+                .lineLimit(1)
             Spacer()
             Button("Copy as CSV") {
                 NSPasteboard.general.clearContents()
@@ -162,5 +196,57 @@ struct ServiceResponseTimeWindow: View {
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    @MainActor
+    private func loadCaptureWideSRT() async {
+        smb2ScanRequestID &+= 1
+        let requestID = smb2ScanRequestID
+        let requestedService = service
+        echoScanResult = nil
+        smb2ScanResult = nil
+        correlatedScanResult = nil
+        smb2ScanError = nil
+        smb2ScanIsLoading = true
+        defer {
+            if requestID == smb2ScanRequestID {
+                smb2ScanIsLoading = false
+            }
+        }
+        let frames = coordinator.allFrames
+        let sessionScope = frames.limitToSessionsInView ? Set(coordinator.visibleSessions.map(\.id)) : nil
+        do {
+            if requestedService.isEcho {
+                let result = try await coordinator.scanEchoResponseTime(
+                    ipv6: requestedService == .icmpv6,
+                    sessionsInScope: sessionScope
+                )
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                echoScanResult = result
+            } else if requestedService == .smb2 {
+                let result = try await coordinator.scanSMB2ServiceResponseTime(sessionsInScope: sessionScope)
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                smb2ScanResult = result
+            } else {
+                let result = try await coordinator.scanServiceResponseTime(
+                    requestedService,
+                    sessionsInScope: sessionScope
+                )
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                correlatedScanResult = result
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            if requestID == smb2ScanRequestID {
+                smb2ScanError = error.localizedDescription
+            }
+        }
     }
 }

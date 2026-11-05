@@ -32,10 +32,14 @@ struct InspectorView: View {
                     if activeTab == .layers {
                         layersInspector(session)
                     } else {
-                        ScrollView {
-                            content(tab: activeTab, session: session)
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                content(tab: activeTab, session: session) { target in
+                                    proxy.scrollTo(target, anchor: .center)
+                                }
                                 .padding(Theme.Metrics.spacingL)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                 } else {
@@ -63,10 +67,12 @@ struct InspectorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session evidence inspector")
+        .focusedSceneValue(\.frameTimeCommandTarget, currentFrameTimeTarget)
         .onAppear {
             coordinator.loadSelectedSavedCaptureEvidence()
         }
         .onChange(of: workspace.selectedSessionID) {
+            frameTimeTarget = nil
             selectedRange = nil
             coordinator.loadSelectedSavedCaptureEvidence()
             // Reconcile the persisted tab so the picker never shows a hidden facet.
@@ -74,6 +80,14 @@ struct InspectorView: View {
                !resolvedVisibleTabs(for: session).contains(workspace.inspectorTab)
             {
                 workspace.inspectorTab = .timeline
+            }
+        }
+        .onChange(of: coordinator.startGeneration) { _, _ in frameTimeTarget = nil }
+        .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in frameTimeTarget = nil }
+        .onChange(of: workspace.id) { _, _ in frameTimeTarget = nil }
+        .onChange(of: coordinator.sessionFramesResult?.sessionID) { _, newID in
+            if newID != frameTimeTarget?.reference.sessionID {
+                frameTimeTarget = nil
             }
         }
     }
@@ -90,6 +104,7 @@ struct InspectorView: View {
     // MARK: Private
 
     @State private var fieldQuery = ""
+    @State private var frameTimeTarget: FrameTimeCommandTarget?
     @State private var selectedRange: Range<Int>?
     /// Bumped when a click in the bytes picks a field, so the tree scrolls to it
     /// (a click in the tree itself leaves the tree where it is).
@@ -100,6 +115,23 @@ struct InspectorView: View {
     /// The decode tree takes the arrow keys once a row in it is clicked.
     @FocusState private var isLayerTreeFocused: Bool
     @Environment(\.openWindow) private var openWindow
+
+    private var currentFrameTimeTarget: FrameTimeCommandTarget? {
+        guard let target = frameTimeTarget,
+              target.isCurrent(
+                  projectID: coordinator.projectStore.activeProjectID,
+                  captureGeneration: coordinator.startGeneration,
+                  sessionID: coordinator.activeWorkspace.selectedSessionID
+              ), let result = coordinator.sessionFramesResult,
+              result.sessionID == target.reference.sessionID,
+              result.frames.contains(where: {
+                  $0.ordinal == target.reference.ordinal && $0.provenance.timestamp == target.reference.timestamp
+              }) else
+        {
+            return nil
+        }
+        return target
+    }
 
     private var selectedEvidence: SessionEvidenceSelection? {
         guard let selection = coordinator.evidenceProjection.selection,
@@ -377,7 +409,8 @@ struct InspectorView: View {
         // An installed locator (none by default) adds where the addresses are.
         let sourceLayers = decoded.isEmpty
             ? decoded : decoded + (AddressLocators.installed?.inspectorLayers(for: session) ?? [])
-        let layers = filterLayers(sourceLayers, query: fieldQuery)
+        let layers = DecodedLayerSearchProjection.filter(sourceLayers, query: fieldQuery)
+        let frameFilterAvailability = DecodedFrameFilter.availability(in: decoded)
         if case .loading = coordinator.citedFrame.state {
             ProgressView("Loading cited frame…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -399,7 +432,7 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             HSplitView {
-                layerTree(layers)
+                layerTree(layers, frameFilterAvailability: frameFilterAvailability)
                 hexPane(session)
             }
             .environment(\.packetTextZoom, coordinator.packetDetailOptions.textZoom)
@@ -407,8 +440,17 @@ struct InspectorView: View {
         }
     }
 
-    private func layerTree(_ layers: [DecodedLayer]) -> some View {
-        ScrollViewReader { proxy in
+    private func layerTree(
+        _ layers: [DecodedLayer], frameFilterAvailability: DecodedFrameFilter.Availability
+    )
+        -> some View
+    {
+        let projectID = coordinator.projectStore.activeProjectID
+        let captureGeneration = coordinator.startGeneration
+        let savedCaptureID = coordinator.activeSavedCapture?.id
+        let selectedSessionID = coordinator.activeWorkspace.selectedSessionID
+        let selectedFrameOrdinal = selectedCitedFrame?.provenance.ordinal.rawValue
+        return ScrollViewReader { proxy in
             ScrollView {
                 DecodedLayerTree(
                     layers: layers, selectedRange: selectedRange, collapsed: $collapsedLayers,
@@ -417,6 +459,22 @@ struct InspectorView: View {
                         selectedRange = (range == selectedRange) ? nil : range
                     },
                     onFilter: { coordinator.filterSessions(with: $0, combination: $1, applying: $2) },
+                    onFrameFilter: { coordinator.filterFrames(with: $0, combination: $1, applying: $2) },
+                    onHighlightFrameFilter: { coordinator.highlightFrames(with: $0) },
+                    onDecodeAs: { transport, port in
+                        guard !coordinator.projectTransitionStatus.isPending,
+                              coordinator.projectStore.activeProjectID == projectID,
+                              coordinator.startGeneration == captureGeneration,
+                              coordinator.activeSavedCapture?.id == savedCaptureID,
+                              coordinator.activeWorkspace.selectedSessionID == selectedSessionID,
+                              selectedCitedFrame?.provenance.ordinal.rawValue == selectedFrameOrdinal else
+                        {
+                            return
+                        }
+                        coordinator.decodeAs.prepareRuleDraft(transport: transport, port: port)
+                        openWindow(id: TracexyApp.decodeAsWindowID)
+                    },
+                    frameFilterAvailability: frameFilterAvailability,
                     columnOptions: coordinator.packetDetailOptions
                 )
                 .padding(Theme.Metrics.spacingL)
@@ -427,6 +485,12 @@ struct InspectorView: View {
             .focusEffectDisabled()
             .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
                 navigate(press, layers: layers)
+            }
+            .onKeyPress(.return, phases: .down) { press in
+                guard press.modifiers.isEmpty else {
+                    return .ignored
+                }
+                return navigate(.toggleLayer, layers: layers)
             }
             .onChange(of: byteRevealToken) {
                 if let selectedRange {
@@ -440,23 +504,29 @@ struct InspectorView: View {
     private func hexPane(_ session: SessionSummary) -> some View {
         let bytes = evidenceBytes(for: session)
         if !bytes.isEmpty {
-            ScrollView {
-                PacketBytesPane(
-                    bytes: bytes, highlight: selectedRange, onShowBytes: { showBytes($0, of: session) },
-                    layers: inspectedLayers(session),
-                    onSelectRange: { range in
-                        // Unfold the layers above the picked field so the tree can show it.
-                        if let owner = DecodedByteMap.owner(ofByte: range.lowerBound, in: inspectedLayers(session)) {
-                            collapsedLayers.subtract(owner.path)
-                        }
-                        selectedRange = range
-                        byteRevealToken &+= 1
-                    },
-                    onHoverByte: { hoveredByte = $0 },
-                    dumpStyle: dumpStyleBinding
-                )
-                .padding(Theme.Metrics.spacingL)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    PacketBytesPane(
+                        bytes: bytes, highlight: selectedRange, onShowBytes: { showBytes($0, of: session) },
+                        layers: inspectedLayers(session),
+                        onSelectRange: { range in
+                            // Unfold the layers above the picked field so the tree can show it.
+                            if let owner = DecodedByteMap
+                                .owner(ofByte: range.lowerBound, in: inspectedLayers(session))
+                            {
+                                collapsedLayers.subtract(owner.path)
+                            }
+                            selectedRange = range
+                            byteRevealToken &+= 1
+                        },
+                        onHoverByte: { hoveredByte = $0 },
+                        dumpStyle: dumpStyleBinding,
+                        onScrollToRow: { proxy.scrollTo($0, anchor: .center) },
+                        sourceIdentity: bytePaneSourceIdentity(for: session)
+                    )
+                    .padding(Theme.Metrics.spacingL)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .overlay(alignment: .bottom) {
                 // Shown only while the pointer is on a byte, over the dump's bottom
@@ -491,7 +561,13 @@ struct InspectorView: View {
     }
 
     @ViewBuilder
-    private func content(tab: InspectorTab, session: SessionSummary) -> some View {
+    private func content(
+        tab: InspectorTab,
+        session: SessionSummary,
+        scrollToTarget: @escaping (String) -> Void
+    )
+        -> some View
+    {
         switch tab {
         case .layers: EmptyView() // routed to layersInspector (linked tree + hex)
         case .timeline: timeline(session)
@@ -508,12 +584,27 @@ struct InspectorView: View {
         case .frames: SessionFramesFacetView(
                 coordinator: coordinator,
                 session: session,
-                selectedOrdinal: selectedCitedFrame?.provenance.ordinal.rawValue
+                selectedOrdinal: selectedCitedFrame?.provenance.ordinal.rawValue,
+                onFrameTimeSelection: { reference in
+                    frameTimeTarget = reference.map {
+                        FrameTimeCommandTarget(
+                            reference: $0,
+                            projectID: coordinator.projectStore.activeProjectID,
+                            captureGeneration: coordinator.startGeneration,
+                            captureRow: nil
+                        )
+                    }
+                }
             )
-        case .stream: FollowConversationView(coordinator: coordinator, session: session)
+        case .stream:
+            FollowConversationView(
+                coordinator: coordinator,
+                session: session,
+                scrollToDatagram: scrollToTarget
+            )
         case .requests: requests(session)
         case .payload: payload(session)
-        case .hex: rawEvidence(session)
+        case .hex: rawEvidence(session, scrollToRow: scrollToTarget)
         }
     }
 
@@ -623,7 +714,7 @@ struct InspectorView: View {
     }
 
     @ViewBuilder
-    private func rawEvidence(_ session: SessionSummary) -> some View {
+    private func rawEvidence(_ session: SessionSummary, scrollToRow: @escaping (String) -> Void) -> some View {
         let bytes = evidenceBytes(for: session)
         if case .loading = coordinator.citedFrame.state {
             ProgressView("Loading cited frame…")
@@ -632,9 +723,15 @@ struct InspectorView: View {
         } else if case let .failed(message) = coordinator.citedFrame.state {
             placeholder(message)
         } else if !bytes.isEmpty {
-            PacketBytesPane(bytes: bytes, onShowBytes: { showBytes($0, of: session) }, dumpStyle: dumpStyleBinding)
-                .environment(\.packetTextZoom, coordinator.packetDetailOptions.textZoom)
-                .environment(\.byteDumpStyle, coordinator.packetDetailOptions.byteDumpStyle)
+            PacketBytesPane(
+                bytes: bytes,
+                onShowBytes: { showBytes($0, of: session) },
+                dumpStyle: dumpStyleBinding,
+                onScrollToRow: scrollToRow,
+                sourceIdentity: bytePaneSourceIdentity(for: session)
+            )
+            .environment(\.packetTextZoom, coordinator.packetDetailOptions.textZoom)
+            .environment(\.byteDumpStyle, coordinator.packetDetailOptions.byteDumpStyle)
         } else if coordinator.isLoadingSelectedSessionEvidence {
             ProgressView("Loading selected evidence…")
         } else if let error = coordinator.selectedSessionEvidenceError {
@@ -738,15 +835,29 @@ struct InspectorView: View {
         }
     }
 
-    /// ↑ ↓ ← → and ⌘← ⌘→ in the decode tree (``DecodeTreeNavigation``).
+    /// ↑ ↓ ← →, Return, ⇧← ⇧→ and ⌘← ⌘→ in the decode tree (``DecodeTreeNavigation``).
     private func navigate(_ press: KeyPress, layers: [DecodedLayer]) -> KeyPress.Result {
-        let command = press.modifiers.contains(.command)
-        let key: DecodeTreeNavigation.Key = switch press.key {
+        let arrow: DecodeTreeNavigation.Arrow = switch press.key {
         case .upArrow: .up
         case .downArrow: .down
-        case .leftArrow: command ? .collapseAll : .left
-        default: command ? .expandAll : .right
+        case .leftArrow: .left
+        default: .right
         }
+        let key = DecodeTreeNavigation.key(
+            for: arrow, command: press.modifiers.contains(.command), shift: press.modifiers.contains(.shift)
+        )
+        guard let outcome = DecodeTreeNavigation.press(
+            key, layers: layers, selection: selectedRange, collapsed: collapsedLayers
+        ) else {
+            return .ignored
+        }
+        collapsedLayers = outcome.collapsed
+        selectedRange = outcome.selection
+        byteRevealToken &+= 1
+        return .handled
+    }
+
+    private func navigate(_ key: DecodeTreeNavigation.Key, layers: [DecodedLayer]) -> KeyPress.Result {
         guard let outcome = DecodeTreeNavigation.press(
             key, layers: layers, selection: selectedRange, collapsed: collapsedLayers
         ) else {
@@ -872,28 +983,10 @@ struct InspectorView: View {
         selectedCitedFrame?.bytes ?? coordinator.evidenceBytes(for: session)
     }
 
-    /// Prunes the decode tree to layers/fields matching the field-filter query.
-    private func filterLayers(_ layers: [DecodedLayer], query: String) -> [DecodedLayer] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else {
-            return layers
-        }
-        return layers.compactMap { layer in
-            if layer.title.lowercased().contains(q) || layer.summary.lowercased().contains(q) {
-                return layer
-            }
-            let fields = layer.fields.filter {
-                $0.name.lowercased().contains(q) || $0.value.lowercased().contains(q)
-            }
-            let children = filterLayers(layer.children, query: q)
-            if fields.isEmpty, children.isEmpty {
-                return nil
-            }
-            return DecodedLayer(
-                proto: layer.proto, title: layer.title, summary: layer.summary,
-                fields: fields, children: children
-            )
-        }
+    private func bytePaneSourceIdentity(for session: SessionSummary) -> String {
+        let citation = selectedCitedFrame.map { "frame-\($0.provenance.ordinal.rawValue)" } ?? "session"
+        let projectID = coordinator.projectStore.activeProjectID.uuidString
+        return "\(projectID)-\(coordinator.startGeneration)-\(session.id)-\(citation)"
     }
 }
 

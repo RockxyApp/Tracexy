@@ -58,6 +58,10 @@ Contributors should run the linters before submitting:
 swiftformat . && swiftlint lint --strict
 ```
 
+The same binary is also a read-only command line, so a build can be exercised without the GUI:
+`Tracexy.app/Contents/MacOS/Tracexy summary capture.pcapng`. See [usage](usage.md) for the full
+command set.
+
 ## Live capture vs. saved captures
 
 - **Saved captures** — open a `.pcap` or `.pcapng` from disk. No helper, no admin rights. This is the

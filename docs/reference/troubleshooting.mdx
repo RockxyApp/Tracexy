@@ -21,4 +21,22 @@ The original in-place capture may have moved or changed, or the live source may 
 
 Tracexy observes packet and TLS/QUIC metadata but does not decrypt traffic. Use a tool designed for application-layer interception when you have authority to inspect that traffic.
 
+## A filter or scan reports "unknown"
+
+Unknown is a real answer, not a failure: the frame could not be decoded far enough to decide the
+expression, so it is counted separately rather than silently treated as a non-match. A truncated
+capture snapshot is the usual cause. Counts beside the frame list say how many frames were matched,
+and how many stayed unknown, over the whole capture.
+
+## A GeoIP database is rejected
+
+Tracexy reads MaxMind `.mmdb` databases. A database in another format is refused with "This isn't a
+MaxMind database (.mmdb) file." rather than partially loaded.
+
+## The command line exits non-zero
+
+`tracexy` exit codes are specific: **0** ok, **1** the capture could not be read, **2** a usage or
+expression error, and **3** `--fail-on` matched a finding at or above the level you named. Only 1 and
+2 indicate a problem with the invocation; 3 is the check doing its job in CI.
+
 For reproducible issues, include app version, macOS version, capture format, and redacted steps in a [GitHub issue](https://github.com/RockxyApp/Tracexy/issues). Do not attach private packet captures by default.

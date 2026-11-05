@@ -198,6 +198,15 @@ struct SessionStreamHealthView: View {
         }
     }
 
+    private static func pointValueLabel(_ point: TCPStreamPoint, role: TCPStreamSeriesRole) -> String {
+        let start = SessionStreamHealth.valueLabel(point.value, role: role)
+        guard let end = point.rangeEnd else {
+            return start
+        }
+        let suffix = role == .sequencePayload ? " (exclusive end)" : ""
+        return "\(start) to \(SessionStreamHealth.valueLabel(end, role: role))\(suffix)"
+    }
+
     @ChartContentBuilder
     private func marks(for line: SessionStreamChartLine, kind: TCPStreamSeriesKind) -> some ChartContent {
         ForEach(line.points) { point in
@@ -208,13 +217,33 @@ struct SessionStreamHealthView: View {
                 )
                 .symbolSize(24)
                 .foregroundStyle(Self.color(for: line))
+            } else if let end = point.rangeEnd {
+                RuleMark(
+                    x: .value("Time", point.date),
+                    yStart: .value(
+                        line.role == .duplicateSACKRange ? "D-SACK left edge"
+                            : (line.role == .sackRange ? "SACK left edge" : "Payload start"),
+                        point.value
+                    ),
+                    yEnd: .value(
+                        line.role == .duplicateSACKRange ? "D-SACK right edge"
+                            : (line.role == .sackRange ? "SACK right edge" : "Payload end"),
+                        end
+                    )
+                )
+                .lineStyle(
+                    line.role == .duplicateSACKRange
+                        ? StrokeStyle(lineWidth: 3, dash: [2, 2])
+                        : StrokeStyle(lineWidth: line.role == .sackRange ? 3 : 2)
+                )
+                .foregroundStyle(Self.color(for: line))
             } else {
                 LineMark(
                     x: .value("Time", point.date),
                     y: .value(line.label, point.value),
                     series: .value("Series", line.id)
                 )
-                .interpolationMethod(.monotone)
+                .interpolationMethod(.linear)
                 .lineStyle(Self.strokeStyle(for: line))
                 .foregroundStyle(Self.color(for: line))
             }
@@ -261,7 +290,7 @@ struct SessionStreamHealthView: View {
             return OverviewChartCalloutRow(
                 id: "\(line.id)",
                 title: line.label,
-                value: SessionStreamHealth.valueLabel(point.value, role: line.role),
+                value: Self.pointValueLabel(point, role: line.role),
                 rawValue: point.value,
                 color: Self.color(for: line)
             )
@@ -278,6 +307,13 @@ private extension SessionStreamHealthView {
     static func color(for line: SessionStreamChartLine) -> Color {
         let base = line.direction == .aToB ? Theme.Traffic.sent : Theme.Traffic.received
         switch line.role {
+        case .sackRange,
+             .duplicateSACKRange:
+            return base.opacity(max(0.35, 0.9 - Double(line.variant) * 0.15))
+        case .sequencePayload:
+            return base.opacity(0.72)
+        case .goodput:
+            return base.opacity(0.75)
         case .sequenceAcknowledged,
              .bytesInFlight:
             return base.opacity(0.55)
@@ -288,9 +324,14 @@ private extension SessionStreamHealthView {
 
     static func strokeStyle(for line: SessionStreamChartLine) -> StrokeStyle {
         switch line.role {
+        case .duplicateSACKRange:
+            StrokeStyle(lineWidth: 3, dash: [2, 2])
         case .sequenceAcknowledged,
-             .bytesInFlight:
+             .bytesInFlight,
+             .sackRoundTrip:
             StrokeStyle(lineWidth: 1.5, dash: [3, 3])
+        case .goodput:
+            StrokeStyle(lineWidth: 1.5, dash: [6, 2])
         default:
             StrokeStyle(lineWidth: 1.5)
         }
@@ -305,11 +346,13 @@ private extension SessionStreamHealthView {
     /// just because its title is.
     static func accessibilityValue(for chart: SessionStreamChart) -> String {
         chart.lines.map { line in
-            let values = line.points.map(\.value)
+            let values = line.points.map(\.value) + line.points.compactMap(\.rangeEnd)
             guard let low = values.min(), let high = values.max() else {
                 return "\(line.label), no points"
             }
-            return "\(line.label), \(values.count.formatted()) points, "
+            let pointCount = line.points.count
+            let pointWord = pointCount == 1 ? "point" : "points"
+            return "\(line.label), \(pointCount.formatted()) \(pointWord), "
                 + "\(SessionStreamHealth.valueLabel(low, role: line.role)) to "
                 + "\(SessionStreamHealth.valueLabel(high, role: line.role))"
         }

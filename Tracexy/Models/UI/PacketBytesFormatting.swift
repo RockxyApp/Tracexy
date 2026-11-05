@@ -11,6 +11,7 @@ nonisolated enum PacketBytesFormat: String, CaseIterable, Identifiable, Sendable
     case cArray
     case escapedString
     case base64
+    case rawBinary
 
     // MARK: Internal
 
@@ -26,7 +27,15 @@ nonisolated enum PacketBytesFormat: String, CaseIterable, Identifiable, Sendable
         case .cArray: "As C Array"
         case .escapedString: "As Escaped String"
         case .base64: "As Base64"
+        case .rawBinary: "As Raw Binary"
         }
+    }
+
+    func clipboardValue(for bytes: ArraySlice<UInt8>, startOffset: Int = 0) -> PacketBytesClipboardValue {
+        if self == .rawBinary {
+            return .data(Data(bytes), type: "application/octet-stream")
+        }
+        return .text(text(for: bytes, startOffset: startOffset))
     }
 
     func text(for bytes: ArraySlice<UInt8>, startOffset: Int = 0) -> String {
@@ -44,7 +53,7 @@ nonisolated enum PacketBytesFormat: String, CaseIterable, Identifiable, Sendable
         case .hexStream:
             return bytes.map { String(format: "%02x", $0) }.joined()
         case .printableText:
-            return String(bytes.map(Self.printable))
+            return String(bytes.filter { $0 >= 0x20 && $0 < 0x7F }.map { Character(UnicodeScalar($0)) })
         case .cArray:
             let rows = stride(from: bytes.startIndex, to: bytes.endIndex, by: 8).map { start in
                 "    " + bytes[start ..< min(start + 8, bytes.endIndex)]
@@ -55,6 +64,8 @@ nonisolated enum PacketBytesFormat: String, CaseIterable, Identifiable, Sendable
             return bytes.map { String(format: "\\x%02x", $0) }.joined()
         case .base64:
             return Data(bytes).base64EncodedString()
+        case .rawBinary:
+            return String(bytes.map(Self.printable))
         }
     }
 
@@ -65,11 +76,18 @@ nonisolated enum PacketBytesFormat: String, CaseIterable, Identifiable, Sendable
     }
 }
 
+// MARK: - PacketBytesClipboardValue
+
+nonisolated enum PacketBytesClipboardValue: Equatable, Sendable {
+    case text(String)
+    case data(Data, type: String)
+}
+
 // MARK: - PacketBytesSearch
 
 /// Find in a frame's bytes, as Wireshark's Find Packet by hex value or string: a
 /// pattern made only of hex byte pairs (spaces, colons or dashes between them are
-/// allowed) is a byte sequence; anything else is ASCII text, matched without case.
+/// allowed) is a byte sequence; anything else searches its UTF-8 bytes, ignoring ASCII case by default.
 nonisolated enum PacketBytesSearch {
     // MARK: Internal
 
@@ -97,16 +115,23 @@ nonisolated enum PacketBytesSearch {
     }
 
     /// Non-overlapping matches, first-to-last, and whether more existed than kept.
-    static func matches(_ query: String, in bytes: [UInt8]) -> (ranges: [Range<Int>], truncated: Bool) {
+    static func matches(
+        _ query: String,
+        in bytes: [UInt8],
+        caseSensitive: Bool = false
+    )
+        -> (ranges: [Range<Int>], truncated: Bool)
+    {
         guard let (pattern, isHex) = pattern(for: query), pattern.count <= bytes.count else {
             return ([], false)
         }
-        let folded = isHex ? bytes : bytes.map(Self.lower)
-        let needle = isHex ? pattern : pattern.map(Self.lower)
+        let foldsTextCase = !isHex && !caseSensitive
+        let haystack = foldsTextCase ? bytes.map(Self.lower) : bytes
+        let needle = foldsTextCase ? pattern.map(Self.lower) : pattern
         var ranges: [Range<Int>] = []
         var index = 0
-        while index + needle.count <= folded.count {
-            if folded[index] == needle[0], Array(folded[index ..< index + needle.count]) == needle {
+        while index + needle.count <= haystack.count {
+            if haystack[index] == needle[0], Array(haystack[index ..< index + needle.count]) == needle {
                 guard ranges.count < maximumMatches else {
                     return (ranges, true)
                 }

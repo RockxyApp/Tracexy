@@ -28,10 +28,20 @@ nonisolated struct TCPTimestamps: Sendable, Hashable {
     let echoReply: UInt32
 }
 
+// MARK: - TCPSACKBlock
+
+/// One receiver-reported SACK range from RFC 2018. Edges are raw sequence numbers;
+/// the right edge is exclusive. Preserve wire order, duplicate/contained ranges,
+/// and wrapping values without inferring D-SACK or delivery to the application.
+nonisolated struct TCPSACKBlock: Sendable, Hashable {
+    let leftEdge: UInt32
+    let rightEdge: UInt32
+}
+
 // MARK: - TCPOptionFacts
 
 /// Typed facts extracted from the TCP option list (RFC 793 / RFC 7323). Absent
-/// options stay `nil`/`false`. Window scale preserves both the raw observed byte
+/// options stay `nil`/`false`/empty. Window scale preserves both the raw observed byte
 /// and the RFC-required effective cap so later analysis never parses display text.
 nonisolated struct TCPOptionFacts: Sendable, Hashable {
     // MARK: Lifecycle
@@ -41,16 +51,22 @@ nonisolated struct TCPOptionFacts: Sendable, Hashable {
         windowScaleRaw: UInt8? = nil,
         windowScale: UInt8? = nil,
         sackPermitted: Bool = false,
+        sackBlocks: [TCPSACKBlock] = [],
         timestamps: TCPTimestamps? = nil
     ) {
         self.maximumSegmentSize = maximumSegmentSize
         self.windowScaleRaw = windowScaleRaw
         self.windowScale = windowScale
         self.sackPermitted = sackPermitted
+        self.sackBlocks = sackBlocks
         self.timestamps = timestamps
     }
 
     // MARK: Internal
+
+    /// A TCP header has at most 40 option bytes; each SACK block occupies eight
+    /// bytes after the two-byte option header, allowing at most four blocks.
+    static let maximumSACKBlockCount = 4
 
     /// Maximum Segment Size (kind 2). `nil` when the option is absent or malformed.
     var maximumSegmentSize: UInt16?
@@ -61,6 +77,9 @@ nonisolated struct TCPOptionFacts: Sendable, Hashable {
     var windowScale: UInt8?
     /// Whether SACK-Permitted (kind 4) was present.
     var sackPermitted: Bool
+    /// Structurally complete SACK (kind 5) blocks in wire order. These are advisory
+    /// observations, independent of the cumulative ACK and SACK negotiation state.
+    var sackBlocks: [TCPSACKBlock]
     /// Timestamps (kind 8), when present and well-formed.
     var timestamps: TCPTimestamps?
 }

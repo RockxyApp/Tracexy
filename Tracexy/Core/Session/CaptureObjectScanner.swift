@@ -68,6 +68,8 @@ nonisolated struct CaptureObjectList: Equatable, Sendable {
     /// Streams read, and streams past ``CaptureObjectScanner/maximumStreams``.
     let scannedStreamCount: Int
     let skippedStreamCount: Int
+    /// FTP control streams omitted because their command/reply order is uncertain.
+    let ambiguousStreamCount: Int
     /// Objects left out past the object or byte bound.
     let omittedObjectCount: Int
 }
@@ -119,12 +121,14 @@ nonisolated enum CaptureObjectScanner {
         let configuration = FollowStreamReader.Configuration(isCancelled: isCancelled)
         let followEach = { (tuples: [FiveTuple], body: (FollowStreamResult) throws -> Void) throws in
             try FollowStreamReader.readEach(
-                contentsOf: url, expectedIdentity: expectedIdentity, tuples: tuples, sourceToken: sourceToken,
+                contentsOf: url, expectedIdentity: expectedIdentity, tuples: tuples,
+                sourceToken: sourceToken ?? SavedCaptureStreamLoader.sourceToken(for: expectedIdentity),
                 configuration: configuration, body
             )
         }
         let read = Array(streams.prefix(maximumStreams))
         var found: [CaptureObject] = []
+        var ambiguousStreams = Set<FiveTuple>()
         // SMB files the bounds left out inside a stream's own read.
         var smbOmitted = 0
         switch kind {
@@ -132,7 +136,11 @@ nonisolated enum CaptureObjectScanner {
             var transfers: [FTPDataObjectReader.Transfer] = []
             var done = 0
             try followEach(read.map(\.tuple)) { result in
-                transfers += FTPDataObjectReader.transfers(in: result)
+                let scan = FTPDataObjectReader.transfers(in: result)
+                transfers += scan.transfers
+                if scan.chronologyUnavailable {
+                    ambiguousStreams.insert(result.tuple)
+                }
                 done += 1
                 onProgress(done, read.count + transfers.count)
             }
@@ -250,7 +258,7 @@ nonisolated enum CaptureObjectScanner {
         objects.sort { ($0.frameOrdinal ?? .max, $0.id) < ($1.frameOrdinal ?? .max, $1.id) }
         return CaptureObjectList(
             objects: objects, scannedStreamCount: read.count, skippedStreamCount: streams.count - read.count,
-            omittedObjectCount: omitted
+            ambiguousStreamCount: ambiguousStreams.count, omittedObjectCount: omitted
         )
     }
 

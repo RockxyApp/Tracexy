@@ -24,6 +24,35 @@ struct LiveCaptureSpoolTests {
         #expect(capture.frames.map(\.linkType) == [LinkType.ethernet, LinkType.raw])
     }
 
+    @Test("Current file-set ordinal offset follows the kept merged segments")
+    func currentFileSetOrdinalOffset() async throws {
+        let directory = Self.uniqueDirectory()
+        let spool = LiveCaptureSpool(directory: directory.appendingPathComponent("spool", isDirectory: true))
+        let fileSet = LiveCaptureSpool.FileSetPolicy(
+            maxFileBytes: 1,
+            maxFileDuration: nil,
+            keepFiles: 2,
+            directory: directory.appendingPathComponent("set", isDirectory: true)
+        )
+        try await spool.reset(epoch: 7, fileSet: fileSet)
+        let first = frame(byte: 1, timestamp: 1, linkType: LinkType.ethernet)
+        let second = frame(byte: 2, timestamp: 2, linkType: LinkType.ethernet)
+        let third = frame(byte: 3, timestamp: 3, linkType: LinkType.ethernet)
+
+        try await spool.append([first], defaultLinkType: LinkType.ethernet, epoch: 7)
+        #expect(await spool.currentSegmentFrameOrdinalOffset() == 0)
+        try await spool.append([second], defaultLinkType: LinkType.ethernet, epoch: 7)
+        #expect(await spool.currentSegmentFrameOrdinalOffset() == 1)
+        try await spool.append([third], defaultLinkType: LinkType.ethernet, epoch: 7)
+        #expect(await spool.currentSegmentFrameOrdinalOffset() == 1)
+
+        let merged = directory.appendingPathComponent("whole.pcapng")
+        try await spool.copyWholeCapture(to: merged)
+        let capture = try PcapngReader.read(contentsOf: merged)
+        #expect(capture.frames.map(\.bytes) == [second.bytes, third.bytes])
+        withExtendedLifetime(spool) {}
+    }
+
     @Test("Append returns one ordered locator per frame; exact-read returns real bytes")
     func appendLocatorsAndExactRead() async throws {
         let directory = Self.uniqueDirectory()
@@ -56,6 +85,32 @@ struct LiveCaptureSpoolTests {
         for (locator, source) in zip(all, [a, b, c]) {
             let bytes = try await spool.read(locator, capturedLength: source.bytes.count, epoch: 5)
             #expect(bytes == source.bytes)
+        }
+        withExtendedLifetime(spool) {}
+    }
+
+    @Test("Current spool evidence rejects a path replaced after capture")
+    func currentEvidenceRejectsPathReplacement() async throws {
+        let directory = Self.uniqueDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let spool = LiveCaptureSpool(directory: directory)
+        try await spool.reset(epoch: 9)
+        let source = frame(byte: 0x42, timestamp: 1)
+        let locator = try #require(try await Self.appended(
+            spool.append([source], defaultLinkType: LinkType.ethernet, epoch: 9)
+        ).first)
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        )
+        let spoolURL = try #require(entries.first { $0.lastPathComponent.hasPrefix("capture-") })
+        let replacement = directory.appendingPathComponent("replacement.pcapng")
+        let original = try Data(contentsOf: spoolURL)
+        try Data(repeating: 0xA5, count: original.count).write(to: replacement)
+        try FileManager.default.removeItem(at: spoolURL)
+        try FileManager.default.moveItem(at: replacement, to: spoolURL)
+
+        await #expect(throws: LiveCaptureSpool.Failure.self) {
+            _ = try await spool.readCurrentSource(locator, capturedLength: source.bytes.count)
         }
         withExtendedLifetime(spool) {}
     }

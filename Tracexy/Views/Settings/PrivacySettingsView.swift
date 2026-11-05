@@ -9,13 +9,10 @@ struct PrivacySettingsView: View {
     // MARK: Lifecycle
 
     init(
-        applicationDefaults: UserDefaults = .standard,
         historyRetentionError: String? = nil,
         isHistoryDemoMode: Bool = false,
         onAutoClearChange: @escaping (AutoClear) -> Void = { _ in }
     ) {
-        _localOnly = AppStorage(wrappedValue: true, SettingsKeys.localOnly, store: applicationDefaults)
-        _shareAnalytics = AppStorage(wrappedValue: false, SettingsKeys.shareAnalytics, store: applicationDefaults)
         self.historyRetentionError = historyRetentionError
         self.isHistoryDemoMode = isHistoryDemoMode
         self.onAutoClearChange = onAutoClearChange
@@ -62,11 +59,22 @@ struct PrivacySettingsView: View {
             }
 
             SettingsSection("Data") {
-                SettingsCheckbox(
-                    isOn: $localOnly,
-                    title: "Keep all data on this Mac (never upload)",
-                    description: "Captured traffic stays on this device and is never sent to any server."
-                )
+                // Not a checkbox: there is no upload path to switch off, and a
+                // control that cannot change what it describes would be the one
+                // false promise this pane must never make.
+                SettingsStatusBanner(
+                    symbol: "lock.laptopcomputer",
+                    tint: .green,
+                    title: "All data stays on this Mac",
+                    detail: """
+                    Captured traffic, History and derived session data are never sent to any \
+                    server. Tracexy has no upload path, so this is how the app is built rather \
+                    than a setting.
+                    """,
+                    titleIdentifier: "privacy.localOnlyStatus"
+                ) {
+                    EmptyView()
+                }
 
                 SettingsDivider()
 
@@ -103,11 +111,21 @@ struct PrivacySettingsView: View {
             }
 
             SettingsSection("Diagnostics") {
-                SettingsCheckbox(
-                    isOn: $shareAnalytics,
-                    title: "Share anonymous usage analytics",
-                    description: "Send aggregate, non-identifying usage metrics to help improve Tracexy."
-                )
+                // Tracexy ships no analytics collection, so an opt-in checkbox
+                // would promise a transmission that never happens and imply a
+                // capability the app does not have.
+                SettingsStatusBanner(
+                    symbol: "eye.slash",
+                    tint: .secondary,
+                    title: "No usage analytics are collected",
+                    detail: """
+                    Tracexy sends no usage metrics, crash reports or identifiers, so there is \
+                    nothing to opt into.
+                    """,
+                    titleIdentifier: "privacy.analyticsStatus"
+                ) {
+                    EmptyView()
+                }
             }
         }
     }
@@ -116,15 +134,12 @@ struct PrivacySettingsView: View {
 
     // Export protections and History Auto-clear are per-Project: one investigation
     // may need masked, redacted exports and a short retention window while another
-    // keeps everything. "Local only" and analytics describe the application and
-    // stay in the shared domain explicitly.
+    // keeps everything. What the app does or does not send is not per-Project and
+    // not a preference at all, so it is stated rather than stored.
     @AppStorage(SettingsKeys.redactBodies) private var redactBodies = true
     @AppStorage(SettingsKeys.stripCredentials) private var stripCredentials = true
     @AppStorage(SettingsKeys.maskIPs) private var maskIPs = false
     @AppStorage(SettingsKeys.autoClear) private var autoClear = AutoClear.never.rawValue
-
-    @AppStorage(SettingsKeys.localOnly, store: .standard) private var localOnly = true
-    @AppStorage(SettingsKeys.shareAnalytics, store: .standard) private var shareAnalytics = false
 
     private let historyRetentionError: String?
     private let isHistoryDemoMode: Bool

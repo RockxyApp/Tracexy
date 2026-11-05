@@ -51,10 +51,16 @@ nonisolated enum FrameHeaderStripper {
             capturedLength: event.reference.capturedLength - start,
             originalLength: max(event.reference.originalLength - start, event.reference.capturedLength - start),
             timestamp: event.reference.timestamp,
+            direction: event.reference.direction,
+            packetFlags: event.reference.packetFlags,
+            packetID: event.reference.packetID,
             linkType: linkType,
             sectionIndex: event.reference.sectionIndex,
             interfaceID: event.reference.interfaceID,
             hasComment: event.reference.hasComment,
+            hasPacketOptions: event.reference.hasPacketOptions,
+            frameCommentReference: event.reference.frameCommentReference,
+            packetOptionsReference: event.reference.packetOptionsReference,
             copyableOptionsRange: event.reference.copyableOptionsRange
         )
         return CaptureFrameEvent(reference: reference, bytes: Array(event.bytes[start...]), progress: event.progress)

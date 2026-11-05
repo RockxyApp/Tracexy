@@ -21,12 +21,14 @@ import Foundation
 nonisolated struct SessionStreamChartLine: Identifiable, Hashable, Sendable {
     // MARK: Lifecycle
 
-    init(series: TCPStreamSeries, tuple: FiveTuple) {
+    init(series: TCPStreamSeries, tuple: FiveTuple, maximumPoints: Int? = nil) {
         id = series.id
         role = series.role
         direction = series.direction
-        label = Self.phrase(for: series.role, tuple: tuple, direction: series.direction)
-        points = series.points
+        variant = series.variant
+        label = Self.phrase(for: series.role, tuple: tuple, direction: series.direction, variant: series.variant)
+        originalPointCount = series.points.count
+        points = Self.displayPoints(series.points, maximum: maximumPoints)
     }
 
     // MARK: Internal
@@ -34,24 +36,68 @@ nonisolated struct SessionStreamChartLine: Identifiable, Hashable, Sendable {
     let id: Int
     let role: TCPStreamSeriesRole
     let direction: ConnectionDirection
+    let variant: Int
     /// What this line is, naming its direction by the endpoint the frames came from.
     let label: String
     let points: [TCPStreamPoint]
+    let originalPointCount: Int
+
+    /// Keep the edges and extrema of each capture-order group. Every drawn point
+    /// remains an observed point; the chart reports the omitted point count.
+    static func displayPoints(_ points: [TCPStreamPoint], maximum: Int?) -> [TCPStreamPoint] {
+        guard let maximum, points.count > max(4, maximum) else {
+            return points
+        }
+        let groups = max(1, maximum / 4)
+        var selected: [TCPStreamPoint] = []
+        selected.reserveCapacity(groups * 4)
+        for group in 0 ..< groups {
+            let first = group * points.count / groups
+            let end = (group + 1) * points.count / groups
+            guard first < end else {
+                continue
+            }
+            var minimum = first
+            var maximumIndex = first
+            for index in first ..< end {
+                if points[index].value < points[minimum].value {
+                    minimum = index
+                }
+                if (points[index].rangeEnd ?? points[index].value) >
+                    (points[maximumIndex].rangeEnd ?? points[maximumIndex].value)
+                {
+                    maximumIndex = index
+                }
+            }
+            var previous: Int?
+            for index in [first, minimum, maximumIndex, end - 1].sorted() where index != previous {
+                selected.append(points[index])
+                previous = index
+            }
+        }
+        return selected
+    }
 
     /// The phrase naming one line. Observation-only by construction: each says what
     /// the frames showed, never why.
     static func phrase(
         for role: TCPStreamSeriesRole,
         tuple: FiveTuple,
-        direction: ConnectionDirection
+        direction: ConnectionDirection,
+        variant: Int = 0
     )
         -> String
     {
         let endpoint = direction == .aToB ? tuple.a.display : tuple.b.display
         return switch role {
+        case .sackRoundTrip: "SACK-reported RTT from \(endpoint)"
         case .roundTrip,
              .sequenceReached,
              .throughput: "Sent by \(endpoint)"
+        case .sequencePayload: "Payload from \(endpoint)"
+        case .goodput: "ACKed from \(endpoint)"
+        case .sackRange: "SACK range \((variant + 1).formatted()) reported for \(endpoint)"
+        case .duplicateSACKRange: "D-SACK range reported for \(endpoint)"
         case .sequenceAcknowledged: "Acknowledged to \(endpoint)"
         case .receiveWindowOffered: "Offered to \(endpoint)"
         case .bytesInFlight: "Unacknowledged from \(endpoint)"
@@ -94,8 +140,8 @@ nonisolated struct SessionStreamChart: Identifiable, Hashable, Sendable {
     static func caption(for kind: TCPStreamSeriesKind) -> String {
         switch kind {
         case .sequence: "Bytes past each direction's first observed sequence number"
-        case .throughput: "Wire bytes per second"
-        case .roundTrip: "Seconds from a segment to the acknowledgement covering it"
+        case .throughput: "Wire bytes sent and receiver-ACKed sequence bytes per second"
+        case .roundTrip: "Seconds from data to cumulative ACK or receiver SACK report"
         case .receiveWindow: "Bytes"
         }
     }
@@ -111,14 +157,29 @@ nonisolated struct SessionStreamHealth: Hashable, Sendable {
     /// Project one derived health value into charts. The input is expected to be the
     /// projection's own deterministic order; this initializer preserves it and
     /// re-derives nothing.
-    init(health: TCPStreamHealth) {
+    init(health: TCPStreamHealth, maximumPointsPerLine: Int? = nil) {
         charts = health.availableKinds.map { kind in
-            SessionStreamChart(
+            let lines = health.series(for: kind).map {
+                SessionStreamChartLine(series: $0, tuple: health.tuple, maximumPoints: maximumPointsPerLine)
+            }
+            let total = lines.reduce(0) { $0 + $1.originalPointCount }
+            let drawn = lines.reduce(0) { $0 + $1.points.count }
+            let displayNote = drawn < total
+                ? "\(drawn.formatted()) of \(total.formatted()) points are drawn; each capture-order group keeps its first, last, minimum and maximum."
+                : nil
+            let caveat = [Self.caveat(for: kind, coverage: health.coverage), displayNote]
+                .compactMap { $0 }.joined(separator: " ")
+            let duplicateSACKCaveat = kind == .sequence && lines.contains { $0.role == .duplicateSACKRange }
+                ? "D-SACK is the receiver's report of duplicate sequence data; it does not identify the cause."
+                : nil
+            let chartCaveat = [caveat.isEmpty ? nil : caveat, duplicateSACKCaveat]
+                .compactMap { $0 }.joined(separator: " ")
+            return SessionStreamChart(
                 kind: kind,
                 title: SessionStreamChart.name(for: kind),
                 axisCaption: SessionStreamChart.caption(for: kind),
-                lines: health.series(for: kind).map { SessionStreamChartLine(series: $0, tuple: health.tuple) },
-                caveat: Self.caveat(for: kind, coverage: health.coverage)
+                lines: lines,
+                caveat: chartCaveat.isEmpty ? nil : chartCaveat
             )
         }
         caveats = Self.caveats(for: health.coverage)
@@ -130,6 +191,9 @@ nonisolated struct SessionStreamHealth: Hashable, Sendable {
     }
 
     // MARK: Internal
+
+    /// Full-source scans retain all observations but bound chart marks per line.
+    static let fullScanMaximumPointsPerLine = 1_024
 
     /// Nothing to draw: a session with no retained TCP segments at all.
     static let empty = SessionStreamHealth(charts: [], caveats: [])
@@ -181,9 +245,27 @@ nonisolated struct SessionStreamHealth: Hashable, Sendable {
         return Array(lines.prefix(2))
     }
 
-    /// The caveat only one chart needs. Today that is the receive window, whose values
-    /// can be understated by up to 2^14 when the frames never showed the scale.
+    /// Chart-specific limits that should stay beside the affected series.
     static func caveat(for kind: TCPStreamSeriesKind, coverage: TCPStreamCoverage) -> String? {
+        if kind == .sequence {
+            let omittedPayload = coverage.unplottablePayloadRangeCount > 0
+                ? "\(coverage.unplottablePayloadRangeCount.formatted()) captured payload ranges crossed the unambiguous relative sequence boundary and were omitted."
+                : nil
+            let omittedSACK = coverage.unplottableSACKRangeCount > 0
+                ? "\(coverage.unplottableSACKRangeCount.formatted()) receiver-reported SACK ranges could not be placed in one unambiguous relative sequence range."
+                : nil
+            let message = [omittedPayload, omittedSACK].compactMap { $0 }.joined(separator: " ")
+            if !message.isEmpty {
+                return message
+            }
+        }
+        if kind == .roundTrip {
+            let ambiguity = coverage.ambiguousRoundTripSampleCount > 0
+                ? "\(coverage.ambiguousRoundTripSampleCount.formatted()) cumulative-ACK RTT candidates were excluded because an overlapping sequence range made their acknowledgements ambiguous."
+                : nil
+            let sack = "SACK-reported RTT uses the first retained exact-range block and reports receiver observation, not application delivery."
+            return [ambiguity, sack].compactMap { $0 }.joined(separator: " ")
+        }
         guard kind == .receiveWindow, coverage.windowScaling == .notObserved else {
             return nil
         }
@@ -197,12 +279,18 @@ nonisolated struct SessionStreamHealth: Hashable, Sendable {
         switch role {
         case .sequenceReached,
              .sequenceAcknowledged,
-             .receiveWindowOffered,
+             .sackRange,
+             .duplicateSACKRange,
+             .sequencePayload:
+            ByteUnits.string(Int64(value.rounded()))
+        case .receiveWindowOffered,
              .bytesInFlight:
             ByteUnits.string(Int64(max(0, value.rounded())))
-        case .throughput:
+        case .throughput,
+             .goodput:
             "\(ByteUnits.string(Int64(max(0, value.rounded()))))/s"
-        case .roundTrip:
+        case .roundTrip,
+             .sackRoundTrip:
             SessionResponseTimes.durationLabel(value)
         }
     }
