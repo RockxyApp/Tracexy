@@ -29,6 +29,29 @@ extension FocusedValues {
     }
 }
 
+// MARK: - SidebarFilterCommands
+
+/// View ▸ Filter Sidebar. The action is published by the sidebar footer itself
+/// through `focusedSceneValue`, so the item is always listed and disabled in a
+/// scene that has no sidebar, rather than disappearing from the menu.
+struct SidebarFilterCommands: Commands {
+    // MARK: Internal
+
+    var body: some Commands {
+        CommandGroup(after: .sidebar) {
+            Button("Filter Sidebar") {
+                focusSidebarFilter?.focus()
+            }
+            .keyboardShortcut("j", modifiers: [.command, .option])
+            .disabled(focusSidebarFilter == nil)
+        }
+    }
+
+    // MARK: Private
+
+    @FocusedValue(\.focusSidebarFilter) private var focusSidebarFilter: SidebarFilterFocusAction?
+}
+
 // MARK: - TracexyApp
 
 /// Started from `main.swift`, which first gives the built-in command line a chance
@@ -478,6 +501,10 @@ struct TracexyApp: App {
         let base = WindowGroup {
             RootView(coordinator: coordinator)
                 .frame(minWidth: 1_000, minHeight: 640)
+                // Published here, not from the sidebar footer: the split view
+                // re-hosts the sidebar in its own NSHostingController, so a
+                // focused value sent from inside it never reaches these commands.
+                .focusedSceneValue(\.focusSidebarFilter, SidebarFilterFocusAction())
                 .expressionLibrarySupport(coordinator: coordinator)
                 .workspaceTabsSupport(coordinator: coordinator)
                 .geoIPSupport(
@@ -528,6 +555,11 @@ struct TracexyApp: App {
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
             SidebarCommands()
+
+            // View ▸ Filter Sidebar (⌥⌘J). The sidebar's filter field was
+            // pointer-only; this is its keyboard and menu-bar route, matching
+            // Xcode's own ⌥⌘J for the navigator filter.
+            SidebarFilterCommands()
 
             // Edit ▸ Find (⌘F). Reuses the standard Find placement so the shortcut
             // reads as native, then routes to the Sessions search box the app

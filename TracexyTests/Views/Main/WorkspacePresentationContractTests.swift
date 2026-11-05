@@ -6,6 +6,37 @@ import Testing
 struct WorkspacePresentationContractTests {
     // MARK: Internal
 
+    /// The sidebar's filter field is an AppKit `NSSearchField`, so it is not in
+    /// SwiftUI's focus chain and nothing moves the first responder to it on its
+    /// own. Keyboard reachability therefore depends on three parts staying wired
+    /// together: the footer publishes the action, the menu item is bound to
+    /// ⌥⌘J, and the representable turns a token change into `makeFirstResponder`.
+    @Test("The sidebar filter field has a menu and keyboard route")
+    func sidebarFilterIsKeyboardReachable() throws {
+        let app = try readProjectFile("Tracexy/TracexyApp.swift")
+        let footer = try readProjectFile("Tracexy/Views/Sidebar/SidebarBottomBar.swift")
+        #expect(app.contains("SidebarFilterCommands()"))
+        #expect(app.contains("Button(\"Filter Sidebar\")"))
+        #expect(app.contains("@FocusedValue(\\.focusSidebarFilter)"))
+        // The scene publishes the action, not the sidebar: NativeWorkspaceSplitView
+        // re-hosts the sidebar in its own NSHostingController, and a focused value
+        // sent from inside that host never reaches the app's Commands.
+        #expect(app.contains(".focusedSceneValue(\\.focusSidebarFilter"))
+        #expect(footer.contains("SidebarFilterFocusAction.fieldIdentifier"))
+        #expect(footer.contains("window.makeFirstResponder(field)"))
+        // The field stays the real NSSearchField; a SwiftUI imitation of it would
+        // lose the system focus ring and the search-field accessibility role.
+        #expect(footer.contains("NSViewRepresentable"))
+        // The shortcut must be the one the Help ▸ Keyboard Shortcuts list prints,
+        // and must not be taken by another command.
+        let shortcut = try #require(Self.shortcutLine(after: "Button(\"Filter Sidebar\")", in: app))
+        #expect(shortcut.contains("\"j\""))
+        #expect(shortcut.contains(".command"))
+        #expect(shortcut.contains(".option"))
+        let bindings = app.components(separatedBy: ".keyboardShortcut(\"j\"").count - 1
+        #expect(bindings == 1, "⌥⌘J must stay bound to exactly one command")
+    }
+
     @Test("Project changes remount native layout and scoped editors without remounting launch setup")
     func projectPresentationIdentity() throws {
         let root = try readProjectFile("Tracexy/Views/Main/RootView.swift")
@@ -571,6 +602,16 @@ struct WorkspacePresentationContractTests {
 
     private enum ResolveError: Error {
         case rootNotFound
+    }
+
+    /// The `.keyboardShortcut` within a few lines after `marker`.
+    private static func shortcutLine(after marker: String, in source: String) -> String? {
+        let lines = source.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.contains(marker) }) else {
+            return nil
+        }
+        return lines[start ..< min(start + 6, lines.count)]
+            .first { $0.contains(".keyboardShortcut(") }
     }
 
     /// The `SettingsKeys` members a source pins to the shared domain, which it
