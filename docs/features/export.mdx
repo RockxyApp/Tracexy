@@ -1,0 +1,29 @@
+---
+title: Export and share
+description: Take the evidence you need, with explicit control over sensitive bytes.
+---
+
+
+**Status: Available**
+
+Take the evidence you need, with explicit control over sensitive bytes.
+
+## Try it
+
+Choose a supported export from the **File** menu or the session actions: **Export Frames…**, **Export Investigation** (sessions or findings as CSV, sessions and findings as JSON, or an investigation report), **Export Objects**, **Export PDUs…**, **Export Packet Dissections…**, **Save Capture…**, or a protected session document. Review destination and privacy settings before saving.
+
+## What you can see
+
+Project configuration exports contain no packets. History automation exposes bounded summaries. Raw PCAP/PCAPNG and frame exports preserve packet content; a protected session document omits packet bytes entirely and follows your **Protected Session Export** choice in **Settings → Privacy**.
+
+## Coverage limits
+
+Redaction cannot make an arbitrary raw packet capture safe to share. Review the exact export and recipient before sending. Some reconstructed output requires valid timestamps and complete source bytes.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Projects" href="/features/projects" />
+  <Card title="MCP" href="/features/mcp" />
+  <Card title="Privacy" href="/reference/privacy" />
+</CardGroup>

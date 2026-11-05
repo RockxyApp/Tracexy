@@ -1,0 +1,31 @@
+---
+title: TCP analysis
+description: Check lifecycle, sequence evidence, and timing without hiding capture gaps.
+---
+
+
+**Status: Partial**
+
+Check lifecycle, sequence evidence, and timing without hiding capture gaps.
+
+## Try it
+
+Use the Sessions **Completeness** column, then select a TCP session. Open **TCP Health** in the right Details inspector for the charts. Hover a point to read its observed frame; click it to open that exact frame in the evidence inspector. Review Findings for selected retransmission, overlap, out-of-order, and reset observations, or open Follow Stream for a stable source.
+
+## What you can see
+
+Tracexy retains bounded connection incarnations and per-direction sequence evidence. The completeness code describes stages seen in this capture, not a claim about a connection’s entire lifetime. TCP Health offers **Sequence**, **Throughput**, **Round Trip**, and **Window** charts when the relevant points exist. Series are named by the endpoint that sent or received the observed frames. Sequence uses bytes relative to each direction's first observed sequence number; throughput uses wire bytes per second; round trip uses a segment and the acknowledgement covering it; window uses offered bytes.
+
+## Coverage limits
+
+Charts describe retained observations, not a diagnosis of congestion or application performance. Untimed segments cannot be plotted. The UI reports retained-run truncation, known capture loss, snap-length truncation, or unknown loss when applicable. A receive window without an observed SYN window scale is shown as a raw advertised value and may understate the real window.
+
+**Coming soon:** the full Wireshark TCP stream-graph collection, universal TCP expert analysis, and SACK-aware goodput. Midstream starts and capture gaps can also limit current conclusions.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Findings" href="/features/findings" />
+  <Card title="Follow Stream" href="/features/follow-stream" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

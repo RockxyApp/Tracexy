@@ -1,0 +1,29 @@
+---
+title: Capture filters
+description: Reduce capture volume before packets enter an investigation.
+---
+
+
+**Status: Available**
+
+Reduce capture volume before packets enter an investigation.
+
+## Try it
+
+Open **Settings → Capture**, enter a Berkeley Packet Filter (BPF) expression, and let it validate before capture. Use **Save Filter…** to name one you expect to reuse, then pick it again from the **Saved Filters** menu. Select the intended interface and start capture.
+
+## What you can see
+
+Capture filters act at capture time. They are separate from Session Expressions, which narrow sessions already present in a capture. Use the readiness panel to verify the active filter and snapshot settings.
+
+## Coverage limits
+
+Packets excluded by BPF are never in the capture and cannot be recovered by changing a view filter. Wireshark display filter syntax does not apply here.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Session Expressions" href="/features/session-expressions" />
+  <Card title="Live capture" href="/features/live-capture" />
+  <Card title="Filter coverage" href="/coverage/packet-inspection" />
+</CardGroup>

@@ -1,0 +1,41 @@
+---
+title: Automation and customization
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/mcp) · [All coverage areas](/reference/feature-coverage)
+
+## Command-line capture/open/export
+
+**Partial**
+
+Read-only local-file commands for summaries, sessions, findings, statistics, frames, objects, TCP follow, file information, selection, merge, and an expression glossary. `select` and `merge` emit PCAPNG to standard output for explicit shell redirection. `info` reports the same kind of file properties as `capinfos`, and the statistics flag accepts TShark `-z` names. **Coming soon:** command-line live capture, and general TShark/dumpcap option compatibility. [Command-line guide](/features/command-line).
+
+## Read-only automation
+
+**Available**
+
+Scoped MCP History projection after an explicit Project grant; no raw packets or capture control.
+
+## TShark field extraction and scripting pipelines
+
+**Coming soon**
+
+No general Wireshark field registry or `-T fields` equivalent. Tracexy's `frames --column Proto:Field` exposes selected fields from its own decoded tree; it is narrower than general field extraction.
+
+## Configuration profiles and portable settings
+
+**Partial**
+
+Project configuration transfer, plus individual import of Wireshark `cfilters` capture-filter and `dfilters` display-filter lists. A whole Wireshark profile, its coloring rules, and its preferences are not imported.
+
+## Lua plugins, custom dissectors, extcap integration
+
+**Coming soon**
+
+No public extension SDK.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

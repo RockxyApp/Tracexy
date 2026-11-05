@@ -1,0 +1,35 @@
+---
+title: Session Expressions
+description: Ask a typed question about sessions and findings.
+---
+
+
+**Status: Available**
+
+Ask a typed question about sessions and findings.
+
+## Try it
+
+Choose **View → Investigate Sessions…** (⌥⌘I), or use an applicable filter field. Enter a Session Expression, check positioned parse feedback, then apply it to the current capture. Keep or adjust the accepted result while navigating evidence.
+
+Name an expression you expect to reuse, then recall it from the editor’s **Saved** menu. To shorten a long expression, choose **View → Expression Library → Macros…** and define a named macro: write `$name`, `$name(a, b)`, or `${name:a;b}` where you want it, and `$1` to `$9` inside the macro take the values in order. Macros are stored per Project, up to a fixed limit.
+
+## What you can see
+
+Expressions operate on typed session, endpoint, protocol, and finding fields. A bounded parser compiles text into the same query model used by structured rules. Unknown finding coverage keeps three-valued semantics.
+
+If you already keep Wireshark display filters, choose **Import Wireshark Display Filters…** from the editor’s **Saved** menu and select a `dfilters` list. Filters that describe sessions become saved Session Expressions; the import reports each one it could not translate, with the reason, instead of broadening it into something that would match more than you asked for. A filter whose meaning shifts from packets to sessions is flagged as approximate rather than presented as exact.
+
+## Coverage limits
+
+This is Tracexy syntax, not Wireshark packet display-filter syntax. It deliberately rejects packet-field spellings that it cannot evaluate. A query cannot reveal packets that capture filters removed.
+
+Importing a `dfilters` list is not full display-filter compatibility. Only fields with a session meaning translate — addresses, ports, protocols, HTTP method and status, the names a session is known by, and the TCP, DNS, ICMP, and TLS conditions Tracexy reports as findings. Everything else is refused individually and named in the import summary, so check that summary before assuming a filter came across. Macros expand session-field expressions; they are not Wireshark display-filter macros.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Capture filters" href="/features/capture-filters" />
+  <Card title="Findings" href="/features/findings" />
+  <Card title="Display-filter coverage" href="/coverage/packet-inspection" />
+</CardGroup>

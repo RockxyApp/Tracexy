@@ -1,6 +1,6 @@
 # Tracexy documentation
 
-The public Mintlify site is authored in this directory. Start with [`index.mdx`](index.mdx), [`quickstart.mdx`](quickstart.mdx), and the [feature coverage catalog](reference/feature-coverage.mdx). [`docs.json`](docs.json) defines the navigation. [Deployment instructions](DEPLOYMENT.md) distinguish repository state from a live Mintlify site.
+The public Mintlify site is authored in this directory. Start with [`index.mdx`](index.mdx), [`quickstart.mdx`](quickstart.mdx), and the [feature coverage catalog](reference/feature-coverage.mdx). Dedicated [`features/`](features/) pages describe current actions and limits. The [`coverage/`](coverage/) pages identify narrower Wireshark workflow coverage and label unavailable work **Coming soon** without a release date. [`docs.json`](docs.json) defines the navigation. [Deployment instructions](DEPLOYMENT.md) distinguish repository state from a live Mintlify site.
 
 The longer source reference remains available here: [usage](usage.md), [protocol support](protocol-support.md), [capture migration](capture-migration.md), [privacy and security](privacy-and-security.md), [architecture](architecture.md), and [getting started for contributors](getting-started.md). These references can be more detailed than the public guide; source and tests remain authoritative when they disagree.
 

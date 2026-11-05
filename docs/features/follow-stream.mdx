@@ -1,0 +1,29 @@
+---
+title: Follow Stream
+description: Reconstruct a bounded conversation when a stable packet source is available.
+---
+
+
+**Status: Partial**
+
+Reconstruct a bounded conversation when a stable packet source is available.
+
+## Try it
+
+Select a TCP session in an opened capture or a fully stopped live source, then open **Follow Stream**. Inspect each direction and its reported gaps or overlaps.
+
+## What you can see
+
+The reader rescans an identity-checked PCAP or PCAPNG source on demand. It reconstructs bounded bidirectional TCP byte runs and reports limitations instead of silently presenting an incomplete stream as complete.
+
+## Coverage limits
+
+A changing source, lost frames, truncation, or missing segments can prevent a complete transcript. This is not a universal TCP, UDP, TLS, or application stream decoder.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Sessions" href="/features/sessions" />
+  <Card title="Packet inspector" href="/features/packet-inspector" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

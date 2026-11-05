@@ -1,0 +1,29 @@
+---
+title: DNS analysis
+description: Trace name lookups to their answering packets and observed endpoints.
+---
+
+
+**Status: Partial**
+
+Trace name lookups to their answering packets and observed endpoints.
+
+## Try it
+
+Open **Statistics → DNS** or **Resolved Addresses**. Select a name or address to show related sessions; use **Show Answering Session** to inspect the DNS or mDNS source.
+
+## What you can see
+
+DNS facts retain bounded answers and provenance. Resolved Addresses combines capture-observed DNS/mDNS names with names you assign in the Project; ambiguous names are marked. Network name resolution is off by default and uses only local capture or Project information.
+
+## Coverage limits
+
+A DNS answer is evidence of a response in the capture, not proof that the named service was reached. Retained answer counts and omitted results matter for large records.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Endpoints" href="/features/conversations-endpoints" />
+  <Card title="Packet inspector" href="/features/packet-inspector" />
+  <Card title="Protocol coverage" href="/coverage/protocols" />
+</CardGroup>

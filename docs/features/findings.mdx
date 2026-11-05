@@ -1,0 +1,29 @@
+---
+title: Evidence-linked Findings
+description: Prioritize observed anomalies and follow each result back to its packets.
+---
+
+
+**Status: Partial**
+
+Prioritize observed anomalies and follow each result back to its packets.
+
+## Try it
+
+Open **Statistics → Findings** or select a finding from Overview. Turn on **Group by Kind**, search, switch the severity picker to warnings only, then open a finding’s session and first cited frame.
+
+## What you can see
+
+Selected TCP lifecycle and sequence observations produce bounded findings, including resets, retransmissions, overlap, and out-of-order evidence. A DNS truncated-response bit has a narrow neutral finding. The UI shows severity, count, citations, and coverage limits.
+
+## Coverage limits
+
+This is selected analysis, not a universal expert engine. ICMP and TLS evidence are currently observation-only; missing findings never prove healthy traffic.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="TCP analysis" href="/features/tcp-analysis" />
+  <Card title="Packet inspector" href="/features/packet-inspector" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

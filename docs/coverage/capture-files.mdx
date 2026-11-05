@@ -1,0 +1,65 @@
+---
+title: Capture and file workflows
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/live-capture) · [All coverage areas](/reference/feature-coverage)
+
+## Live interface capture; start, stop, restart
+
+**Available**
+
+Signed macOS helper, interface selection, readiness, loss accounting.
+
+## Capture filters
+
+**Available**
+
+BPF filter entry, validation, saved/imported named filters.
+
+## Remote capture and extcap sources
+
+**Partial**
+
+Supported local FIFO/source workflows; no general extcap or remote-capture plugin system.
+
+## Auto-stop and capture rotation
+
+**Partial**
+
+Bounded auto-stop and supported rotated file sets; not all Wireshark dumpcap options.
+
+## Open PCAP/PCAPNG and compressed captures
+
+**Available**
+
+Content sniffing, saved/open-in-place workflows, bounded gzip/LZ4 and selected archives.
+
+## Merge, split, save, export selected packets
+
+**Available**
+
+Supported capture formats with explicit conversion limits.
+
+## Text hex-dump import and every Wireshark capture format
+
+**Coming soon**
+
+Use Wireshark to convert unsupported inputs to PCAPNG.
+
+## Capture file properties, comments, timestamps
+
+**Partial**
+
+File info and supported comments/time handling; not every pcapng option or Wireshark metadata view.
+
+## Print packet views
+
+**Coming soon**
+
+Export supported evidence instead.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

@@ -1,0 +1,29 @@
+---
+title: Packet inspector
+description: Read the layers and exact bytes behind a selected observation.
+---
+
+
+**Status: Available**
+
+Read the layers and exact bytes behind a selected observation.
+
+## Try it
+
+Select a session or cited frame and use the evidence inspector's facet bar. Move between **Timeline**, **Evidence**, **Layers**, and **Hex**; only the facets a session actually has something to show appear. A finding can open its first cited frame directly.
+
+## What you can see
+
+The decoder checks bounds and returns partial facts for malformed or truncated input. **Show Bytes…** can decode selected representations such as base64, gzip, percent encoding, and hex, with a bounded output size.
+
+## Coverage limits
+
+Only supported protocol layers receive named fields. Unrecognized, encrypted, or truncated content stays visible as bytes or an explicit limitation rather than a guessed decode.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="All Frames" href="/features/frames" />
+  <Card title="Findings" href="/features/findings" />
+  <Card title="Protocol coverage" href="/coverage/protocols" />
+</CardGroup>

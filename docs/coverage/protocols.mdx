@@ -1,0 +1,53 @@
+---
+title: Protocols and content
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/reference/protocols) · [All coverage areas](/reference/feature-coverage)
+
+## Ethernet/VLAN, cooked/loopback/raw IP, ARP, IPv4/IPv6, ICMP, TCP/UDP
+
+**Available**
+
+Bounded decode; supported IPv4/IPv6 fragment reassembly.
+
+## DNS, TLS, HTTP/1, STUN, QUIC
+
+**Partial**
+
+Selected metadata and explicit follow views; QUIC long headers only.
+
+## HTTP/2, WebSocket, mail, SSH, local services, tunnels
+
+**Partial**
+
+Selected cleartext and on-demand paths; coverage depends on source and protocol.
+
+## HTTP/3, deep QUIC, encrypted HTTP content
+
+**Coming soon**
+
+No QUIC or TLS decryption.
+
+## Complete Wireshark protocol dissector catalog
+
+**Coming soon**
+
+Tracexy has a deliberately bounded selected set.
+
+## TLS/QUIC decryption and key-log workflows
+
+**Coming soon**
+
+Encrypted application bytes are not exposed.
+
+## Export Objects and upper-layer PDUs
+
+**Partial**
+
+Selected supported protocols and reconstructed objects, with completeness limits.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

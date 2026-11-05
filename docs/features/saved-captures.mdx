@@ -1,0 +1,29 @@
+---
+title: Saved captures
+description: Open packet evidence without starting a live capture or installing the helper.
+---
+
+
+**Status: Available**
+
+Open packet evidence without starting a live capture or installing the helper.
+
+## Try it
+
+Choose **File → Open…** to inspect a PCAP or PCAPNG in place. Use **Import into Library…** when you want a Project-managed copy. Review format and progress before switching to the resulting sessions.
+
+## What you can see
+
+The file header determines format even when the extension is unusual. Gzip and LZ4 wrapped captures and the supported TCP Viewer schema-1 capture payload import into a managed copy. Truncated final records retain accepted earlier evidence with a warning.
+
+## Coverage limits
+
+Zstandard, bzip2, xz, HAR, and arbitrary session archives are unsupported. An invalid or cancelled open leaves the current investigation in place.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Projects" href="/features/projects" />
+  <Card title="Frames" href="/features/frames" />
+  <Card title="File-format coverage" href="/coverage/capture-files" />
+</CardGroup>

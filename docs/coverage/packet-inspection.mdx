@@ -1,0 +1,71 @@
+---
+title: Packet inspection and navigation
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/packet-inspector) · [All coverage areas](/reference/feature-coverage)
+
+## Packet list, details tree, hex/bytes pane
+
+**Available**
+
+All Frames and evidence inspector; supported layers only.
+
+## Search/find packet, go to frame, related packets
+
+**Available**
+
+Text/hex search and supported frame/session navigation.
+
+## Packet marking, ignoring, comments
+
+**Available**
+
+Local investigation controls and supported comment export.
+
+## Custom columns, layout, colorization
+
+**Partial**
+
+Custom session columns and native layout; Wireshark coloring-rule/profile semantics are not reproduced.
+
+## Decode As and enabled protocols
+
+**Partial**
+
+Selected protocol/port overrides; no universal dissector dispatch.
+
+## Checksum validation and malformed-packet hints
+
+**Partial**
+
+Selected IP/TCP/UDP checks and bounded decode warnings; no universal expert validation.
+
+## Name resolution and address book
+
+**Partial**
+
+Local address names and optional user-selected GeoIP/ASN databases; no broad Wireshark resolver parity.
+
+## Time references, shift and display formats
+
+**Partial**
+
+Selected frame time controls and export shift; not every Wireshark time mode.
+
+## Field-level packet display filters
+
+**Coming soon**
+
+Session Expressions query whole sessions and deliberately use different syntax. A Wireshark `dfilters` list can be imported: filters that describe sessions become saved Session Expressions, and the rest are refused individually with a reason instead of being approximated silently.
+
+## Filter macros
+
+**Partial**
+
+Named Session Expression macros accept positional values, so one saved name can stand for a longer expression. These are macros over session fields, not Wireshark display-filter macros.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

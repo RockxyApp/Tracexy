@@ -1,0 +1,29 @@
+---
+title: Live capture
+description: Capture traffic on a chosen macOS interface and keep the evidence local.
+---
+
+
+**Status: Available**
+
+Capture traffic on a chosen macOS interface and keep the evidence local.
+
+## Try it
+
+Choose an interface in the toolbar, inspect Capture Readiness, then press **Start**. Approve the signed helper in macOS when prompted. Press **Stop** to finish the session fold and write its summary to History.
+
+## What you can see
+
+Use **Follow Live** to keep the newest visible session selected. Configure automatic stop by time or packet count, or a rotating PCAPNG file set for a long capture. Capture Readiness separates interface loss, helper drops, and frames outside the inspection window.
+
+## Coverage limits
+
+The in-memory frame window is bounded. Accepted live frames are spooled locally for complete save/export while the source is stable. A stopped or unavailable interface ends capture with an explicit reason.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Capture filters" href="/features/capture-filters" />
+  <Card title="Sessions" href="/features/sessions" />
+  <Card title="Saved captures" href="/features/saved-captures" />
+</CardGroup>
