@@ -773,6 +773,9 @@ extension MainContentCoordinator {
     /// the bytes Show Packet Bytes shows, and the pending Decode Again prompt (a
     /// capture decoded from here on uses the current Decode As rules).
     func retireCaptureLocalTools() {
+        FieldValueDistributionController.shared.cancel(clearResult: true)
+        FieldPlotController.shared.cancel(clearResult: true)
+        FileStructureController.shared.cancel(clearResult: true)
         sessionTimeDisplay.clearTimeReferences()
         sessionTimeDisplay.selectedFrame = nil
         packetBytesInspection.subject = nil

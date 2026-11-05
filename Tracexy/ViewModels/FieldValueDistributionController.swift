@@ -65,10 +65,13 @@ final class FieldValueDistributionController {
         }
     }
 
-    func cancel() {
+    func cancel(clearResult: Bool = false) {
         task?.cancel()
         requestID &+= 1
         isLoading = false
+        if clearResult {
+            result = nil
+        }
     }
 
     // MARK: Private

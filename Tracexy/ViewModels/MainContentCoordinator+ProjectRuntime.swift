@@ -329,6 +329,12 @@ extension MainContentCoordinator {
         // must never write them while another Project is on screen; the incoming
         // Project's windows read their own capture again on demand.
         exportObjects.cancel(clearLists: true)
+        // Field distribution, field plot and file structure describe the
+        // outgoing capture too. They are shared controllers, so without this
+        // their window keeps one Project's figures on screen under another.
+        FieldValueDistributionController.shared.cancel(clearResult: true)
+        FieldPlotController.shared.cancel(clearResult: true)
+        FileStructureController.shared.cancel(clearResult: true)
         allFrames.cancel(clearList: true)
         allFrames.clearFrameExpression()
         allFrames.clearFrameHighlight()

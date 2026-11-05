@@ -68,13 +68,18 @@ final class FileStructureController {
         }
     }
 
-    func cancel() {
+    func cancel(clearResult: Bool = false) {
         task?.cancel()
         filterTask?.cancel()
         filterRequestID &+= 1
         requestID &+= 1
         isLoading = false
         isFilteringListedBlocks = false
+        if clearResult {
+            structure = nil
+            listedBlocks = []
+            listedBlockTitles = []
+        }
     }
 
     func selectBlockTitle(_ title: String?) {

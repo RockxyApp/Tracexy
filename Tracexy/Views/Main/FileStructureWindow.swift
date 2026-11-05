@@ -16,7 +16,13 @@ struct FileStructureWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 620, minHeight: 320)
-            .task(id: coordinator.adoptedSavedCaptureIdentity) { controller.run(from: coordinator) }
+            .task(id: RunKey(
+                identity: coordinator.adoptedSavedCaptureIdentity,
+                project: coordinator.projectStore.activeProjectID,
+                generation: coordinator.startGeneration
+            )) {
+                controller.run(from: coordinator)
+            }
             .onDisappear { controller.cancel() }
             .onChange(of: controller.selectedBlockTitle) { _, _ in selection = nil }
     }
@@ -31,6 +37,14 @@ struct FileStructureWindow: View {
     }
 
     // MARK: Private
+
+    /// The saved-capture identity alone is nil for a live capture on both
+    /// sides of a Project switch, so it could not tell one from the other.
+    private struct RunKey: Hashable {
+        let identity: PcapFileIdentity?
+        let project: UUID
+        let generation: Int
+    }
 
     @State private var selection: CaptureFileBlock.ID?
     @State private var notice: String?
