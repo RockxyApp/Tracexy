@@ -10,15 +10,26 @@ Turn packet evidence into bounded traffic summaries.
 
 ## Try it
 
-Open the **Statistics** menu for **Protocol Hierarchy**, **Packet Lengths**, **I/O Graph**, **Flow Graph**, **HTTP**, **IP Statistics**, **Service Response Time**, **Value Distribution…**, or **Plot…**. Narrow to sessions in view where offered, then copy or export the visible result.
+Open the **Statistics** menu. Each item is its own window over the sessions in view:
+
+- **Findings** (⌥⌘E), **Conversations**, **Endpoints**
+- **Protocol Hierarchy**, **Packet Lengths**, **I/O Graph**, **Flow Graph**
+- **Value Distribution…** and **Plot…** for a chosen numeric field
+- **HTTP**, **IP Statistics**, **Service Response Time**, **Message Counts**
+- **DNS**, **DNS Lookups**, **Resolved Addresses**
+- **SIP**, **VoIP Calls**, **RTP Streams**, **UDP Multicast Streams**
+
+Narrow to sessions in view where offered, then copy or export the visible result. **Tools → Firewall Rules…** writes rule text for the selected session in a chosen firewall’s syntax; nothing is applied for you.
 
 ## What you can see
 
 Available views include protocol and length summaries, capture traffic over time, selected protocol statistics, value distributions, and numeric field plots. Bounded visualizations report omissions or downsampling.
 
+The same statistics are available from the command line as taps — protocol hierarchy, packet lengths, conversations and endpoints per address family, expert, DNS, HTTP, HTTP sequences, the SMB2, LDAP, Kerberos, ICMP, and ICMPv6 service response times, the IP statistics trees, SIP, and RTP streams.
+
 ## Coverage limits
 
-A statistic is only as complete as the capture and the supported decoder. Some graphs count all timed frames; others count only scoped sessions. See each view’s scope control before comparing numbers.
+A statistic is only as complete as the capture and the supported decoder. Some graphs count all timed frames; others count only scoped sessions. See each view's scope control before comparing numbers. This is a selected set of reports, not the full Wireshark statistics catalog.
 
 ## Keep exploring
 

@@ -20,11 +20,21 @@ Bounded decode; supported IPv4/IPv6 fragment reassembly.
 
 Selected metadata and explicit follow views; QUIC long headers only.
 
+## SCTP
+
+**Partial**
+
+Common header endpoints, verification tag, raw CRC32C and at most 64 bounded chunk headers are decoded, with DATA TSN and PPI; chunks past the retention limit are flagged as omitted rather than counted. **View → Validate Checksums** verifies CRC32C only when the IP-declared packet boundary is fully captured.
+
+SCTP flows fold into sessions on their endpoint pair, with directional packets and bytes, and appear in the SCTP tab of **Statistics → Conversations** and **Statistics → Endpoints** (`--tap conv,sctp`, `--tap endpoints,sctp`). `sctp.port`, `sctp.srcport` and `sctp.dstport` filter All Frames, SCTP port rows in the decode tree offer Apply as Frame Filter, and Wireshark `sctp` port filters translate into Session Expressions. An observed INIT chunk names the side that opened the association, and an observed ABORT marks the session as an error.
+
+Grouping is per endpoint pair, not per association: the verification tag is decoded but not used as session identity, so successive associations on one port pair share a session. Stream reassembly and Follow for SCTP are absent.
+
 ## HTTP/2, WebSocket, mail, SSH, local services, tunnels
 
 **Partial**
 
-Selected cleartext and on-demand paths; coverage depends on source and protocol.
+Selected cleartext and on-demand paths; coverage depends on source and protocol. Cleartext HTTP/2 and post-upgrade WebSocket traffic on a followed TCP stream are read as messages and streams — see [Follow TCP/UDP/application stream](/coverage/analysis#follow-tcp-udp-application-stream).
 
 ## HTTP/3, deep QUIC, encrypted HTTP content
 
@@ -48,6 +58,6 @@ Encrypted application bytes are not exposed.
 
 **Partial**
 
-Selected supported protocols and reconstructed objects, with completeness limits.
+Selected supported protocols and reconstructed objects, with completeness limits. FTP file bytes use the command's sender direction in TCP sequence order; control streams with unknown command/reply chronology are counted and skipped. Upper-layer PDU export omits and counts TCP streams whose retained frame provenance cannot prove cross-direction order.
 
 Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

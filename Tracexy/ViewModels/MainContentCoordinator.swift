@@ -140,7 +140,8 @@ final class MainContentCoordinator {
 
     /// True when the app was launched in direct-capture dev mode — via the env
     /// var `TRACEXY_DIRECT_CAPTURE=1` or the launch argument `--direct-capture`
-    /// (both set by `scripts/run.sh`). Bypasses the privileged helper and captures
+    /// (the launch argument is what `scripts/run.sh -d` passes). Bypasses the
+    /// privileged helper and captures
     /// through libpcap directly, and suppresses the first-run helper-install sheet.
     static let forceDirectCapture: Bool =
         ProcessInfo.processInfo.environment["TRACEXY_DIRECT_CAPTURE"] == "1"

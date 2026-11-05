@@ -10,15 +10,19 @@ Trace name lookups to their answering packets and observed endpoints.
 
 ## Try it
 
-Open **Statistics → DNS** or **Resolved Addresses**. Select a name or address to show related sessions; use **Show Answering Session** to inspect the DNS or mDNS source.
+Open **Statistics → DNS Lookups** for every name the sessions in view looked up, what came back, and how long it took; each row leads to that name's sessions. Switch the same window to **Encrypted DNS** to see the sessions that carried DNS encrypted instead.
+
+Open **Statistics → DNS** for the statistics tree — packet types, query and answer types, classes, response codes, opcodes, sizes, name and section statistics, and response times. Open **Statistics → Resolved Addresses** to move between names and addresses, and use **Show Answering Session** to inspect the DNS or mDNS source.
 
 ## What you can see
 
-DNS facts retain bounded answers and provenance. Resolved Addresses combines capture-observed DNS/mDNS names with names you assign in the Project; ambiguous names are marked. Network name resolution is off by default and uses only local capture or Project information.
+DNS facts retain bounded answers and provenance. Resolved Addresses combines capture-observed DNS/mDNS names with names you assign in the Project; ambiguous names are marked. Network name resolution is off by default (**View → Name Resolution → Resolve Network Addresses**) and uses only local capture or Project information.
+
+Findings cover the DNS truncation bit, name errors, server failures, and a retried query that observed no response, each cited back to its frames.
 
 ## Coverage limits
 
-A DNS answer is evidence of a response in the capture, not proof that the named service was reached. Retained answer counts and omitted results matter for large records.
+A DNS answer is evidence of a response in the capture, not proof that the named service was reached. Retained answer counts and omitted results matter for large records. An encrypted DNS session shows that DNS was carried, not which names it asked for.
 
 ## Keep exploring
 

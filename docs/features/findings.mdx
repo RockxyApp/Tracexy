@@ -10,15 +10,24 @@ Prioritize observed anomalies and follow each result back to its packets.
 
 ## Try it
 
-Open **Statistics → Findings** or select a finding from Overview. Turn on **Group by Kind**, search, switch the severity picker to warnings only, then open a finding’s session and first cited frame.
+Open **Statistics → Findings** (⌥⌘E) or select a finding from Overview. Turn on **Group by Kind**, search, switch the severity picker to warnings only, then open a finding's session and first cited frame. Use **View → Next Session With a Finding** (⌥⌘↓) and **Previous Session With a Finding** (⌥⌘↑) to walk the capture by evidence.
 
 ## What you can see
 
-Selected TCP lifecycle and sequence observations produce bounded findings, including resets, retransmissions, overlap, and out-of-order evidence. A DNS truncated-response bit has a narrow neutral finding. The UI shows severity, count, citations, and coverage limits.
+Findings are bounded, cited observations across several protocols:
+
+- **TCP lifecycle** — connection refused, unanswered handshake, abort after data, half close, tuple reuse, reset.
+- **TCP sequence and flow** — retransmission, fast retransmission, spurious retransmission, overlap, out-of-order, duplicate acknowledgement, zero window, window full, keep-alive, and bytes acknowledged that the capture never saw.
+- **DNS** — truncation bit set, name error, server failure, and a retried query that observed no response.
+- **ICMP and ICMPv6** — destination unreachable, packet too big or fragmentation needed, and time exceeded, both as observed messages and as messages quoting one of your sessions.
+- **TLS** — fatal alert, warning alert, a selected version below TLS 1.2, repeated HelloRetryRequest, and an unanswered ClientHello.
+- **Credentials** — a login secret observed sent unencrypted.
+
+The UI shows severity, count, citations, and coverage limits. Each kind has a Session Expression spelling, so `finding == retransmission` narrows Sessions to the same evidence.
 
 ## Coverage limits
 
-This is selected analysis, not a universal expert engine. ICMP and TLS evidence are currently observation-only; missing findings never prove healthy traffic.
+This is selected analysis, not a universal expert engine. Every finding describes what this capture contains, and a missing finding never proves healthy traffic — capture loss, truncation, encryption, and bounded retention all limit what can be observed.
 
 ## Keep exploring
 

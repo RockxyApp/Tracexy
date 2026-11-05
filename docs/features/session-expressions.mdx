@@ -16,7 +16,9 @@ Name an expression you expect to reuse, then recall it from the editor’s **Sav
 
 ## What you can see
 
-Expressions operate on typed session, endpoint, protocol, and finding fields. A bounded parser compiles text into the same query model used by structured rules. Unknown finding coverage keeps three-valued semantics.
+Expressions operate on typed session, endpoint, protocol, and finding fields — including the SCTP protocol term and every finding kind Tracexy reports. A bounded parser compiles text into the same query model used by structured rules. Unknown finding coverage keeps three-valued semantics: a finding's presence is a match, its absence is indeterminate rather than a safe negative.
+
+A Session Expression selects sessions. To narrow the individual frames a list shows, use a [Frame Expression](/features/frames) in All Frames instead.
 
 If you already keep Wireshark display filters, choose **Import Wireshark Display Filters…** from the editor’s **Saved** menu and select a `dfilters` list. Filters that describe sessions become saved Session Expressions; the import reports each one it could not translate, with the reason, instead of broadening it into something that would match more than you asked for. A filter whose meaning shifts from packets to sessions is flagged as approximate rather than presented as exact.
 
@@ -24,7 +26,7 @@ If you already keep Wireshark display filters, choose **Import Wireshark Display
 
 This is Tracexy syntax, not Wireshark packet display-filter syntax. It deliberately rejects packet-field spellings that it cannot evaluate. A query cannot reveal packets that capture filters removed.
 
-Importing a `dfilters` list is not full display-filter compatibility. Only fields with a session meaning translate — addresses, ports, protocols, HTTP method and status, the names a session is known by, and the TCP, DNS, ICMP, and TLS conditions Tracexy reports as findings. Everything else is refused individually and named in the import summary, so check that summary before assuming a filter came across. Macros expand session-field expressions; they are not Wireshark display-filter macros.
+Importing a `dfilters` list is not full display-filter compatibility. Only fields with a session meaning translate — addresses, TCP, UDP and SCTP ports, protocols, HTTP method and status, the names a session is known by, and the TCP, DNS, ICMP, and TLS conditions Tracexy reports as findings. Everything else is refused individually and named in the import summary, so check that summary before assuming a filter came across. Macros expand session-field expressions; they are not Wireshark display-filter macros.
 
 ## Keep exploring
 

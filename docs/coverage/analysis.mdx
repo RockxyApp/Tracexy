@@ -18,7 +18,11 @@ Session-first tables, host/endpoint projections, app context when observed.
 
 **Partial**
 
-On-demand bounded follow for stable sources and selected protocols; no universal stream dissector.
+On-demand bounded follow for stable sources and selected protocols; TCP export keeps attributed source chunks and per-peer YAML indexes. When retained provenance cannot prove cross-direction order, bidirectional Save/Copy/Print is disabled with a reason while one-direction Save/Print stays available in TCP sequence order with unknown frame metadata explicit.
+
+A followed TCP stream that carries HTTP/2 is read as frames and streams — request and response heads and per-direction DATA volume, as far as the leading run of each direction allows — and a stream that completes an HTTP/1.1 `101 Switching Protocols` upgrade is read as WebSocket messages and frames, with the read limit reported rather than silently truncated.
+
+UDP transcripts can filter retained rows by direction, and retained datagrams can be saved as bounded YAML or concatenated raw payload when completeness checks pass; both TCP and UDP conversations can be excluded from the session view with a Session Expression. Raw export loses datagram boundaries and does not prove complete network capture; there is no universal stream dissector.
 
 ## Protocol hierarchy, capture summary, packet lengths
 
@@ -30,25 +34,29 @@ Scope-aware Overview and Statistics views.
 
 **Partial**
 
-Traffic timeline and supported graphs; not every Wireshark graph calculation or plot.
+Traffic timeline and supported graphs. **Statistics → I/O Graph** compares up to four independently named and enabled Tracexy Frame Expression series in one complete stable-source pass, on a shared bounded time axis. It preserves capture extent, reports per-series match/unknown/untimed coverage, zero-fills empty intervals, and supports CSV/chart-image export; interval changes reproject the bounded aggregate without rescanning. A chart interval can select a representative matching frame in All Frames through a Project/generation/source-token-guarded request. Show All Traffic restores the unfiltered live graph. Series count independently when filters overlap. Arbitrary Wireshark field calculations, secondary axes, moving averages and profile persistence remain unavailable.
 
 ## TCP stream graphs and deep sequence analysis
 
 **Partial**
 
-Selected lifecycle, retransmission, RTT/flow-control evidence; no full set of Wireshark TCP plots.
+Selected lifecycle, retransmission, RTT/flow-control evidence; overlapping retransmissions invalidate pending cumulative-ACK RTT candidates under Karn's algorithm and excluded candidates are counted. A separate SACK-reported RTT line conservatively matches the first retained SACK block to one exact, non-overlapping captured payload range; both frames are cited, and repeated reports do not duplicate a sample. This reports receiver observation, not application delivery, and is not a claim of Wireshark algorithm parity.
+
+A stable-source action can rescan one TCP conversation up to 65,536 decoded segments, while each chart draws at most 1,024 observed points per line and reports the displayed/total count. Sequence plots each captured payload byte interval and its exclusive edge, as well as reached and cumulatively acknowledged edges; payload ranges crossing the relative sequence half-space are counted and omitted. Up to four receiver-reported SACK ranges per ACK are overlaid at the citing ACK time in the peer's relative sequence space; RFC 2883 D-SACK first blocks are shown as separately styled ranges only when the same-packet cumulative ACK places them wholly below its edge, or places them wholly above it and the second SACK block contains them. The chart names this as a receiver report and does not infer cause. Ranges whose edges cannot be placed in one unambiguous half-space are counted and omitted.
+
+The Throughput chart includes wire-byte rate and SACK-aware receiver-ACKed sequence-space Goodput, de-duplicating overlapping blocks and cumulative ACK coverage and excluding RFC 2883 D-SACK block patterns from new-byte credit. D-SACK expert findings, the tcptrace graph, and the full set of Wireshark TCP plots remain unavailable.
 
 ## Expert information
 
 **Partial**
 
-Evidence-linked selected findings with explicit coverage limits; not a general expert engine.
+Evidence-linked selected findings with explicit coverage limits, plus typed TCP window-update and zero-window probe observations; not a general expert engine.
 
 ## HTTP, DNS, IP, service response, distribution statistics
 
 **Partial**
 
-Selected statistics trees and views over supported decoded traffic.
+Selected statistics trees and views over supported decoded traffic. SMB2, LDAP, Kerberos, ICMP and ICMPv6 service response time in the window and the CLI rescan the complete stable capture; session scope is independent of All Frames paging. Echo SRT refuses a result if any required session/address/timestamp fact is missing or if pending requests or exact duration samples exceed 200,000, preserving bounded memory and exact reported medians. LDAP currently recognizes the first message per segment, without TCP PDU reassembly.
 
 ## Telephony: SIP, RTP, VoIP calls, multicast
 
@@ -70,8 +78,8 @@ Coverage is limited to the protocols listed in the app and [protocol reference](
 
 ## Arbitrary plots, taps, Lua and dissector plugins
 
-**Coming soon**
+**Partial**
 
-No compatible plugin/tap execution model.
+**Statistics → Plot…** charts one decode-tree field over time and **Statistics → Value Distribution…** counts one field's values, both over a complete pass of a stable source. Arbitrary Wireshark field calculations, Lua, and a compatible plugin/tap execution model remain unavailable.
 
 Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

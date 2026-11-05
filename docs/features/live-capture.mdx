@@ -10,15 +10,21 @@ Capture traffic on a chosen macOS interface and keep the evidence local.
 
 ## Try it
 
-Choose an interface in the toolbar, inspect Capture Readiness, then press **Start**. Approve the signed helper in macOS when prompted. Press **Stop** to finish the session fold and write its summary to History.
+Choose an interface in the toolbar, inspect Capture Readiness, then press **Start** — or use **Capture → Start Capture** (⌘E). Approve the signed helper in macOS when prompted. **Stop Capture** (the same ⌘E) finishes the session fold and writes its summary to History.
+
+The **Capture** menu also offers **Restart Capture** (⇧⌘R), **Refresh Interfaces**, and **Manage Interfaces…**.
 
 ## What you can see
 
-Use **Follow Live** to keep the newest visible session selected. Configure automatic stop by time or packet count, or a rotating PCAPNG file set for a long capture. Capture Readiness separates interface loss, helper drops, and frames outside the inspection window.
+Use **Follow Live** to keep the newest visible session selected.
+
+In **Settings → Capture** you can pick a default interface, auto-start capture on launch, set the snap length and promiscuous mode, and size the in-memory retention window. **Stop automatically** stops a live capture after 1, 5, or 15 minutes, 1 hour, or 8 hours, or after 10,000, 100,000, or 1,000,000 packets — whichever limit comes first. **Save as a file set** starts a new PCAPNG file every 10 MB, 100 MB, or 1 GB, or every minute, 10 minutes, or hour, and can keep only the newest 5, 20, or 100 files. The set lives in the Project's Captures folder, named so **File → File Set → Next File** walks it.
+
+Capture Readiness separates interface loss, helper drops, and frames outside the inspection window.
 
 ## Coverage limits
 
-The in-memory frame window is bounded. Accepted live frames are spooled locally for complete save/export while the source is stable. A stopped or unavailable interface ends capture with an explicit reason.
+The in-memory frame window is bounded. Accepted live frames are spooled locally for complete save/export while the source is stable. With a file set that keeps only the newest files, older files are deleted as the capture runs, and a finding citing a deleted file says so; Follow and Frames read the newest file. A stopped or unavailable interface ends capture with an explicit reason.
 
 ## Keep exploring
 

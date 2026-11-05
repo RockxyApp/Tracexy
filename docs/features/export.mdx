@@ -10,11 +10,22 @@ Take the evidence you need, with explicit control over sensitive bytes.
 
 ## Try it
 
-Choose a supported export from the **File** menu or the session actions: **Export Frames…**, **Export Investigation** (sessions or findings as CSV, sessions and findings as JSON, or an investigation report), **Export Objects**, **Export PDUs…**, **Export Packet Dissections…**, **Save Capture…**, or a protected session document. Review destination and privacy settings before saving.
+Choose a supported export from the **File** menu or the session actions:
+
+- **Export Frames…** — the frames in view as PCAPNG or PCAP.
+- **Export Investigation** — **Sessions as CSV…**, **Sessions and Findings as JSON…**, **Findings as CSV…**, or an **Investigation Report…** in Markdown.
+- **Export Objects** — the files and messages the capture carried: **HTTP**, **Email (IMF)**, **SMB**, **TFTP**, **FTP Data**, or **X.509 Certificates**.
+- **Export PDUs…** — application-layer protocol data units.
+- **Export Packet Dissections…**, plus **Export Marked Packet Dissections…**, **Export First to Last Marked Dissections…**, and **Export Capture Frame Range Dissections…**.
+- **Save Capture…** or a protected session document.
+
+**File → Print Packet Views** prints the same material: **Custom Packet Views…**, **Packet Summaries…**, **Packet Dissections…** (⌘P), **Packet Bytes…**, each also in a marked-only, first-to-last-marked, or capture frame range form.
+
+Review destination and privacy settings before saving.
 
 ## What you can see
 
-Project configuration exports contain no packets. History automation exposes bounded summaries. Raw PCAP/PCAPNG and frame exports preserve packet content; a protected session document omits packet bytes entirely and follows your **Protected Session Export** choice in **Settings → Privacy**.
+Project configuration exports contain no packets. History automation exposes bounded summaries. Raw PCAP/PCAPNG and frame exports preserve packet content; a protected session document omits packet bytes entirely and follows your **Protected Session Export** choice in **Settings → Privacy**. Writing an exported object body to disk asks first.
 
 ## Coverage limits
 

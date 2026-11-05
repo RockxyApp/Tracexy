@@ -10,15 +10,24 @@ Move from a session-level question to an exact packet.
 
 ## Try it
 
-Open a selected session’s **Frames** facet, or **View → All Frames** (⌥⌘A). Search, use **Go to Frame**, apply **Mark Frame**, **Add Frame Comment…**, or **Ignore Frame** from a row’s context menu, and choose a row to open its layers and bytes.
+Open a selected session's **Frames** facet, or **View → All Frames** (⌥⌘A). From there you can:
+
+- Narrow the list with a **Frame Expression**, keep one under a name in **Saved Frame Filters**, or pick one back out of the recent list.
+- Search the capture with **Find in Frames**: a string, hex bytes, a regular expression, or a Frame Expression, looked for in either packet bytes or decoded details.
+- Jump with **Go to Frame**, **Next Mark**, **Previous Mark**, **Next Frame in Session**, and **First** or **Last Displayed Frame in Session**.
+- Annotate from a row's context menu: **Mark Frame**, **Add Frame Comment…**, **Ignore Frame**, or the displayed-set actions **Mark All Displayed**, **Ignore All Displayed**, and **Unignore All**.
+- Set a time reference with **Set as Time Reference** or **View → Set Time Reference** (⌘T), then step between references.
+- Add or remove columns, apply **Coloring Rules** or temporary **Conversation Colors**, and export or print the selected frame, the marked frames, or everything the Frame Expression matches.
 
 ## What you can see
 
-Frame times can be shown relative to a session or capture, as local or UTC time, or from a selected reference. Untimed frames remain untimed. Search and navigation respect the available source and scope.
+A Frame Expression reads only facts decoded from the frame itself — no session summary and no rendered text. It supports `frame.len`, `frame.cap_len`, `frame.truncated`, the TCP flag and port terms, `tcp.window_size_value`, the UDP and SCTP port terms, `ip.addr`, `ip.src`, `ip.dst`, `ip.id`, `ip.flags.df`, the DNS response, rcode, id, and truncation terms, the ICMP and ICMPv6 type and code terms, and `and` / `or` / `not`. Syntax feedback is positioned as you type.
+
+Frame times can be shown relative to a session or capture, as local or UTC time, or from a selected reference, at a chosen precision. Untimed frames remain untimed. Search and navigation respect the available source and scope.
 
 ## Coverage limits
 
-The recent live inspection window is bounded; exact cited frames can be recovered from a stable local spool or saved source. Unsupported layers still expose raw bytes without invented interpretation.
+The recent live inspection window is bounded; exact cited frames can be recovered from a stable local spool or saved source. Unsupported layers still expose raw bytes without invented interpretation. A Frame Expression is Tracexy's own frame grammar, not Wireshark display-filter syntax, and covers only the fields listed above.
 
 ## Keep exploring
 

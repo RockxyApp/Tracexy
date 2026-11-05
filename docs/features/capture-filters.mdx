@@ -10,15 +10,15 @@ Reduce capture volume before packets enter an investigation.
 
 ## Try it
 
-Open **Settings → Capture**, enter a Berkeley Packet Filter (BPF) expression, and let it validate before capture. Use **Save Filter…** to name one you expect to reuse, then pick it again from the **Saved Filters** menu. Select the intended interface and start capture.
+Open **Settings → Capture**, set the capture filter to a custom expression, enter a Berkeley Packet Filter (BPF) expression, and let it validate before capture. Use **Save Filter…** to name one you expect to reuse, then pick it again — or delete it — from the **Saved Filters** menu. If you already keep a Wireshark capture-filter list, choose **Import Capture Filter…** and apply a named expression from it. Select the intended interface and start capture.
 
 ## What you can see
 
-Capture filters act at capture time. They are separate from Session Expressions, which narrow sessions already present in a capture. Use the readiness panel to verify the active filter and snapshot settings.
+Capture filters act at capture time. They are separate from Session Expressions, which narrow sessions already present in a capture, and from Frame Expressions, which narrow the frames a list shows. Saved filters belong to the active Project. Use the readiness panel to verify the active filter and snapshot settings.
 
 ## Coverage limits
 
-Packets excluded by BPF are never in the capture and cannot be recovered by changing a view filter. Wireshark display filter syntax does not apply here.
+Packets excluded by BPF are never in the capture and cannot be recovered by changing a view filter. Wireshark display filter syntax does not apply here. Importing a capture-filter list applies one named expression and replaces this Project’s custom expression; nothing else in the file is imported.
 
 ## Keep exploring
 
