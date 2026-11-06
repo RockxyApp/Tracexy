@@ -13,40 +13,51 @@ struct TrafficRateGraphWindow: View {
 
     var body: some View {
         let key = scanKey
-        let scannedComparison = resultKey == key ? comparisonResult : nil
-        let comparison = scannedComparison?.usingInterval(requestedInterval)
-        let graph = TrafficRateGraph.compute(
-            from: selection.accepted == nil ? coordinator.trafficTimeline : .empty,
-            requestedInterval: requestedInterval
-        )
+        // Both aggregations are held in state and recomputed off the main actor by
+        // `projectGraphs`. Computing them here re-ran a 16,384-point fold on every
+        // `hoveredColumn` write, which janked the whole app on hover.
+        let graph = liveGraph
+        let comparison = projectedComparison
         let axis = selection.accepted == nil ? graph.axis : comparison?.axis
-        Group {
-            if selection.accepted != nil {
-                comparisonContent(comparison, key: key)
-            } else if let axis = graph.axis, graph.totalFrames > 0 {
-                charts(graph, axis: axis).padding(Theme.Metrics.spacingL)
-            } else {
-                ContentUnavailableView(
-                    "No Traffic to Graph", systemImage: "chart.xyaxis.line",
-                    description: Text("Open a capture or start capturing to see its traffic over time.")
-                )
+        content(key, graph: graph, comparison: comparison)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) { intervalPicker(axis) }
             }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) { intervalPicker(axis) }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .tracexySafeAreaBar(edge: .top) { comparisonControls }
-        .tracexySafeAreaBar(edge: .bottom) { footer(graph, comparison: comparison) }
-        .frame(minWidth: 740, minHeight: 560)
-        .task(id: key) { await scanComparison(key) }
-        .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
-            clearComparison(resetDrafts: true)
-        }
-        .onDisappear { scanRequestID &+= 1 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexySafeAreaBar(edge: .top) { comparisonControls }
+            .tracexySafeAreaBar(edge: .bottom) { footer(graph, comparison: comparison) }
+            .frame(minWidth: 740, minHeight: 560)
+            .task(id: key) { await scanComparison(key) }
+            .task(id: projectionKey) { await projectGraphs(projectionKey) }
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
+                clearComparison(resetDrafts: true)
+            }
+            .onDisappear { scanRequestID &+= 1 }
     }
 
     // MARK: Private
+
+    /// The projected aggregates for one set of inputs, computed off the main actor.
+    private struct Projection: Sendable {
+        let graph: TrafficRateGraph
+        let comparison: TrafficGraphComparison?
+    }
+
+    /// Everything the projected aggregates depend on. Deliberately free of
+    /// `hoveredColumn`, so hovering never triggers a recompute, and cheap to
+    /// compare: the live timeline is identified by its exact totals and span
+    /// rather than by its buckets.
+    private struct ProjectionKey: Equatable {
+        let scan: ScanKey
+        let resultKey: ScanKey?
+        let hasComparisonResult: Bool
+        let interval: TimeInterval
+        let totals: TrafficTotals
+        let untimedFrameCount: Int
+        let bucketWidth: TimeInterval
+        let firstTimedFrame: Date?
+        let lastTimedFrame: Date?
+    }
 
     private struct ScanKey: Equatable {
         let configuration: TrafficGraphComparisonConfiguration?
@@ -75,6 +86,9 @@ struct TrafficRateGraphWindow: View {
     @State private var drafts = [TrafficGraphSeriesDraft(name: "All traffic", expressionText: "frame.len >= 0")]
     @State private var selection = TrafficGraphComparisonSelection()
     @State private var comparisonResult: TrafficGraphComparison?
+    @State private var liveGraph = TrafficRateGraph.empty
+    @State private var projectedComparison: TrafficGraphComparison?
+    @State private var projectedKey: ProjectionKey?
     @State private var resultKey: ScanKey?
     @State private var errorKey: ScanKey?
     @State private var scanError: String?
@@ -91,6 +105,27 @@ struct TrafficRateGraphWindow: View {
             savedIdentity: coordinator.adoptedSavedCaptureIdentity,
             correction: coordinator.activeSavedCapture?.timeCorrection,
             unavailableReason: coordinator.allFramesUnavailableReason, revision: scanRevision
+        )
+    }
+
+    /// The timeline the unfiltered graph draws. An applied comparison draws its
+    /// own scanned series instead, so the live timeline is excluded from the key.
+    private var projectedTimeline: TrafficTimeline {
+        selection.accepted == nil ? coordinator.trafficTimeline : .empty
+    }
+
+    private var projectionKey: ProjectionKey {
+        let timeline = projectedTimeline
+        return ProjectionKey(
+            scan: scanKey,
+            resultKey: resultKey,
+            hasComparisonResult: comparisonResult != nil,
+            interval: requestedInterval,
+            totals: timeline.totals,
+            untimedFrameCount: timeline.untimedFrameCount,
+            bucketWidth: timeline.bucketWidth,
+            firstTimedFrame: timeline.firstTimedFrame,
+            lastTimedFrame: timeline.lastTimedFrame
         )
     }
 
@@ -141,6 +176,28 @@ struct TrafficRateGraphWindow: View {
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    @ViewBuilder
+    private func content(
+        _ key: ScanKey, graph: TrafficRateGraph, comparison: TrafficGraphComparison?
+    )
+        -> some View
+    {
+        if selection.accepted != nil {
+            comparisonContent(comparison, key: key)
+        } else if let axis = graph.axis, graph.totalFrames > 0 {
+            charts(graph, axis: axis).padding(Theme.Metrics.spacingL)
+        } else if projectedKey != projectionKey {
+            ProgressView("Graphing capture traffic…")
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView(
+                "No Traffic to Graph", systemImage: "chart.xyaxis.line",
+                description: Text("Open a capture or start capturing to see its traffic over time.")
+            )
+        }
     }
 
     private func draftRow(_ draft: Binding<TrafficGraphSeriesDraft>) -> some View {
@@ -512,6 +569,27 @@ struct TrafficRateGraphWindow: View {
 
     private static func byteRate(_ value: Double) -> String {
         byteFormatter.string(fromByteCount: Int64(max(0, value).rounded()))
+    }
+
+    /// Folds the live timeline and reprojects the scanned comparison off the main
+    /// actor, then adopts the result only while its inputs are still current.
+    @MainActor
+    private func projectGraphs(_ key: ProjectionKey) async {
+        let timeline = projectedTimeline
+        let interval = key.interval
+        let scanned = resultKey == key.scan ? comparisonResult : nil
+        let projection = await Task.detached(priority: .userInitiated) {
+            Projection(
+                graph: TrafficRateGraph.compute(from: timeline, requestedInterval: interval),
+                comparison: scanned?.usingInterval(interval)
+            )
+        }.value
+        guard !Task.isCancelled, key == projectionKey else {
+            return
+        }
+        liveGraph = projection.graph
+        projectedComparison = projection.comparison
+        projectedKey = key
     }
 
     private func graphColumn(

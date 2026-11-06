@@ -216,10 +216,12 @@ extension MainContentCoordinator {
                 pcapReason = String(localized: "some frames carry no capture time")
             }
         }
-        let averageBytes: Int = if let activity = savedCaptureActivity, activity.totalFrames > 0 {
+        // A measurement or nothing. The panel omits the size rather than render a
+        // substituted figure as if it had been measured.
+        let averageBytes: Int? = if let activity = savedCaptureActivity, activity.totalFrames > 0 {
             max(1, activity.totalBytes / activity.totalFrames)
         } else {
-            512
+            nil
         }
         let sourceIsPcapng: Bool = if case .pcapng = properties?.container {
             true
@@ -281,6 +283,10 @@ extension MainContentCoordinator {
         guard !annotated.isEmpty else {
             return []
         }
+        // One membership pass over the frame rows, not one search per session:
+        // the repeated `contains` was quadratic on the main actor and stalled the
+        // window between pressing Save and the export's own progress.
+        let framedSessionIDs = frameScopeSessionIDs(scope)
         let included = presentedSessions.filter { session in
             guard annotated.contains(session.id) else {
                 return false
@@ -295,12 +301,8 @@ extension MainContentCoordinator {
                     return false
                 }
                 return begin <= end && begin.addingTimeInterval(session.duration ?? 0) >= start
-            case let .frames(ordinals):
-                return allFrames.markedSessionIDs.contains {
-                    ordinals.contains($0.key) && $0.value == session.id
-                } || allFrames.list?.rows.contains {
-                    ordinals.contains($0.ordinal) && $0.sessionID == session.id
-                } == true
+            case .frames:
+                return framedSessionIDs.contains(session.id)
             case .frameExpression:
                 // Per-session notes are added only to matching packets by the
                 // streaming exporter; do not copy unrelated notes into comments.
@@ -322,6 +324,24 @@ extension MainContentCoordinator {
     }
 
     // MARK: Private
+
+    /// Sessions that own any frame in a `.frames` scope, gathered in a single pass
+    /// over the marked ordinals and the listed rows. Empty for every other scope.
+    private func frameScopeSessionIDs(_ scope: FrameExportScope) -> Set<UUID> {
+        guard case let .frames(ordinals) = scope else {
+            return []
+        }
+        var ids = Set<UUID>()
+        for (ordinal, sessionID) in allFrames.markedSessionIDs where ordinals.contains(ordinal) {
+            ids.insert(sessionID)
+        }
+        for row in allFrames.list?.rows ?? [] where ordinals.contains(row.ordinal) {
+            if let sessionID = row.sessionID {
+                ids.insert(sessionID)
+            }
+        }
+        return ids
+    }
 
     private func runFrameExport(_ choice: FrameExportPanel.Choice, originProjectID: UUID?, originGeneration: Int) {
         if let captureComment = choice.captureComment {

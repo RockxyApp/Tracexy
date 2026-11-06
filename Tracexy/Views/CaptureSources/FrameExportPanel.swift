@@ -39,7 +39,12 @@ final class FrameExportPanel: NSObject, NSOpenSavePanelDelegate {
         let sourceIsPcapng: Bool
         /// `nil` when PCAP is representable; otherwise the reason it is not.
         let pcapUnavailableReason: String?
-        let averageFrameBytes: Int
+        /// Mean bytes per frame measured from the source's own accounting, or `nil`
+        /// when the source reports none. Nothing is substituted for a missing
+        /// measurement: without it the panel states the frame count alone, because
+        /// a size derived from an assumed frame length is not a measurement and
+        /// must not be shown as one.
+        let averageFrameBytes: Int?
         /// Notes written about this capture; the "include notes" option shows only
         /// when there are some.
         var noteCount = 0
@@ -572,9 +577,15 @@ final class FrameExportAccessoryView: NSView, NSTextViewDelegate {
         timeCorrectionControls.setAvailable(true)
         let choice = context.scopes[max(0, min(scopePopUp.indexOfSelectedItem, context.scopes.count - 1))]
         if let frames = choice.frameEstimate {
-            let bytes = Int64(frames) * Int64(context.averageFrameBytes + (format == .pcap ? 16 : 32))
-            let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-            estimateLabel.stringValue = String(localized: "≈ \(frames.formatted()) frames, ≈ \(size)")
+            if let averageFrameBytes = context.averageFrameBytes {
+                let bytes = Int64(frames) * Int64(averageFrameBytes + (format == .pcap ? 16 : 32))
+                let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+                estimateLabel.stringValue = String(localized: "≈ \(frames.formatted()) frames, ≈ \(size)")
+            } else {
+                estimateLabel.stringValue = String(
+                    localized: "≈ \(frames.formatted()) frames; file size is determined while exporting."
+                )
+            }
         } else {
             estimateLabel.stringValue = String(localized: "Frame count is determined while exporting.")
         }
