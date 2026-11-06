@@ -120,6 +120,12 @@ struct AllFramesWindow: View {
                         ) { isFinding = false }
                     }
                 }
+                // The bar spans the window, so its controls need the same inset
+                // every other safe-area bar applies. Without it the expression
+                // field and Highlight button are drawn hard against the window
+                // edge with their leading corners clipped off.
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.vertical, Theme.Metrics.spacingS)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tracexySafeAreaBar(edge: .bottom) {
@@ -800,6 +806,81 @@ struct AllFramesWindow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The bulk mark and ignore commands as one menu rather than four buttons.
+    /// Laid out side by side they did not fit the window's own default width:
+    /// every label truncated ("Mark All Di…", "Unignore D…"), which leaves a
+    /// control whose text no longer says what pressing it does.
+    @ViewBuilder
+    private func markActionsMenu(rows: [CaptureFrameRow], state: CaptureFrameListState) -> some View {
+        let hasMarked = rows.contains { state.marked.contains($0.id) }
+        let hasIgnored = rows.contains { state.ignored.contains($0.id) }
+        Menu("Marks") {
+            Button("Mark All Displayed") { state.markDisplayed(rows) }
+                .disabled(rows.isEmpty)
+            Button("Unmark All Displayed") { state.unmarkDisplayed(rows) }
+                .disabled(!hasMarked)
+            Divider()
+            Button("Ignore All Displayed") { state.ignoreDisplayed(rows) }
+                .disabled(rows.isEmpty)
+            Button("Unignore Displayed") { state.unignoreDisplayed(rows) }
+                .disabled(!hasIgnored)
+        }
+        .fixedSize()
+        // A menu whose every item is unavailable stays openable unless the menu
+        // itself is disabled, which reads as a working control that does nothing.
+        // With no rows there is nothing any of these commands can act on, and
+        // the marked and ignored checks are drawn from those same rows.
+        .disabled(rows.isEmpty)
+        .help("Mark, unmark, ignore or unignore every frame displayed in this list")
+    }
+
+    /// The export and print commands as one menu, for the same reason. With a
+    /// Frame Expression applied this group grows to five controls, so the row
+    /// was at its worst exactly when the expression tools were in use.
+    @ViewBuilder
+    private func exportActionsMenu(state: CaptureFrameListState) -> some View {
+        let matching = state.acceptedFrameExpression
+        let canExport = coordinator.canExportFrames
+        Menu("Export") {
+            Button("Export Marked…") {
+                coordinator.presentFrameExportPanel(prefersMarkedFrames: true)
+            }
+            .disabled(state.marked.isEmpty || !canExport)
+            if matching != nil {
+                Divider()
+                Button("Export Matching Frames…") {
+                    coordinator.presentFrameExportPanel(prefersAppliedFrameExpression: true)
+                }
+                .disabled(!canExport)
+                Button("Export Matching Dissections…") {
+                    DissectionExportController.shared.export(from: coordinator, frameExpression: matching)
+                }
+                .disabled(!canExport || DissectionExportController.shared.isExporting)
+                Menu("Print Matching Packet Views…") {
+                    Button("Summaries…") {
+                        DissectionExportController.shared.printDissections(
+                            from: coordinator, frameExpression: matching, layout: .summary
+                        )
+                    }
+                    Button("Dissections…") {
+                        DissectionExportController.shared.printDissections(
+                            from: coordinator, frameExpression: matching
+                        )
+                    }
+                    Button("Captured Bytes…") {
+                        DissectionExportController.shared.printDissections(
+                            from: coordinator, frameExpression: matching, layout: .bytes
+                        )
+                    }
+                }
+                .disabled(!canExport || DissectionExportController.shared.isPrinting)
+            }
+        }
+        .fixedSize()
+        .disabled(!canExport || (state.marked.isEmpty && matching == nil))
+        .help("Export the marked frames, or everything matching the applied Frame Expression")
+    }
+
     private func footer(shown: Int, rows: [CaptureFrameRow], state: CaptureFrameListState) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
             HStack(spacing: Theme.Metrics.spacingM) {
@@ -882,66 +963,8 @@ struct AllFramesWindow: View {
                     .toggleStyle(.checkbox)
                     .disabled(state.ignored.isEmpty)
                     .help("Show ignored frames, dimmed and struck through")
-                Button("Mark All Displayed") {
-                    state.markDisplayed(rows)
-                }
-                .disabled(rows.isEmpty)
-                .help("Mark every frame currently displayed in this list")
-                Button("Unmark All Displayed") {
-                    state.unmarkDisplayed(rows)
-                }
-                .disabled(!rows.contains { state.marked.contains($0.id) })
-                .help("Unmark frames currently displayed in this list")
-                Button("Ignore All Displayed") {
-                    state.ignoreDisplayed(rows)
-                }
-                .disabled(rows.isEmpty)
-                .help("Ignore every frame currently displayed in this list")
-                Button("Unignore Displayed") {
-                    state.unignoreDisplayed(rows)
-                }
-                .disabled(!rows.contains { state.ignored.contains($0.id) })
-                .help(
-                    "Unignore rows in this list, including retained time-reference rows; the separate pinned strip is not included"
-                )
-                Button("Export Marked…") {
-                    coordinator.presentFrameExportPanel(prefersMarkedFrames: true)
-                }
-                .disabled(state.marked.isEmpty || !coordinator.canExportFrames)
-                .help("Export only the marked frames as PCAPNG or PCAP")
-                if state.acceptedFrameExpression != nil {
-                    Button("Export Matching Frames…") {
-                        coordinator.presentFrameExportPanel(prefersAppliedFrameExpression: true)
-                    }
-                    .disabled(!coordinator.canExportFrames)
-                    .help("Stream every frame matching the applied Frame Expression to PCAPNG or PCAP")
-                    Button("Export Matching Dissections…") {
-                        DissectionExportController.shared.export(
-                            from: coordinator, frameExpression: state.acceptedFrameExpression
-                        )
-                    }
-                    .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
-                    .help("Export text, CSV or JSON for every frame matching the applied Frame Expression")
-                    Menu("Print Matching Packet Views…") {
-                        Button("Summaries…") {
-                            DissectionExportController.shared.printDissections(
-                                from: coordinator, frameExpression: state.acceptedFrameExpression, layout: .summary
-                            )
-                        }
-                        Button("Dissections…") {
-                            DissectionExportController.shared.printDissections(
-                                from: coordinator, frameExpression: state.acceptedFrameExpression
-                            )
-                        }
-                        Button("Captured Bytes…") {
-                            DissectionExportController.shared.printDissections(
-                                from: coordinator, frameExpression: state.acceptedFrameExpression, layout: .bytes
-                            )
-                        }
-                    }
-                    .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
-                    .help("Print supported packet views for every frame matching the applied Frame Expression")
-                }
+                markActionsMenu(rows: rows, state: state)
+                exportActionsMenu(state: state)
                 Button("Rescan") { rescan(coordinator, state) }
                     .disabled(state.isLoading || coordinator.allFramesUnavailableReason != nil)
             }
