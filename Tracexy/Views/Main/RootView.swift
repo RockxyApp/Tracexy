@@ -244,6 +244,21 @@ struct RootView: View {
         }
 
         #if DEBUG
+        UITestWindowPlacement.installIfRequested()
+
+        // A deterministic saved capture opened through the normal external-open
+        // flow and nothing else: no auxiliary window, no capture start. UI tests
+        // that drive the real menu, keyboard and window routes need a populated
+        // workspace, not a pre-opened tool window.
+        if CommandLine.arguments.contains("--open-capture-ui-test"),
+           let path = ProcessInfo.processInfo.environment["TRACEXY_UI_TEST_CAPTURE"],
+           !path.isEmpty
+        {
+            coordinator.importExternalCaptures([URL(fileURLWithPath: path)])
+            await coordinator.waitForExternalCaptureOpen()
+            return
+        }
+
         // A deterministic capture path used only by the native RTP UI test. The
         // fixture enters through the same external-open flow as Finder and waits
         // for the normal capture reader before the statistics window is shown.
