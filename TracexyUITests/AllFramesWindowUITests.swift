@@ -143,7 +143,67 @@ final class AllFramesWindowUITests: XCTestCase {
         )
     }
 
+    /// The footer's bulk commands moved into two menus because, as a row of
+    /// buttons, every label truncated at the window's own default width. The
+    /// commands must still be listed and still reachable, and the Export menu
+    /// must go disabled when there is nothing it could export rather than
+    /// opening onto nothing.
+    @MainActor
+    func testFooterGroupsTheBulkCommandsAndGatesExport() throws {
+        let capture = try UITestCapture.write()
+        defer { try? FileManager.default.removeItem(at: capture) }
+
+        let app = launchAppWithCapture("all-frames-footer-menus", capture: capture)
+        defer { app.terminate() }
+
+        let window = openAllFrames(app)
+        let rows = frameRows(in: window)
+        XCTAssertTrue(waitUntil(45) { rows.count >= UITestCapture.frameCount }, window.debugDescription)
+
+        let export = footerMenu(named: "Export", in: window)
+        XCTAssertTrue(export.waitForExistence(timeout: 15), window.debugDescription)
+        XCTAssertFalse(
+            export.isEnabled,
+            "With nothing marked and no Frame Expression applied there is nothing to export, "
+                + "so the menu must be disabled rather than open onto only dimmed items"
+        )
+
+        let marks = footerMenu(named: "Marks", in: window)
+        XCTAssertTrue(marks.waitForExistence(timeout: 15), window.debugDescription)
+        XCTAssertTrue(marks.isEnabled, "Frames are listed, so the bulk mark commands must be available")
+        marks.click()
+        for command in [
+            "Mark All Displayed", "Unmark All Displayed",
+            "Ignore All Displayed", "Unignore Displayed",
+        ] {
+            XCTAssertTrue(
+                app.menuItems[command].firstMatch.waitForExistence(timeout: 10),
+                "\(command) must still be reachable from the grouped menu: \(app.debugDescription)"
+            )
+        }
+
+        // Marking every displayed frame is what makes an export possible, so
+        // the gate is checked by doing the thing that should open it.
+        app.menuItems["Mark All Displayed"].firstMatch.click()
+        XCTAssertTrue(
+            waitUntil(15) { footerMenu(named: "Export", in: window).isEnabled },
+            "Marked frames must make the Export menu usable: \(window.debugDescription)"
+        )
+    }
+
     // MARK: Private
+
+    /// A SwiftUI `Menu` in a window's own content is exposed as a `MenuButton`
+    /// carrying a `title`, not as a `PopUpButton` and not with an identifier or
+    /// a label — measured in this window's element subtree, where a
+    /// `popUpButtons["Export"]` query matched nothing while the button was
+    /// plainly present as `MenuButton ... title: 'Export'`.
+    @MainActor
+    private func footerMenu(named title: String, in window: XCUIElement) -> XCUIElement {
+        window.menuButtons
+            .matching(NSPredicate(format: "title == %@", title))
+            .firstMatch
+    }
 
     /// SwiftUI's `Table` is exposed to the accessibility client as an `Outline`
     /// with `OutlineRow` children, not as a `Table` with `tableRows` — measured
