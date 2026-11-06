@@ -54,16 +54,28 @@ enum UITestWindowPlacement {
     private static var isInstalled = false
     private static var observers: [NSObjectProtocol] = []
 
+    /// The screen that holds the coordinate origin, never `NSScreen.main`.
+    /// `main` is the screen of the *key* window, so a window already on a
+    /// second display reports that display as main, is judged to be where it
+    /// belongs, and is never moved — and every window opened after it gets
+    /// centred on that second display too. The hook then produces exactly the
+    /// unhittable windows it exists to prevent. The origin-holding screen is
+    /// fixed regardless of which window has key.
+    private static var primaryScreen: NSScreen? {
+        NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+    }
+
     /// Moves the window onto the main screen, keeping its size. A sheet is left
     /// alone: it is positioned by its parent, and moving it detaches it.
     private static func center(_ window: NSWindow) {
-        guard window.parent == nil, !window.isSheet,
-              let screen = NSScreen.main ?? NSScreen.screens.first else
-        {
+        guard window.parent == nil, !window.isSheet, let screen = primaryScreen else {
             return
         }
         let visible = screen.visibleFrame
-        guard !visible.contains(window.frame.origin) else {
+        // The whole frame, not just its origin. A window whose bottom-left
+        // corner sits inside the primary screen can still extend off it, and
+        // the part that hangs over reports `is not hittable` all the same.
+        guard !visible.contains(window.frame) else {
             return
         }
         let size = window.frame.size
