@@ -22,14 +22,33 @@ struct SidebarFilterFocusAction {
     static let fieldIdentifier = "tracexy.sidebar.filter-field"
 
     /// - Returns: `true` when a filter field was found and took first responder.
+    /// Whether the route can work at all right now. The command is listed
+    /// always, so it must go disabled when it cannot act rather than look
+    /// available and quietly do nothing.
+    @MainActor var canFocus: Bool {
+        guard let (window, _) = Self.locateField() else {
+            return false
+        }
+        return window.attachedSheet == nil
+    }
+
+    /// - Returns: `true` when a filter field was found and took first responder.
     @MainActor
     @discardableResult
     func focus() -> Bool {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
-              let root = window.contentView,
-              let field = Self.filterField(in: root) else
-        {
+        // The field's own window, not NSApp.keyWindow. Key belongs to whatever
+        // is frontmost, which is routinely a sheet or a panel, while the
+        // workspace holds main instead.
+        guard let (window, field) = Self.locateField() else {
             return false
+        }
+        // A modal sheet owns key and will not give it up, so first responder
+        // behind it would look focused while the keystrokes went nowhere.
+        guard window.attachedSheet == nil else {
+            return false
+        }
+        if !window.isKeyWindow {
+            window.makeKeyAndOrderFront(nil)
         }
         return window.makeFirstResponder(field)
     }
@@ -38,6 +57,18 @@ struct SidebarFilterFocusAction {
 
     /// Breadth-first so the footer's field is reached without recursing through
     /// the whole session table first.
+    /// The window that actually contains the field, so the caller never has to
+    /// assume it is the key one.
+    @MainActor
+    private static func locateField() -> (NSWindow, NSSearchField)? {
+        for window in NSApp.windows {
+            if let root = window.contentView, let field = filterField(in: root) {
+                return (window, field)
+            }
+        }
+        return nil
+    }
+
     @MainActor
     private static func filterField(in root: NSView) -> NSSearchField? {
         var queue = [root]

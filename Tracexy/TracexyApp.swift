@@ -43,7 +43,7 @@ struct SidebarFilterCommands: Commands {
                 focusSidebarFilter?.focus()
             }
             .keyboardShortcut("j", modifiers: [.command, .option])
-            .disabled(focusSidebarFilter == nil)
+            .disabled(focusSidebarFilter?.canFocus != true)
         }
     }
 

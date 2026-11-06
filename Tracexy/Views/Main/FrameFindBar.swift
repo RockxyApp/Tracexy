@@ -49,6 +49,10 @@ struct FrameFindBar: View {
                 .textFieldStyle(.roundedBorder)
                 .font(mode == .string ? Theme.Typography.body : Theme.Typography.mono)
                 .frame(minWidth: 160)
+                .focused($isQueryFocused)
+                // The bar is shown to be typed in, so opening it puts the caret
+                // in the field rather than leaving the user to click it first.
+                .onAppear { isQueryFocused = true }
                 .onSubmit { step(forward: true) }
             Toggle("Match Case", isOn: $query.caseSensitive)
                 .toggleStyle(.checkbox)
@@ -57,6 +61,7 @@ struct FrameFindBar: View {
                 .labelStyle(.iconOnly)
                 .help("Previous matching frame")
                 .disabled(isSearching || coordinator.allFrames.isLoading)
+                .keyboardShortcut("g", modifiers: [.command, .shift])
             Button("Next", systemImage: "chevron.down") { step(forward: true) }
                 .labelStyle(.iconOnly)
                 .help("Next matching frame")
@@ -120,6 +125,8 @@ struct FrameFindBar: View {
         let unknown: Int
         let completeness: CaptureLoadCompleteness
     }
+
+    @FocusState private var isQueryFocused: Bool
 
     @State private var mode = Mode.string
     @State private var query = FrameSearchQuery(kind: .string, target: .bytes, text: "")
