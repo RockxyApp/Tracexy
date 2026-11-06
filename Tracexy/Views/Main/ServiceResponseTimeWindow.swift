@@ -24,6 +24,10 @@ struct ServiceResponseTimeWindow: View {
                 }
             }
             .tracexyDenseScrollEdge()
+            // Expanded before the bar is attached: a bar attached first is
+            // sized together with the content and the pair is then centred, so
+            // the picker floated below the titlebar in the empty state.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tracexySafeAreaBar(edge: .top) {
                 HStack {
                     Picker("Service", selection: $service) {
@@ -39,7 +43,6 @@ struct ServiceResponseTimeWindow: View {
                 .padding(.horizontal, Theme.Metrics.spacingL)
                 .padding(.vertical, Theme.Metrics.spacingS)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tracexySafeAreaBar(edge: .bottom) {
                 footer(rows, echo: echo, omittedCorrelations: omittedCorrelations)
             }

@@ -45,8 +45,14 @@ struct IPStatisticsWindow: View {
             }
         }
         .tracexyDenseScrollEdge()
-        .tracexySafeAreaBar(edge: .top) { choosers }
+        // Expanded before the bar is attached, not after. A safe-area bar sits
+        // above the content it is attached to and the pair is sized together,
+        // so expanding afterwards centres bar and content as one block: with an
+        // empty state the chooser bar was measured floating 130pt below the
+        // titlebar while this window's footer, attached after the frame, stayed
+        // pinned to the bottom edge.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexySafeAreaBar(edge: .top) { choosers }
         .tracexySafeAreaBar(edge: .bottom) { footer(roots) }
         .frame(minWidth: 640, minHeight: 360)
         .onAppear { coordinator.loadAllFrames() }
