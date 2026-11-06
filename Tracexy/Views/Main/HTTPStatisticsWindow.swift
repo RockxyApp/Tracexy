@@ -56,6 +56,7 @@ struct HTTPStatisticsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(statistics)
         }

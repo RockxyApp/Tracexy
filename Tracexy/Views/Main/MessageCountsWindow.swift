@@ -55,6 +55,7 @@ struct MessageCountsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(roots: roots, omitted: ApplicationMessageCounts.omittedCount(of: sessions))
         }

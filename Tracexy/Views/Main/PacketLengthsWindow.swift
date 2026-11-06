@@ -89,6 +89,7 @@ struct PacketLengthsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows: ranges + [total], sessions: sessions.count)
         }

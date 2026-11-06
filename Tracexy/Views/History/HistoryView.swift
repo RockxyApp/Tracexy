@@ -524,6 +524,7 @@ private struct HistoryCaptureRow: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .help("Capture summary is incomplete")
+                    .accessibilityLabel("Incomplete capture summary")
             }
         }
         .padding(.vertical, 2)

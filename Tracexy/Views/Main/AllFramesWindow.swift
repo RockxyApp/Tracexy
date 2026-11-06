@@ -109,6 +109,7 @@ struct AllFramesWindow: View {
                         .help("Find text, hex bytes, a regular expression, or a Frame Expression in the capture")
                 }
             }
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .top) {
                 VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
                     frameExpressionBar(state)

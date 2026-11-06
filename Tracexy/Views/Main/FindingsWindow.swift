@@ -51,6 +51,7 @@ struct FindingsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(nodes: nodes, inView: inView)
         }

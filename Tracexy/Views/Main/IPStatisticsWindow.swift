@@ -44,6 +44,7 @@ struct IPStatisticsWindow: View {
                     .help("Count only the frames of the sessions the main window shows")
             }
         }
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .top) { choosers }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .tracexySafeAreaBar(edge: .bottom) { footer(roots) }

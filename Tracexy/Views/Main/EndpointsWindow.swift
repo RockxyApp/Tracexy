@@ -38,6 +38,7 @@ struct EndpointsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows: rows, total: all.count, sessions: sessions.count, canGroup: kind == .ipv4 && !subnets.isEmpty)
         }

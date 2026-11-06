@@ -56,6 +56,7 @@ struct ConversationsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows: rows, total: all.count, sessions: sessions.count)
         }

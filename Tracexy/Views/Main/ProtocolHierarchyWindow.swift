@@ -63,6 +63,7 @@ struct ProtocolHierarchyWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(roots: roots, sessionCount: sessions.count, csv: ProtocolHierarchyNode.csv(
                 roots, totalSessions: sessions.count, totalBytes: sessions.reduce(0) { $0 + $1.totalBytes }

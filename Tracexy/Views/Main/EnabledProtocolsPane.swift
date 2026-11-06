@@ -38,6 +38,7 @@ struct EnabledProtocolsPane: View {
         }
         .listStyle(.inset)
         .searchable(text: $search, placement: .toolbar, prompt: "Protocol")
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) { footer(settings) }
     }
 
