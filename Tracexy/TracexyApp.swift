@@ -1164,7 +1164,7 @@ private struct TracexyCaptureFileCommands: Commands {
             Button {
                 coordinator.toggleCapture()
             } label: {
-                CaptureCommandLabel(coordinator: coordinator)
+                CaptureCommandLabel(coordinator: coordinator, start: "Start Capture", stop: "Stop Capture")
             }
             .keyboardShortcut("e", modifiers: .command)
             Button("Restart Capture") {
@@ -1305,9 +1305,13 @@ private struct TracexyCaptureFileCommands: Commands {
 /// does not re-run that body.
 private struct CaptureCommandLabel: View {
     let coordinator: MainContentCoordinator
+    /// Passed in rather than held here, so the command's two titles stay on the
+    /// button that carries its keyboard shortcut.
+    let start: LocalizedStringKey
+    let stop: LocalizedStringKey
 
     var body: some View {
-        Text(coordinator.isCapturing || coordinator.isStarting ? "Stop Capture" : "Start Capture")
+        Text(coordinator.isCapturing || coordinator.isStarting ? stop : start)
     }
 }
 
