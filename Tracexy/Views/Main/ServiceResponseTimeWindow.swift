@@ -23,6 +23,7 @@ struct ServiceResponseTimeWindow: View {
                         .help("Count only the frames of the sessions the main window shows")
                 }
             }
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .top) {
                 HStack {
                     Picker("Service", selection: $service) {
@@ -109,7 +110,8 @@ struct ServiceResponseTimeWindow: View {
             VStack(spacing: Theme.Metrics.spacingM) {
                 ProgressView("Scanning capture for response times…")
                     .controlSize(.small)
-                Button("Cancel") { cancelScan() }
+                Button("Cancel", role: .cancel) { cancelScan() }
+                    .keyboardShortcut(.cancelAction)
                     .controlSize(.small)
                     .accessibilityIdentifier("serviceResponseTime.cancel")
             }

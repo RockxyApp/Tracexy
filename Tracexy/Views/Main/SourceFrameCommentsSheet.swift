@@ -34,6 +34,9 @@ struct SourceFrameCommentsSheet: View {
         }
         .padding(Theme.Metrics.spacingL)
         .frame(minWidth: 420, minHeight: 280)
+        // Read-only sheet: Escape dismisses it the way Done does, so there is a
+        // keyboard route out without a second, misleading Cancel button.
+        .onExitCommand { onDone() }
     }
 
     // MARK: Private

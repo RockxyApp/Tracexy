@@ -55,6 +55,7 @@ struct ExportObjectsWindow: View {
         }
         .searchable(text: $state.search, placement: .toolbar, prompt: "File name, host or content type")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .top) {
             HStack {
                 Picker("Objects", selection: Binding(
@@ -169,7 +170,8 @@ struct ExportObjectsWindow: View {
             }
             Spacer()
             if saving != nil {
-                Button("Cancel") { cancelSaveAll() }
+                Button("Cancel", role: .cancel) { cancelSaveAll() }
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("exportObjects.saveAllCancel")
             }
             Button("Save…") {
@@ -177,6 +179,7 @@ struct ExportObjectsWindow: View {
                     save(selected)
                 }
             }
+            .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("exportObjects.saveSelected")
             .disabled(selected == nil || saving != nil)
             Button("Save All…") { saveAll(objects) }

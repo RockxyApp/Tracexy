@@ -26,6 +26,7 @@ struct ResolvedAddressesWindow: View {
         }
         .searchable(text: $filter, placement: .toolbar, prompt: "Address or name")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) { footer(rows: rows, total: all.count) }
         .frame(minWidth: 520, minHeight: 360)
         .sheet(item: $subnetDraft) { draft in
@@ -107,7 +108,8 @@ struct ResolvedAddressesWindow: View {
                     Button("Rename Subnet…") {
                         subnetDraft = SubnetNameDraft(block: row.address, name: row.name)
                     }
-                    Button("Remove Subnet Name") {
+                    Divider()
+                    Button("Remove Subnet Name", role: .destructive) {
                         coordinator.addressNames.setSubnetName("", for: row.address)
                     }
                 }
@@ -246,6 +248,7 @@ private struct SubnetNameSheet: View {
             Form {
                 TextField("Subnet:", text: $block, prompt: Text("192.168.1.0/24"))
                     .font(Theme.Typography.mono)
+                    .focused($isBlockFocused)
                 TextField("Name:", text: $name, prompt: Text("office"))
             }
             Text(message)
@@ -269,6 +272,8 @@ private struct SubnetNameSheet: View {
         }
         .padding(Theme.Metrics.spacingL * 2)
         .frame(width: 380)
+        // Typing starts in the first field rather than nowhere.
+        .task { isBlockFocused = true }
     }
 
     // MARK: Private
@@ -277,6 +282,7 @@ private struct SubnetNameSheet: View {
     @State private var block: String
     @State private var name: String
     @State private var isFull = false
+    @FocusState private var isBlockFocused: Bool
 
     private var parsed: CIDRValue? {
         SubnetNames.block(block)

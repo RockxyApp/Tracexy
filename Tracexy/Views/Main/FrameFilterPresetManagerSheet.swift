@@ -31,11 +31,14 @@ struct FrameFilterPresetManagerSheet: View {
                         HStack {
                             TextField("Name", text: $filter.name)
                                 .frame(width: 190)
+                                .focused($focusedFilterName, equals: filter.id)
                                 .accessibilityIdentifier("frameFilterPreset.name.\(filter.id.uuidString)")
                             Spacer()
-                            Button("Remove", systemImage: "minus.circle") { remove(filter.id) }
-                                .labelStyle(.iconOnly)
-                                .accessibilityLabel("Remove \(filter.name)")
+                            Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                                remove(filter.id)
+                            }
+                            .labelStyle(.iconOnly)
+                            .accessibilityLabel("Remove \(filter.name)")
                         }
                         TextField("Frame Expression", text: $filter.expression)
                             .textFieldStyle(.roundedBorder)
@@ -67,6 +70,8 @@ struct FrameFilterPresetManagerSheet: View {
         }
         .padding(20)
         .frame(minWidth: 680, minHeight: 460)
+        // Typing starts in the first filter's name rather than nowhere.
+        .task { focusedFilterName = filters.first?.id }
     }
 
     // MARK: Private
@@ -74,6 +79,7 @@ struct FrameFilterPresetManagerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var filters: [SavedFrameFilter]
     @State private var message: String?
+    @FocusState private var focusedFilterName: UUID?
 
     private var isValid: Bool {
         filters.count <= FrameFilterPresetLibrary.maximumFilters

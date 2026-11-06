@@ -30,9 +30,10 @@ struct FrameColorRuleManagerSheet: View {
                 ForEach($rules) { $rule in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Toggle("Enabled", isOn: $rule.isEnabled).labelsHidden()
-                                .accessibilityLabel("Enable \(rule.name)")
+                            Toggle("Enable \(rule.name)", isOn: $rule.isEnabled)
+                                .labelsHidden()
                             TextField("Rule name", text: $rule.name).frame(width: 150)
+                                .focused($focusedRuleName, equals: rule.id)
                             Spacer()
                             ColorPicker(
                                 "Text",
@@ -56,7 +57,9 @@ struct FrameColorRuleManagerSheet: View {
                                 .labelStyle(.iconOnly)
                                 .disabled(rules.count >= FrameColorRuleLibrary.maximumRules)
                                 .accessibilityLabel("Duplicate \(rule.name)")
-                            Button("Remove", systemImage: "minus.circle") { rules.removeAll { $0.id == rule.id } }
+                            Button(
+                                "Remove", systemImage: "minus.circle", role: .destructive
+                            ) { rules.removeAll { $0.id == rule.id } }
                                 .labelStyle(.iconOnly)
                                 .accessibilityLabel("Remove \(rule.name)")
                         }
@@ -99,6 +102,8 @@ struct FrameColorRuleManagerSheet: View {
         }
         .padding(20)
         .frame(minWidth: 860, minHeight: 500)
+        // Typing starts in the first rule's name rather than nowhere.
+        .task { focusedRuleName = rules.first?.id }
         .fileImporter(
             isPresented: $isImporting,
             allowedContentTypes: [.json, .plainText, .data, UTType(filenameExtension: "jsonc") ?? .plainText],
@@ -123,6 +128,7 @@ struct FrameColorRuleManagerSheet: View {
     @State private var message: String?
     @State private var importReport: String?
     @State private var isImporting = false
+    @FocusState private var focusedRuleName: UUID?
 
     private var isValid: Bool {
         rules.count <= FrameColorRuleLibrary.maximumRules

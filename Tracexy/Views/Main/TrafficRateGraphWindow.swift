@@ -24,6 +24,7 @@ struct TrafficRateGraphWindow: View {
                 ToolbarItem(placement: .primaryAction) { intervalPicker(axis) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .top) { comparisonControls }
             .tracexySafeAreaBar(edge: .bottom) { footer(graph, comparison: comparison) }
             .frame(minWidth: 740, minHeight: 560)
@@ -205,10 +206,13 @@ struct TrafficRateGraphWindow: View {
         let index = drafts.firstIndex(where: { $0.id == value.id }) ?? 0
         let palette = TrafficGraphPaletteToken.allCases[min(index, TrafficGraphPaletteToken.allCases.count - 1)]
         return HStack(spacing: Theme.Metrics.spacingS) {
-            Toggle("Enabled", isOn: draft.isEnabled)
+            // The title is the accessibility label and .labelsHidden() keeps it
+            // off screen. A separate .accessibilityLabel would be appended to
+            // this title rather than replacing it, which VoiceOver then reads
+            // twice over.
+            Toggle("Enable graph series \(index + 1)", isOn: draft.isEnabled)
                 .labelsHidden()
                 .toggleStyle(.checkbox)
-                .accessibilityLabel("Enable graph series \(index + 1)")
             Image(systemName: palette.symbolName)
                 .foregroundStyle(seriesColor(palette))
                 .frame(width: 16)

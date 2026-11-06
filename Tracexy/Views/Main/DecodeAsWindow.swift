@@ -20,6 +20,7 @@ struct DecodeAsWindow: View {
                 rules(settings)
             }
         }
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .top) {
             HStack {
                 Picker("Pane", selection: $settings.showsEnabledProtocols) {
@@ -116,6 +117,10 @@ struct DecodeAsWindow: View {
                 Image(systemName: "minus.circle")
             }
             .buttonStyle(.borderless)
+            // HIG Accessibility's macOS default hit target is 28x28pt; the bare
+            // symbol alone was under it.
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
             .help("Remove this rule")
             .accessibilityLabel("Remove rule")
         }

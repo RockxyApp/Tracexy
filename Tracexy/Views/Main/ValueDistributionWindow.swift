@@ -26,6 +26,7 @@ struct ValueDistributionWindow: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 520, minHeight: 320)
             .task(id: RunKey(
@@ -150,6 +151,7 @@ struct ValueDistributionWindow: View {
                     NSPasteboard.general.setString(result.csv(), forType: .string)
                 }
             }
+            .keyboardShortcut(.defaultAction)
             .disabled(controller.result?.rows.isEmpty ?? true)
             Button("Save as CSV…") {
                 if let result = controller.result {

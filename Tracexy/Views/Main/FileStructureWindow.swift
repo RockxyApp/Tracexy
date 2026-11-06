@@ -14,6 +14,7 @@ struct FileStructureWindow: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 620, minHeight: 320)
             .task(id: RunKey(
@@ -160,6 +161,7 @@ struct FileStructureWindow: View {
             }
             Spacer()
             Button("Reload") { controller.run(from: coordinator) }
+                .keyboardShortcut(.defaultAction)
                 .disabled(controller.isLoading)
         }
         .font(Theme.Typography.caption)
