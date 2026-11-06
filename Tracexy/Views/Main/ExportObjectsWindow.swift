@@ -317,7 +317,10 @@ struct ExportObjectsWindow: View {
         }
         coordinator.inspectCitedFrame(sessionID: object.sessionID, provenance: provenance)
         notice = nil
-        Self.activateWorkspaceWindow()
+        // Deliberately does not bring the workspace forward. Citing a frame is a
+        // step taken from this list and usually followed by another one here, so
+        // taking key away would interrupt the very workflow it serves. Show
+        // Session is the action that means "take me there", and it activates.
     }
 
     private func save(_ object: CaptureObject) {
