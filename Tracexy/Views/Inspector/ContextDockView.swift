@@ -459,15 +459,31 @@ struct ContextDockView: View {
         if history.count >= 3 {
             let peak = history.map(\.milliseconds).max() ?? 1
             VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
-                HStack(alignment: .bottom, spacing: 2) {
-                    ForEach(history) { point in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(point.isCurrent ? Color.accentColor : Color.secondary.opacity(0.35))
-                            .frame(height: max(28 * point.milliseconds / peak, 2))
-                            .frame(maxWidth: .infinity)
+                VStack(spacing: 2) {
+                    HStack(alignment: .bottom, spacing: 2) {
+                        ForEach(history) { point in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(point.isCurrent ? Color.accentColor : Color.secondary.opacity(0.35))
+                                .frame(height: max(28 * point.milliseconds / peak, 2))
+                                .frame(maxWidth: .infinity)
+                        }
                     }
+                    .frame(height: 28)
+                    // Colour alone cannot carry which bar is this session: a tick
+                    // under the selected column states it by position instead.
+                    HStack(spacing: 2) {
+                        ForEach(history) { point in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(point.isCurrent ? Color.accentColor : Color.clear)
+                                .frame(height: 2)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(height: 2)
                 }
-                .frame(height: 28)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Host latency baseline for the last hour")
+                .accessibilityValue(Self.baselineAccessibilityValue(history))
                 HStack(spacing: Theme.Metrics.spacingM) {
                     Text("p50 \(Self.ms(median(of: history.map(\.milliseconds)) ?? 0))")
                         .foregroundStyle(.secondary)
@@ -688,6 +704,25 @@ struct ContextDockView: View {
         case .strong: .blue
         case .weak: .orange
         }
+    }
+
+    /// What the sparkline states aloud: how this session's latency sits inside the
+    /// host's recent distribution, since VoiceOver cannot read the bars.
+    private static func baselineAccessibilityValue(_ history: [BaselinePoint]) -> String {
+        let values = history.map(\.milliseconds).sorted()
+        guard let low = values.first, let high = values.last else {
+            return "No baseline samples"
+        }
+        let middle = values.count.isMultiple(of: 2)
+            ? (values[values.count / 2 - 1] + values[values.count / 2]) / 2
+            : values[values.count / 2]
+        let sessionWord = history.count == 1 ? "session" : "sessions"
+        var phrase = "\(history.count.formatted()) \(sessionWord) on this host. "
+            + "Median \(ms(middle)). Range \(ms(low)) to \(ms(high))."
+        if let current = history.first(where: \.isCurrent) {
+            phrase += " This session \(ms(current.milliseconds))."
+        }
+        return phrase
     }
 
     private static func ms(_ value: Double) -> String {

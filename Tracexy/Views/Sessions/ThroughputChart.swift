@@ -8,6 +8,8 @@ import SwiftUI
 /// live strip, or a footer sparkline). Reads only `samples`, so its ~1×/sec
 /// updates never re-run a host view that also drives the NSTableView.
 struct ThroughputChart: View {
+    // MARK: Internal
+
     let samples: [ThroughputSample]
     var showYAxis = true
 
@@ -39,5 +41,29 @@ struct ThroughputChart: View {
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Throughput chart. Bytes per second over the recent capture window.")
+        .accessibilityValue(Self.accessibilityValue(for: samples))
+    }
+
+    /// Spoken summary of the plot: VoiceOver cannot read the marks, so the
+    /// current rate, the peak and the range carry the same reading the shape does.
+    static func accessibilityValue(for samples: [ThroughputSample]) -> String {
+        let rates = samples.map(\.bytesPerSecond)
+        guard let low = rates.min(), let high = rates.max(), let current = rates.last else {
+            return "No throughput samples yet"
+        }
+        let sampleWord = samples.count == 1 ? "sample" : "samples"
+        return "\(samples.count.formatted()) \(sampleWord). "
+            + "Now \(Self.rate(current)). Peak \(Self.rate(high)). "
+            + "Range \(Self.rate(low)) to \(Self.rate(high))."
+    }
+
+    // MARK: Private
+
+    private static func rate(_ bytesPerSecond: Double) -> String {
+        let clamped = bytesPerSecond.rounded()
+        let bytes = Int64(exactly: clamped.isFinite ? max(clamped, 0) : 0) ?? Int64.max
+        return "\(ByteUnits.string(bytes)) per second"
     }
 }

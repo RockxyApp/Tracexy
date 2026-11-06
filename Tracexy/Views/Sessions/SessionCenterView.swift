@@ -271,8 +271,9 @@ struct SessionCenterView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            // Command-R belongs to File > Reload, which carries the
+            // canReloadActiveSavedCapture guard this button does not.
             Button("Reload") { coordinator.reloadActiveSavedCapture() }
-                .keyboardShortcut("r", modifiers: .command)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingS)
@@ -486,7 +487,10 @@ struct SessionCenterView: View {
             TableColumn("Host", value: \.host) { session in
                 HStack(spacing: Theme.Metrics.spacingS) {
                     SessionTagDots(tags: coordinator.investigationNotes.tags(onSession: session.id))
-                    Text(coordinator.addressNames.displayHost(for: session)).font(Theme.Typography.body).lineLimit(1)
+                    Text(coordinator.addressNames.displayHost(for: session))
+                        .font(Theme.Typography.body)
+                        .lineLimit(1)
+                        .help(coordinator.addressNames.displayHost(for: session))
                     if coordinator.investigationNotes.hasNote(onSession: session.id) {
                         Image(systemName: "note.text")
                             .font(.system(size: Theme.Icon.small))
@@ -520,6 +524,10 @@ struct SessionCenterView: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(Theme.color(for: session.status))
                     .help(session.status.label)
+                    // The column header is intentionally empty, and help text is
+                    // pointer-only, so state would otherwise be colour and shape
+                    // alone with nothing for VoiceOver to announce.
+                    .accessibilityLabel(session.status.label)
             }
             .width(20)
             .customizationID("status")
@@ -529,6 +537,8 @@ struct SessionCenterView: View {
                     .font(Theme.Typography.body)
                     .lineLimit(1)
                     .foregroundStyle(session.status == .error ? Color.red : Color.primary)
+                    // The most content-rich column, and the one most often cut.
+                    .help(session.infoSummary)
             }
             .width(min: 160, ideal: 280)
             .customizationID("summary")
@@ -613,6 +623,7 @@ struct SessionCenterView: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(Theme.color(for: row.status))
                     .help(row.status.label)
+                    .accessibilityLabel(row.status.label)
             }
             .width(20)
             TableColumn("Summary") { (row: SessionRow) in

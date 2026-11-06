@@ -145,6 +145,8 @@ struct PacketBytesPane: View {
                 moveMatch(by: -1, ranges: found.ranges)
             } label: {
                 Image(systemName: "chevron.up")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(found.ranges.isEmpty)
@@ -155,6 +157,8 @@ struct PacketBytesPane: View {
                 moveMatch(by: 1, ranges: found.ranges)
             } label: {
                 Image(systemName: "chevron.down")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(found.ranges.isEmpty)

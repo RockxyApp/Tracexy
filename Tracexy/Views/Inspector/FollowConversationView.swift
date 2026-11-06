@@ -134,11 +134,17 @@ struct FollowConversationView: View {
                 .font(Theme.Typography.caption)
                 .accessibilityLabel("Find in transcript")
             if !query.isEmpty {
-                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Clear find")
-                    .help("Clear the find text")
+                // 20pt, not the 28pt default: the HIG hard minimum keeps the press
+                // target legal without stretching this dense find capsule.
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Clear find")
+                .help("Clear the find text")
             }
         }
         .padding(.horizontal, 8)
@@ -277,6 +283,8 @@ private extension FollowConversationView {
                 moveDatagramMatch(by: -1)
             } label: {
                 Image(systemName: "chevron.up")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(ids.isEmpty)
@@ -287,6 +295,8 @@ private extension FollowConversationView {
                 moveDatagramMatch(by: 1)
             } label: {
                 Image(systemName: "chevron.down")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(ids.isEmpty)

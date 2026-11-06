@@ -124,6 +124,7 @@ private struct PinnedFrameRowCard: View {
             Image(systemName: "ellipsis.circle")
         }
         .menuStyle(.borderlessButton)
+        .accessibilityLabel("More actions for Frame \(row.ordinal.formatted())")
         .help("More actions for Frame \(row.ordinal.formatted())")
     }
 }
@@ -141,7 +142,8 @@ private struct PinnedFrameRowContextMenu: View {
         Button("Go to Packet") { onGoTo(row.ordinal) }
             .disabled(!canNavigate)
         Button("Unpin Row") { state.unpinFrameRow(row.ordinal) }
-        Button("Unpin All Rows") { state.unpinAllFrameRows() }
+        Divider()
+        Button("Unpin All Rows", role: .destructive) { state.unpinAllFrameRows() }
     }
 }
 

@@ -541,12 +541,14 @@ struct OverviewView: View {
                     .font(Theme.Typography.title)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .help(identityTitle)
                 statusPill(status)
             }
             Text(identitySubtitle)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .help(identitySubtitle)
         }
         .accessibilityElement(children: .combine)
     }

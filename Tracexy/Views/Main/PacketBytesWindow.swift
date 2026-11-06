@@ -27,7 +27,10 @@ struct PacketBytesWindow: View {
                 )
             }
         }
-        .frame(minWidth: showsFrameDetails ? 720 : 560, minHeight: 360)
+        // A constant minimum: under .windowResizability(.contentMinSize) a minimum
+        // computed from live state resizes a window the user already sized by hand
+        // whenever "Show as" changes. 720 covers the widest mode (frame details).
+        .frame(minWidth: 720, minHeight: 360)
         .alert("Couldn’t Save Rendering", isPresented: Binding(
             get: { renderingSaveError != nil },
             set: {
@@ -76,13 +79,6 @@ struct PacketBytesWindow: View {
     @State private var renderingSaveError: String?
     @State private var renderingSaveRequest = UUID()
 
-    private var showsFrameDetails: Bool {
-        guard let subject = coordinator.packetBytesInspection.subject else {
-            return false
-        }
-        return !subject.layers.isEmpty && presentation == .hexDump && decoding == .none
-    }
-
     private var layerFilterControl: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: Theme.Icon.small))
@@ -91,10 +87,14 @@ struct PacketBytesWindow: View {
                 .font(Theme.Typography.caption)
                 .accessibilityLabel("Filter decoded fields")
             if !fieldQuery.isEmpty {
-                Button { fieldQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .accessibilityLabel("Clear field filter")
-                    .help("Clear the field filter")
+                Button { fieldQuery = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel("Clear field filter")
+                .help("Clear the field filter")
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -129,6 +129,7 @@ struct PacketBytesWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(
                 inputCount: input.count, decoded: try? decoded.get(), title: subject.title,

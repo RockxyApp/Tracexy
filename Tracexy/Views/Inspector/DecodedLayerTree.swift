@@ -84,7 +84,9 @@ struct DecodedLayerTree: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    .frame(width: 16, height: 16)
+                    // 20pt is the HIG hard minimum; the 28pt default would stretch
+                    // every layer header and break this dense tree's row rhythm.
+                    .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -96,6 +98,7 @@ struct DecodedLayerTree: View {
                     .foregroundStyle(Theme.color(for: layer.proto))
                 if !layer.summary.isEmpty {
                     Text(layer.summary).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .help(layer.summary)
                 }
                 Spacer(minLength: 0)
             }

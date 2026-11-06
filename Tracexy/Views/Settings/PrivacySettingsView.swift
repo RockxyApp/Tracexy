@@ -79,7 +79,7 @@ struct PrivacySettingsView: View {
                 SettingsDivider()
 
                 SettingsRow(label: "Auto-clear:") {
-                    Picker("", selection: autoClearSelection) {
+                    Picker("Auto-clear", selection: autoClearSelection) {
                         ForEach(AutoClear.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     .labelsHidden()
