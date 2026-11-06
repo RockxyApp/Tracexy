@@ -44,265 +44,238 @@ struct AllFramesWindow: View {
                 )
             }
         }
-        Group {
-            if state.isLoading {
-                FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
-                    loading(state)
+        framesContent(state: state, rows: rows, pinnedRows: pinnedRows)
+            .searchable(text: $state.search, placement: .toolbar, prompt: "Info, address or protocol")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Toggle("Limit to Sessions in View", isOn: $state.limitToSessionsInView)
+                        .toggleStyle(.checkbox)
+                        .help(
+                            "Show only the frames of the sessions the main window shows, like Wireshark's displayed frames"
+                        )
                 }
-            } else if let error = state.error {
-                ContentUnavailableView {
-                    Label("Frames Unavailable", systemImage: "list.number")
-                } description: {
-                    Text(error)
-                } actions: {
-                    Button("Try Again") { coordinator.loadAllFrames(force: true) }
+                ToolbarItem(placement: .navigation) {
+                    goToField(rows)
                 }
-            } else if state.list == nil {
-                ContentUnavailableView {
-                    Label("No Frames Listed", systemImage: "list.number")
-                } actions: {
-                    Button("List Frames") { coordinator.loadAllFrames(force: true) }
+                ToolbarItem(placement: .primaryAction) {
+                    frameNavigationControls
                 }
-            } else if state.isEvaluatingFrameExpression {
-                FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
-                    ProgressView("Filtering frames…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else if rows.isEmpty, pinnedRows.isEmpty {
-                NoFramesMatchView(state: state)
-            } else {
-                frameListContent(rows: rows, pinnedRows: pinnedRows, state: state)
-            }
-        }
-        .searchable(text: $state.search, placement: .toolbar, prompt: "Info, address or protocol")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Toggle("Limit to Sessions in View", isOn: $state.limitToSessionsInView)
-                    .toggleStyle(.checkbox)
-                    .help(
-                        "Show only the frames of the sessions the main window shows, like Wireshark's displayed frames"
-                    )
-            }
-            ToolbarItem(placement: .navigation) {
-                goToField(rows)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                frameNavigationControls
-            }
-            ToolbarItem(placement: .primaryAction) {
-                ControlGroup {
-                    Button("Previous Frame in Session", systemImage: "chevron.up") {
-                        stepInSession(rows, forward: false)
-                    }
-                    .keyboardShortcut(",", modifiers: .control)
-                    Button("Next Frame in Session", systemImage: "chevron.down") { stepInSession(rows, forward: true) }
+                ToolbarItem(placement: .primaryAction) {
+                    ControlGroup {
+                        Button("Previous Frame in Session", systemImage: "chevron.up") {
+                            stepInSession(rows, forward: false)
+                        }
+                        .keyboardShortcut(",", modifiers: .control)
+                        Button("Next Frame in Session", systemImage: "chevron.down") {
+                            stepInSession(rows, forward: true)
+                        }
                         .keyboardShortcut(".", modifiers: .control)
-                    Button("First Displayed Frame in Session", systemImage: "arrow.up.to.line") {
-                        selectSessionEdge(rows, last: false)
+                        Button("First Displayed Frame in Session", systemImage: "arrow.up.to.line") {
+                            selectSessionEdge(rows, last: false)
+                        }
+                        Button("Last Displayed Frame in Session", systemImage: "arrow.down.to.line") {
+                            selectSessionEdge(rows, last: true)
+                        }
                     }
-                    Button("Last Displayed Frame in Session", systemImage: "arrow.down.to.line") {
-                        selectSessionEdge(rows, last: true)
-                    }
+                    .disabled(selection.flatMap { id in rows.first { $0.id == id }?.sessionID } == nil)
+                    .help("Step through or select the first or last displayed frame of the selected frame's session")
                 }
-                .disabled(selection.flatMap { id in rows.first { $0.id == id }?.sessionID } == nil)
-                .help("Step through or select the first or last displayed frame of the selected frame's session")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                ControlGroup {
-                    Button(
-                        selectedRow.map { state.marked.contains($0.id) } == true
-                            ? "Unmark Selected Frame" : "Mark Selected Frame",
-                        systemImage: selectedRow.map { state.marked.contains($0.id) } == true
-                            ? "bookmark.slash" : "bookmark"
-                    ) {
-                        toggleSelectedMark()
-                    }
-                    .disabled(!canMutateSelectedRow)
-                    .help("Mark or unmark the selected frame that is still visible in the main list")
+                ToolbarItem(placement: .primaryAction) {
+                    ControlGroup {
+                        Button(
+                            selectedRow.map { state.marked.contains($0.id) } == true
+                                ? "Unmark Selected Frame" : "Mark Selected Frame",
+                            systemImage: selectedRow.map { state.marked.contains($0.id) } == true
+                                ? "bookmark.slash" : "bookmark"
+                        ) {
+                            toggleSelectedMark()
+                        }
+                        .disabled(!canMutateSelectedRow)
+                        .help("Mark or unmark the selected frame that is still visible in the main list")
 
-                    Button(
-                        selectedRow.map { state.ignored.contains($0.id) } == true
-                            ? "Unignore Selected Frame" : "Ignore Selected Frame",
-                        systemImage: selectedRow.map { state.ignored.contains($0.id) } == true ? "eye" : "eye.slash"
-                    ) {
-                        toggleSelectedIgnore()
+                        Button(
+                            selectedRow.map { state.ignored.contains($0.id) } == true
+                                ? "Unignore Selected Frame" : "Ignore Selected Frame",
+                            systemImage: selectedRow.map { state.ignored.contains($0.id) } == true ? "eye" : "eye.slash"
+                        ) {
+                            toggleSelectedIgnore()
+                        }
+                        .disabled(!canMutateSelectedRow)
+                        .help("Ignore or unignore the selected frame that is still visible in the main list")
                     }
-                    .disabled(!canMutateSelectedRow)
-                    .help("Ignore or unignore the selected frame that is still visible in the main list")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Toggle("Find in Frames", systemImage: "text.magnifyingglass", isOn: $isFinding)
+                        .help("Find text, hex bytes, a regular expression, or a Frame Expression in the capture")
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Toggle("Find in Frames", systemImage: "text.magnifyingglass", isOn: $isFinding)
-                    .help("Find text, hex bytes, a regular expression, or a Frame Expression in the capture")
-            }
-        }
-        .tracexySafeAreaBar(edge: .top) {
-            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-                frameExpressionBar(state)
-                if isFinding {
-                    FrameFindBar(
-                        coordinator: coordinator, selection: selection,
-                        onSelect: selectFoundFrame
-                    ) { isFinding = false }
+            .tracexySafeAreaBar(edge: .top) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+                    frameExpressionBar(state)
+                    if isFinding {
+                        FrameFindBar(
+                            coordinator: coordinator, selection: selection,
+                            onSelect: selectFoundFrame
+                        ) { isFinding = false }
+                    }
                 }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .tracexySafeAreaBar(edge: .bottom) {
-            footer(shown: rows.count, rows: rows, state: state)
-        }
-        .frame(minWidth: 760, minHeight: 360)
-        .focusedSceneValue(
-            \.frameTimeCommandTarget,
-            state.isLoading || state.isEvaluatingFrameExpression || state.list == nil || state.error != nil
-                ? nil : commandTarget
-        )
-        .onAppear(perform: loadAllFramesAndReceiveSelection)
-        .onChange(of: state.externalSelectionRequest) { _, _ in receiveExternalSelectionRequest() }
-        .onChange(of: state.isLoading) { _, loading in
-            if !loading {
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexySafeAreaBar(edge: .bottom) {
+                footer(shown: rows.count, rows: rows, state: state)
+            }
+            .frame(minWidth: 760, minHeight: 360)
+            .focusedSceneValue(
+                \.frameTimeCommandTarget,
+                state.isLoading || state.isEvaluatingFrameExpression || state.list == nil || state.error != nil
+                    ? nil : commandTarget
+            )
+            .onAppear(perform: loadAllFramesAndReceiveSelection)
+            .onChange(of: state.externalSelectionRequest) { _, _ in receiveExternalSelectionRequest() }
+            .onChange(of: state.isLoading) { _, loading in
+                if !loading {
+                    state.refreshPinnedFrameRows(from: state.list.map { $0.rows + $0.auxiliaryRows } ?? [])
+                    state.refreshFrameColorRules()
+                    resolvePendingTableSelection()
+                    receiveExternalSelectionRequest()
+                }
+            }
+            .onChange(of: state.frameColorRuleLibrary.rules) { _, _ in state.refreshFrameColorRules() }
+            .onChange(of: state.list?.firstRetainedOrdinal) { _, _ in
                 state.refreshPinnedFrameRows(from: state.list.map { $0.rows + $0.auxiliaryRows } ?? [])
                 state.refreshFrameColorRules()
                 resolvePendingTableSelection()
-                receiveExternalSelectionRequest()
+                updateSelectedFrameTimeReference(rows: rows)
             }
-        }
-        .onChange(of: state.frameColorRuleLibrary.rules) { _, _ in state.refreshFrameColorRules() }
-        .onChange(of: state.list?.firstRetainedOrdinal) { _, _ in
-            state.refreshPinnedFrameRows(from: state.list.map { $0.rows + $0.auxiliaryRows } ?? [])
-            state.refreshFrameColorRules()
-            resolvePendingTableSelection()
-            updateSelectedFrameTimeReference(rows: rows)
-        }
-        .onChange(of: selection) { previous, current in
-            if let current, current != previous {
-                if historyRestoreOrdinal == current {
-                    historyRestoreOrdinal = nil
-                } else {
-                    if let pendingHistoryRestoreOrdinal,
-                       coordinator.allFrames.pendingTableSelection == pendingHistoryRestoreOrdinal
-                    {
-                        coordinator.allFrames.pendingTableSelection = nil
+            .onChange(of: selection) { previous, current in
+                if let current, current != previous {
+                    if historyRestoreOrdinal == current {
+                        historyRestoreOrdinal = nil
+                    } else {
+                        if let pendingHistoryRestoreOrdinal,
+                           coordinator.allFrames.pendingTableSelection == pendingHistoryRestoreOrdinal
+                        {
+                            coordinator.allFrames.pendingTableSelection = nil
+                        }
+                        coordinator.allFrames.recordFrameSelection(current)
+                        pendingHistoryRestoreOrdinal = nil
+                        pendingHistoryBackward = nil
+                        pendingHistoryRequestID = nil
                     }
-                    coordinator.allFrames.recordFrameSelection(current)
-                    pendingHistoryRestoreOrdinal = nil
-                    pendingHistoryBackward = nil
-                    pendingHistoryRequestID = nil
+                }
+                updateSelectedFrameTimeReference(rows: rows)
+            }
+            .onChange(of: coordinator.startGeneration) { _, _ in
+                sourceComments.dismiss()
+                coordinator.allFrames.clearFrameNavigationHistory()
+                state.clearRecentFrameExpressions()
+                historyRestoreOrdinal = nil
+                pendingHistoryRestoreOrdinal = nil
+                pendingHistoryBackward = nil
+                pendingHistoryRequestID = nil
+                state.externalSelectionRequest = nil
+                state.externalSelectionRequestID = nil
+                selection = nil
+            }
+            .onChange(of: state.isEvaluatingFrameExpression) { _, _ in resolveFrameSelections() }
+            .onChange(of: state.acceptedFrameExpressionText) { old, new in
+                guard old != new, !new.isEmpty, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
+            }
+            .onChange(of: coordinator.packetDetailOptions.frameColumns, initial: true) { old, new in
+                for index in 0 ..< PacketDetailOptions.maximumFrameColumns {
+                    columnCustomization[visibility: "field\(index)"] = index < new.count ? .visible : .hidden
+                }
+                if old != new {
+                    state.clearCaptureTimeReferenceColumnValues()
+                    state.clearPinnedFrameColumnValues()
+                    coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
                 }
             }
-            updateSelectedFrameTimeReference(rows: rows)
-        }
-        .onChange(of: coordinator.startGeneration) { _, _ in
-            sourceComments.dismiss()
-            coordinator.allFrames.clearFrameNavigationHistory()
-            state.clearRecentFrameExpressions()
-            historyRestoreOrdinal = nil
-            pendingHistoryRestoreOrdinal = nil
-            pendingHistoryBackward = nil
-            pendingHistoryRequestID = nil
-            state.externalSelectionRequest = nil
-            state.externalSelectionRequestID = nil
-            selection = nil
-        }
-        .onChange(of: state.isEvaluatingFrameExpression) { _, _ in resolveFrameSelections() }
-        .onChange(of: state.acceptedFrameExpressionText) { old, new in
-            guard old != new, !new.isEmpty, let list = state.list else {
-                return
+            .onChange(of: coordinator.packetDetailOptions.validateChecksums, initial: true) { _, validate in
+                coordinator.allFrames.countsBadChecksums = validate
             }
-            coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
-        }
-        .onChange(of: coordinator.packetDetailOptions.frameColumns, initial: true) { old, new in
-            for index in 0 ..< PacketDetailOptions.maximumFrameColumns {
-                columnCustomization[visibility: "field\(index)"] = index < new.count ? .visible : .hidden
+            .onChange(of: coordinator.sessionTimeDisplay.frameTimeReferences) { old, new in
+                let oldCaptureReferences = old.filter { $0.sessionID == nil }.map(\.ordinal)
+                let newCaptureReferences = new.filter { $0.sessionID == nil }.map(\.ordinal)
+                guard showsCumulativeBytes, oldCaptureReferences != newCaptureReferences, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
             }
-            if old != new {
-                state.clearCaptureTimeReferenceColumnValues()
-                state.clearPinnedFrameColumnValues()
-                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
+            .onChange(of: showsCumulativeBytes, initial: true) { old, new in
+                columnCustomization[visibility: "cumulativeBytes"] = new ? .visible : .hidden
+                guard old != new, new, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
             }
-        }
-        .onChange(of: coordinator.packetDetailOptions.validateChecksums, initial: true) { _, validate in
-            coordinator.allFrames.countsBadChecksums = validate
-        }
-        .onChange(of: coordinator.sessionTimeDisplay.frameTimeReferences) { old, new in
-            let oldCaptureReferences = old.filter { $0.sessionID == nil }.map(\.ordinal)
-            let newCaptureReferences = new.filter { $0.sessionID == nil }.map(\.ordinal)
-            guard showsCumulativeBytes, oldCaptureReferences != newCaptureReferences, let list = state.list else {
-                return
+            .onChange(of: state.showsRelativeTCPNumbers) { old, new in
+                guard old != new, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
             }
-            coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
-        }
-        .onChange(of: showsCumulativeBytes, initial: true) { old, new in
-            columnCustomization[visibility: "cumulativeBytes"] = new ? .visible : .hidden
-            guard old != new, new, let list = state.list else {
-                return
-            }
-            coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
-        }
-        .onChange(of: state.showsRelativeTCPNumbers) { old, new in
-            guard old != new, let list = state.list else {
-                return
-            }
-            coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
-        }
-        .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
-            sourceComments.dismiss()
-        }
-        .sheet(item: Binding(
-            get: { commentingFrame.map(FrameCommentTarget.init) },
-            set: { commentingFrame = $0?.id }
-        )) { target in
-            commentSheet(for: target.id)
-        }
-        .sheet(item: $sourceComments.target) { target in
-            SourceFrameCommentsSheet(ordinal: target.id, presentation: sourceComments.presentation) {
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
                 sourceComments.dismiss()
             }
-        }
-        .sheet(isPresented: $isManagingFrameFilters) {
-            FrameFilterPresetManagerSheet(
-                library: coordinator.allFrames.frameFilterLibrary,
-                expectedProjectID: presetProjectID
-            )
-        }
-        .sheet(isPresented: $isManagingColorRules) {
-            FrameColorRuleManagerSheet(
-                library: coordinator.allFrames.frameColorRuleLibrary,
-                expectedProjectID: colorRuleProjectID
-            )
-        }
-        .sheet(item: $namingAddress) { target in
-            FrameAddressNameSheet(
-                address: target.id,
-                addressNames: coordinator.addressNames,
-                projectStore: coordinator.projectStore,
-                expectedProjectID: target.projectID,
-            ) {
-                namingAddress = nil
+            .sheet(item: Binding(
+                get: { commentingFrame.map(FrameCommentTarget.init) },
+                set: { commentingFrame = $0?.id }
+            )) { target in
+                commentSheet(for: target.id)
             }
-        }
-        .alert("Save Frame Filter", isPresented: $isSavingFrameFilter) {
-            TextField("Name", text: $newPresetName)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                let saved = coordinator.allFrames.frameFilterLibrary.save(
-                    name: newPresetName,
-                    expression: state.frameExpressionDraft,
+            .sheet(item: $sourceComments.target) { target in
+                SourceFrameCommentsSheet(ordinal: target.id, presentation: sourceComments.presentation) {
+                    sourceComments.dismiss()
+                }
+            }
+            .sheet(isPresented: $isManagingFrameFilters) {
+                FrameFilterPresetManagerSheet(
+                    library: coordinator.allFrames.frameFilterLibrary,
                     expectedProjectID: presetProjectID
                 )
-                notice = frameFilterSaveNotice(saved)
             }
-        } message: {
-            Text("Saved Frame Filters are local to this Project. Saving does not apply the filter.")
-        }
-        .onChange(of: coordinator.projectStore.activeProjectID) { _, newID in
-            state.clearFrameExpression()
-            state.clearFrameHighlight()
-            state.clearRecentFrameExpressions()
-            presetProjectID = newID
-            isSavingFrameFilter = false
-            isManagingFrameFilters = false
-        }
+            .sheet(isPresented: $isManagingColorRules) {
+                FrameColorRuleManagerSheet(
+                    library: coordinator.allFrames.frameColorRuleLibrary,
+                    expectedProjectID: colorRuleProjectID
+                )
+            }
+            .sheet(item: $namingAddress) { target in
+                FrameAddressNameSheet(
+                    address: target.id,
+                    addressNames: coordinator.addressNames,
+                    projectStore: coordinator.projectStore,
+                    expectedProjectID: target.projectID,
+                ) {
+                    namingAddress = nil
+                }
+            }
+            .alert("Save Frame Filter", isPresented: $isSavingFrameFilter) {
+                TextField("Name", text: $newPresetName)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let saved = coordinator.allFrames.frameFilterLibrary.save(
+                        name: newPresetName,
+                        expression: state.frameExpressionDraft,
+                        expectedProjectID: presetProjectID
+                    )
+                    notice = frameFilterSaveNotice(saved)
+                }
+            } message: {
+                Text("Saved Frame Filters are local to this Project. Saving does not apply the filter.")
+            }
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, newID in
+                state.clearFrameExpression()
+                state.clearFrameHighlight()
+                state.clearRecentFrameExpressions()
+                presetProjectID = newID
+                isSavingFrameFilter = false
+                isManagingFrameFilters = false
+            }
     }
 
     /// Wireshark's Next/Previous Packet in Conversation: the adjacent frame of the
@@ -372,6 +345,16 @@ struct AllFramesWindow: View {
             retainedOrdinals: Set(page?.rows.map(\.ordinal) ?? []),
             firstRetainedOrdinal: page?.firstRetainedOrdinal ?? 1,
             precedingRetainedFrameTimestamp: page?.precedingRetainedFrameTimestamp
+        )
+    }
+
+    func frameRuleColor(_ rgb: UInt32) -> Color {
+        Color(
+            .sRGB,
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255,
+            opacity: 1
         )
     }
 
@@ -1029,16 +1012,6 @@ struct AllFramesWindow: View {
         return RelatedSpan(sessionID: session, first: first, last: last)
     }
 
-    private func frameRuleColor(_ rgb: UInt32) -> Color {
-        Color(
-            .sRGB,
-            red: Double((rgb >> 16) & 0xFF) / 255,
-            green: Double((rgb >> 8) & 0xFF) / 255,
-            blue: Double(rgb & 0xFF) / 255,
-            opacity: 1
-        )
-    }
-
     private func fieldColumn(_ index: Int, _ fields: [FieldKey]) -> some TableColumnContent<CaptureFrameRow, Never> {
         TableColumn(fields.indices.contains(index) ? Self.columnTitle(fields[index]) : "") { row in
             let value = row.columnValues.indices.contains(index) ? row.columnValues[index] : ""
@@ -1173,89 +1146,6 @@ struct AllFramesWindow: View {
     }
 }
 
-extension AllFramesWindow {
-    @ViewBuilder
-    func frameHighlightGlyph(_ row: CaptureFrameRow) -> some View {
-        if coordinator.allFrames.highlightedFrameOrdinals.contains(row.id) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: Theme.Icon.small))
-                .foregroundStyle(.orange)
-                .help("Highlighted by Frame Expression: \(coordinator.allFrames.highlightedFrameExpressionText)")
-                .accessibilityLabel("Highlighted by Frame Expression")
-                .accessibilityHint(coordinator.allFrames.highlightedFrameExpressionText)
-        }
-    }
-
-    @ViewBuilder
-    func temporaryConversationColorGlyph(_ row: CaptureFrameRow) -> some View {
-        if let sessionID = row.sessionID,
-           let slot = coordinator.allFrames.temporaryConversationColorSlots[sessionID],
-           TemporaryConversationColorPalette.backgroundRGB.indices.contains(slot)
-        {
-            Image(systemName: "circle.fill")
-                .font(.system(size: Theme.Icon.small))
-                .foregroundStyle(
-                    selection == row.id || coordinator.allFrames.ignored.contains(row.id)
-                        ? Color.secondary : frameRuleColor(TemporaryConversationColorPalette.foregroundRGB)
-                )
-                .help("Temporary conversation color \(slot + 1)")
-                .accessibilityLabel("Temporary conversation color \(slot + 1)")
-        }
-    }
-
-    @ViewBuilder
-    func frameColorRuleGlyph(_ row: CaptureFrameRow) -> some View {
-        if row.sessionID.flatMap({ coordinator.allFrames.temporaryConversationColorSlots[$0] }) != nil {
-            EmptyView()
-        } else if let id = coordinator.allFrames.frameColorRuleByOrdinal[row.id],
-                  let rule = coordinator.allFrames.frameColorRuleLibrary.rules.first(where: { $0.id == id })
-        {
-            Image(systemName: "circle.fill")
-                .font(.system(size: Theme.Icon.small))
-                .foregroundStyle(frameRuleColor(rule.backgroundRGB))
-                .help("Colorized by \(rule.name): \(rule.expression)")
-                .accessibilityLabel("Colorized by \(rule.name)")
-                .accessibilityHint(rule.expression)
-        } else if coordinator.allFrames.frameColorRuleUnknownOrdinals.contains(row.id) {
-            Image(systemName: "circle.dashed")
-                .font(.system(size: Theme.Icon.small))
-                .foregroundStyle(.secondary)
-                .help("Color rule result unknown; no rule was applied")
-                .accessibilityLabel("Color rule result unknown")
-        }
-    }
-
-    @ViewBuilder
-    func colorizedCell(_ row: CaptureFrameRow, @ViewBuilder content: () -> some View) -> some View {
-        if let sessionID = row.sessionID,
-           let slot = coordinator.allFrames.temporaryConversationColorSlots[sessionID],
-           TemporaryConversationColorPalette.backgroundRGB.indices.contains(slot),
-           selection != row.id, !coordinator.allFrames.ignored.contains(row.id)
-        {
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(frameRuleColor(TemporaryConversationColorPalette.foregroundRGB))
-                .background(frameRuleColor(TemporaryConversationColorPalette.backgroundRGB[slot]))
-                .help("Temporary conversation color \(slot + 1)")
-                .accessibilityHint("Temporary conversation color \(slot + 1); overrides saved coloring rules")
-        } else if let id = coordinator.allFrames.frameColorRuleByOrdinal[row.id],
-                  let rule = coordinator.allFrames.frameColorRuleLibrary.rules.first(where: { $0.id == id }),
-                  selection != row.id, !coordinator.allFrames.ignored.contains(row.id)
-        {
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(frameRuleColor(rule.foregroundRGB))
-                .background(frameRuleColor(rule.backgroundRGB))
-                .help("Colorized by \(rule.name): \(rule.expression)")
-                .accessibilityHint("Colorized by rule \(rule.name): \(rule.expression)")
-        } else if coordinator.allFrames.ignored.contains(row.id), selection != row.id {
-            content().foregroundStyle(.tertiary)
-        } else {
-            content()
-        }
-    }
-}
-
 // MARK: - Page retention
 
 /// The page a reload should come back to: the one the window is showing, or the
@@ -1278,4 +1168,49 @@ private func frameFilterSaveNotice(_ saved: Bool) -> String {
     saved
         ? String(localized: "Frame filter saved to this Project.")
         : String(localized: "Could not save this Frame Filter. Choose a valid name and expression.")
+}
+
+// MARK: - Frame-list content
+
+/// `body` is one long modifier chain. Leaving the list's six states inline put
+/// the whole chain past what the type checker will solve on the toolchain CI
+/// builds with, so they are a separate expression here.
+extension AllFramesWindow {
+    @ViewBuilder
+    func framesContent(
+        state: CaptureFrameListState,
+        rows: [CaptureFrameRow],
+        pinnedRows: [CaptureFrameRow]
+    )
+        -> some View
+    {
+        if state.isLoading {
+            FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
+                loading(state)
+            }
+        } else if let error = state.error {
+            ContentUnavailableView {
+                Label("Frames Unavailable", systemImage: "list.number")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { coordinator.loadAllFrames(force: true) }
+            }
+        } else if state.list == nil {
+            ContentUnavailableView {
+                Label("No Frames Listed", systemImage: "list.number")
+            } actions: {
+                Button("List Frames") { coordinator.loadAllFrames(force: true) }
+            }
+        } else if state.isEvaluatingFrameExpression {
+            FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
+                ProgressView("Filtering frames…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if rows.isEmpty, pinnedRows.isEmpty {
+            NoFramesMatchView(state: state)
+        } else {
+            frameListContent(rows: rows, pinnedRows: pinnedRows, state: state)
+        }
+    }
 }
