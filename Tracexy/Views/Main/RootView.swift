@@ -92,6 +92,9 @@ struct RootView: View {
         .sheet(isPresented: $coordinator.isSplitCapturePresented) {
             SplitCaptureSheet(coordinator: coordinator)
         }
+        .sheet(isPresented: $coordinator.isTimeShiftPresented) {
+            FrameTimeShiftSheet(coordinator: coordinator)
+        }
         // Changing Projects while a capture runs is an explicit, reversible choice.
         // Cancel leaves the outgoing Project untouched; Stop and Switch waits for
         // the helper's final drain, fold and History write before anything moves.
@@ -332,7 +335,7 @@ struct MainDetailView: View {
     var body: some View {
         let workspace = coordinator.activeWorkspace
         let footerSurface = statusSurface(for: workspace.sidebarSelection)
-        surface(workspace)
+        surfaceStack(workspace)
             .tracexySafeAreaBar(edge: .bottom) {
                 SessionStatusBar(snapshot: footerSnapshot(workspace, surface: footerSurface))
             }
@@ -443,6 +446,23 @@ struct MainDetailView: View {
             InspectorView(coordinator: coordinator)
         }
         .tracexyDenseScrollEdge()
+    }
+
+    /// The active surface with the frame-export progress banner above it.
+    ///
+    /// Export Frames… can be started from Overview, Flow and History as well as the
+    /// session list, and while it runs the coordinator refuses Start, Clear and Open
+    /// by telling the investigator to cancel the export. The banner carries the only
+    /// Cancel Export control, so it belongs to the workspace column rather than to
+    /// the session surface, where three of the four launch points could not see it.
+    private func surfaceStack(_ workspace: WorkspaceState) -> some View {
+        VStack(spacing: 0) {
+            if coordinator.isExportingFrames {
+                FrameExportProgressBanner(coordinator: coordinator)
+                Divider()
+            }
+            surface(workspace)
+        }
     }
 
     @ViewBuilder
@@ -737,5 +757,43 @@ private extension NSItemProvider {
                 continuation.resume(returning: url)
             }
         }
+    }
+}
+
+// MARK: - FrameExportProgressBanner
+
+/// Root chrome for a running frame export: what is being written, how far it has
+/// got, and the one control that cancels it.
+///
+/// Lives in the workspace column so it is visible from every surface the export can
+/// be started from.
+struct FrameExportProgressBanner: View {
+    let coordinator: MainContentCoordinator
+
+    var body: some View {
+        HStack(spacing: Theme.Metrics.spacingM) {
+            Image(systemName: "square.and.arrow.up")
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(coordinator.isCancellingFrameExport ? "Cancelling export…" : "Exporting frames…")
+                    .font(Theme.Typography.bodyEmphasis)
+                if let name = coordinator.frameExportName {
+                    Text(name).font(Theme.Typography.caption).lineLimit(1).truncationMode(.middle)
+                }
+                if let fraction = coordinator.frameExportFraction {
+                    ProgressView(value: fraction)
+                        .accessibilityValue(Text(fraction, format: .percent))
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+            Button("Cancel Export") { coordinator.cancelFrameExport() }
+                .disabled(coordinator.isCancellingFrameExport)
+        }
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingS)
+        .background(Color.accentColor.opacity(0.06))
+        .accessibilityIdentifier("frame-export-progress")
     }
 }

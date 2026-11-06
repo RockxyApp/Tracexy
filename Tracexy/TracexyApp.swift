@@ -1,6 +1,69 @@
 import AppKit
 import SwiftUI
 
+// MARK: - FrameTimeCommandTarget
+
+/// A frame selection belongs to one window, while reference storage is shared.
+struct FrameTimeCommandTarget {
+    let reference: FrameTimeReference
+    let projectID: UUID
+    let captureGeneration: Int
+    let captureRow: CaptureFrameRow?
+
+    func isCurrent(projectID: UUID, captureGeneration: Int, sessionID: UUID?) -> Bool {
+        self.projectID == projectID && self.captureGeneration == captureGeneration
+            && (reference.sessionID == nil || reference.sessionID == sessionID)
+    }
+}
+
+// MARK: - FrameTimeCommandTargetKey
+
+private struct FrameTimeCommandTargetKey: FocusedValueKey {
+    typealias Value = FrameTimeCommandTarget
+}
+
+extension FocusedValues {
+    var frameTimeCommandTarget: FrameTimeCommandTarget? {
+        get { self[FrameTimeCommandTargetKey.self] }
+        set { self[FrameTimeCommandTargetKey.self] = newValue }
+    }
+}
+
+// MARK: - SidebarFilterCommands
+
+/// View ▸ Filter Sidebar. The action is published by the sidebar footer itself
+/// through `focusedSceneValue`, so the item is always listed and disabled in a
+/// scene that has no sidebar, rather than disappearing from the menu.
+struct SidebarFilterCommands: Commands {
+    // MARK: Internal
+
+    var body: some Commands {
+        CommandGroup(after: .sidebar) {
+            Button("Filter Sidebar") {
+                focusSidebarFilter?.focus()
+            }
+            .keyboardShortcut("j", modifiers: [.command, .option])
+            .disabled(focusSidebarFilter == nil)
+        }
+    }
+
+    // MARK: Private
+
+    @FocusedValue(\.focusSidebarFilter) private var focusSidebarFilter: SidebarFilterFocusAction?
+}
+
+// MARK: - SidebarMenuCommands
+
+/// The View menu's sidebar commands as one element. `.commands` is built with
+/// `CommandsBuilder`, which takes at most ten children, so sibling groups that
+/// belong together are composed here rather than listed separately.
+struct SidebarMenuCommands: Commands {
+    var body: some Commands {
+        SidebarCommands()
+        SidebarFilterCommands()
+    }
+}
+
 // MARK: - TracexyApp
 
 /// Started from `main.swift`, which first gives the built-in command line a chance
@@ -450,6 +513,10 @@ struct TracexyApp: App {
         let base = WindowGroup {
             RootView(coordinator: coordinator)
                 .frame(minWidth: 1_000, minHeight: 640)
+                // Published here, not from the sidebar footer: the split view
+                // re-hosts the sidebar in its own NSHostingController, so a
+                // focused value sent from inside it never reaches these commands.
+                .focusedSceneValue(\.focusSidebarFilter, SidebarFilterFocusAction())
                 .expressionLibrarySupport(coordinator: coordinator)
                 .workspaceTabsSupport(coordinator: coordinator)
                 .geoIPSupport(
@@ -499,7 +566,10 @@ struct TracexyApp: App {
             // View ▸ Show/Hide Sidebar (⌃⌘S). Routes through the NSSplitViewController
             // responder chain, so the native collapse KVO resynchronizes RootView's
             // `isSidebarPresented` with the native toolbar toggle.
-            SidebarCommands()
+            // Bundled: the sidebar toggle plus View ▸ Filter Sidebar (⌥⌘J), which
+            // gives the pointer-only filter field a keyboard and menu-bar route,
+            // matching Xcode's own ⌥⌘J for the navigator filter.
+            SidebarMenuCommands()
 
             // Edit ▸ Find (⌘F). Reuses the standard Find placement so the shortcut
             // reads as native, then routes to the Sessions search box the app
@@ -786,6 +856,10 @@ private struct TracexyCaptureFileCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: [.command, .option])
 
+            Button("Import Hex Dump…") {
+                coordinator.presentHexDumpImportPanel()
+            }
+
             Button("Merge Captures…") {
                 coordinator.presentMergeCapturesPanel()
             }
@@ -851,6 +925,18 @@ private struct TracexyCaptureFileCommands: Commands {
             }
         }
 
+        CommandGroup(after: .textEditing) {
+            Button("Time Shift…") {
+                coordinator.presentTimeShiftSheet()
+            }
+            .disabled(!coordinator.canTimeShiftSavedCapture)
+
+            Button("Undo Time Shift") {
+                coordinator.undoTimeShift()
+            }
+            .disabled(!coordinator.canUndoTimeShift)
+        }
+
         // File ▸ Export Frames… sits with the other export items (HIG: prefer a
         // format pop-up in the Save sheet; no custom shortcut for an occasional
         // command).
@@ -889,6 +975,95 @@ private struct TracexyCaptureFileCommands: Commands {
                 DissectionExportController.shared.export(from: coordinator)
             }
             .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
+            Button("Export Marked Packet Dissections…") {
+                DissectionExportController.shared.export(from: coordinator, markedOnly: true)
+            }
+            .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                || DissectionExportController.shared.isExporting)
+            Button("Export First to Last Marked Dissections…") {
+                DissectionExportController.shared.exportFirstToLastMarked(from: coordinator)
+            }
+            .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                || DissectionExportController.shared.isExporting)
+            Button("Export Capture Frame Range Dissections…") {
+                DissectionExportController.shared.exportFrameRange(from: coordinator)
+            }
+            .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
+            Menu("Print Packet Views") {
+                Button("Custom Packet Views…") {
+                    DissectionExportController.shared.printCustomPacketViews(from: coordinator)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Divider()
+                Button("Packet Summaries…") {
+                    DissectionExportController.shared.printDissections(from: coordinator, layout: .summary)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Button("Marked Packet Summaries…") {
+                    DissectionExportController.shared.printDissections(
+                        from: coordinator,
+                        markedOnly: true,
+                        layout: .summary
+                    )
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Button("First to Last Marked Summaries…") {
+                    DissectionExportController.shared.printDissections(
+                        from: coordinator, firstToLastMarked: true, layout: .summary
+                    )
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Divider()
+                Button("Packet Dissections…") {
+                    DissectionExportController.shared.printDissections(from: coordinator)
+                }
+                .keyboardShortcut("p")
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Button("Marked Packet Dissections…") {
+                    DissectionExportController.shared.printDissections(from: coordinator, markedOnly: true)
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Button("First to Last Marked Dissections…") {
+                    DissectionExportController.shared.printDissections(from: coordinator, firstToLastMarked: true)
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Divider()
+                Button("Packet Bytes…") {
+                    DissectionExportController.shared.printDissections(from: coordinator, layout: .bytes)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Button("Marked Packet Bytes…") {
+                    DissectionExportController.shared.printDissections(
+                        from: coordinator, markedOnly: true, layout: .bytes
+                    )
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Button("First to Last Marked Bytes…") {
+                    DissectionExportController.shared.printDissections(
+                        from: coordinator, firstToLastMarked: true, layout: .bytes
+                    )
+                }
+                .disabled(!coordinator.canExportFrames || coordinator.allFrames.marked.isEmpty
+                    || DissectionExportController.shared.isPrinting)
+                Divider()
+                Button("Capture Frame Range Summaries…") {
+                    DissectionExportController.shared.printFrameRange(from: coordinator, layout: .summary)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Button("Capture Frame Range Dissections…") {
+                    DissectionExportController.shared.printFrameRange(from: coordinator, layout: .details)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                Button("Capture Frame Range Bytes…") {
+                    DissectionExportController.shared.printFrameRange(from: coordinator, layout: .bytes)
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+            }
         }
 
         // View ▸ Session Time: how the Sessions table shows start times.
@@ -914,6 +1089,14 @@ private struct TracexyCaptureFileCommands: Commands {
             )) {
                 ForEach(FrameTimeFormat.allCases) { format in
                     Text(format.menuTitle).tag(format)
+                }
+            }
+            Picker("Frame Time Precision", selection: Binding(
+                get: { coordinator.sessionTimeDisplay.framePrecision },
+                set: { coordinator.sessionTimeDisplay.framePrecision = $0 }
+            )) {
+                ForEach(FrameTimePrecision.allCases) { precision in
+                    Text(precision.title).tag(precision)
                 }
             }
             // View ▸ Validate Checksums: Wireshark's per-protocol checksum checks,
@@ -951,18 +1134,25 @@ private struct TracexyCaptureFileCommands: Commands {
             }
             .keyboardShortcut("0", modifiers: .command)
             .disabled(coordinator.packetDetailOptions.textZoom == 0)
-            if coordinator.sessionTimeDisplay.selectedFrameIsReference {
-                Button("Clear Time Reference") {
-                    coordinator.sessionTimeDisplay.toggleReferenceOnSelectedFrame()
+            let target = currentFrameTimeTarget
+            let isReference = target.map { target in
+                if let sessionID = target.reference.sessionID {
+                    return coordinator.sessionTimeDisplay.isTimeReference(
+                        sessionID: sessionID, ordinal: target.reference.ordinal
+                    )
                 }
-                .keyboardShortcut("t", modifiers: .command)
-            } else {
-                Button("Set Time Reference") {
-                    coordinator.sessionTimeDisplay.toggleReferenceOnSelectedFrame()
+                return coordinator.sessionTimeDisplay.isCaptureTimeReference(ordinal: target.reference.ordinal)
+            } == true
+            Button(isReference ? "Clear Time Reference" : "Set Time Reference") {
+                if let target = currentFrameTimeTarget {
+                    coordinator.toggleFrameTimeReference(target.reference, captureRow: target.captureRow)
                 }
-                .keyboardShortcut("t", modifiers: .command)
-                .disabled(coordinator.sessionTimeDisplay.selectedFrame == nil)
             }
+            .keyboardShortcut("t", modifiers: .command)
+            .disabled(target == nil || (!isReference && target.map {
+                !coordinator.sessionTimeDisplay.canAddTimeReference(at: $0.reference.ordinal)
+            } == true))
+            .help("Up to \(SessionTimeDisplay.maximumTimeReferences) temporary references per capture")
         }
 
         // Statistics: the report windows over the sessions in view, as Wireshark's
@@ -1076,7 +1266,22 @@ private struct TracexyCaptureFileCommands: Commands {
 
     // MARK: Private
 
+    @FocusedValue(\.frameTimeCommandTarget) private var frameTimeCommandTarget
+
     @Environment(\.openWindow) private var openWindow
+
+    private var currentFrameTimeTarget: FrameTimeCommandTarget? {
+        guard let target = frameTimeCommandTarget,
+              target.isCurrent(
+                  projectID: coordinator.projectStore.activeProjectID,
+                  captureGeneration: coordinator.startGeneration,
+                  sessionID: coordinator.activeWorkspace.selectedSessionID
+              ) else
+        {
+            return nil
+        }
+        return target
+    }
 }
 
 // MARK: - CaptureInfoWindowScene

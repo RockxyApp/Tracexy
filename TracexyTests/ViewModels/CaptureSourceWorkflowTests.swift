@@ -105,6 +105,8 @@ struct CaptureSourceWorkflowTests {
         await env.coordinator.waitForExternalCaptureOpen()
         let sessionIDs = env.coordinator.sessions.map(\.id)
         env.coordinator.closeCapture()
+        let item = try #require(env.coordinator.savedCaptures.first)
+        #expect(item.availability == .available)
 
         let moved = source.deletingLastPathComponent().appendingPathComponent("elsewhere")
             .appendingPathComponent("mover.pcap")
@@ -113,14 +115,12 @@ struct CaptureSourceWorkflowTests {
             withIntermediateDirectories: true
         )
         try FileManager.default.moveItem(at: source, to: moved)
-        env.coordinator.refreshSavedCaptures()
-        let item = try #require(env.coordinator.savedCaptures.first)
-        #expect(item.availability == .missing)
-        #expect(!item.isReadable)
 
         env.coordinator.openSavedCapture(item)
+        #expect(env.coordinator.isOpeningSavedCapture)
         await env.coordinator.waitForSavedCaptureOpen()
         #expect(env.coordinator.unavailableReferencedCapture?.id == item.id)
+        #expect(env.coordinator.savedCaptures.first?.availability == .missing)
         #expect(env.coordinator.captureError == nil)
         #expect(!env.coordinator.isViewingSavedCapture)
 
@@ -134,12 +134,49 @@ struct CaptureSourceWorkflowTests {
         try reference.relocated(to: moved, identity: identity).write(to: #require(item.sidecarURL))
         env.coordinator.unavailableReferencedCapture = nil
         env.coordinator.refreshSavedCaptures()
+        await env.coordinator.waitForSavedCaptureAvailabilityRefresh()
         let relocated = try #require(env.coordinator.savedCaptures.first)
         #expect(relocated.availability == .available)
         #expect(relocated.id == item.id)
         env.coordinator.openSavedCapture(relocated)
         await env.coordinator.waitForSavedCaptureOpen()
         #expect(env.coordinator.sessions.map(\.id) == sessionIDs)
+    }
+
+    @Test("Reference availability is checked away from the main thread")
+    func referenceOpenProbeIsOffMain() async throws {
+        let env = try await makeEnvironment()
+        defer { env.tearDown() }
+        let source = try env.externalCapture("probe")
+        env.coordinator.openExternalCapture(source, copiesIntoLibrary: false)
+        await env.coordinator.waitForExternalCaptureOpen()
+        env.coordinator.closeCapture()
+        let item = try #require(env.coordinator.savedCaptures.first)
+        let record = ReferenceProbeThreadRecord()
+        env.coordinator.savedCaptureReferenceProbe = .init { _ in
+            record.noteCurrentThread()
+            return .missing
+        }
+
+        env.coordinator.openSavedCapture(item)
+        await env.coordinator.waitForSavedCaptureOpen()
+        #expect(record.ranOnMainThread == false)
+        #expect(env.coordinator.unavailableReferencedCapture?.availability == .missing)
+        #expect(env.coordinator.savedCaptures.first?.availability == .missing)
+        #expect(!env.coordinator.isViewingSavedCapture)
+    }
+
+    @Test("Library refresh marks a reference checking until its background probe completes")
+    func libraryRefreshChecksReferenceOffMain() async throws {
+        let env = try await makeEnvironment()
+        defer { env.tearDown() }
+        let source = try env.externalCapture("refresh")
+        env.coordinator.openExternalCapture(source, copiesIntoLibrary: false)
+        await env.coordinator.waitForExternalCaptureOpen()
+        env.coordinator.refreshSavedCaptures()
+        #expect(env.coordinator.savedCaptures.first?.availability == .checking)
+        await env.coordinator.waitForSavedCaptureAvailabilityRefresh()
+        #expect(env.coordinator.savedCaptures.first?.availability == .available)
     }
 
     @Test("A file replaced on disk enables Reload and reload re-reads it")
@@ -159,6 +196,7 @@ struct CaptureSourceWorkflowTests {
             [.modificationDate: Date(timeIntervalSinceNow: 5)], ofItemAtPath: source.path
         )
         env.coordinator.noteActiveSavedCaptureAvailability()
+        await env.coordinator.waitForActiveSavedCaptureAvailability()
         #expect(env.coordinator.activeSavedCaptureChangedOnDisk)
         #expect(env.coordinator.canReloadActiveSavedCapture)
 
@@ -269,4 +307,27 @@ struct CaptureSourceWorkflowTests {
         coordinator.clearRecentCaptures()
         return Environment(coordinator: coordinator, root: root, isolation: isolation)
     }
+}
+
+// MARK: - ReferenceProbeThreadRecord
+
+private final class ReferenceProbeThreadRecord: @unchecked Sendable {
+    // MARK: Internal
+
+    var ranOnMainThread: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func noteCurrentThread() {
+        lock.lock()
+        value = Thread.isMainThread
+        lock.unlock()
+    }
+
+    // MARK: Private
+
+    private let lock = NSLock()
+    private var value: Bool?
 }

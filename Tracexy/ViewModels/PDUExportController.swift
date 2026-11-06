@@ -104,15 +104,17 @@ final class PDUExportController {
     // MARK: Private
 
     private static func warning(_ summary: PDUExportSummary) -> String? {
-        if summary.pduCount == 0 {
+        if summary.pduCount == 0, summary.ambiguousStreamCount == 0 {
             return String(
                 localized: "No recognized message was found in the sessions in view, so the PDU file is empty."
             )
         }
-        if summary.skippedStreamCount > 0 || summary.omittedPDUCount > 0 {
+        if summary.skippedStreamCount > 0 || summary.ambiguousStreamCount > 0 || summary.omittedPDUCount > 0 {
             return String(localized: """
-            Exported \(summary.pduCount.formatted()) PDUs; \(summary.skippedStreamCount.formatted()) streams and \
-            \(summary.omittedPDUCount.formatted()) PDUs past the export limits were left out.
+            Exported \(summary.pduCount.formatted()) PDUs; \(summary.skippedStreamCount
+                .formatted()) streams exceeded the scan limit, \
+            \(summary.ambiguousStreamCount.formatted()) TCP streams lacked a proven packet order, and \
+            \(summary.omittedPDUCount.formatted()) PDUs exceeded the export limits.
             """)
         }
         return nil

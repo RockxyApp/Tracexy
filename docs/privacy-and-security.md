@@ -6,7 +6,8 @@ page states plainly what the app does and does not do today.
 ## Privacy posture
 
 - **Local-first.** Captured traffic stays on your Mac. Tracexy does not upload it to any server. The
-  "Keep all data on this Mac" preference reflects this default posture.
+  Privacy pane states **All data stays on this Mac** — a statement of the build, not a switch,
+  because there is no upload path to turn off.
 - **Capture stays under user control.** By default, live capture begins when you press **Start**. If
   you explicitly enable **Settings → Capture → Auto-start capture on launch**, Tracexy starts capture
   after launch setup completes. The gate on capturing is the one-time operating-system approval of
@@ -50,7 +51,8 @@ credentials, or masking addresses produces a version-2 protected document that c
 frame metadata but no raw packet bytes. Credential stripping also removes DNS query/answer strings and
 the free-form decoded summary; IP masking replaces literal IPv4/IPv6 addresses in exported summary
 fields with a fixed placeholder. The document records the applied protections as machine-readable
-metadata. A version-1 document with packet bytes is produced only when every protection is disabled.
+metadata. A version-1 document with packet bytes — version 3 when any timing value is null — is
+produced only when every protection is disabled.
 
 **Mask IP addresses** also applies to every **File → Export Investigation** file (both CSVs, the JSON
 and the Markdown report): hosts, endpoints, your notes, finding text, the session expression and the
@@ -126,15 +128,15 @@ with the app over XPC. This boundary is the highest-value part of the codebase t
   command execution, shell, or file access. Frames are drained as typed `NSSecureCoding` objects
   (`FrameBatchMessage`/`CapturedFrameMessage`) with the secure-coding class allow-list configured on
   both endpoints; the app validates every field defensively and rejects malformed metadata rather than
-  trusting it. The current contract is protocol **v5**. Known protocol v4 helpers remain capture-
-  compatible for a one-time explicit migration; unknown or future protocols fail closed rather than
+  trusting it. The current contract is protocol **v6**. Known v4 and v5 helpers remain capture-
+  compatible, v4 only through a one-time explicit migration; unknown or future protocols fail closed rather than
   being silently treated as compatible. Protocol, build, and marketing version have distinct roles,
   so matching display text alone is never accepted as proof that the expected helper is running.
-- **Approval-preserving executable updates.** Protocol v5 reports a bounded SHA-256 executable
+- **Approval-preserving executable updates.** Protocol v5 and later report a bounded SHA-256 executable
   digest, launch UUID, process identifier, build, and protocol. When an idle approved helper differs
   from the signed helper embedded in the app, the app asks it to acknowledge a maintenance exit and
-  then verifies a fresh launch, exact metadata, and exact digest. Normal v5 updates do not unregister
-  the service or discard Login Items approval. The legacy v4-to-v5 transition remains an explicit
+  then verifies a fresh launch, exact metadata, and exact digest. Normal v5-and-later updates do not unregister
+  the service or discard Login Items approval. The legacy v4 transition remains an explicit
   user action because v4 has no maintenance selector.
 - **Bidirectional code-sign validation.** The helper validates every connecting caller (signing-team
   match with a certificate-chain fallback, plus a bundle-identity allowlist checked against the

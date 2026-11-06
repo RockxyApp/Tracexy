@@ -1,0 +1,39 @@
+---
+title: Follow Stream
+description: Reconstruct a bounded conversation when a stable packet source is available.
+---
+
+
+**Status: Partial**
+
+Reconstruct a bounded conversation when a stable packet source is available.
+
+## Try it
+
+Select a TCP or UDP session in an opened capture or a fully stopped live source, then open the **Stream** facet. A TCP session offers **Follow Stream** (read as **Follow TCP Stream**); a UDP session offers **Follow Conversation** (**Follow UDP Conversation**), listing the datagrams one by one.
+
+Inspect each direction and its reported gaps or overlaps. Find text in the transcript, optionally matching case exactly, and step between matches. Where the bytes support it the facet also lists:
+
+- **HTTP** exchanges, with **Show Body…** and a save action per response.
+- **HTTP/2** streams.
+- **WebSocket** messages.
+- **DNS** messages for a followed UDP conversation, paired query to response.
+- **X.509 certificates** read from a plaintext TLS handshake, savable as a PEM chain.
+
+Copy or save a transcript as **Raw Bytes**, **ASCII Text**, **Hex Dump**, **C Arrays**, or **YAML**, for both directions or one, and print it.
+
+## What you can see
+
+The reader rescans an identity-checked PCAP or PCAPNG source on demand. Nothing is sent or exported by the read itself. It reconstructs bounded bidirectional TCP byte runs, reports how many frames it scanned and whether the source was a complete file or a truncated tail, and names its observed limitations instead of silently presenting an incomplete stream as complete.
+
+## Coverage limits
+
+A changing source, lost frames, truncation, or missing segments can prevent a complete transcript. Readings are produced from the bytes actually retained: an encrypted stream stays encrypted, and application decoding covers the protocols listed above rather than every application stream.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Sessions" href="/features/sessions" />
+  <Card title="Packet inspector" href="/features/packet-inspector" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

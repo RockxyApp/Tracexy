@@ -14,6 +14,21 @@ struct SavedCaptureStreamLoaderTests {
     // MARK: - Batch equivalence and cleared raw bytes
 
     @Test
+    func savedLoadReturnsPcapngNameResolutionMappings() throws {
+        var bytes = PcapngFixture.sectionHeader(little: true)
+        bytes += PcapngFixture.interfaceDescription(little: true)
+        bytes += PcapngFixture.nameResolutionBlock(little: true, records: [
+            (1, [203, 0, 113, 8] + Array("edge.example.test\0".utf8)),
+        ])
+        try Self.withRawPcap(bytes, ext: "pcapng") { url in
+            let result = try SavedCaptureStreamLoader(contentsOf: url).load()
+            #expect(result.nameResolutionRecords.map(\.address) == ["203.0.113.8"])
+            #expect(result.nameResolutionRecords.map(\.name.text) == ["edge.example.test"])
+            #expect(result.properties.blockInventory.nameResolutionBlockCount == 1)
+        }
+    }
+
+    @Test
     func sessionsEqualBatchBuildWithRepresentativeBytesCleared() throws {
         let frames: [(bytes: [UInt8], time: TimeInterval)] = [
             (
@@ -58,6 +73,32 @@ struct SavedCaptureStreamLoaderTests {
             #expect(result.completeness == .complete)
             #expect(result.totalFrames == 3)
             #expect(result.defaultLinkType == LinkType.ethernet)
+        }
+    }
+
+    @Test("Saved loader correction updates session and capture metadata time projections")
+    func timestampOverlayRebuildsDerivedTimes() throws {
+        let frames: [(bytes: [UInt8], time: TimeInterval)] = [
+            (PacketBuilder.tlsClientHelloFrame(
+                sni: "one.example", src: "10.0.0.5", dst: "203.0.113.1", srcPort: 40_001
+            ), 1.0),
+            (PacketBuilder.tlsClientHelloFrame(
+                sni: "two.example", src: "10.0.0.5", dst: "203.0.113.2", srcPort: 40_002
+            ), 2.0),
+        ]
+        let correction = try CaptureTimeCorrection(shiftBy: 9)
+        try Self.withPcap(frames) { url in
+            let result = try SavedCaptureStreamLoader(
+                contentsOf: url, configuration: .init(timeCorrection: correction)
+            ).load()
+            #expect(result.metadata.firstTimedAt == Date(timeIntervalSince1970: 10))
+            #expect(result.metadata.lastTimedAt == Date(timeIntervalSince1970: 11))
+            #expect(result.sessions.map(\.startTime).compactMap { $0 }.sorted() == [
+                Date(timeIntervalSince1970: 10), Date(timeIntervalSince1970: 11),
+            ])
+            let source = try SavedCaptureStreamLoader(contentsOf: url).load()
+            #expect(source.metadata.firstTimedAt == Date(timeIntervalSince1970: 1))
+            #expect(source.metadata.lastTimedAt == Date(timeIntervalSince1970: 2))
         }
     }
 
@@ -149,6 +190,24 @@ struct SavedCaptureStreamLoaderTests {
         try Data([UInt8]()).write(to: url)
         #expect(throws: (any Error).self) {
             _ = try CaptureEvidenceReader.read(reference, from: url)
+        }
+    }
+
+    @Test
+    func evidenceReadRejectsReplacementDuringRead() throws {
+        let hello = PacketBuilder.tlsClientHelloFrame(
+            sni: "during.example", src: "10.0.0.1", dst: "203.0.113.7", srcPort: 41_000
+        )
+        let url = try Self.makeURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(Self.pcapBytes([(hello, 1.0)])).write(to: url)
+        let loader = try SavedCaptureStreamLoader(contentsOf: url)
+        let result = try loader.load()
+        let reference = try #require(result.evidence.values.first)
+        #expect(throws: PacketError.self) {
+            _ = try CaptureEvidenceReader.read(reference, from: url) {
+                try Data(repeating: 0xA5, count: Int(reference.identity.size)).write(to: url, options: .atomic)
+            }
         }
     }
 

@@ -99,9 +99,14 @@ extension TracexyCommandLine {
                 ? "No TCP session matches; follow needs --expression naming exactly one."
                 : "\(tuples.count) TCP sessions match; follow needs --expression naming exactly one.")
         }
-        let result = try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: tuple).read()
-        let turns = FollowStreamExport.turns(of: result)
-        let bytes = FollowStreamExport.data(turns, format: invocation.followFormat, side: .both, tuple: tuple)
+        let result = try FollowStreamReader(
+            contentsOf: url, expectedIdentity: identity, tuple: tuple,
+            sourceToken: SavedCaptureStreamLoader.sourceToken(for: identity)
+        ).read()
+        let snapshot = try FollowStreamExport.snapshot(of: result)
+        let bytes = try FollowStreamExport.data(
+            snapshot, format: invocation.followFormat, side: .both, tuple: tuple
+        )
         if invocation.followFormat == .raw {
             data(bytes)
         } else {

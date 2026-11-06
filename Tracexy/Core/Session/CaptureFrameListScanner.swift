@@ -17,6 +17,11 @@ nonisolated struct CaptureFrameRow: Identifiable, Hashable, Sendable {
     let sessionID: UUID?
     let interfaceID: Int
     let hasComment: Bool
+    var frameCommentReference: CaptureFrameCommentReference?
+    /// Capture-interface direction; distinct from the conversation's endpoint direction.
+    var captureDirection: CaptureDirection = .unknown
+    /// Timestamp state of the packet immediately before this row in capture order.
+    var previousCapturedFrame: FrameTimePredecessor = .unknown
     /// Why decoding stopped early — Wireshark's malformed and short frames.
     var decodeStop: DecodeStop?
     /// An HTTP/1 request or response line, for Statistics ▸ HTTP.
@@ -33,9 +38,14 @@ nonisolated struct CaptureFrameRow: Identifiable, Hashable, Sendable {
     var ip: IPFrameFact?
     /// An SMB2, LDAP or Kerberos message, for Statistics ▸ Service Response Time.
     var srt: SRTFrameFact?
+    /// Compact typed facts for packet-level Frame Expressions; no payload or
+    /// rendered Info text is retained for filtering.
+    var filterFacts: FrameFilterFacts?
     /// The values of the columns applied from Layers (Apply as Column), in their
     /// order; a field that occurs more than once lists each occurrence, comma-separated.
     var columnValues: [String] = []
+    /// Capture-wide sum through this frame; `nil` only if the UInt64 sum overflows.
+    var cumulativeCapturedBytes: UInt64?
     /// An IPv4, TCP, UDP or ICMP checksum is wrong; shown only with View ▸ Validate
     /// Checksums on, since frames sent from this Mac are often offloaded.
     var hasBadChecksum = false
@@ -171,10 +181,18 @@ nonisolated struct DNSFrameFact: Hashable, Sendable {
 /// The bounded outcome of one ``CaptureFrameListScanner`` pass.
 nonisolated struct CaptureFrameList: Sendable, Equatable {
     let identity: PcapFileIdentity
-    /// Frames in capture order, at most ``CaptureFrameListScanner/Configuration/maxRetainedFrames``.
+    /// A bounded window in capture order, at most ``CaptureFrameListScanner/Configuration/maxRetainedFrames``.
     let rows: [CaptureFrameRow]
+    /// Small off-page row set requested by bounded All Frames annotations.
+    var auxiliaryRows: [CaptureFrameRow] = []
     let scannedFrameCount: Int
     let completeness: CaptureLoadCompleteness
+    /// First one-based ordinal requested for this retained window.
+    var firstRetainedOrdinal = 1
+    /// Original capture time origin, even when the retained window starts later.
+    var captureStartTimestamp: Date?
+    /// The frame immediately before this window, for a boundary delta.
+    var precedingRetainedFrameTimestamp: Date?
     /// Listed frames whose decoding stopped early (malformed or cut short).
     var decodeProblemCount = 0
     /// Listed frames with a wrong checksum that decoded cleanly otherwise.
@@ -191,13 +209,66 @@ nonisolated struct CaptureFrameList: Sendable, Equatable {
     }
 }
 
+// MARK: - TCPRelativeSequenceValues
+
+/// Display-only relative TCP values. A missing reverse-direction base stays
+/// unknown instead of exposing its raw acknowledgement as if it were relative.
+nonisolated struct TCPRelativeSequenceValues: Sendable {
+    let sequence: UInt32?
+    let acknowledgement: UInt32?
+}
+
+// MARK: - TCPRelativeSequenceProjection
+
+/// Capture-order TCP sequence origins for the All Frames presentation. It is
+/// deliberately bounded; conversations beyond the cap have unknown relative values.
+nonisolated struct TCPRelativeSequenceProjection: Sendable {
+    static let maximumConversations = 200_000
+
+    private(set) var origins: [FiveTuple: [IPEndpoint: UInt32]] = [:]
+
+    mutating func values(for packet: DecodedPacket) -> TCPRelativeSequenceValues? {
+        guard let facts = packet.tcpFacts, let source = packet.sourceEndpoint,
+              let destination = packet.destinationEndpoint, let tuple = packet.fiveTuple else
+        {
+            return nil
+        }
+        guard origins[tuple] != nil || origins.count < Self.maximumConversations else {
+            return TCPRelativeSequenceValues(sequence: nil, acknowledgement: nil)
+        }
+        var conversationOrigins = origins[tuple] ?? [:]
+        if facts.flags.contains(.syn), !facts.flags.contains(.ack) {
+            if conversationOrigins[source] != facts.sequenceNumber {
+                conversationOrigins.removeAll(keepingCapacity: true)
+                conversationOrigins[source] = facts.sequenceNumber
+            }
+        }
+        if conversationOrigins[source] == nil {
+            conversationOrigins[source] = facts.sequenceNumber
+        }
+        origins[tuple] = conversationOrigins
+        guard let sourceOrigin = conversationOrigins[source] else {
+            return TCPRelativeSequenceValues(sequence: nil, acknowledgement: nil)
+        }
+        let acknowledgement = facts.flags.contains(.ack)
+            ? conversationOrigins[destination].map { facts.acknowledgementNumber &- $0 }
+            : nil
+        return TCPRelativeSequenceValues(
+            sequence: facts.sequenceNumber &- sourceOrigin,
+            acknowledgement: acknowledgement
+        )
+    }
+}
+
 // MARK: - CaptureFrameListScanner
 
 /// A pure, synchronous, on-demand scan of a *stable* capture that lists every
 /// frame, decoded once through the shared decode seam — the same contract as
 /// ``SessionFrameScanner`` (identity checked before and after, cooperative
 /// cancellation, progress), without the per-session match. Memory is bounded by
-/// ``Configuration/maxRetainedFrames`` rows; frames past it are counted only.
+/// ``Configuration/maxRetainedFrames`` page rows plus the explicitly requested
+/// bounded auxiliary ordinals. A caller can retain a later window by ordinal, or
+/// receive every decoded row through `onRow`; both keep the returned list bounded.
 nonisolated final class CaptureFrameListScanner {
     // MARK: Lifecycle
 
@@ -215,6 +286,7 @@ nonisolated final class CaptureFrameListScanner {
             contentsOf: url,
             configuration: .init(
                 maxCapturedLength: configuration.maxCapturedLength,
+                timestampTransform: configuration.timeCorrection?.streamTransform,
                 isCancelled: configuration.isCancelled
             )
         )
@@ -233,13 +305,23 @@ nonisolated final class CaptureFrameListScanner {
         init(
             maxCapturedLength: Int = CapturedFrame.maxReasonableLength,
             maxRetainedFrames: Int = Configuration.defaultMaxRetainedFrames,
+            retainedFrameStartOrdinal: Int = 1,
             progressStride: Int = 1_024,
             columns: [FieldKey] = [],
+            captureTimeReferenceOrdinals: Set<UInt64> = [],
+            auxiliaryFrameOrdinals: Set<UInt64> = [],
+            showsRelativeTCPNumbers: Bool = false,
+            timeCorrection: CaptureTimeCorrection? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.columns = columns
+            self.captureTimeReferenceOrdinals = captureTimeReferenceOrdinals
+            self.auxiliaryFrameOrdinals = auxiliaryFrameOrdinals
+            self.showsRelativeTCPNumbers = showsRelativeTCPNumbers
+            self.timeCorrection = timeCorrection
             self.maxCapturedLength = maxCapturedLength
             self.maxRetainedFrames = min(Configuration.defaultMaxRetainedFrames, max(1, maxRetainedFrames))
+            self.retainedFrameStartOrdinal = max(1, retainedFrameStartOrdinal)
             self.progressStride = max(1, progressStride)
             self.isCancelled = isCancelled
         }
@@ -250,9 +332,20 @@ nonisolated final class CaptureFrameListScanner {
 
         let maxCapturedLength: Int
         let maxRetainedFrames: Int
+        /// One-based first ordinal to retain. Earlier frames are decoded to
+        /// preserve sequential decode context for this window.
+        let retainedFrameStartOrdinal: Int
         let progressStride: Int
         /// Fields whose values each row carries, as Wireshark's custom columns.
         let columns: [FieldKey]
+        /// Capture-wide references reset the cumulative captured-byte projection.
+        let captureTimeReferenceOrdinals: Set<UInt64>
+        /// Off-page pinned/reference rows that need the same scan projection.
+        let auxiliaryFrameOrdinals: Set<UInt64>
+        /// All Frames-only projection; raw packet facts remain untouched.
+        let showsRelativeTCPNumbers: Bool
+        /// Saved-capture timestamp overlay shared with the session fold.
+        let timeCorrection: CaptureTimeCorrection?
         let isCancelled: @Sendable () -> Bool
     }
 
@@ -261,7 +354,13 @@ nonisolated final class CaptureFrameListScanner {
     /// The innermost named protocol and a Wireshark-style Info line: TCP flags,
     /// sequence, acknowledgement, window and length; TLS record types; DNS query or
     /// response with its name — else the innermost layer's own summary.
-    static func info(of packet: DecodedPacket) -> (protocolName: String, info: String) {
+    static func info(
+        of packet: DecodedPacket,
+        relativeTCPValues: TCPRelativeSequenceValues? = nil,
+        showsRelativeTCPNumbers: Bool = false
+    )
+        -> (protocolName: String, info: String)
+    {
         guard let layer = packet.layers.last else {
             return ("—", "")
         }
@@ -277,7 +376,8 @@ nonisolated final class CaptureFrameListScanner {
         // An application layer above TCP (HTTP, …) speaks for the frame, as in
         // Wireshark's Info; a bare TCP segment gets the flags/sequence line.
         let applicationSummary = layer.proto == .tcp || layer.summary.isEmpty ? nil : layer.summary
-        var text = tlsInfo(packet) ?? dnsInfo(packet) ?? applicationSummary ?? tcpInfo(packet)
+        var text = tlsInfo(packet) ?? dnsInfo(packet) ?? applicationSummary
+            ?? tcpInfo(packet, relativeValues: relativeTCPValues, showsRelativeNumbers: showsRelativeTCPNumbers)
             ?? (layer.summary.isEmpty ? layer.title : layer.summary)
         if text.count > maxInfoLength {
             text = String(text.prefix(maxInfoLength - 1)) + "…"
@@ -285,18 +385,80 @@ nonisolated final class CaptureFrameListScanner {
         return (layer.proto.label, text)
     }
 
-    func scan(onProgress: (PcapStreamProgress) -> Void = { _ in }) throws -> CaptureFrameList {
+    /// The same source/destination labels used by the All Frames packet list,
+    /// including IP-only partial decodes and link-layer-only frames.
+    static func addresses(of packet: DecodedPacket) -> (source: String, destination: String) {
+        let source = display(packet.sourceEndpoint?.ip ?? ipAddress(packet, field: "Source"))
+            ?? linkAddress(packet, field: "Source") ?? "—"
+        let destination = display(packet.destinationEndpoint?.ip ?? ipAddress(packet, field: "Destination"))
+            ?? linkAddress(packet, field: "Destination") ?? "—"
+        return (source, destination)
+    }
+
+    func scan(
+        onProgress: (PcapStreamProgress) -> Void = { _ in },
+        onRow: ((CaptureFrameRow) throws -> Void)? = nil,
+        onDecodedPacket: ((DecodedPacket, SessionFrameProvenance) throws -> Void)? = nil
+    )
+        throws -> CaptureFrameList
+    {
         var scanned = 0
         var rows: [CaptureFrameRow] = []
+        var auxiliaryRows: [CaptureFrameRow] = []
+        var captureStartTimestamp: Date?
+        var precedingRetainedFrameTimestamp: Date?
+        var previousCapturedFrame: FrameTimePredecessor = .none
+        var cumulativeCapturedBytes: UInt64 = 0
+        var cumulativeByteOverflowed = false
         var sequential = SequentialFrameDecoder()
+        var relativeTCPProjection = TCPRelativeSequenceProjection()
+        let pageLastOrdinal = configuration.retainedFrameStartOrdinal.addingReportingOverflow(
+            configuration.maxRetainedFrames - 1
+        )
+        let retainedPageEnd = pageLastOrdinal.overflow ? Int.max : pageLastOrdinal.partialValue
+        let lastAuxiliaryOrdinal = configuration.auxiliaryFrameOrdinals.max().map { Int(clamping: $0) } ?? 0
+        let lastRequiredOrdinal = max(retainedPageEnd, lastAuxiliaryOrdinal)
         let completion: CaptureStreamCompletion
         walk: while true {
             switch try reader.next() {
             case let .frame(event):
                 scanned += 1
-                if rows.count < configuration.maxRetainedFrames {
-                    rows.append(row(event, ordinal: scanned, sequential: &sequential))
+                if configuration.captureTimeReferenceOrdinals.contains(UInt64(scanned)) {
+                    cumulativeCapturedBytes = 0
+                    cumulativeByteOverflowed = false
                 }
+                let (nextCumulativeBytes, overflow) = cumulativeCapturedBytes.addingReportingOverflow(
+                    UInt64(max(0, event.reference.capturedLength))
+                )
+                cumulativeByteOverflowed = cumulativeByteOverflowed || overflow
+                if !cumulativeByteOverflowed {
+                    cumulativeCapturedBytes = nextCumulativeBytes
+                }
+                if scanned == 1 {
+                    captureStartTimestamp = event.reference.timestamp
+                }
+                if scanned == configuration.retainedFrameStartOrdinal - 1 {
+                    precedingRetainedFrameTimestamp = event.reference.timestamp
+                }
+                let inRetainedWindow = scanned >= configuration.retainedFrameStartOrdinal
+                    && rows.count < configuration.maxRetainedFrames
+                let isAuxiliaryRow = configuration.auxiliaryFrameOrdinals.contains(UInt64(scanned))
+                if inRetainedWindow || onRow != nil || onDecodedPacket != nil || scanned <= lastRequiredOrdinal {
+                    let (decoded, packet) = row(
+                        event, ordinal: scanned, previousCapturedFrame: previousCapturedFrame,
+                        cumulativeCapturedBytes: cumulativeByteOverflowed ? nil : cumulativeCapturedBytes,
+                        relativeTCPProjection: &relativeTCPProjection,
+                        sequential: &sequential
+                    )
+                    try onRow?(decoded)
+                    try onDecodedPacket?(packet, decoded.provenance)
+                    if inRetainedWindow {
+                        rows.append(decoded)
+                    } else if isAuxiliaryRow {
+                        auxiliaryRows.append(decoded)
+                    }
+                }
+                previousCapturedFrame = event.reference.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
                 if scanned % configuration.progressStride == 0 {
                     onProgress(event.progress)
                 }
@@ -313,7 +475,11 @@ nonisolated final class CaptureFrameListScanner {
              .partialBody: .incompleteTruncatedTail(completion.reason)
         }
         return CaptureFrameList(
-            identity: reader.identity, rows: rows, scannedFrameCount: scanned, completeness: completeness,
+            identity: reader.identity, rows: rows, auxiliaryRows: auxiliaryRows,
+            scannedFrameCount: scanned, completeness: completeness,
+            firstRetainedOrdinal: configuration.retainedFrameStartOrdinal,
+            captureStartTimestamp: captureStartTimestamp,
+            precedingRetainedFrameTimestamp: precedingRetainedFrameTimestamp,
             decodeProblemCount: rows.count { $0.decodeStop != nil },
             badChecksumOnlyCount: rows.count { $0.hasBadChecksum && $0.decodeStop == nil }
         )
@@ -328,7 +494,13 @@ nonisolated final class CaptureFrameListScanner {
 
     /// `443 → 51000 [SYN, ACK] Seq=5000 Ack=1001 Win=65535 Len=0` — raw sequence
     /// numbers (Wireshark shows them relative by default).
-    private static func tcpInfo(_ packet: DecodedPacket) -> String? {
+    private static func tcpInfo(
+        _ packet: DecodedPacket,
+        relativeValues: TCPRelativeSequenceValues?,
+        showsRelativeNumbers: Bool
+    )
+        -> String?
+    {
         guard let facts = packet.tcpFacts, let source = packet.sourceEndpoint,
               let destination = packet.destinationEndpoint else
         {
@@ -339,9 +511,19 @@ nonisolated final class CaptureFrameListScanner {
             (.ece, "ECE"), (.cwr, "CWR"),
         ]
         let flags = names.filter { facts.flags.contains($0.0) }.map(\.1).joined(separator: ", ")
-        var text = "\(source.port) → \(destination.port) [\(flags)] Seq=\(facts.sequenceNumber)"
+        let sequence: String = if showsRelativeNumbers {
+            relativeValues?.sequence.map(String.init) ?? "?"
+        } else {
+            String(facts.sequenceNumber)
+        }
+        var text = "\(source.port) → \(destination.port) [\(flags)] Seq=\(sequence)"
         if facts.flags.contains(.ack) {
-            text += " Ack=\(facts.acknowledgementNumber)"
+            let acknowledgement: String = if showsRelativeNumbers {
+                relativeValues?.acknowledgement.map(String.init) ?? "?"
+            } else {
+                String(facts.acknowledgementNumber)
+            }
+            text += " Ack=\(acknowledgement)"
         }
         return text + " Win=\(facts.windowSize) Len=\(facts.payloadLength)"
     }
@@ -417,9 +599,12 @@ nonisolated final class CaptureFrameListScanner {
     private func row(
         _ event: CaptureFrameEvent,
         ordinal: Int,
+        previousCapturedFrame: FrameTimePredecessor,
+        cumulativeCapturedBytes: UInt64?,
+        relativeTCPProjection: inout TCPRelativeSequenceProjection,
         sequential: inout SequentialFrameDecoder
     )
-        -> CaptureFrameRow
+        -> (CaptureFrameRow, DecodedPacket)
     {
         let frame = CapturedFrame(
             bytes: event.bytes,
@@ -435,7 +620,13 @@ nonisolated final class CaptureFrameListScanner {
             ordinal: UInt64(ordinal),
             locator: locator
         )
-        var (protocolName, info) = Self.info(of: packet)
+        let relativeValues = configuration.showsRelativeTCPNumbers
+            ? relativeTCPProjection.values(for: packet) : nil
+        var (protocolName, info) = Self.info(
+            of: packet,
+            relativeTCPValues: relativeValues,
+            showsRelativeTCPNumbers: configuration.showsRelativeTCPNumbers
+        )
         if let stop = packet.decodeStop {
             info = info.isEmpty ? stop.infoSuffix : "\(info) \(stop.infoSuffix)"
         }
@@ -448,17 +639,19 @@ nonisolated final class CaptureFrameListScanner {
             locator: locator,
             reassembledFrom: sequential.lastReassembledFrom
         )
-        return CaptureFrameRow(
+        let addresses = Self.addresses(of: packet)
+        let result = CaptureFrameRow(
             provenance: provenance,
-            source: Self.display(packet.sourceEndpoint?.ip ?? Self.ipAddress(packet, field: "Source"))
-                ?? Self.linkAddress(packet, field: "Source") ?? "—",
-            destination: Self.display(packet.destinationEndpoint?.ip ?? Self.ipAddress(packet, field: "Destination"))
-                ?? Self.linkAddress(packet, field: "Destination") ?? "—",
+            source: addresses.source,
+            destination: addresses.destination,
             protocolName: protocolName,
             info: info,
             sessionID: packet.fiveTuple.map(SessionBuilder.sessionID(for:)),
             interfaceID: event.reference.interfaceID,
             hasComment: event.reference.hasComment,
+            frameCommentReference: event.reference.frameCommentReference,
+            captureDirection: event.reference.direction,
+            previousCapturedFrame: previousCapturedFrame,
             decodeStop: packet.decodeStop,
             http: HTTPFrameFact(packet, bytes: event.bytes),
             dns: DNSFrameFact(packet),
@@ -467,11 +660,17 @@ nonisolated final class CaptureFrameListScanner {
             multicast: MulticastFrameFact(packet, bytes: event.bytes),
             ip: IPFrameFact(packet),
             srt: SRTFrameFact(packet, bytes: event.bytes),
+            filterFacts: FrameFilterFacts(
+                packet: packet, capturedLength: provenance.capturedLength, originalLength: provenance.originalLength,
+                captureDirection: event.reference.direction
+            ),
             columnValues: configuration.columns.map {
                 FieldValueScanner.values(of: $0, in: packet.layers).joined(separator: ",")
             },
+            cumulativeCapturedBytes: cumulativeCapturedBytes,
             hasBadChecksum: ChecksumValidation.hasIncorrectChecksum(packet.layers, bytes: event.bytes)
         )
+        return (result, packet)
     }
 
     private func revalidateSourceIdentity() throws {

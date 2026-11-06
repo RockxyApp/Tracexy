@@ -1,5 +1,21 @@
 import Foundation
 
+// MARK: - CaptureDirection
+
+/// Link-layer capture direction relative to the recording interface. It does
+/// not describe which endpoint initiated a conversation.
+nonisolated enum CaptureDirection: UInt32, Sendable, Equatable, Hashable {
+    case unknown = 0
+    case inbound = 1
+    case outbound = 2
+
+    // MARK: Lifecycle
+
+    init(epbFlags: UInt32) {
+        self = Self(rawValue: epbFlags & 0x3) ?? .unknown
+    }
+}
+
 // MARK: - CaptureFormatLimits
 
 /// Bounds shared by every capture-format reader, inside the app and in the

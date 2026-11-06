@@ -35,6 +35,7 @@ enum StatisticsTap: Equatable {
         case "ipv6": .ipv6
         case "tcp": .tcp
         case "udp": .udp
+        case "sctp": .sctp
         default: nil
         }
         if let tree = Self.ipTree(parts.first ?? "") {
@@ -72,13 +73,14 @@ enum StatisticsTap: Equatable {
 
     // MARK: Internal
 
-    static let names = "conv,ipv4|ipv6|tcp|udp, endpoints,ipv4|ipv6|tcp|udp, plen, phs, expert, dns, http, "
+    static let names = "conv,ipv4|ipv6|tcp|udp|sctp, endpoints,ipv4|ipv6|tcp|udp|sctp, plen, phs, expert, "
+        + "dns, http, "
         + "smb2,srt, ldap,srt, kerberos,srt, icmp,srt, icmpv6,srt, ip_hosts|ptype|ip_srcdst|dests|ip_ttl (and "
         + "ipv6_hosts|ipv6_ptype|ipv6_srcdst|ipv6_dests|ipv6_hop), http_seq, sip,stat, rtp,streams"
 
     /// Every tap name `--tap` accepts, one each.
     static var allNames: [String] {
-        let kinds = ["ipv4", "ipv6", "tcp", "udp"]
+        let kinds = ["ipv4", "ipv6", "tcp", "udp", "sctp"]
         let ip = IPStatistics.Tree.allCases.map(\.tapName)
             + ["ipv6_hosts", "ipv6_ptype", "ipv6_srcdst", "ipv6_dests", "ipv6_hop"]
         return kinds.map { "conv,\($0)" } + kinds.map { "endpoints,\($0)" }
@@ -95,6 +97,13 @@ enum StatisticsTap: Equatable {
              .rtpStreams: true
         default: false
         }
+    }
+
+    var usesCaptureWideSRT: Bool {
+        guard case .serviceResponseTime = self else {
+            return false
+        }
+        return true
     }
 
     /// Rows as named columns, the shared shape of every output format.
@@ -413,8 +422,6 @@ enum StatisticsTap: Equatable {
 /// One statistic as named columns and string cells, rendered as an aligned text
 /// table, RFC 4180 CSV (formula-guarded like the other exports) or JSON objects.
 struct StatisticsTable: Equatable {
-    // MARK: Internal
-
     let title: String
     let columns: [String]
     let rows: [[String]]
@@ -438,12 +445,10 @@ struct StatisticsTable: Equatable {
     }
 
     var jsonObject: [String: Any] {
-        ["statistic": title, "rows": rows.map { Dictionary(uniqueKeysWithValues: zip(columns, $0)) }]
+        ["statistic": title, "rows": rows.map { Dictionary(zip(columns, $0), uniquingKeysWith: { _, last in last }) }]
     }
 
-    // MARK: Private
-
-    private static func csvCell(_ value: String) -> String {
+    static func csvCell(_ value: String) -> String {
         // Guard spreadsheet formula injection as the investigation export does.
         let guarded = ["=", "+", "-", "@"]
             .contains(where: value.hasPrefix) && Double(value) == nil ? "'" + value : value
@@ -457,8 +462,194 @@ struct StatisticsTable: Equatable {
 // MARK: - Frames
 
 extension TracexyCommandLine {
-    /// `tracexy frames`: the All Frames list as a table — tshark's `-T fields` over the
-    /// columns Tracexy lists — limited to the sessions an `--expression` keeps.
+    private static let maxSpoolRowBytes = 64 * 1_024 * 1_024
+    private static let frameColumnNames = [
+        "number", "time_s", "source", "destination", "protocol", "capture_direction", "length", "info", "session",
+    ]
+
+    private static func captureDirectionText(_ direction: CaptureDirection) -> String {
+        switch direction {
+        case .unknown: "unknown"
+        case .inbound: "inbound"
+        case .outbound: "outbound"
+        }
+    }
+
+    /// SMB2 SRT is reducible in one bounded pass: retain unmatched request
+    /// timestamps and per-command aggregates rather than every All Frames row.
+    static func streamingSMB2SRTTable(
+        file: URL,
+        sessions: [SessionSummary],
+        limited: Bool
+    )
+        throws -> StatisticsTable
+    {
+        let kept = Set(sessions.map(\.id))
+        var accumulator = ServiceResponseTime.StreamingSMB2Accumulator()
+        var scanned = 0
+        try withExpandedCapture(file) { url in
+            let handle = try FileHandle(forReadingFrom: url)
+            let identity = PcapFileIdentity.snapshot(of: handle)
+            try handle.close()
+            let scanner = try CaptureFrameListScanner(
+                contentsOf: url, expectedIdentity: identity, sourceToken: UUID(),
+                configuration: .init(maxRetainedFrames: 1)
+            )
+            let list = try scanner.scan(onRow: { row in
+                scanned += 1
+                guard !limited || row.sessionID.map(kept.contains) == true else {
+                    return
+                }
+                accumulator.record(row)
+            })
+            guard list.completeness == .complete else {
+                throw FrameRowsTruncatedError(scannedFrameCount: scanned)
+            }
+        }
+        let result = accumulator.result()
+        let title = result.omittedRequests == 0
+            ? "SMB2 SRT Statistics"
+            : "SMB2 SRT Statistics (omitted \(result.omittedRequests) requests after the 200,000 pending-request limit)"
+        let columns = ["index", "command", "calls", "min_srt_s", "max_srt_s", "avg_srt_s", "sum_srt_s"]
+            + (result.omittedRequests == 0 ? [] : ["omitted_pending_requests"])
+        var rows = result.rows.map { row in
+            let cells = [
+                String(row.index), row.procedure, String(row.calls), ServiceResponseTime.seconds(row.minimum),
+                ServiceResponseTime.seconds(row.maximum), ServiceResponseTime.seconds(row.average),
+                ServiceResponseTime.seconds(row.sum),
+            ]
+            return result.omittedRequests == 0 ? cells : cells + [String(result.omittedRequests)]
+        }
+        if rows.isEmpty, result.omittedRequests > 0 {
+            rows.append(["", "No paired replies", "0", "", "", "", "", String(result.omittedRequests)])
+        }
+        return StatisticsTable(title: title, columns: columns, rows: rows)
+    }
+
+    static func streamingEchoSRTTable(
+        _ service: ServiceResponseTime.Service,
+        file: URL,
+        sessions: [SessionSummary],
+        limited: Bool
+    )
+        throws -> StatisticsTable
+    {
+        let kept = Set(sessions.map(\.id))
+        var accumulator = EchoResponseTimeStreamingAccumulator(ipv6: service == .icmpv6)
+        var scanned = 0
+        try withExpandedCapture(file) { url in
+            let handle = try FileHandle(forReadingFrom: url)
+            let identity = PcapFileIdentity.snapshot(of: handle)
+            try handle.close()
+            let scanner = try CaptureFrameListScanner(
+                contentsOf: url, expectedIdentity: identity, sourceToken: UUID(),
+                configuration: .init(maxRetainedFrames: 1)
+            )
+            let list = try scanner.scan(onRow: { row in
+                scanned += 1
+                guard !limited || row.sessionID.map(kept.contains) == true else {
+                    return
+                }
+                accumulator.record(row)
+            })
+            guard list.completeness == .complete else {
+                throw FrameRowsTruncatedError(scannedFrameCount: scanned)
+            }
+        }
+        let echo = accumulator.result()
+        return StatisticsTable(
+            title: "\(service.title) Service Response Time (SRT) Statistics (all times in ms)",
+            columns: EchoResponseTime.columns.map { $0.lowercased().replacingOccurrences(of: " ", with: "_") },
+            rows: [echo.values]
+        )
+    }
+
+    static func streamingServiceSRTTable(
+        _ service: ServiceResponseTime.Service,
+        file: URL,
+        sessions: [SessionSummary],
+        limited: Bool
+    )
+        throws -> StatisticsTable
+    {
+        let kept = Set(sessions.map(\.id))
+        var accumulator = ServiceResponseTime.StreamingAccumulator(service: service)
+        var scanned = 0
+        try withExpandedCapture(file) { url in
+            let handle = try FileHandle(forReadingFrom: url)
+            let identity = PcapFileIdentity.snapshot(of: handle)
+            try handle.close()
+            let scanner = try CaptureFrameListScanner(
+                contentsOf: url, expectedIdentity: identity, sourceToken: UUID(),
+                configuration: .init(maxRetainedFrames: 1)
+            )
+            let list = try scanner.scan(onRow: { row in
+                scanned += 1
+                guard !limited || row.sessionID.map(kept.contains) == true else {
+                    return
+                }
+                accumulator.record(row)
+            })
+            guard list.completeness == .complete else {
+                throw FrameRowsTruncatedError(scannedFrameCount: scanned)
+            }
+        }
+        let result = accumulator.result()
+        let isLDAP = service == .ldap
+        let correlation = isLDAP ? "correlations" : "KDC requests"
+        let title = result.omittedCorrelations == 0
+            ? "\(service.title) SRT Statistics"
+            : "\(service.title) SRT Statistics (omitted \(result.omittedCorrelations) \(correlation) after the 200,000-record limit)"
+        let columns = ["index", "procedure", "calls", "min_srt_s", "max_srt_s", "avg_srt_s", "sum_srt_s"]
+            + (result.omittedCorrelations == 0 ? [] : ["omitted_correlations"])
+        var rows = result.rows.map { row in
+            let cells = [
+                String(row.index), row.procedure, String(row.calls), ServiceResponseTime.seconds(row.minimum),
+                ServiceResponseTime.seconds(row.maximum), ServiceResponseTime.seconds(row.average),
+                ServiceResponseTime.seconds(row.sum),
+            ]
+            return result.omittedCorrelations == 0 ? cells : cells + [String(result.omittedCorrelations)]
+        }
+        if rows.isEmpty, result.omittedCorrelations > 0 {
+            rows.append(["", "No paired replies", "0", "", "", "", "", String(result.omittedCorrelations)])
+        }
+        return StatisticsTable(title: title, columns: columns, rows: rows)
+    }
+
+    struct FrameRowsIncompleteError: LocalizedError, Equatable {
+        let scannedFrameCount: Int
+        let retainedFrameCount: Int
+
+        var errorDescription: String? {
+            "Frame output is incomplete: scanned \(scannedFrameCount) frames but retained only the first \(retainedFrameCount). Split the capture before exporting frame rows or frame-derived statistics."
+        }
+    }
+
+    struct FrameRowsTruncatedError: LocalizedError, Equatable {
+        let scannedFrameCount: Int
+
+        var errorDescription: String? {
+            "Frame output is incomplete: the capture ends in a truncated record after \(scannedFrameCount) complete frames. Repair the capture before exporting frame rows or frame-derived statistics."
+        }
+    }
+
+    struct FrameRowEncodingLimitError: LocalizedError, Equatable {
+        let byteCount: Int
+
+        var errorDescription: String? {
+            "One encoded frame row needs \(byteCount) bytes, above the 64 MiB output-row limit. Select fewer columns."
+        }
+    }
+
+    /// The All Frames list as a materialized table, over the columns Tracexy lists
+    /// and limited to the sessions an `--expression` keeps.
+    ///
+    /// `tracexy frames` no longer calls this: it streams through ``streamFrames``
+    /// so a large capture never has to be held in memory at once. What remains is
+    /// the parity oracle for that renderer — the frame-stream test compares every
+    /// streamed text/CSV cell against this table, which is why a dead-code scan
+    /// finds no product caller. Retiring it means moving it into the test target,
+    /// not deleting it, or the streaming renderer loses its only comparison.
     static func framesTable(
         file original: URL,
         sessions: [SessionSummary],
@@ -471,17 +662,151 @@ extension TracexyCommandLine {
         let origin = rows.first?.provenance.timestamp
         return StatisticsTable(
             title: "Frames",
-            columns: ["number", "time_s", "source", "destination", "protocol", "length", "info", "session"]
-                + columns.map { "\($0.proto.label):\($0.name)" },
+            columns: frameColumnNames + columns.map { "\($0.proto.label):\($0.name)" },
             rows: rows.map { row in
                 [
                     String(row.ordinal),
                     Self.elapsedText(row.provenance.timestamp, since: origin),
-                    row.source, row.destination, row.protocolName, String(row.length), row.info,
+                    row.source, row.destination, row.protocolName, captureDirectionText(row.captureDirection),
+                    String(row.length), row.info,
                     row.sessionID?.uuidString ?? "",
                 ] + row.columnValues
             }
         )
+    }
+
+    /// Spool each selected row before publishing anything. The scanner's final
+    /// identity and completeness checks must succeed before output begins.
+    static func streamFrames(
+        file: URL,
+        sessions: [SessionSummary],
+        limited: Bool,
+        columns: [FieldKey],
+        format: Format,
+        output: (String) -> Void
+    )
+        throws
+    {
+        let spool = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tracexy-cli-frame-rows-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: spool.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        defer { try? FileManager.default.removeItem(at: spool) }
+        let writer = try FileHandle(forWritingTo: spool)
+        defer { try? writer.close() }
+        let names = frameColumnNames + columns.map { "\($0.proto.label):\($0.name)" }
+        var widths = names.map(\.count)
+        var origin: Date?
+        var emitted = 0
+        let kept = Set(sessions.map(\.id))
+
+        try withExpandedCapture(file) { url in
+            let handle = try FileHandle(forReadingFrom: url)
+            let identity = PcapFileIdentity.snapshot(of: handle)
+            try handle.close()
+            let list = try CaptureFrameListScanner(
+                contentsOf: url, expectedIdentity: identity, sourceToken: UUID(),
+                configuration: .init(maxRetainedFrames: 1, columns: columns)
+            ).scan(onRow: { row in
+                guard !limited || row.sessionID.map(kept.contains) == true else {
+                    return
+                }
+                if origin == nil {
+                    origin = row.provenance.timestamp
+                }
+                let cells = [
+                    String(row.ordinal), elapsedText(row.provenance.timestamp, since: origin),
+                    row.source, row.destination, row.protocolName, captureDirectionText(row.captureDirection),
+                    String(row.length), row.info,
+                    row.sessionID?.uuidString ?? "",
+                ] + row.columnValues
+                for index in cells.indices {
+                    widths[index] = max(widths[index], cells[index].count)
+                }
+                let encoded = try JSONSerialization.data(withJSONObject: cells)
+                guard encoded.count <= maxSpoolRowBytes else {
+                    throw FrameRowEncodingLimitError(byteCount: encoded.count)
+                }
+                let length = UInt32(encoded.count)
+                try writer.write(contentsOf: Data([
+                    UInt8(truncatingIfNeeded: length >> 24), UInt8(truncatingIfNeeded: length >> 16),
+                    UInt8(truncatingIfNeeded: length >> 8), UInt8(truncatingIfNeeded: length),
+                ]))
+                try writer.write(contentsOf: encoded)
+                emitted += 1
+            })
+            guard list.completeness == .complete else {
+                throw FrameRowsTruncatedError(scannedFrameCount: list.scannedFrameCount)
+            }
+        }
+        try writer.close()
+        let reader = try FileHandle(forReadingFrom: spool)
+        defer { try? reader.close() }
+        // Verify the generated spool before the first byte reaches stdout.
+        for _ in 0 ..< emitted {
+            guard try readFrameCells(reader).count == names.count else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        }
+        guard try reader.read(upToCount: 1)?.isEmpty != false else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        try reader.seek(toOffset: 0)
+        switch format {
+        case .text:
+            let rule = String(repeating: "=", count: max(6, widths.reduce(0, +) + 2 * (widths.count - 1)))
+            output(rule + "\nFrames\n" + paddedFrameLine(names, widths: widths) + "\n"
+                + String(repeating: "-", count: rule.count) + "\n")
+            for _ in 0 ..< emitted {
+                try output(paddedFrameLine(readFrameCells(reader), widths: widths) + "\n")
+            }
+            output(rule + "\n")
+        case .csv:
+            output(names.map(StatisticsTable.csvCell).joined(separator: ",") + "\n")
+            for _ in 0 ..< emitted {
+                try output(readFrameCells(reader).map(StatisticsTable.csvCell).joined(separator: ",") + "\n")
+            }
+        case .json:
+            output("{\"statistic\":\"Frames\",\"rows\":[")
+            for index in 0 ..< emitted {
+                let cells = try readFrameCells(reader)
+                let object = Dictionary(zip(names, cells), uniquingKeysWith: { _, last in last })
+                let encoded = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+                output((index == 0 ? "" : ",") + (String(data: encoded, encoding: .utf8) ?? "{}"))
+            }
+            output("]}\n")
+        }
+    }
+
+    private static func paddedFrameLine(_ cells: [String], widths: [Int]) -> String {
+        cells.enumerated().map { index, cell in
+            cell.padding(toLength: widths[index], withPad: " ", startingAt: 0)
+        }.joined(separator: "  ").replacing(#/\s+$/#, with: "")
+    }
+
+    private static func readFrameCells(_ reader: FileHandle) throws -> [String] {
+        let header = try readFrameBytes(reader, count: 4)
+        let length = header.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        guard Int(length) <= maxSpoolRowBytes else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let data = try readFrameBytes(reader, count: Int(length))
+        guard let cells = try JSONSerialization.jsonObject(with: data) as? [String] else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return cells
+    }
+
+    private static func readFrameBytes(_ reader: FileHandle, count: Int) throws -> Data {
+        var result = Data()
+        while result.count < count {
+            guard let next = try reader.read(upToCount: count - result.count), !next.isEmpty else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            result.append(next)
+        }
+        return result
     }
 
     /// `Protocol:Field` — the protocol by its label or name, any case.
@@ -523,7 +848,8 @@ extension TracexyCommandLine {
         file original: URL,
         sessions: [SessionSummary],
         limited: Bool,
-        columns: [FieldKey] = []
+        columns: [FieldKey] = [],
+        maxRetainedFrames: Int = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
     )
         throws -> [CaptureFrameRow]
     {
@@ -543,8 +869,18 @@ extension TracexyCommandLine {
         let identity = PcapFileIdentity.snapshot(of: handle)
         try handle.close()
         let list = try CaptureFrameListScanner(
-            contentsOf: file, expectedIdentity: identity, sourceToken: UUID(), configuration: .init(columns: columns)
+            contentsOf: file, expectedIdentity: identity, sourceToken: UUID(),
+            configuration: .init(maxRetainedFrames: maxRetainedFrames, columns: columns)
         ).scan()
+        guard list.completeness == .complete else {
+            throw FrameRowsTruncatedError(scannedFrameCount: list.scannedFrameCount)
+        }
+        guard list.omittedFrameCount == 0 else {
+            throw FrameRowsIncompleteError(
+                scannedFrameCount: list.scannedFrameCount,
+                retainedFrameCount: list.rows.count
+            )
+        }
         let kept = Set(sessions.map(\.id))
         return list.rows.filter { row in
             !limited || row.sessionID.map(kept.contains) == true

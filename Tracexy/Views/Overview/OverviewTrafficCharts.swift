@@ -276,29 +276,6 @@ struct OverviewTrafficTimelineChart: View {
     }
 }
 
-// MARK: - OverviewProportionBar
-
-/// A thin proportional fill over a track. Bounded to `0...1`; a zero fraction
-/// shows the bare track rather than trapping.
-struct OverviewProportionBar: View {
-    let fraction: Double
-    let tint: Color
-
-    var body: some View {
-        let clamped = min(max(fraction, 0), 1)
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary.opacity(0.5))
-                Capsule().fill(tint.gradient)
-                    .frame(width: max(0, proxy.size.width * clamped))
-            }
-        }
-        .frame(height: 6)
-        .frame(maxWidth: .infinity)
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - OverviewDirectionBar
 
 /// Sent and received bytes laid end to end in one track, each scaled against

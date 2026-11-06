@@ -140,6 +140,40 @@ struct TrafficStatisticsTests {
         }
     }
 
+    @Test("an SCTP flow is its own port-carrying tab, counted like TCP and UDP")
+    func sctpConversationsAndEndpointsCarryPorts() throws {
+        let sessions = [
+            Self.session(
+                "sctp",
+                client: ("10.0.0.5", 50_000),
+                server: ("192.0.2.1", 2_905),
+                up: (4, 400),
+                down: (6, 600),
+                start: 10,
+                duration: 2,
+                proto: .sctp
+            ),
+        ]
+        let rows = TrafficStatistics.conversations(of: sessions, kind: .sctp)
+        #expect(rows.count == 1)
+        let row = try #require(rows.first)
+        #expect(row.term == "ip == 10.0.0.5 and ip == 192.0.2.1 and port == 50000 and port == 2905")
+        #expect(row.packetsAToB == 4)
+        #expect(row.bytesBToA == 600)
+        #expect(TrafficAddressKind.sctp.usesPorts)
+        #expect(
+            TrafficStatistics.conversations(of: sessions, kind: .tcp).isEmpty,
+            "an SCTP flow must not be counted as a TCP conversation"
+        )
+        #expect(TrafficStatistics.conversations(of: sessions, kind: .udp).isEmpty)
+        // It is still an IPv4 conversation: SCTP is carried over IP.
+        #expect(TrafficStatistics.conversations(of: sessions, kind: .ipv4).count == 1)
+
+        let endpoints = TrafficStatistics.endpoints(of: sessions, kind: .sctp)
+        #expect(endpoints.count == 2)
+        #expect(endpoints.contains { $0.address == "192.0.2.1" && $0.port == 2_905 })
+    }
+
     // MARK: Private
 
     private static func session(

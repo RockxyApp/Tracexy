@@ -78,7 +78,7 @@ struct IPPayloadBoundsTests {
     }
 
     @Test("A non-first IPv4 fragment never yields transport endpoints")
-    func laterIPv4FragmentHasNoTransport() {
+    func laterIPv4FragmentHasNoTransport() throws {
         // Fragment offset 185 (×8 = 1480 bytes), no more fragments: the bytes after
         // the IP header are the tail of some UDP datagram, not a UDP header.
         let tail: [UInt8] = [0x00, 0x35, 0x00, 0x35, 0x00, 0x10, 0x00, 0x00, 1, 2, 3, 4]
@@ -88,13 +88,19 @@ struct IPPayloadBoundsTests {
         let packet = decode(frame)
         let ip = packet.layers.first { $0.proto == .ipv4 }
         #expect(ip?.fields.contains { $0.name == "Fragment" && $0.value == "offset 1480, last fragment" } == true)
+        #expect(ip?.fields.contains { $0.name == "Fragment Offset" && $0.value == "1480" } == true)
+        #expect(ip?.fields.contains { $0.name == "More Fragments" && $0.value == "No" } == true)
+        var parser = FrameExpressionParser()
+        let facts = FrameFilterFacts(packet: packet)
+        #expect(try parser.parse("ip.frag_offset == 1480").evaluate(facts) == .yes)
+        #expect(try parser.parse("ip.flags.mf").evaluate(facts) == .no)
         #expect(packet.transport == nil)
         #expect(packet.fiveTuple == nil)
         #expect(!packet.layers.contains { $0.proto == .udp })
     }
 
     @Test("The first IPv4 fragment stops at the IP layer; its datagram is decoded once rebuilt")
-    func firstIPv4FragmentStopsAtIP() {
+    func firstIPv4FragmentStopsAtIP() throws {
         let datagram = PacketBuilder.udp(srcPort: 53, dstPort: 40_000, payload: [1, 2, 3, 4])
         var frame = PacketBuilder.ethernetIPv4(proto: 17, src: "10.0.0.1", dst: "10.0.0.2", payload: datagram)
         frame[20] = 0x20
@@ -102,6 +108,10 @@ struct IPPayloadBoundsTests {
         let packet = decode(frame)
         let ip = packet.layers.first { $0.proto == .ipv4 }
         #expect(ip?.fields.contains { $0.name == "Fragment" && $0.value == "offset 0, more fragments" } == true)
+        #expect(ip?.fields.contains { $0.name == "Fragment Offset" && $0.value == "0" } == true)
+        #expect(ip?.fields.contains { $0.name == "More Fragments" && $0.value == "Yes" } == true)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("ip.frag_offset == 0").evaluate(FrameFilterFacts(packet: packet)) == .yes)
         #expect(packet.fiveTuple == nil)
         #expect(packet.ipFragment?.offset == 0 && packet.ipFragment?.moreFragments == true)
     }

@@ -1,0 +1,29 @@
+---
+title: SIP, RTP, and VoIP
+description: Inspect supported call signaling and media stream statistics.
+---
+
+
+**Status: Partial**
+
+Inspect supported call signaling and media stream statistics.
+
+## Try it
+
+Open **Statistics → SIP**, **VoIP Calls**, **RTP Streams**, or **UDP Multicast Streams**. Select a call or stream, then use **Show Sessions** to narrow the list, **Open First Frame** to reach the cited signaling or media frame, **Flow Sequence** to see a call's progression, or **Copy Call-ID**. Open a stream's analysis sheet for timing, jitter, and loss when present, as packets or as a graph, and **Save as CSV…** for the result.
+
+## What you can see
+
+Supported views summarize SIP methods and status, call progression, RTP payload type, packet gaps, jitter, delta, skew, and stream candidates. UDP multicast streams have separate rate and burst statistics. A reverse stream is named only when one was observed.
+
+## Coverage limits
+
+Broad telephony decoding, all codecs, audio playback, and every Wireshark telephony tool are unavailable. RTP interpretation depends on observed headers and known clock rates.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Statistics" href="/features/statistics" />
+  <Card title="Frames" href="/features/frames" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

@@ -59,33 +59,90 @@ struct FollowStreamReaderTests {
             Self.tcpFrame(client: false, seq: 5_004, payload: Array("200B".utf8)),
         ]
         try Self.withCapture(.pcap(frames)) { url, identity in
-            let result = try FollowStreamReader(contentsOf: url, expectedIdentity: identity, tuple: Self.tuple).read()
-            let turns = FollowStreamExport.turns(of: result)
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple,
+                sourceToken: SavedCaptureStreamLoader.sourceToken(for: identity)
+            ).read()
+            let snapshot = try FollowStreamExport.snapshot(of: result)
+            let turns = try #require(snapshot.turns)
+            let chunks = try #require(snapshot.captureOrderedChunks)
             #expect(turns.map(\.direction) == [.aToB, .bToA, .aToB, .bToA])
-            #expect(turns.map(\.firstOrdinal) == [1, 2, 3, 4])
-            #expect(turns.map { String(bytes: $0.bytes, encoding: .utf8) } == [
+            #expect(chunks.map(\.provenance?.ordinal.rawValue) == [1, 2, 3, 4])
+            #expect(turns.map { String(bytes: snapshot.bytes(in: $0), encoding: .utf8) } == [
                 "GET /a\r\n",
                 "200A",
                 "GET /b\r\n",
                 "200B"
             ])
 
-            let raw = FollowStreamExport.data(turns, format: .raw, side: .both, tuple: result.tuple)
+            let raw = try FollowStreamExport.data(snapshot, format: .raw, side: .both, tuple: result.tuple)
             #expect(raw == Data("GET /a\r\n200AGET /b\r\n200B".utf8))
-            let client = FollowStreamExport.data(turns, format: .raw, side: .aToB, tuple: result.tuple)
+            let client = try FollowStreamExport.data(snapshot, format: .raw, side: .aToB, tuple: result.tuple)
             #expect(client == Data("GET /a\r\nGET /b\r\n".utf8))
-            let arrays = try #require(String(
-                bytes: FollowStreamExport.data(turns, format: .cArrays, side: .both, tuple: result.tuple),
+            let arrays = try #require(try String(
+                bytes: FollowStreamExport.data(snapshot, format: .cArrays, side: .both, tuple: result.tuple),
                 encoding: .utf8
             ))
             #expect(arrays.contains("char peer0_0[] = { /* Frame 1 */"))
             #expect(arrays.contains("char peer1_1[] = { /* Frame 4 */"))
-            let yaml = try #require(String(
-                bytes: FollowStreamExport.data(turns, format: .yaml, side: .both, tuple: result.tuple),
+            let yaml = try #require(try String(
+                bytes: FollowStreamExport.data(snapshot, format: .yaml, side: .both, tuple: result.tuple),
                 encoding: .utf8
             ))
             #expect(yaml.hasPrefix("peers:\n  - peer: 0\n    host: 10.0.0.5\n    port: 50000\n"))
             #expect(yaml.contains("    data: !!binary |\n      \(Data("200B".utf8).base64EncodedString())"))
+
+            let printed = try FollowStreamExport.printableText(
+                snapshot,
+                format: .raw,
+                side: .aToB,
+                tuple: result.tuple,
+                limitationLabels: ["sequence gap"],
+                completeness: result.completeness,
+                retainedBytes: result.aToB.retainedByteCount + result.bToA.retainedByteCount,
+                observedOmittedBytes: 3
+            )
+            #expect(printed.contains("10.0.0.5:50000 → 203.0.113.9:443"))
+            #expect(printed.contains("Hex Dump"))
+            #expect(printed.contains("observed but not retained: 3"))
+            #expect(printed.contains("Observed limitations: sequence gap"))
+            #expect(printed.contains("47 45 54 20 2f 61"))
+            #expect(printed.contains("GET /a.."))
+            let empty = Self.emptyDirection
+            let aOnly = try FollowStreamExport.snapshot(aToB: result.aToB, bToA: empty)
+            #expect(throws: FollowStreamExport.PrintError.emptySelection) {
+                try FollowStreamExport.printableText(
+                    aOnly,
+                    format: .ascii,
+                    side: .bToA,
+                    tuple: result.tuple,
+                    limitationLabels: [],
+                    completeness: result.completeness,
+                    retainedBytes: result.aToB.retainedByteCount + result.bToA.retainedByteCount,
+                    observedOmittedBytes: 0
+                )
+            }
+
+            let oversizedBytes = Array(repeating: UInt8(0x41), count: FollowStreamExport.maximumPrintBytes)
+            let oversized = try FollowStreamExport.snapshot(aToB: FollowStreamDirectionSnapshot(
+                anchorSequence: 1,
+                runs: [FollowStreamRun(sequenceAnchor: 1, firstCaptureOrdinal: 1, bytes: oversizedBytes)],
+                retainedByteCount: oversizedBytes.count,
+                observedOmittedByteCount: 0,
+                matchedFrameCount: 1
+            ), bToA: empty)
+            #expect(throws: FollowStreamExport.PrintError.tooLarge) {
+                try FollowStreamExport.printableText(
+                    oversized,
+                    format: .ascii,
+                    side: .both,
+                    tuple: result.tuple,
+                    limitationLabels: [],
+                    completeness: result.completeness,
+                    retainedBytes: FollowStreamExport.maximumPrintBytes,
+                    observedOmittedBytes: 0
+                )
+            }
 
             if WiresharkOracle.isAvailable {
                 // tshark's raw follow prints each turn as hex, server turns indented by a tab.
@@ -96,9 +153,135 @@ struct FollowStreamReaderTests {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     return !trimmed.isEmpty && trimmed.allSatisfy(\.isHexDigit)
                 }
-                let ours = turns.map { $0.bytes.map { String(format: "%02x", $0) }.joined() }
+                let ours = turns.map { snapshot.bytes(in: $0).map { String(format: "%02x", $0) }.joined() }
                 // The field column (frame numbers) precedes the follow output; keep the turns.
                 #expect(Array(hexTurns.suffix(ours.count)).map { $0.trimmingCharacters(in: .whitespaces) } == ours)
+            }
+        }
+    }
+
+    @Test
+    func yamlKeepsAdjacentSameDirectionFramesAndPerPeerIndexes() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 1_000, payload: Array("a".utf8)),
+            Self.tcpFrame(client: true, seq: 1_001, payload: Array("b".utf8)),
+            Self.tcpFrame(client: false, seq: 5_000, payload: Array("c".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple,
+                sourceToken: SavedCaptureStreamLoader.sourceToken(for: identity)
+            ).read()
+            let snapshot = try FollowStreamExport.snapshot(of: result)
+            let chunks = try #require(snapshot.captureOrderedChunks)
+            #expect(chunks.map(\.provenance?.ordinal.rawValue) == [1, 2, 3])
+            #expect(snapshot.turns?.map(\.chunkRange) == [0 ..< 2, 2 ..< 3])
+            #expect(snapshot.turnCount == 2)
+            let yaml = try #require(try String(
+                data: FollowStreamExport.data(snapshot, format: .yaml, side: .both, tuple: result.tuple),
+                encoding: .utf8
+            ))
+            #expect(yaml.contains("  - packet: 1\n    peer: 0\n    index: 0\n    timestamp: 1.000000000\n"))
+            #expect(yaml.contains("  - packet: 2\n    peer: 0\n    index: 1\n    timestamp: 2.000000000\n"))
+            #expect(yaml.contains("  - packet: 3\n    peer: 1\n    index: 0\n    timestamp: 3.000000000\n"))
+            #expect(yaml.components(separatedBy: "  - packet:").count - 1 == 3)
+        }
+    }
+
+    @Test
+    func droppedProvenanceCutsInsideRunAndRefusesUnprovenInterleave() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 1_000, payload: Array("abcd".utf8)),
+            Self.tcpFrame(client: false, seq: 5_000, payload: Array("Z".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple, sourceToken: UUID()
+            ).read()
+            var limited = result.aToB
+            limited.segmentMarksDroppedFrom = 2
+            let snapshot = try FollowStreamExport.snapshot(aToB: limited, bToA: result.bToA)
+            #expect(snapshot.aToBChunks.map { String(bytes: $0.bytes, encoding: .utf8) } == ["ab", "cd"])
+            #expect(snapshot.aToBChunks.map(\.provenance?.ordinal.rawValue) == [1, nil])
+            #expect(snapshot.unknownProvenanceByteCount == 2)
+            #expect(snapshot.captureOrderedChunks == nil)
+            #expect(snapshot.turns == nil)
+            #expect(snapshot.turnCount == nil)
+            #expect(snapshot.origin == nil)
+            #expect(!snapshot.canExport(side: .both))
+            #expect(try FollowStreamExport
+                .data(snapshot, format: .raw, side: .aToB, tuple: result.tuple) == Data("abcd".utf8))
+            #expect(throws: FollowStreamExport.ExportError.orderingUnavailable) {
+                try FollowStreamExport.data(snapshot, format: .raw, side: .both, tuple: result.tuple)
+            }
+            #expect(throws: FollowStreamExport.ExportError.orderingUnavailable) {
+                try FollowStreamExport.printableText(
+                    snapshot, format: .yaml, side: .both, tuple: result.tuple, limitationLabels: [],
+                    completeness: result.completeness, retainedBytes: 5, observedOmittedBytes: 0
+                )
+            }
+            let yaml = try #require(try String(
+                data: FollowStreamExport.data(snapshot, format: .yaml, side: .aToB, tuple: result.tuple),
+                encoding: .utf8
+            ))
+            #expect(yaml
+                .contains("  - packet: null\n    provenance: unavailable\n    peer: 0\n    index: 1\n    data:"))
+            #expect(yaml.components(separatedBy: "timestamp:").count - 1 == 1)
+            let arrays = try #require(try String(
+                data: FollowStreamExport.data(snapshot, format: .cArrays, side: .aToB, tuple: result.tuple),
+                encoding: .utf8
+            ))
+            #expect(arrays.contains("char peer0_1[] = { /* Frame unavailable */"))
+            let printed = try FollowStreamExport.printableText(
+                snapshot, format: .ascii, side: .aToB, tuple: result.tuple, limitationLabels: [],
+                completeness: result.completeness, retainedBytes: 5, observedOmittedBytes: 0
+            )
+            #expect(printed.contains("First-frame provenance is unavailable for 2 retained bytes"))
+            #expect(printed.hasSuffix("abcd"))
+        }
+    }
+
+    @Test
+    func oneDirectionExportPreservesSequenceOrderWhenCaptureArrivalDiffers() throws {
+        let frames = [
+            Self.tcpFrame(client: true, seq: 1_002, payload: Array("cd".utf8)),
+            Self.tcpFrame(client: true, seq: 1_000, payload: Array("ab".utf8)),
+            Self.tcpFrame(client: false, seq: 5_000, payload: Array("Z".utf8)),
+        ]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple,
+                sourceToken: SavedCaptureStreamLoader.sourceToken(for: identity)
+            ).read()
+            let snapshot = try FollowStreamExport.snapshot(of: result)
+            #expect(snapshot.aToBChunks.map(\.provenance?.ordinal.rawValue) == [2, 1])
+            #expect(snapshot.captureOrderedChunks?.map(\.provenance?.ordinal.rawValue) == [1, 2, 3])
+            #expect(try FollowStreamExport
+                .data(snapshot, format: .raw, side: .aToB, tuple: result.tuple) == Data("abcd".utf8))
+            #expect(try FollowStreamExport
+                .data(snapshot, format: .raw, side: .both, tuple: result.tuple) == Data("cdabZ".utf8))
+        }
+    }
+
+    @Test
+    func missingMarksNeverBorrowRunProvenanceAndSingleSideBothRemainsAvailable() throws {
+        let frames = [Self.tcpFrame(client: true, seq: 1_000, payload: Array("data".utf8))]
+        try Self.withCapture(.pcap(frames)) { url, identity in
+            let result = try FollowStreamReader(
+                contentsOf: url, expectedIdentity: identity, tuple: Self.tuple, sourceToken: UUID()
+            ).read()
+            var unmarked = result.aToB
+            unmarked.segmentMarks = []
+            let snapshot = try FollowStreamExport.snapshot(aToB: unmarked, bToA: Self.emptyDirection)
+            #expect(snapshot.aToBChunks.first?.provenance == nil)
+            #expect(snapshot.unknownProvenanceByteCount == 4)
+            #expect(snapshot.captureOrderedChunks == nil)
+            #expect(snapshot.turnCount == 1)
+            #expect(snapshot.canExport(side: .both))
+            #expect(try FollowStreamExport
+                .data(snapshot, format: .raw, side: .both, tuple: result.tuple) == Data("data".utf8))
+            #expect(throws: CancellationError.self) {
+                try FollowStreamExport.snapshot(of: result, checkingCancellation: { false })
             }
         }
     }
@@ -570,8 +753,6 @@ struct FollowStreamReaderTests {
 
     // MARK: Private
 
-    // MARK: Fixture kinds
-
     private enum CaptureKind {
         case pcap([[UInt8]])
         case pcapng([[UInt8]])
@@ -587,6 +768,14 @@ struct FollowStreamReaderTests {
         source: IPEndpoint(ip: "10.0.0.5", port: 50_000),
         destination: IPEndpoint(ip: "203.0.113.9", port: 443)
     )
+
+    // MARK: Fixture kinds
+
+    private static var emptyDirection: FollowStreamDirectionSnapshot {
+        FollowStreamDirectionSnapshot(
+            anchorSequence: nil, runs: [], retainedByteCount: 0, observedOmittedByteCount: 0, matchedFrameCount: 0
+        )
+    }
 
     // MARK: Frame builders
 

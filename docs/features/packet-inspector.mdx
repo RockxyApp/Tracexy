@@ -1,0 +1,31 @@
+---
+title: Packet inspector
+description: Read the layers and exact bytes behind a selected observation.
+---
+
+
+**Status: Available**
+
+Read the layers and exact bytes behind a selected observation.
+
+## Try it
+
+Select a session or cited frame and use the evidence inspector's facet bar. Move between **Timeline**, **Evidence**, **Ladder**, **Frames**, **Stream**, **Layers**, **Requests**, **Payload**, and **Hex**. Only the facets a session actually has something to show appear: Evidence and Ladder need retained session evidence, Frames needs a stable capture source, Stream appears for TCP or UDP, Requests for an observed application exchange, and Payload and Hex for retained bytes. A finding can open its first cited frame directly.
+
+## What you can see
+
+The decoder checks bounds and returns partial facts for malformed or truncated input. **Show Bytes…** in the Layers facet — or **Show Body…** on an HTTP exchange in the Stream facet — can decode a selected run of bytes as Base64, Gzip, Zlib (HTTP deflate), Raw Deflate, Percent-Encoding, Quoted-Printable, ROT-13, or Hex Digits, with a bounded output size. **View → Show Bytes as Bits** switches the bytes pane to a bit view, and **View → Validate Checksums** turns on the supported per-protocol checksum checks.
+
+Use **Capture → Decode As…** to route a port to a different supported protocol for this session, and **Capture → Enabled Protocols…** to turn a decoder off.
+
+## Coverage limits
+
+Only supported protocol layers receive named fields. Unrecognized, encrypted, or truncated content stays visible as bytes or an explicit limitation rather than a guessed decode. Decode As accepts Tracexy's own supported protocols; TShark's `-d` grammar is not supported.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="All Frames" href="/features/frames" />
+  <Card title="Findings" href="/features/findings" />
+  <Card title="Protocol coverage" href="/coverage/protocols" />
+</CardGroup>

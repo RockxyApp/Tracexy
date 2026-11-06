@@ -28,5 +28,16 @@ struct AllFramesSessionSteppingTests {
         // A frame that belongs to no session has none to step through.
         #expect(AllFramesWindow.adjacentInSession(from: 5, forward: true, rows: rows) == nil)
         #expect(AllFramesWindow.adjacentInSession(from: nil, forward: true, rows: rows) == nil)
+
+        #expect(AllFramesWindow.frameAtPageBoundary(rows, first: true) == 1)
+        #expect(AllFramesWindow.frameAtPageBoundary(rows, first: false) == 8)
+        #expect(AllFramesWindow.frameAtPageBoundary([], first: true) == nil)
+        #expect(AllFramesWindow.frameAtPageBoundary([], first: false) == nil)
+
+        let predecessors = AllFramesWindow.previousDisplayedFrames(
+            rows, retainedOrdinals: Set(rows.map(\.ordinal))
+        )
+        #expect(predecessors[1] == FrameTimePredecessor.none)
+        #expect(predecessors[2] == FrameTimePredecessor.unknown)
     }
 }

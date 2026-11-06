@@ -226,6 +226,7 @@ nonisolated struct SessionQueryParser: Hashable, Sendable {
         "icmpv6": .icmpv6,
         "tcp": .tcp,
         "udp": .udp,
+        "sctp": .sctp,
         "dns": .dns,
         "tls": .tls,
         "http": .http,

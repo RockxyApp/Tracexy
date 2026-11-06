@@ -89,11 +89,13 @@ extension MainContentCoordinator {
 
         if isViewingSavedCapture, let url = savedCaptureEvidenceURL, let identity = adoptedSavedCaptureIdentity {
             let token = SavedCaptureStreamLoader.sourceToken(for: identity)
+            let timeCorrection = activeSavedCapture?.timeCorrection
             sessionFramesTask = Task.detached(priority: .userInitiated) { [weak self] in
                 do {
                     let scanner = try SessionFrameScanner(
                         contentsOf: url, expectedIdentity: identity, sessionID: sessionID,
-                        sourceToken: token, clientEndpoint: client
+                        sourceToken: token, clientEndpoint: client,
+                        configuration: .init(timeCorrection: timeCorrection)
                     )
                     let result = try scanner.scan(onProgress: relay.submit)
                     try Task.checkCancellation()

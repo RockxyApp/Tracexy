@@ -278,7 +278,9 @@ extension MainContentCoordinator {
             endedAt: lifetime.endedAt,
             sourceKind: .saved,
             completeness: completeness,
-            timeBasis: lifetime.timeBasis,
+            timeBasis: request.capture.timeCorrection == nil
+                ? (result.metadata.hasTimestampCorrectionMarker ? .correctedCaptured : lifetime.timeBasis)
+                : (lifetime.timeBasis == .captured ? .correctedCaptured : .openedCorrected),
             sessions: result.sessions,
             findings: HistoryFindingRecord.records(
                 connection: result.connectionAnalysis,
@@ -305,14 +307,14 @@ extension MainContentCoordinator {
         guard metadata.totalFrames > 0, metadata.untimedFrameCount == 0,
               let first = metadata.firstTimedAt, let last = metadata.lastTimedAt else
         {
-            return (openedAt, openedAt, .opened)
+            return (openedAt, openedAt, metadata.hasTimestampCorrectionMarker ? .openedCorrected : .opened)
         }
         let start = first.timeIntervalSince1970
         let end = last.timeIntervalSince1970
         guard start.isFinite, end.isFinite, end >= start else {
-            return (openedAt, openedAt, .opened)
+            return (openedAt, openedAt, metadata.hasTimestampCorrectionMarker ? .openedCorrected : .opened)
         }
-        return (start, end, .captured)
+        return (start, end, metadata.hasTimestampCorrectionMarker ? .correctedCaptured : .captured)
     }
 
     /// Project (off `@MainActor`) and write asynchronously. Success refreshes the

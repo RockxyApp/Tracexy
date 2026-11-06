@@ -22,4 +22,20 @@ extension MainContentCoordinator {
             workspace.isInvestigationEditorPresented = true
         }
     }
+
+    /// Apply or prepare a typed packet-level predicate in View ▸ All Frames.
+    /// This state and grammar remain independent of the session investigation editor.
+    func filterFrames(with term: String, combination: DecodedFieldFilter.Combination, applying: Bool) {
+        let state = allFrames
+        state.updateFrameExpressionDraft(combination.combineFrame(state.frameExpressionDraft, term))
+        if applying {
+            state.applyFrameExpression()
+        }
+    }
+
+    /// Highlight frames for a decoded-field term without changing the Frame
+    /// Expression draft or applied filter.
+    func highlightFrames(with term: String) {
+        allFrames.highlightFrames(with: term)
+    }
 }

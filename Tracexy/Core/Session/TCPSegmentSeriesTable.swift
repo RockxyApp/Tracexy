@@ -49,6 +49,8 @@ nonisolated struct TCPSegmentObservation: Hashable, Sendable {
     /// `nil` when it carried none. Present on SYNs in practice; retained per segment
     /// so the analysis derives the flow's scaling from the frames themselves.
     let windowScale: UInt8?
+    /// Structurally decoded receiver-reported ranges, retained in wire order.
+    let sackBlocks: [TCPSACKBlock]
 }
 
 // MARK: - TCPSegmentSeriesSummary
@@ -250,7 +252,8 @@ nonisolated struct TCPSegmentSeriesTable {
                 flags: facts.flags,
                 windowSize: facts.windowSize,
                 payloadLength: facts.payloadLength,
-                windowScale: facts.options.windowScale
+                windowScale: facts.options.windowScale,
+                sackBlocks: Array(facts.options.sackBlocks.prefix(TCPOptionFacts.maximumSACKBlockCount))
             )
         )
         retainedObservationTotal += 1

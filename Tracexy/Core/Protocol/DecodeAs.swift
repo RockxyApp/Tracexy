@@ -119,6 +119,58 @@ nonisolated struct DecodeAsRule: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+// MARK: - DecodeAsPacketEndpoint
+
+nonisolated enum DecodeAsPacketEndpoint: String, Hashable, Sendable {
+    case source
+    case destination
+}
+
+// MARK: - DecodeAsPacketTarget
+
+nonisolated struct DecodeAsPacketTarget: Hashable, Identifiable, Sendable {
+    let transport: DecodeAsRule.Transport
+    let endpoint: DecodeAsPacketEndpoint
+    let port: UInt16
+
+    var id: String {
+        "\(transport.rawValue)-\(endpoint.rawValue)-\(port)"
+    }
+
+    var title: String {
+        "\(transport.title) \(endpoint.rawValue) port \(port)…"
+    }
+}
+
+// MARK: - DecodeAsPacketTargets
+
+nonisolated enum DecodeAsPacketTargets {
+    static func from(_ layer: DecodedLayer) -> [DecodeAsPacketTarget] {
+        layer.decodeAsTargets
+    }
+
+    static func from(proto: ProtocolKind, fields: [DecodedField]) -> [DecodeAsPacketTarget] {
+        let transport: DecodeAsRule.Transport
+        switch proto {
+        case .tcp: transport = .tcp
+        case .udp: transport = .udp
+        default: return []
+        }
+        let portFields: [(DecodeAsPacketEndpoint, String)] = [
+            (.source, "Source Port"),
+            (.destination, "Destination Port"),
+        ]
+        return portFields.compactMap { endpoint, name in
+            guard let value = fields.first(where: { $0.name == name })?.value,
+                  let port = UInt16(value) else
+            {
+                return nil
+            }
+            return DecodeAsPacketTarget(transport: transport, endpoint: endpoint, port: port)
+        }
+    }
+}
+
 // MARK: - DecodeAs
 
 /// Wireshark's Analyze ▸ Decode As: the active Project's port → protocol rules, read by

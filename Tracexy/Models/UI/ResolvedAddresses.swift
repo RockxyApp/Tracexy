@@ -12,6 +12,8 @@ nonisolated enum ResolvedAddressSource: Hashable, Sendable {
     case named
     /// A name the user gave an IPv4 block in this Project (the row's address is the block).
     case namedSubnet
+    /// A name mapping embedded in this PCAPNG capture.
+    case captureFile
 
     // MARK: Internal
 
@@ -21,6 +23,7 @@ nonisolated enum ResolvedAddressSource: Hashable, Sendable {
         case .mdns: "mDNS answer"
         case .named: "Named by you"
         case .namedSubnet: "Subnet named by you"
+        case .captureFile: "Capture file"
         }
     }
 }
@@ -32,8 +35,8 @@ nonisolated struct ResolvedAddressRow: Identifiable, Hashable, Sendable {
     let address: String
     let name: String
     let source: ResolvedAddressSource
-    /// The DNS or mDNS session whose answer carried the name; `nil` for a name the
-    /// user gave.
+    /// The DNS or mDNS session whose answer carried the name; `nil` for Project- or
+    /// capture-file-provided names.
     let sessionID: UUID?
     /// How many sessions' answers gave this address this name.
     let answerCount: Int
@@ -48,17 +51,17 @@ nonisolated struct ResolvedAddressRow: Identifiable, Hashable, Sendable {
 
 // MARK: - ResolvedAddresses
 
-/// The names learned for addresses in a capture — from DNS and mDNS answers carried by
-/// its sessions — beside the names the user gave in this Project. Derived from the
-/// sessions on demand, so it holds nothing the sessions do not already hold, and every
-/// learned name leads back to the session whose answer carried it.
+/// Names learned for addresses from DNS/mDNS session facts or a PCAPNG Name Resolution
+/// Block, beside Project-provided names. DNS/mDNS rows link to the answering session;
+/// file mappings retain their container source without fabricating a session.
 nonisolated enum ResolvedAddresses {
     // MARK: Internal
 
     static func rows(
         sessions: [SessionSummary],
         namedAddresses: [String: String],
-        namedSubnets: [String: String] = [:]
+        namedSubnets: [String: String] = [:],
+        captureFileRecords: [CaptureNameResolutionRecord] = []
     )
         -> [ResolvedAddressRow]
     {
@@ -114,6 +117,23 @@ nonisolated enum ResolvedAddresses {
                 address: block, name: name, source: .namedSubnet, sessionID: nil,
                 answerCount: 0, hasOtherNames: false
             ))
+        }
+        var fileNames: [String: Set<String>] = [:]
+        for record in captureFileRecords {
+            guard let address = IPAddressValue(parsing: record.address)?.compressedText,
+                  !record.name.text.isEmpty else
+            {
+                continue
+            }
+            fileNames[address, default: []].insert(record.name.text)
+        }
+        for (address, names) in fileNames {
+            for name in names {
+                rows.append(ResolvedAddressRow(
+                    address: address, name: name, source: .captureFile, sessionID: nil,
+                    answerCount: 0, hasOtherNames: names.count > 1
+                ))
+            }
         }
         return rows.sorted(by: precedes)
     }

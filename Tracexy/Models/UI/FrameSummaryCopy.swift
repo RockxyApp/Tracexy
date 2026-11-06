@@ -5,8 +5,8 @@ import Foundation
 /// Wireshark's Copy ▸ Summary as Text, …as CSV, …as YAML and …as HTML for a row of
 /// the packet list: the columns as shown, tab-separated, quoted and comma-separated,
 /// as a YAML list under a comment naming the packet, or as an HTML table row with the
-/// text alongside for plain-text paste. Unlike Wireshark, a quote inside a CSV field
-/// is doubled and HTML text is escaped, so the result stays well formed.
+/// text alongside for plain-text paste. CSV doubles quotes and guards leading
+/// spreadsheet formula markers in capture text; HTML text is escaped.
 nonisolated enum FrameSummaryCopy {
     // MARK: Internal
 
@@ -41,7 +41,7 @@ nonisolated enum FrameSummaryCopy {
     static func copy(
         _ values: [String],
         format: Format,
-        rowIndex: Int,
+        rowIndex: UInt64,
         captureName: String
     )
         -> (text: String, html: String?)
@@ -51,12 +51,18 @@ nonisolated enum FrameSummaryCopy {
             return (values.joined(separator: "\t") + "\n", nil)
         case .csv:
             return (
-                values.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
-                    .joined(separator: ",") + "\n",
+                values.map { value in
+                    let first = value.first { !$0.isWhitespace }
+                    let safe = first.map { "=+-@".contains($0) } == true ? "'\(value)" : value
+                    return "\"" + safe.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+                }
+                .joined(separator: ",") + "\n",
                 nil
             )
         case .yaml:
-            return ("----\n# Packet \(rowIndex) from \(captureName)\n- " + values.joined(separator: "\n- ") + "\n", nil)
+            let safeCaptureName = yamlComment(URL(fileURLWithPath: captureName).lastPathComponent)
+            let rows = values.map { "- \(yamlQuoted($0))" }.joined(separator: "\n")
+            return ("---\n# Packet \(rowIndex) from \(safeCaptureName)\n\(rows)\n", nil)
         case .html:
             let cells = values.enumerated().map { index, value in
                 "<td style=\"text-align:\(rightAligned.contains(index) ? "right" : "left");\">\(escaped(value))</td>"
@@ -77,5 +83,37 @@ nonisolated enum FrameSummaryCopy {
     private static func escaped(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func yamlQuoted(_ value: String) -> String {
+        var escaped = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x22: escaped += "\\\""
+            case 0x5C: escaped += "\\\\"
+            case 0x08: escaped += "\\b"
+            case 0x09: escaped += "\\t"
+            case 0x0A: escaped += "\\n"
+            case 0x0C: escaped += "\\f"
+            case 0x0D: escaped += "\\r"
+            case 0 ... 0x1F,
+                 0x7F ... 0x9F:
+                escaped += String(format: "\\u%04X", scalar.value)
+            default:
+                escaped.unicodeScalars.append(scalar)
+            }
+        }
+        escaped += "\""
+        return escaped
+    }
+
+    private static func yamlComment(_ value: String) -> String {
+        value.unicodeScalars.map { scalar in
+            switch scalar.value {
+            case 0 ... 0x1F,
+                 0x7F ... 0x9F: " "
+            default: String(scalar)
+            }
+        }.joined()
     }
 }

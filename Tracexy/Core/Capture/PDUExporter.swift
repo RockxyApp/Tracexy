@@ -7,6 +7,8 @@ nonisolated struct PDUExportSummary: Equatable, Sendable {
     let streamCount: Int
     /// TCP streams past ``PDUExporter/maximumStreams``, not read.
     let skippedStreamCount: Int
+    /// TCP streams omitted because captured frames do not prove their interleaving.
+    let ambiguousStreamCount: Int
     /// PDUs left out past the PDU or byte bound.
     let omittedPDUCount: Int
 }
@@ -101,6 +103,7 @@ nonisolated enum PDUExporter {
         var pdus: [(order: UInt64, time: Date?, bytes: [UInt8])] = []
         var total = 0
         var omitted = 0
+        var ambiguousStreams = Set<FiveTuple>()
         func keep(_ order: UInt64, _ time: Date?, _ bytes: [UInt8]) {
             guard pdus.count < maximumPDUs, total + bytes.count <= maximumBytes else {
                 omitted += 1
@@ -160,30 +163,45 @@ nonisolated enum PDUExporter {
         // listed twice is read once and exported under each of its listings.
         let named = read.compactMap { stream in dissectorName(stream.kind, tcp: true).map { (stream.tuple, $0) } }
         let namesOn = Dictionary(grouping: named, by: \.0).mapValues { $0.map(\.1) }
-        func keepTurns(of result: FollowStreamResult, as name: String) {
-            for turn in FollowStreamExport.turns(of: result) {
+        func keepTurns(of result: FollowStreamResult, as name: String) throws {
+            let snapshot = try FollowStreamExport.snapshot(of: result, checkingCancellation: { !isCancelled() })
+            guard let turns = snapshot.turns, let chunks = snapshot.captureOrderedChunks else {
+                ambiguousStreams.insert(result.tuple)
+                return
+            }
+            for turn in turns {
+                if isCancelled() {
+                    throw CancellationError()
+                }
                 let aToB = turn.direction == .aToB
-                keep(turn.firstOrdinal, turn.timestamp, packet(
+                guard let firstChunk = chunks[turn.chunkRange].first,
+                      let provenance = firstChunk.provenance else
+                {
+                    ambiguousStreams.insert(result.tuple)
+                    return
+                }
+                keep(provenance.ordinal.rawValue, provenance.timestamp, packet(
                     name: name,
                     source: aToB ? result.tuple.a : result.tuple.b,
                     destination: aToB ? result.tuple.b : result.tuple.a,
-                    tcp: true, payload: turn.bytes
+                    tcp: true, payload: snapshot.bytes(in: turn)
                 ))
             }
         }
         try FollowStreamReader.readEach(
             contentsOf: url, expectedIdentity: expectedIdentity, tuples: named.map(\.0),
+            sourceToken: SavedCaptureStreamLoader.sourceToken(for: expectedIdentity),
             configuration: .init(isCancelled: isCancelled)
         ) { result in
             for name in namesOn[result.tuple] ?? [] {
-                keepTurns(of: result, as: name)
+                try keepTurns(of: result, as: name)
             }
         }
         pdus.sort { $0.order < $1.order }
         try write(pdus.map { ($0.time, $0.bytes) }, to: output)
         return PDUExportSummary(
             pduCount: pdus.count, streamCount: read.count, skippedStreamCount: streams.count - read.count,
-            omittedPDUCount: omitted
+            ambiguousStreamCount: ambiguousStreams.count, omittedPDUCount: omitted
         )
     }
 
@@ -196,7 +214,11 @@ nonisolated enum PDUExporter {
         var data = PcapngBlockWriter.sectionHeader(comment: nil)
         data += PcapngBlockWriter.interfaceDescription(linkType: linkType, name: "Exported PDUs", fileName: "")
         for (time, bytes) in packets {
-            data += try PcapngBlockWriter.enhancedPacket(bytes: bytes, interfaceID: 0, time: time)
+            if let time {
+                data += try PcapngBlockWriter.enhancedPacket(bytes: bytes, interfaceID: 0, time: time)
+            } else {
+                data += PcapngBlockWriter.simplePacket(bytes: bytes)
+            }
         }
         do {
             try data.write(to: staging, options: .atomic)

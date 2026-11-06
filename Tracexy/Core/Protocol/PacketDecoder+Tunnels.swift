@@ -53,7 +53,13 @@ extension PacketDecoder {
             fields: fields, byteRange: span(buf, headerLength)
         ))
         // Version 1 is PPTP's enhanced GRE, which carries PPP, not a packet decoded here.
-        guard version == 0, packet.tunnelDepth < maximumTunnelDepth else {
+        guard version == 0 else {
+            return
+        }
+        guard packet.tunnelDepth < maximumTunnelDepth else {
+            if [0x0800, 0x86DD, 0x6558].contains(protocolType) {
+                packet.undecodedInnerIPHeader = true
+            }
             return
         }
         let inner = try buf.subset(from: headerLength)
@@ -70,7 +76,11 @@ extension PacketDecoder {
     /// carried directly, with no tunnel header of its own. The inner header must be of
     /// the version the protocol number names.
     static func ipInIP(_ buf: PacketBuffer, version: UInt8, into packet: inout DecodedPacket) throws {
-        guard packet.tunnelDepth < maximumTunnelDepth, try buf.u8(0) >> 4 == version else {
+        guard try buf.u8(0) >> 4 == version else {
+            return
+        }
+        guard packet.tunnelDepth < maximumTunnelDepth else {
+            packet.undecodedInnerIPHeader = true
             return
         }
         packet.tunnelDepth += 1
@@ -91,6 +101,7 @@ extension PacketDecoder {
             byteRange: span(buf, 8)
         ))
         guard packet.tunnelDepth < maximumTunnelDepth else {
+            packet.undecodedInnerIPHeader = true
             return
         }
         packet.tunnelDepth += 1

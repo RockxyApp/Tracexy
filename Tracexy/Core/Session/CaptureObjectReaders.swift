@@ -128,27 +128,46 @@ nonisolated enum FTPDataObjectReader {
         /// The listening end, and where a NATed PASV reply leaves it.
         let endpoints: [IPEndpoint]
         let peerIP: String
+        /// The sender implied by the control command: server for RETR, client for uploads.
+        let dataSenderIP: String
         let command: String
     }
 
+    struct TransferScan: Sendable, Equatable {
+        let transfers: [Transfer]
+        let chronologyUnavailable: Bool
+    }
+
     /// The transfers of one control connection whose command sends a file.
-    static func transfers(in result: FollowStreamResult) -> [Transfer] {
+    static func transfers(in result: FollowStreamResult) -> TransferScan {
         guard let client = ObjectStreamSides.clientDirection(of: result) else {
-            return []
+            return TransferScan(transfers: [], chronologyUnavailable: true)
         }
         let clientIP = client == .aToB ? result.tuple.a.ip : result.tuple.b.ip
         let serverIP = client == .aToB ? result.tuple.b.ip : result.tuple.a.ip
+        guard let snapshot = try? FollowStreamExport.snapshot(of: result), let turns = snapshot.turns,
+              let chunks = snapshot.captureOrderedChunks else
+        {
+            return TransferScan(transfers: [], chronologyUnavailable: true)
+        }
         var transfers: [Transfer] = []
         var current: (setup: UInt64, endpoints: [IPEndpoint], peer: String, command: String?)?
         func finish() {
             if let current, let command = current.command, isExported(command) {
+                let dataSenderIP = command.hasPrefix("RETR") ? serverIP : clientIP
                 transfers.append(Transfer(
-                    setupOrdinal: current.setup, endpoints: current.endpoints, peerIP: current.peer, command: command
+                    setupOrdinal: current.setup, endpoints: current.endpoints, peerIP: current.peer,
+                    dataSenderIP: dataSenderIP, command: command
                 ))
             }
         }
-        for turn in FollowStreamExport.turns(of: result) {
-            for line in lines(turn.bytes) {
+        for turn in turns {
+            guard let firstChunk = chunks[turn.chunkRange].first,
+                  let setupOrdinal = firstChunk.provenance?.ordinal.rawValue else
+            {
+                return TransferScan(transfers: [], chronologyUnavailable: true)
+            }
+            for line in lines(snapshot.bytes(in: turn)) {
                 if turn.direction == client {
                     // Wireshark gives the line to the current data connection first:
                     // the first command, or a data command after a non-data one.
@@ -161,7 +180,7 @@ nonisolated enum FTPDataObjectReader {
                     }
                     if let endpoint = activeEndpoint(line) {
                         finish()
-                        current = (turn.firstOrdinal, [endpoint], serverIP, nil)
+                        current = (setupOrdinal, [endpoint], serverIP, nil)
                     }
                 } else if let port = passivePort(line) {
                     finish()
@@ -169,12 +188,12 @@ nonisolated enum FTPDataObjectReader {
                     if let ip = port.ip, ip != serverIP {
                         endpoints.append(IPEndpoint(ip: serverIP, port: port.port))
                     }
-                    current = (turn.firstOrdinal, endpoints, clientIP, nil)
+                    current = (setupOrdinal, endpoints, clientIP, nil)
                 }
             }
         }
         finish()
-        return transfers
+        return TransferScan(transfers: transfers, chronologyUnavailable: false)
     }
 
     /// Each transfer with the first connection after its setup between its listening
@@ -205,20 +224,31 @@ nonisolated enum FTPDataObjectReader {
         }
     }
 
-    /// The transfer's object: every byte of the data connection in capture order.
+    /// The transfer's object: one direction's bytes in TCP sequence order.
     static func object(_ transfer: Transfer, in result: FollowStreamResult, sessionID: UUID) -> CaptureObject? {
-        let turns = FollowStreamExport.turns(of: result)
-        guard let first = turns.first else {
+        let direction: ConnectionDirection
+        let aMatches = result.tuple.a.ip == transfer.dataSenderIP
+        let bMatches = result.tuple.b.ip == transfer.dataSenderIP
+        guard aMatches != bMatches,
+              let snapshot = try? FollowStreamExport.snapshot(of: result),
+              let chunks = try? snapshot.chunks(for: aMatches ? .aToB : .bToA), !chunks.isEmpty else
+        {
             return nil
+        }
+        direction = aMatches ? .aToB : .bToA
+        var body: [UInt8] = []
+        body.reserveCapacity(chunks.reduce(0) { $0 + $1.bytes.count })
+        for chunk in chunks {
+            body.append(contentsOf: chunk.bytes)
         }
         return CaptureObject(
             id: "\(sessionID.uuidString)-\(transfer.setupOrdinal)",
             sessionID: sessionID,
-            frameOrdinal: first.firstOrdinal,
-            host: first.direction == .aToB ? result.tuple.a.ip : result.tuple.b.ip,
+            frameOrdinal: chunks.first?.provenance?.ordinal.rawValue,
+            host: direction == .aToB ? result.tuple.a.ip : result.tuple.b.ip,
             contentType: "FTP file",
             fileName: transfer.command.count > 5 ? String(transfer.command.dropFirst(5)) : "(MISSING)",
-            body: turns.flatMap(\.bytes)
+            body: body
         )
     }
 

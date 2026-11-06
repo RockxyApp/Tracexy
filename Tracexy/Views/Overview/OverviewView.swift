@@ -13,6 +13,28 @@ import SwiftUI
 /// and local retention; a saved file reports provenance and an explicitly
 /// *unknown* fidelity — never a fabricated clean figure.
 struct OverviewView: View {
+    // MARK: Lifecycle
+
+    /// Binds the two chart selectors to the active Project's own suite. Unlike
+    /// Settings, the workspace window injects no `defaultAppStorage`, so an
+    /// unpinned `@AppStorage` would land in the shared domain and carry one
+    /// Project's chart choice — a Synthetic Project's included — into the next.
+    /// `MainDetailView` remounts on the Project identity, so this rebinds on a
+    /// switch.
+    init(coordinator: MainContentCoordinator) {
+        self.coordinator = coordinator
+        _trafficMeasure = AppStorage(
+            wrappedValue: .bytes,
+            ProjectScopedSettingsKeys.overviewTrafficMeasure,
+            store: coordinator.activeProjectDefaults
+        )
+        _timeSeriesChoice = AppStorage(
+            wrappedValue: .sessionsStarted,
+            ProjectScopedSettingsKeys.overviewTimeSeries,
+            store: coordinator.activeProjectDefaults
+        )
+    }
+
     // MARK: Internal
 
     /// Which series the small time chart beside Protocols shows.
@@ -196,8 +218,9 @@ struct OverviewView: View {
     private static let maximumFindingMarkers = 64
 
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("overview.trafficMeasure") private var trafficMeasure: TrafficMeasure = .bytes
-    @AppStorage("overview.timeSeries") private var timeSeriesChoice: TimeSeriesChoice = .sessionsStarted
+    @AppStorage(ProjectScopedSettingsKeys.overviewTrafficMeasure) private var trafficMeasure: TrafficMeasure = .bytes
+    @AppStorage(ProjectScopedSettingsKeys.overviewTimeSeries)
+    private var timeSeriesChoice: TimeSeriesChoice = .sessionsStarted
 
     private var isSaved: Bool {
         coordinator.isViewingSavedCapture

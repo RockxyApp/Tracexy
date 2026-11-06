@@ -15,7 +15,7 @@ import Foundation
 //   retransmission   -> retransmissionObserved (note)
 //   overlap          -> overlapObserved    (note)
 //   outOfOrderBuffered / pendingOverflow -> outOfOrderObserved (note)
-//   zeroWindow / zeroWindowProbe -> zeroWindowObserved (warning)
+//   zeroWindow / zeroWindowProbe / zeroWindowProbeAcknowledgement -> zeroWindowObserved (warning)
 //   windowFull       -> windowFullObserved (note)
 //   duplicateAcknowledgement -> duplicateAcknowledgementObserved (note)
 //   keepAlive        -> keepAliveObserved  (note)
@@ -96,7 +96,8 @@ nonisolated enum ConnectionAnalysisFindingKind: Hashable, Sendable {
     /// bound overflowed (`.pendingOverflow`).
     case outOfOrderObserved
     /// One side advertised a zero receive window, or the other side probed such a
-    /// window (`.zeroWindow`, `.zeroWindowProbe`): the receiving application was
+    /// window (`.zeroWindow`, `.zeroWindowProbe`, `.zeroWindowProbeAcknowledgement`):
+    /// the receiving application was
     /// not draining its socket buffer at that moment.
     case zeroWindowObserved
     /// A data segment filled the peer's advertised receive window exactly
@@ -526,7 +527,8 @@ nonisolated struct ConnectionAssessor: Hashable, Sendable {
         case .outOfOrderBuffered,
              .pendingOverflow: .outOfOrderObserved
         case .zeroWindow,
-             .zeroWindowProbe: .zeroWindowObserved
+             .zeroWindowProbe,
+             .zeroWindowProbeAcknowledgement: .zeroWindowObserved
         case .windowFull: .windowFullObserved
         case .duplicateAcknowledgement: .duplicateAcknowledgementObserved
         case .keepAlive: .keepAliveObserved
@@ -781,7 +783,9 @@ nonisolated struct ConnectionAssessor: Hashable, Sendable {
         case .spuriousRetransmission: 15
         case .ackedUnseenSegment: 16
         case .cleartextCredential: 17
-        default: 18
+        case .zeroWindowProbeAcknowledgement: 18
+        case .windowUpdate: 19
+        default: 20
         }
     }
 

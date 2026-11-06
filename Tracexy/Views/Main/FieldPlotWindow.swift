@@ -35,7 +35,12 @@ struct FieldPlotWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 620, minHeight: 360)
-            .task(id: RunKey(field: controller.field, limited: controller.limitToSessionsInView)) {
+            .task(id: RunKey(
+                field: controller.field,
+                limited: controller.limitToSessionsInView,
+                project: coordinator.projectStore.activeProjectID,
+                generation: coordinator.startGeneration
+            )) {
                 controller.run(from: coordinator)
             }
             .onDisappear { controller.cancel() }
@@ -58,9 +63,13 @@ struct FieldPlotWindow: View {
         case line
     }
 
+    /// Carries the Project and capture generation so switching either reloads
+    /// this window instead of leaving it on the previous capture's figures.
     private struct RunKey: Hashable {
         let field: FieldKey?
         let limited: Bool
+        let project: UUID
+        let generation: Int
     }
 
     @State private var style = Style.dots

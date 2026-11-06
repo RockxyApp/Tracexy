@@ -410,50 +410,6 @@ extension SettingsStatusBanner where Accessory == EmptyView {
     }
 }
 
-// MARK: - SettingsBadge
-
-/// A small capsule fact — the two or three things worth reading before the
-/// detail grid. Tinted `.secondary` by default so a row of them stays quiet;
-/// pass a tint only when one badge genuinely outranks the others.
-struct SettingsBadge: View {
-    // MARK: Lifecycle
-
-    init(
-        _ text: String,
-        systemImage: String? = nil,
-        tint: Color = .secondary,
-        metrics: SettingsDisplayMetrics = .standard
-    ) {
-        self.text = text
-        systemName = systemImage
-        self.tint = tint
-        self.metrics = metrics
-    }
-
-    // MARK: Internal
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if let systemName {
-                Image(systemName: systemName)
-                    .font(metrics.metadataFont(weight: .semibold))
-            }
-            Text(localized: text)
-                .font(metrics.metadataFont(weight: .medium))
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .tracexyChipStyle(tint: tint, isActive: true)
-    }
-
-    // MARK: Private
-
-    private let text: String
-    private let systemName: String?
-    private let tint: Color
-    private let metrics: SettingsDisplayMetrics
-}
-
 // MARK: - SettingsDetailGrid
 
 /// Baseline-aligned label/value pairs inside a card.

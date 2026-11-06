@@ -12,98 +12,270 @@ struct AllFramesWindow: View {
 
     @Bindable var coordinator: MainContentCoordinator
 
+    @State var selection: CaptureFrameRow.ID?
+    @State var historyRestoreOrdinal: UInt64?
+    @State var pendingHistoryRestoreOrdinal: UInt64?
+    @State var pendingHistoryBackward: Bool?
+    @State var pendingHistoryRequestID: Int?
+    @State var goTo = ""
+    @State var revealToken = 0
+    @State var notice: String?
+
+    @Environment(\.openWindow) var openWindow
+
     var body: some View {
         @Bindable var state = coordinator.allFrames
         let inView = Set(coordinator.visibleSessions.map(\.id))
         let rows = state.visibleRows(sessionsInView: inView)
-        Group {
-            if state.isLoading {
-                loading(state)
-            } else if let error = state.error {
-                ContentUnavailableView {
-                    Label("Frames Unavailable", systemImage: "list.number")
-                } description: {
-                    Text(error)
-                } actions: {
-                    Button("Try Again") { coordinator.loadAllFrames(force: true) }
-                }
-            } else if state.list == nil {
-                ContentUnavailableView {
-                    Label("No Frames Listed", systemImage: "list.number")
-                } actions: {
-                    Button("List Frames") { coordinator.loadAllFrames(force: true) }
-                }
-            } else if rows.isEmpty {
-                ContentUnavailableView(
-                    "No Frames Match",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    description: Text(state.limitToSessionsInView
-                        ? "No frame of the sessions in view matches. Turn off Limit to Sessions in View to see every frame."
-                        : "No frame matches the search.")
+        let pinnedRows = state.pinnedFrameRows.values.sorted { $0.ordinal < $1.ordinal }
+        let selectedRow = selection.flatMap { ordinal in rows.first { $0.ordinal == ordinal } }
+        let canMutateSelectedRow = !state.isLoading
+            && !state.isEvaluatingFrameExpression
+            && state.error == nil
+            && state.list != nil
+            && selectedRow != nil
+        let commandTarget = selectedRow.flatMap { row in
+            row.provenance.timestamp.map { timestamp in
+                FrameTimeCommandTarget(
+                    reference: .init(sessionID: nil, ordinal: row.ordinal, timestamp: timestamp),
+                    projectID: coordinator.projectStore.activeProjectID,
+                    captureGeneration: coordinator.startGeneration,
+                    captureRow: row
                 )
-            } else {
-                table(rows)
             }
         }
-        .searchable(text: $state.search, placement: .toolbar, prompt: "Info, address or protocol")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Toggle("Limit to Sessions in View", isOn: $state.limitToSessionsInView)
-                    .toggleStyle(.checkbox)
-                    .help(
-                        "Show only the frames of the sessions the main window shows, like Wireshark's displayed frames"
-                    )
-            }
-            ToolbarItem(placement: .navigation) {
-                goToField(rows)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                ControlGroup {
-                    Button("Previous Frame in Session", systemImage: "chevron.up") {
-                        stepInSession(rows, forward: false)
-                    }
-                    .keyboardShortcut(",", modifiers: .control)
-                    Button("Next Frame in Session", systemImage: "chevron.down") { stepInSession(rows, forward: true) }
-                        .keyboardShortcut(".", modifiers: .control)
+        framesContent(state: state, rows: rows, pinnedRows: pinnedRows)
+            .searchable(text: $state.search, placement: .toolbar, prompt: "Info, address or protocol")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Toggle("Limit to Sessions in View", isOn: $state.limitToSessionsInView)
+                        .toggleStyle(.checkbox)
+                        .help(
+                            "Show only the frames of the sessions the main window shows, like Wireshark's displayed frames"
+                        )
                 }
-                .disabled(selection.flatMap { id in rows.first { $0.id == id }?.sessionID } == nil)
-                .help("Previous or next frame of the selected frame's session (Control-comma, Control-period)")
+                ToolbarItem(placement: .navigation) {
+                    goToField(rows)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    frameNavigationControls
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    ControlGroup {
+                        Button("Previous Frame in Session", systemImage: "chevron.up") {
+                            stepInSession(rows, forward: false)
+                        }
+                        .keyboardShortcut(",", modifiers: .control)
+                        Button("Next Frame in Session", systemImage: "chevron.down") {
+                            stepInSession(rows, forward: true)
+                        }
+                        .keyboardShortcut(".", modifiers: .control)
+                        Button("First Displayed Frame in Session", systemImage: "arrow.up.to.line") {
+                            selectSessionEdge(rows, last: false)
+                        }
+                        Button("Last Displayed Frame in Session", systemImage: "arrow.down.to.line") {
+                            selectSessionEdge(rows, last: true)
+                        }
+                    }
+                    .disabled(selection.flatMap { id in rows.first { $0.id == id }?.sessionID } == nil)
+                    .help("Step through or select the first or last displayed frame of the selected frame's session")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    ControlGroup {
+                        Button(
+                            selectedRow.map { state.marked.contains($0.id) } == true
+                                ? "Unmark Selected Frame" : "Mark Selected Frame",
+                            systemImage: selectedRow.map { state.marked.contains($0.id) } == true
+                                ? "bookmark.slash" : "bookmark"
+                        ) {
+                            toggleSelectedMark()
+                        }
+                        .disabled(!canMutateSelectedRow)
+                        .help("Mark or unmark the selected frame that is still visible in the main list")
+
+                        Button(
+                            selectedRow.map { state.ignored.contains($0.id) } == true
+                                ? "Unignore Selected Frame" : "Ignore Selected Frame",
+                            systemImage: selectedRow.map { state.ignored.contains($0.id) } == true ? "eye" : "eye.slash"
+                        ) {
+                            toggleSelectedIgnore()
+                        }
+                        .disabled(!canMutateSelectedRow)
+                        .help("Ignore or unignore the selected frame that is still visible in the main list")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Toggle("Find in Frames", systemImage: "text.magnifyingglass", isOn: $isFinding)
+                        .help("Find text, hex bytes, a regular expression, or a Frame Expression in the capture")
+                }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Toggle("Find in Frames", systemImage: "text.magnifyingglass", isOn: $isFinding)
-                    .help("Find a string, hex bytes or a regular expression in the frames' bytes or details")
+            .tracexySafeAreaBar(edge: .top) {
+                VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+                    frameExpressionBar(state)
+                    if isFinding {
+                        FrameFindBar(
+                            coordinator: coordinator, selection: selection,
+                            onSelect: selectFoundFrame
+                        ) { isFinding = false }
+                    }
+                }
             }
-        }
-        .tracexySafeAreaBar(edge: .top) {
-            if isFinding {
-                FrameFindBar(
-                    coordinator: coordinator, rows: rows, selection: $selection, revealToken: $revealToken
-                ) { isFinding = false }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexySafeAreaBar(edge: .bottom) {
+                footer(shown: rows.count, rows: rows, state: state)
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .tracexySafeAreaBar(edge: .bottom) {
-            footer(shown: rows.count, state: state)
-        }
-        .frame(minWidth: 760, minHeight: 360)
-        .onAppear { coordinator.loadAllFrames() }
-        .onChange(of: coordinator.packetDetailOptions.frameColumns, initial: true) { old, new in
-            for index in 0 ..< PacketDetailOptions.maximumFrameColumns {
-                columnCustomization[visibility: "field\(index)"] = index < new.count ? .visible : .hidden
+            .frame(minWidth: 760, minHeight: 360)
+            .focusedSceneValue(
+                \.frameTimeCommandTarget,
+                state.isLoading || state.isEvaluatingFrameExpression || state.list == nil || state.error != nil
+                    ? nil : commandTarget
+            )
+            .onAppear(perform: loadAllFramesAndReceiveSelection)
+            .onChange(of: state.externalSelectionRequest) { _, _ in receiveExternalSelectionRequest() }
+            .onChange(of: state.isLoading) { _, loading in
+                if !loading {
+                    state.refreshPinnedFrameRows(from: state.list.map { $0.rows + $0.auxiliaryRows } ?? [])
+                    state.refreshFrameColorRules()
+                    resolvePendingTableSelection()
+                    receiveExternalSelectionRequest()
+                }
             }
-            if old != new {
-                coordinator.loadAllFrames(force: true)
+            .onChange(of: state.frameColorRuleLibrary.rules) { _, _ in state.refreshFrameColorRules() }
+            .onChange(of: state.list?.firstRetainedOrdinal) { _, _ in
+                state.refreshPinnedFrameRows(from: state.list.map { $0.rows + $0.auxiliaryRows } ?? [])
+                state.refreshFrameColorRules()
+                resolvePendingTableSelection()
+                updateSelectedFrameTimeReference(rows: rows)
             }
-        }
-        .onChange(of: coordinator.packetDetailOptions.validateChecksums, initial: true) { _, validate in
-            coordinator.allFrames.countsBadChecksums = validate
-        }
-        .sheet(item: Binding(
-            get: { commentingFrame.map(FrameCommentTarget.init) },
-            set: { commentingFrame = $0?.id }
-        )) { target in
-            commentSheet(for: target.id)
-        }
+            .onChange(of: selection) { previous, current in
+                if let current, current != previous {
+                    if historyRestoreOrdinal == current {
+                        historyRestoreOrdinal = nil
+                    } else {
+                        if let pendingHistoryRestoreOrdinal,
+                           coordinator.allFrames.pendingTableSelection == pendingHistoryRestoreOrdinal
+                        {
+                            coordinator.allFrames.pendingTableSelection = nil
+                        }
+                        coordinator.allFrames.recordFrameSelection(current)
+                        pendingHistoryRestoreOrdinal = nil
+                        pendingHistoryBackward = nil
+                        pendingHistoryRequestID = nil
+                    }
+                }
+                updateSelectedFrameTimeReference(rows: rows)
+            }
+            .onChange(of: coordinator.startGeneration) { _, _ in
+                sourceComments.dismiss()
+                coordinator.allFrames.clearFrameNavigationHistory()
+                state.clearRecentFrameExpressions()
+                historyRestoreOrdinal = nil
+                pendingHistoryRestoreOrdinal = nil
+                pendingHistoryBackward = nil
+                pendingHistoryRequestID = nil
+                state.externalSelectionRequest = nil
+                state.externalSelectionRequestID = nil
+                selection = nil
+            }
+            .onChange(of: state.isEvaluatingFrameExpression) { _, _ in resolveFrameSelections() }
+            .onChange(of: state.acceptedFrameExpressionText) { old, new in
+                guard old != new, !new.isEmpty, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
+            }
+            .onChange(of: coordinator.packetDetailOptions.frameColumns, initial: true) { old, new in
+                for index in 0 ..< PacketDetailOptions.maximumFrameColumns {
+                    columnCustomization[visibility: "field\(index)"] = index < new.count ? .visible : .hidden
+                }
+                if old != new {
+                    state.clearCaptureTimeReferenceColumnValues()
+                    state.clearPinnedFrameColumnValues()
+                    coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
+                }
+            }
+            .onChange(of: coordinator.packetDetailOptions.validateChecksums, initial: true) { _, validate in
+                coordinator.allFrames.countsBadChecksums = validate
+            }
+            .onChange(of: coordinator.sessionTimeDisplay.frameTimeReferences) { old, new in
+                let oldCaptureReferences = old.filter { $0.sessionID == nil }.map(\.ordinal)
+                let newCaptureReferences = new.filter { $0.sessionID == nil }.map(\.ordinal)
+                guard showsCumulativeBytes, oldCaptureReferences != newCaptureReferences, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
+            }
+            .onChange(of: showsCumulativeBytes, initial: true) { old, new in
+                columnCustomization[visibility: "cumulativeBytes"] = new ? .visible : .hidden
+                guard old != new, new, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
+            }
+            .onChange(of: state.showsRelativeTCPNumbers) { old, new in
+                guard old != new, let list = state.list else {
+                    return
+                }
+                coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal)
+            }
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, _ in
+                sourceComments.dismiss()
+            }
+            .sheet(item: Binding(
+                get: { commentingFrame.map(FrameCommentTarget.init) },
+                set: { commentingFrame = $0?.id }
+            )) { target in
+                commentSheet(for: target.id)
+            }
+            .sheet(item: $sourceComments.target) { target in
+                SourceFrameCommentsSheet(ordinal: target.id, presentation: sourceComments.presentation) {
+                    sourceComments.dismiss()
+                }
+            }
+            .sheet(isPresented: $isManagingFrameFilters) {
+                FrameFilterPresetManagerSheet(
+                    library: coordinator.allFrames.frameFilterLibrary,
+                    expectedProjectID: presetProjectID
+                )
+            }
+            .sheet(isPresented: $isManagingColorRules) {
+                FrameColorRuleManagerSheet(
+                    library: coordinator.allFrames.frameColorRuleLibrary,
+                    expectedProjectID: colorRuleProjectID
+                )
+            }
+            .sheet(item: $namingAddress) { target in
+                FrameAddressNameSheet(
+                    address: target.id,
+                    addressNames: coordinator.addressNames,
+                    projectStore: coordinator.projectStore,
+                    expectedProjectID: target.projectID,
+                ) {
+                    namingAddress = nil
+                }
+            }
+            .alert("Save Frame Filter", isPresented: $isSavingFrameFilter) {
+                TextField("Name", text: $newPresetName)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let saved = coordinator.allFrames.frameFilterLibrary.save(
+                        name: newPresetName,
+                        expression: state.frameExpressionDraft,
+                        expectedProjectID: presetProjectID
+                    )
+                    notice = frameFilterSaveNotice(saved)
+                }
+            } message: {
+                Text("Saved Frame Filters are local to this Project. Saving does not apply the filter.")
+            }
+            .onChange(of: coordinator.projectStore.activeProjectID) { _, newID in
+                state.clearFrameExpression()
+                state.clearFrameHighlight()
+                state.clearRecentFrameExpressions()
+                presetProjectID = newID
+                isSavingFrameFilter = false
+                isManagingFrameFilters = false
+            }
     }
 
     /// Wireshark's Next/Previous Packet in Conversation: the adjacent frame of the
@@ -120,6 +292,72 @@ struct AllFramesWindow: View {
         "\(field.proto.label) \(field.name)"
     }
 
+    /// Each shown row's predecessor in this displayed page. A predecessor outside
+    /// the retained page is unknown until the same full display scope is scanned.
+    ///
+    /// The one exception is the row that opens a later page. The scan that built
+    /// the page also recorded the frame immediately before it, so that boundary
+    /// delta is authoritative rather than guessed. It applies only when the first
+    /// shown row really is the page's first retained frame: a filtered page whose
+    /// opening frame is hidden, or a pinned row from another page sorted ahead of
+    /// it, has some other predecessor and stays unknown.
+    static func previousDisplayedFrames(
+        _ rows: [CaptureFrameRow],
+        retainedOrdinals: Set<UInt64>,
+        firstRetainedOrdinal: Int = 1,
+        precedingRetainedFrameTimestamp: Date? = nil
+    )
+        -> [UInt64: FrameTimePredecessor]
+    {
+        var result: [UInt64: FrameTimePredecessor] = [:]
+        result.reserveCapacity(rows.count)
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let previousRow = rows[index - 1]
+                result[row.ordinal] = retainedOrdinals.contains(previousRow.ordinal)
+                    && retainedOrdinals.contains(row.ordinal)
+                    ? previousRow.provenance.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
+                    : .unknown
+            } else if row.ordinal == 1 {
+                // Spelled out: a dictionary's subscript setter takes `Value?`, so a
+                // bare `.none` is `Optional.none` and removes the key instead of
+                // storing the case that says this frame has no predecessor.
+                result[row.ordinal] = FrameTimePredecessor.none
+            } else if row.ordinal == UInt64(max(1, firstRetainedOrdinal)),
+                      retainedOrdinals.contains(row.ordinal),
+                      let precedingRetainedFrameTimestamp
+            {
+                result[row.ordinal] = .timestamp(precedingRetainedFrameTimestamp)
+            } else {
+                result[row.ordinal] = .unknown
+            }
+        }
+        return result
+    }
+
+    /// Resolves the predecessor map for the shown rows from the loaded page,
+    /// passing the boundary frame the scan recorded so a later page's first row
+    /// shows a real delta instead of an unknown one.
+    func previousDisplayedFrames(_ rows: [CaptureFrameRow]) -> [UInt64: FrameTimePredecessor] {
+        let page = coordinator.allFrames.list
+        return Self.previousDisplayedFrames(
+            rows,
+            retainedOrdinals: Set(page?.rows.map(\.ordinal) ?? []),
+            firstRetainedOrdinal: page?.firstRetainedOrdinal ?? 1,
+            precedingRetainedFrameTimestamp: page?.precedingRetainedFrameTimestamp
+        )
+    }
+
+    func frameRuleColor(_ rgb: UInt32) -> Color {
+        Color(
+            .sRGB,
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255,
+            opacity: 1
+        )
+    }
+
     // MARK: Private
 
     private struct FrameCommentTarget: Identifiable {
@@ -134,21 +372,156 @@ struct AllFramesWindow: View {
         let last: UInt64
     }
 
-    @State private var selection: CaptureFrameRow.ID?
     /// Hides the Apply as Column slots nobody filled.
     @State private var columnCustomization = TableColumnCustomization<CaptureFrameRow>()
+    @State private var showsCumulativeBytes = false
 
-    @State private var goTo = ""
-    @State private var revealToken = 0
     /// Wireshark's Find Packet bar, shown under the toolbar.
     @State private var isFinding = false
-    @State private var notice: String?
     @State private var commentingFrame: UInt64?
     @State private var commentDraft = ""
+    @State private var sourceComments = FrameSourceCommentsPresentationModel()
+    @State private var namingAddress: FrameAddressNameTarget?
+    @State private var newPresetName = ""
+    @State private var presetProjectID: UUID?
+    @State private var isSavingFrameFilter = false
+    @State private var isManagingFrameFilters = false
+    @State private var isManagingColorRules = false
+    @State private var colorRuleProjectID: UUID?
 
     /// View ▸ Zoom's step for the frame list.
     private var zoom: Int {
         coordinator.packetDetailOptions.textZoom
+    }
+
+    private func frameExpressionBar(_ state: CaptureFrameListState) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: Theme.Metrics.spacingS) {
+                TextField(
+                    "Frame Expression", text: Binding(
+                        get: { state.frameExpressionDraft },
+                        set: { state.updateFrameExpressionDraft($0) }
+                    ), prompt: Text("tcp.flags.syn and tcp.flags.ack")
+                )
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 460)
+                .onSubmit { state.applyFrameExpression() }
+                .help(
+                    "Filter individual listed frames. Supports frame.len and frame.cap_len comparisons, "
+                        + "frame.truncated, tcp.rst, tcp.syn, tcp.port, tcp.srcport, tcp.dstport, "
+                        + "tcp.flags.fin/syn/reset/push/ack/urg/ece/cwr, tcp.window_size_value, "
+                        + "udp.port, udp.srcport, udp.dstport, sctp.port, sctp.srcport, sctp.dstport, "
+                        + "ip.addr, ip.src, "
+                        + "ip.dst, ip.id, ip.flags.df, dns.response, dns.rcode, dns.id, dns.flags.truncated, "
+                        + "icmp.type/code, icmpv6.type/code, and/or/not."
+                )
+                FrameExpressionSyntaxStatus(isValid: state.frameExpressionDraftIsValid)
+                RecentFrameExpressionsMenu(state: state)
+                Menu("Saved Frame Filters") {
+                    if coordinator.allFrames.frameFilterLibrary.filters.isEmpty {
+                        Text(coordinator.allFrames.frameFilterLibrary
+                            .storageAvailable ? "No Saved Frame Filters" : "Saved Filters Unavailable")
+                    }
+                    ForEach(coordinator.allFrames.frameFilterLibrary.filters) { filter in
+                        Button(filter.name) {
+                            state.updateFrameExpressionDraft(filter.expression)
+                        }
+                        .help(filter.expression)
+                    }
+                    Divider()
+                    Button("Save Current Frame Filter…") {
+                        presetProjectID = coordinator.projectStore.activeProjectID
+                        newPresetName = ""
+                        isSavingFrameFilter = true
+                    }
+                    .disabled(state.frameExpressionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !coordinator.allFrames.frameFilterLibrary.storageAvailable)
+                    Button("Manage Saved Frame Filters…") {
+                        presetProjectID = coordinator.projectStore.activeProjectID
+                        isManagingFrameFilters = true
+                    }
+                    .disabled(!coordinator.allFrames.frameFilterLibrary.storageAvailable)
+                }
+                Menu("Coloring Rules") {
+                    if state.frameColorRuleLibrary.rules.isEmpty {
+                        Text(state.frameColorRuleLibrary.storageAvailable ? "No Coloring Rules" : "Rules Unavailable")
+                    }
+                    ForEach(state.frameColorRuleLibrary.rules) { rule in
+                        Label(rule.name, systemImage: "circle.fill")
+                            .foregroundStyle(frameRuleColor(rule.backgroundRGB))
+                            .help(rule.expression)
+                    }
+                    Divider()
+                    Button("Manage Coloring Rules…") {
+                        colorRuleProjectID = coordinator.projectStore.activeProjectID
+                        isManagingColorRules = true
+                    }
+                    .disabled(!state.frameColorRuleLibrary.storageAvailable)
+                }
+                Menu("Conversation Colors") {
+                    Text(
+                        "\(state.temporaryConversationColorSlots.count) of \(CaptureFrameListState.maximumTemporaryConversationColorSlots) temporary slots"
+                    )
+                    Button("Clear Conversation Colors") { state.clearTemporaryConversationColors() }
+                        .disabled(state.temporaryConversationColorSlots.isEmpty)
+                }
+                .help("Temporary capture-local colors assigned from a frame’s conversation")
+                Button("Apply") { state.applyFrameExpression() }
+                    .disabled(state.list == nil || state.isLoading)
+                Button("Clear") { state.clearFrameExpression() }
+                    .disabled(state.frameExpressionDraft.isEmpty && state.acceptedFrameExpression == nil)
+                if state.isEvaluatingFrameExpression {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Filtering frames")
+                }
+                if state.isEvaluatingFrameColorRules {
+                    ProgressView().controlSize(.small).accessibilityLabel("Evaluating coloring rules")
+                }
+                Spacer()
+                if state.acceptedFrameExpression != nil {
+                    Text("Frame filter active")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: Theme.Metrics.spacingS) {
+                Button("Highlight") { state.highlightFramesFromDraft() }
+                    .disabled(state.list == nil || state.isLoading)
+                    .help("Highlight frames matching the draft without filtering the packet list")
+                if state.highlightedFrameExpression != nil {
+                    Text("Highlight: \(state.highlightedFrameExpressionText)")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 360, alignment: .leading)
+                        .help("Temporary highlight for frames in the retained page")
+                    Button("Clear Highlight") { state.clearFrameHighlight() }
+                    if state.isEvaluatingFrameHighlight {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel("Evaluating frame highlights")
+                    } else if state.highlightedFrameUnknownCount > 0 {
+                        Text("\(state.highlightedFrameUnknownCount) unknown on page")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Highlights apply to the retained page only")
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            if let error = state.frameExpressionError {
+                Text("Draft — Character \(error.position): \(error.reason)")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityLabel(
+                        "Frame Expression draft syntax error at character \(error.position): \(error.reason)"
+                    )
+            }
+        }
+        .controlSize(.small)
     }
 
     /// Wireshark's Conversation Filter and Colorize Conversation for the frame's session.
@@ -179,30 +552,48 @@ struct AllFramesWindow: View {
         }
     }
 
-    /// Marks a frame of the selected frame's session, as Wireshark's related-packet
-    /// column does: where the session starts and ends, and every frame between.
-    private func relatedGlyph(_ ordinal: UInt64, span: RelatedSpan) -> some View {
-        let (symbol, label): (String, String) = if ordinal == span.first {
-            ("arrow.down.to.line", String(localized: "First frame of the selected frame's session"))
-        } else if ordinal == span.last {
-            ("arrow.up.to.line", String(localized: "Last frame of the selected frame's session"))
-        } else {
-            ("link", String(localized: "Same session as the selected frame"))
+    @ViewBuilder
+    private func captureTimeReferenceMenu(_ row: CaptureFrameRow) -> some View {
+        if coordinator.sessionTimeDisplay.isCaptureTimeReference(ordinal: row.ordinal),
+           let timestamp = row.provenance.timestamp
+        {
+            Button("Clear Time Reference") {
+                let reference = FrameTimeReference(sessionID: nil, ordinal: row.ordinal, timestamp: timestamp)
+                coordinator.sessionTimeDisplay.toggleTimeReference(reference)
+                coordinator.allFrames.removeCaptureTimeReferenceRow(row.ordinal)
+                coordinator.sessionTimeDisplay.selectedFrame = reference
+            }
+        } else if let timestamp = row.provenance.timestamp {
+            Button("Set as Time Reference") {
+                let reference = FrameTimeReference(sessionID: nil, ordinal: row.ordinal, timestamp: timestamp)
+                if coordinator.sessionTimeDisplay.toggleTimeReference(reference) {
+                    coordinator.allFrames.retainCaptureTimeReferenceRow(row)
+                }
+            }
+            .disabled(!coordinator.sessionTimeDisplay.canAddTimeReference(at: row.ordinal))
         }
-        return Image(systemName: symbol)
-            .font(.system(size: Theme.Icon.small))
-            .foregroundStyle(.secondary)
-            .help(label)
-            .accessibilityLabel(label)
+    }
+
+    private func frameAddressNameMenu(_ row: CaptureFrameRow) -> some View {
+        FrameAddressNameMenu(
+            row: row, addressNames: coordinator.addressNames,
+            target: $namingAddress, projectStore: coordinator.projectStore
+        )
+    }
+
+    @ViewBuilder
+    private func frameSourceMetadataMenu(_ row: CaptureFrameRow) -> some View {
+        SourceFrameCommentMenuItem(row: row, coordinator: coordinator, presentation: sourceComments)
+        frameAddressNameMenu(row)
     }
 
     private func table(_ rows: [CaptureFrameRow]) -> some View {
-        let name = coordinator.packetDetailOptions.resolvesNetworkAddresses
-            ? FrameAddressNames.resolver(sessions: coordinator.presentedSessions, book: coordinator.addressNames)
-            : { $0 }
-        let previous = Self.previousTimestamps(rows)
-        let captureStart = coordinator.allFrames.list?.rows.first?.provenance.timestamp
+        let name = coordinator.packetDetailOptions.resolvesNetworkAddresses ? coordinator
+            .resolvedFrameAddressName : { $0 }
+        let previous = previousDisplayedFrames(rows)
+        let captureStart = coordinator.allFrames.list?.captureStartTimestamp
         let format = coordinator.sessionTimeDisplay.frameFormat
+        let captureReferences = coordinator.sessionTimeDisplay.captureReferences()
         let related = Self.relatedSpan(of: selection, in: rows)
         let time = { (row: CaptureFrameRow) in
             FrameTimeFormat.text(
@@ -210,104 +601,82 @@ struct AllFramesWindow: View {
                 format == .sinceSessionStart ? .sinceCaptureStart : format,
                 timestamp: row.provenance.timestamp,
                 ordinal: row.ordinal,
-                previous: previous[row.ordinal] ?? nil,
+                previous: previous[row.ordinal] ?? .unknown,
+                previousCaptured: row.previousCapturedFrame,
                 sessionStart: nil,
                 captureStart: captureStart,
-                reference: nil
+                precision: coordinator.sessionTimeDisplay.framePrecision,
+                references: captureReferences
             )
         }
         let fields = coordinator.packetDetailOptions.frameColumns
-        return Table(rows, selection: $selection, columnCustomization: $columnCustomization) {
+        return Table(rows, selection: interactiveFrameSelection, columnCustomization: $columnCustomization) {
             TableColumn("No.") { row in
-                HStack(spacing: 4) {
-                    if let related, row.id != selection, row.sessionID == related.sessionID {
-                        relatedGlyph(row.ordinal, span: related)
+                colorizedCell(row) {
+                    HStack(spacing: 4) {
+                        if let related, row.id != selection, row.sessionID == related.sessionID {
+                            AllFramesRelatedFrameGlyph(ordinal: row.ordinal, first: related.first, last: related.last)
+                        }
+                        temporaryConversationColorGlyph(row)
+                        frameColorRuleGlyph(row)
+                        frameHighlightGlyph(row)
+                        if coordinator.allFrames.marked.contains(row.id) {
+                            Image(systemName: "bookmark.fill")
+                                .foregroundStyle(Color.accentColor)
+                                .accessibilityLabel("Marked")
+                        }
+                        Text(row.ordinal.formatted()).monospacedDigit()
+                            .fontWeight(coordinator.allFrames.marked.contains(row.id) ? .semibold : .regular)
                     }
-                    if coordinator.allFrames.marked.contains(row.id) {
-                        Image(systemName: "bookmark.fill")
-                            .foregroundStyle(Color.accentColor)
-                            .accessibilityLabel("Marked")
-                    }
-                    Text(row.ordinal.formatted()).monospacedDigit()
-                        .fontWeight(coordinator.allFrames.marked.contains(row.id) ? .semibold : .regular)
                 }
-                .foregroundStyle(coordinator.allFrames.ignored.contains(row.id) ? .tertiary : .primary)
             }
             .width(min: 56, ideal: 72)
-            TableColumn(format == .sinceSessionStart ? String(localized: "Time") : format.columnTitle) { row in
-                Text(time(row)).monospacedDigit()
-            }
-            .width(min: 90, ideal: 110)
+            frameTimeColumn(format: format, time: time)
             TableColumn("Source") { row in
-                Text(name(row.source)).font(Theme.Typography.zoomed(.callout, zoom: zoom, monospaced: true))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(row.source)
+                colorizedCell(row) {
+                    Text(name(row.source)).font(Theme.Typography.zoomed(.callout, zoom: zoom, monospaced: true))
+                        .lineLimit(1).truncationMode(.middle).help(row.source)
+                }
             }
             .width(min: 100, ideal: 130)
             TableColumn("Destination") { row in
-                Text(name(row.destination)).font(Theme.Typography.zoomed(.callout, zoom: zoom, monospaced: true))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(row.destination)
+                colorizedCell(row) {
+                    Text(name(row.destination)).font(Theme.Typography.zoomed(.callout, zoom: zoom, monospaced: true))
+                        .lineLimit(1).truncationMode(.middle).help(row.destination)
+                }
             }
             .width(min: 100, ideal: 130)
             TableColumn("Protocol") { row in
-                Text(row.protocolName).lineLimit(1)
+                colorizedCell(row) { Text(row.protocolName).lineLimit(1) }
             }
             .width(min: 60, ideal: 72)
+            captureDirectionColumn()
             TableColumn("Length") { row in
-                Text(row.length.formatted()).monospacedDigit()
+                colorizedCell(row) { Text(row.length.formatted()).monospacedDigit() }
             }
             .width(min: 52, ideal: 64)
+            frameCumulativeBytesColumn()
             Group {
                 fieldColumn(0, fields)
                 fieldColumn(1, fields)
                 fieldColumn(2, fields)
                 fieldColumn(3, fields)
             }
-            TableColumn("Info") { row in
-                HStack(spacing: Theme.Metrics.spacingS) {
-                    if let stop = row.decodeStop {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .help(stop.explanation)
-                            .accessibilityLabel(stop.explanation)
-                    } else if row.hasBadChecksum, coordinator.allFrames.countsBadChecksums {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .help(
-                                "A checksum in this frame is wrong. Frames sent from this Mac are often captured before the network card fills checksums in."
-                            )
-                            .accessibilityLabel("Wrong checksum")
-                    }
-                    Text(row.info).lineLimit(1).truncationMode(.tail)
-                        .strikethrough(coordinator.allFrames.ignored.contains(row.id))
-                        .foregroundStyle(coordinator.allFrames.ignored.contains(row.id) ? .tertiary : .primary)
-                    if let comment = coordinator.allFrames.frameComments[row.id] {
-                        Image(systemName: "text.bubble.fill")
-                            .foregroundStyle(Color.accentColor)
-                            .help(comment)
-                            .accessibilityLabel("Your comment: \(comment)")
-                    } else if row.hasComment {
-                        Image(systemName: "text.bubble")
-                            .foregroundStyle(.secondary)
-                            .help("This frame carries a comment in the capture file")
-                            .accessibilityLabel("Has comment")
-                    }
-                }
-            }
-            .width(min: 200, ideal: 380)
+            frameInfoColumn()
         }
         .font(Theme.Typography.zoomed(.body, zoom: zoom))
         .contextMenu(forSelectionType: CaptureFrameRow.ID.self) { ids in
             if let row = rows.first(where: { $0.id == ids.first }) {
                 Button("Open Session and Frame") { open(row) }
                     .disabled(row.sessionID == nil)
+                decodeAsMenu(row)
                 Divider()
                 Button(coordinator.allFrames.marked.contains(row.id) ? "Unmark Frame" : "Mark Frame") {
-                    coordinator.allFrames.toggleMark(row.id)
+                    coordinator.allFrames.toggleMark(row.id, sessionID: row.sessionID)
                 }
+                PinnedFrameRowMenu(row: row, state: coordinator.allFrames)
+                captureTimeReferenceMenu(row)
+                frameSourceMetadataMenu(row)
                 Button(coordinator.allFrames
                     .frameComments[row.id] == nil ? "Add Frame Comment…" : "Edit Frame Comment…")
                 {
@@ -323,23 +692,47 @@ struct AllFramesWindow: View {
                 if !coordinator.allFrames.ignored.isEmpty {
                     Button("Unignore All") { coordinator.allFrames.ignored = [] }
                 }
+                if let sessionID = row.sessionID {
+                    let colorSlot = coordinator.allFrames.temporaryConversationColorSlots[sessionID]
+                    Button(colorSlot == nil ? "Color This Conversation" : "Clear Conversation Color") {
+                        coordinator.allFrames.toggleTemporaryConversationColor(sessionID: sessionID)
+                    }
+                    .disabled(
+                        colorSlot == nil
+                            && coordinator.allFrames.temporaryConversationColorSlots.count
+                            >= CaptureFrameListState.maximumTemporaryConversationColorSlots
+                    )
+                    .help(
+                        "Temporary color applies to this conversation in the current capture and overrides saved coloring rules."
+                    )
+                }
+                Divider()
+                Button("Export This Frame’s Dissection…") {
+                    DissectionExportController.shared.export(
+                        from: coordinator,
+                        frameSelection: FrameOrdinalSelection(intervals: [.init(first: row.id, last: row.id)])
+                    )
+                }
+                .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
+                .help("Export the selected capture frame as text, CSV, or JSON")
+                Button("Export This Frame…", systemImage: "square.and.arrow.up") {
+                    coordinator.presentFrameExportPanel(preselectedFrameOrdinals: [row.id])
+                }
+                .disabled(!coordinator.canExportFrames)
+                .help("Export only this frame's captured bytes to a new PCAP or PCAPNG file")
+                printFrameMenu(row)
                 Divider()
                 conversationMenus(row)
                 removeColumnMenu(fields)
-                Menu("Copy") {
-                    ForEach(FrameSummaryCopy.Format.allCases) { copyFormat in
-                        Button(copyFormat.title) {
-                            copySummary(
-                                [
-                                    String(row.ordinal), time(row), name(row.source), name(row.destination),
-                                    row.protocolName, String(row.length),
-                                ] + row.columnValues + [row.info],
-                                format: copyFormat,
-                                rowIndex: rows.firstIndex { $0.id == row.id } ?? 0
-                            )
-                        }
-                    }
-                }
+                copyMenu(
+                    for: row,
+                    values: [
+                        String(row.ordinal), time(row), name(row.source), name(row.destination),
+                        row.protocolName, String(row.length),
+                    ] + (showsCumulativeBytes ? [row.cumulativeCapturedBytes?.formatted() ?? ""] : [])
+                        + row.columnValues + [row.info],
+                    rowIndex: row.ordinal
+                )
             }
         } primaryAction: { ids in
             if let row = rows.first(where: { $0.id == ids.first }) {
@@ -352,6 +745,26 @@ struct AllFramesWindow: View {
                 revealRow: rows.firstIndex { $0.id == selection }
             ) {}
         }
+    }
+
+    private func printFrameMenu(_ row: CaptureFrameRow) -> some View {
+        let frame = FrameOrdinalSelection(intervals: [.init(first: row.id, last: row.id)])
+        return Menu("Print This Frame") {
+            Button("Summary…") {
+                DissectionExportController.shared.printDissections(
+                    from: coordinator, frameSelection: frame, layout: .summary
+                )
+            }
+            Button("Dissection…") {
+                DissectionExportController.shared.printDissections(from: coordinator, frameSelection: frame)
+            }
+            Button("Captured Bytes…") {
+                DissectionExportController.shared.printDissections(
+                    from: coordinator, frameSelection: frame, layout: .bytes
+                )
+            }
+        }
+        .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
     }
 
     private func goToField(_ rows: [CaptureFrameRow]) -> some View {
@@ -386,55 +799,171 @@ struct AllFramesWindow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func footer(shown: Int, state: CaptureFrameListState) -> some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
-            if let notice {
-                Text(notice)
-            } else if let list = state.list {
-                Text(list.omittedFrameCount > 0
-                    ? "Showing \(shown.formatted()) of the first \(list.rows.count.formatted()) of \(list.scannedFrameCount.formatted()) frames"
-                    : "Showing \(shown.formatted()) of \(list.scannedFrameCount.formatted()) frames")
+    private func footer(shown: Int, rows: [CaptureFrameRow], state: CaptureFrameListState) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            HStack(spacing: Theme.Metrics.spacingM) {
+                CaptureFrameListSummaryView(shown: shown, state: state, notice: notice)
+                Spacer(minLength: Theme.Metrics.spacingS)
+                if let coverage = state.captureExpressionCoverage {
+                    if let previous = coverage.previousMatchOrdinal {
+                        Button("Previous Matching Page") { loadPage(containing: previous) }
+                    }
+                    if let next = coverage.nextMatchOrdinal {
+                        Button("Next Matching Page") { loadPage(containing: next) }
+                    }
+                }
             }
-            Spacer()
-            if !state.marked.isEmpty || !state.ignored.isEmpty {
-                Text("\(state.marked.count.formatted()) marked, \(state.ignored.count.formatted()) ignored")
-                    .monospacedDigit()
+            HStack(spacing: Theme.Metrics.spacingM) {
+                Spacer()
+                if let list = state.list, list.omittedFrameCount > 0 {
+                    Button("Previous Page") {
+                        let pageSize = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
+                        coordinator.loadAllFrames(
+                            force: true, retainedFrameStartOrdinal: max(1, list.firstRetainedOrdinal - pageSize)
+                        )
+                    }
+                    .disabled(list.firstRetainedOrdinal <= 1 || state.isLoading)
+                    Button("Next Page") {
+                        let pageSize = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
+                        coordinator.loadAllFrames(
+                            force: true, retainedFrameStartOrdinal: list.firstRetainedOrdinal + pageSize
+                        )
+                    }
+                    .disabled(list.firstRetainedOrdinal + list.rows.count > list.scannedFrameCount || state.isLoading)
+                }
+                if !state.marked.isEmpty || !state.ignored.isEmpty {
+                    Text("\(state.marked.count.formatted()) marked, \(state.ignored.count.formatted()) ignored")
+                        .monospacedDigit()
+                }
+                relativeTCPNumbersToggle(state: state)
+                Toggle("Cumulative Bytes", isOn: $showsCumulativeBytes)
+                    .toggleStyle(.checkbox)
+                    .disabled(state.list == nil || state.isLoading || state.error != nil)
+                    .help(
+                        "Show captured-byte totals from the capture start or latest capture-wide time reference; hidden frames still count"
+                    )
+                let captureReferences = coordinator.sessionTimeDisplay.captureReferences()
+                if !captureReferences.isEmpty {
+                    Menu("Time References (\(captureReferences.count.formatted()))") {
+                        Button("Previous Time Reference") { jumpToTimeReference(forward: false) }
+                        Button("Next Time Reference") { jumpToTimeReference(forward: true) }
+                        Divider()
+                        Button("Clear Time References") {
+                            coordinator.sessionTimeDisplay.clearCaptureTimeReferences()
+                            state.clearCaptureTimeReferenceRows()
+                        }
+                    }
+                }
+                Button("Previous Mark") { jumpToMark(forward: false) }
+                    .disabled(state.marked.isEmpty)
+                    .help("Select the previous marked frame")
+                Button("Next Mark") { jumpToMark(forward: true) }
+                    .disabled(state.marked.isEmpty)
+                    .help("Select the next marked frame")
+                if let problems = state.list?.problemCount(countingBadChecksums: state.countsBadChecksums),
+                   problems > 0 || state.showsDecodeProblemsOnly
+                {
+                    Toggle(
+                        (state.list?.omittedFrameCount ?? 0) > 0
+                            ? "Only Decode Problems (\(problems.formatted()) on page)"
+                            : "Only Decode Problems (\(problems.formatted()))",
+                        isOn: Binding(
+                            get: { state.showsDecodeProblemsOnly },
+                            set: { state.showsDecodeProblemsOnly = $0 }
+                        )
+                    )
+                    .toggleStyle(.checkbox)
+                    .help(state.countsBadChecksums
+                        ? "Show only malformed frames, frames the snapshot length cut short, and frames with a wrong checksum"
+                        : "Show only malformed frames and frames the snapshot length cut short")
+                }
+                Toggle("Show Ignored", isOn: Binding(get: { state.showsIgnored }, set: { state.showsIgnored = $0 }))
+                    .toggleStyle(.checkbox)
+                    .disabled(state.ignored.isEmpty)
+                    .help("Show ignored frames, dimmed and struck through")
+                Button("Mark All Displayed") {
+                    state.markDisplayed(rows)
+                }
+                .disabled(rows.isEmpty)
+                .help("Mark every frame currently displayed in this list")
+                Button("Unmark All Displayed") {
+                    state.unmarkDisplayed(rows)
+                }
+                .disabled(!rows.contains { state.marked.contains($0.id) })
+                .help("Unmark frames currently displayed in this list")
+                Button("Ignore All Displayed") {
+                    state.ignoreDisplayed(rows)
+                }
+                .disabled(rows.isEmpty)
+                .help("Ignore every frame currently displayed in this list")
+                Button("Unignore Displayed") {
+                    state.unignoreDisplayed(rows)
+                }
+                .disabled(!rows.contains { state.ignored.contains($0.id) })
+                .help(
+                    "Unignore rows in this list, including retained time-reference rows; the separate pinned strip is not included"
+                )
+                Button("Export Marked…") {
+                    coordinator.presentFrameExportPanel(prefersMarkedFrames: true)
+                }
+                .disabled(state.marked.isEmpty || !coordinator.canExportFrames)
+                .help("Export only the marked frames as PCAPNG or PCAP")
+                if state.acceptedFrameExpression != nil {
+                    Button("Export Matching Frames…") {
+                        coordinator.presentFrameExportPanel(prefersAppliedFrameExpression: true)
+                    }
+                    .disabled(!coordinator.canExportFrames)
+                    .help("Stream every frame matching the applied Frame Expression to PCAPNG or PCAP")
+                    Button("Export Matching Dissections…") {
+                        DissectionExportController.shared.export(
+                            from: coordinator, frameExpression: state.acceptedFrameExpression
+                        )
+                    }
+                    .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isExporting)
+                    .help("Export text, CSV or JSON for every frame matching the applied Frame Expression")
+                    Menu("Print Matching Packet Views…") {
+                        Button("Summaries…") {
+                            DissectionExportController.shared.printDissections(
+                                from: coordinator, frameExpression: state.acceptedFrameExpression, layout: .summary
+                            )
+                        }
+                        Button("Dissections…") {
+                            DissectionExportController.shared.printDissections(
+                                from: coordinator, frameExpression: state.acceptedFrameExpression
+                            )
+                        }
+                        Button("Captured Bytes…") {
+                            DissectionExportController.shared.printDissections(
+                                from: coordinator, frameExpression: state.acceptedFrameExpression, layout: .bytes
+                            )
+                        }
+                    }
+                    .disabled(!coordinator.canExportFrames || DissectionExportController.shared.isPrinting)
+                    .help("Print supported packet views for every frame matching the applied Frame Expression")
+                }
+                Button("Rescan") { rescan(coordinator, state) }
+                    .disabled(state.isLoading || coordinator.allFramesUnavailableReason != nil)
             }
-            Button("Previous Mark") { jumpToMark(forward: false) }
-                .disabled(state.marked.isEmpty)
-                .help("Select the previous marked frame")
-            Button("Next Mark") { jumpToMark(forward: true) }
-                .disabled(state.marked.isEmpty)
-                .help("Select the next marked frame")
-            if let problems = state.list?.problemCount(countingBadChecksums: state.countsBadChecksums),
-               problems > 0 || state.showsDecodeProblemsOnly
-            {
-                Toggle("Only Decode Problems (\(problems.formatted()))", isOn: Binding(
-                    get: { state.showsDecodeProblemsOnly },
-                    set: { state.showsDecodeProblemsOnly = $0 }
-                ))
-                .toggleStyle(.checkbox)
-                .help(state.countsBadChecksums
-                    ? "Show only malformed frames, frames the snapshot length cut short, and frames with a wrong checksum"
-                    : "Show only malformed frames and frames the snapshot length cut short")
-            }
-            Toggle("Show Ignored", isOn: Binding(get: { state.showsIgnored }, set: { state.showsIgnored = $0 }))
-                .toggleStyle(.checkbox)
-                .disabled(state.ignored.isEmpty)
-                .help("Show ignored frames, dimmed and struck through")
-            Button("Export Marked…") {
-                coordinator.presentFrameExportPanel(prefersMarkedFrames: true)
-            }
-            .disabled(state.marked.isEmpty || !coordinator.canExportFrames)
-            .help("Export only the marked frames as PCAPNG or PCAP")
-            Button("Rescan") { coordinator.loadAllFrames(force: true) }
-                .disabled(state.isLoading || coordinator.allFramesUnavailableReason != nil)
         }
         .font(Theme.Typography.caption)
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    private func frameListContent(
+        rows: [CaptureFrameRow], pinnedRows: [CaptureFrameRow], state: CaptureFrameListState
+    )
+        -> some View
+    {
+        FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
+            if rows.isEmpty {
+                NoFramesMatchView(state: state)
+            } else {
+                table(rows)
+            }
+        }
     }
 
     private func commentSheet(for ordinal: UInt64) -> some View {
@@ -483,84 +1012,205 @@ struct AllFramesWindow: View {
         return RelatedSpan(sessionID: session, first: first, last: last)
     }
 
-    /// Each shown row's predecessor in the list, for the delta format.
-    private static func previousTimestamps(_ rows: [CaptureFrameRow]) -> [UInt64: Date?] {
-        var result: [UInt64: Date?] = [:]
-        result.reserveCapacity(rows.count)
-        var previous: Date?
-        for row in rows {
-            result[row.ordinal] = previous
-            previous = row.provenance.timestamp
-        }
-        return result
-    }
-
-    /// An Apply as Column slot: the field's values in each frame, hidden while unused.
     private func fieldColumn(_ index: Int, _ fields: [FieldKey]) -> some TableColumnContent<CaptureFrameRow, Never> {
         TableColumn(fields.indices.contains(index) ? Self.columnTitle(fields[index]) : "") { row in
             let value = row.columnValues.indices.contains(index) ? row.columnValues[index] : ""
-            Text(value).lineLimit(1).truncationMode(.tail).help(value)
+            colorizedCell(row) { Text(value).lineLimit(1).truncationMode(.tail).help(value) }
         }
         .width(min: 60, ideal: 120)
         .customizationID("field\(index)")
         .disabledCustomizationBehavior(.all)
     }
 
-    /// Copy ▸ Summary as Text / CSV / YAML / HTML: the row's columns as shown.
-    private func copySummary(_ values: [String], format: FrameSummaryCopy.Format, rowIndex: Int) {
-        let copied = FrameSummaryCopy.copy(
-            values, format: format, rowIndex: rowIndex,
-            captureName: coordinator.savedCaptureEvidenceURL?.path ?? String(localized: "live capture")
-        )
-        NSPasteboard.general.clearContents()
-        if let html = copied.html {
-            NSPasteboard.general.setString(html, forType: .html)
+    private func frameInfoColumn() -> some TableColumnContent<CaptureFrameRow, Never> {
+        TableColumn("Info") { row in
+            colorizedCell(row) {
+                HStack(spacing: Theme.Metrics.spacingS) {
+                    if let stop = row.decodeStop {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .help(stop.explanation)
+                            .accessibilityLabel(stop.explanation)
+                    } else if row.hasBadChecksum, coordinator.allFrames.countsBadChecksums {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .help(
+                                "A checksum in this frame is wrong. Frames sent from this Mac are often captured before the network card fills checksums in."
+                            )
+                            .accessibilityLabel("Wrong checksum")
+                    }
+                    Text(row.info).lineLimit(1).truncationMode(.tail)
+                        .strikethrough(coordinator.allFrames.ignored.contains(row.id))
+                    if let comment = coordinator.allFrames.frameComments[row.id] {
+                        Image(systemName: "text.bubble.fill")
+                            .foregroundStyle(Color.accentColor)
+                            .help(comment)
+                            .accessibilityLabel("Your comment: \(comment)")
+                    } else if row.hasComment {
+                        Image(systemName: "text.bubble")
+                            .foregroundStyle(.secondary)
+                            .help("This frame carries a comment in the capture file")
+                            .accessibilityLabel("Has comment")
+                    }
+                }
+            }
         }
-        NSPasteboard.general.setString(copied.text, forType: .string)
+        .width(min: 200, ideal: 380)
     }
 
-    private func goToFrame(_ rows: [CaptureFrameRow]) {
-        guard let number = UInt64(goTo.trimmingCharacters(in: .whitespaces)) else {
-            notice = String(localized: "Type a frame number.")
-            return
+    private func updateSelectedFrameTimeReference(rows: [CaptureFrameRow]) {
+        if let selection, let row = rows.first(where: { $0.id == selection }),
+           let timestamp = row.provenance.timestamp
+        {
+            coordinator.sessionTimeDisplay.selectedFrame = FrameTimeReference(
+                sessionID: nil, ordinal: row.ordinal, timestamp: timestamp
+            )
+        } else if coordinator.sessionTimeDisplay.selectedFrame?.sessionID == nil {
+            coordinator.sessionTimeDisplay.selectedFrame = nil
         }
-        if rows.contains(where: { $0.ordinal == number }) {
-            selection = number
-            revealToken &+= 1
-            notice = nil
-        } else {
-            notice = String(localized: "Frame \(number.formatted()) is not in this list.")
-        }
-    }
-
-    private func stepInSession(_ rows: [CaptureFrameRow], forward: Bool) {
-        guard let next = Self.adjacentInSession(from: selection, forward: forward, rows: rows) else {
-            notice = forward
-                ? String(localized: "This is the session's last frame in the list.")
-                : String(localized: "This is the session's first frame in the list.")
-            return
-        }
-        notice = nil
-        selection = next
-        revealToken &+= 1
     }
 
     private func jumpToMark(forward: Bool) {
-        let rows = coordinator.allFrames.visibleRows(sessionsInView: Set(coordinator.visibleSessions.map(\.id)))
-        guard let next = coordinator.allFrames.adjacentMark(from: selection, in: rows, forward: forward) else {
+        let state = coordinator.allFrames
+        guard let next = state.adjacentMarkAcrossCapture(from: selection, forward: forward) else {
             return
         }
-        selection = next
+        cancelExternalSelectionForManualSelection()
+        let rows = state.visibleRows(sessionsInView: Set(coordinator.visibleSessions.map(\.id)))
+        if rows.contains(where: { $0.ordinal == next }) {
+            selection = next
+            revealToken &+= 1
+            notice = nil
+        } else if state.list?.rows.contains(where: { $0.ordinal == next }) == true {
+            notice = String(localized: "Frame \(next.formatted()) is hidden by the current filters.")
+        } else if let list = state.list, next <= UInt64(list.scannedFrameCount) {
+            let pageSize = CaptureFrameListScanner.Configuration.defaultMaxRetainedFrames
+            let start = ((Int(next) - 1) / pageSize) * pageSize + 1
+            coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: start)
+            state.pendingTableSelection = next
+            notice = nil
+        } else {
+            // The mark survives a rescan but the list does not, so the page that
+            // holds this frame cannot be resolved yet. Say so rather than letting
+            // an enabled button do nothing.
+            notice = String(localized: "Frame \(next.formatted()) can’t be shown until the list is rescanned.")
+        }
+    }
+
+    private func jumpToTimeReference(forward: Bool) {
+        let references = coordinator.sessionTimeDisplay.captureReferences()
+        guard !references.isEmpty else {
+            return
+        }
+        let next = if let selection {
+            if forward {
+                references.first { $0.ordinal > selection }
+            } else {
+                references.last { $0.ordinal < selection }
+            }
+        } else if forward {
+            references.first
+        } else {
+            references.last
+        }
+        guard let next else {
+            notice = forward
+                ? String(localized: "There is no later time reference.")
+                : String(localized: "There is no earlier time reference.")
+            return
+        }
+        cancelExternalSelectionForManualSelection()
+        selection = next.ordinal
         revealToken &+= 1
+        notice = nil
     }
 
     private func open(_ row: CaptureFrameRow) {
         if coordinator.revealFrame(row) {
             notice = nil
+        } else if row.sessionID == nil {
+            Task {
+                switch await coordinator.inspectOrphanFrameBytes(row) {
+                case let .unavailable(error):
+                    notice = error
+                case .ready:
+                    openWindow(id: TracexyApp.packetBytesWindowID)
+                    notice = nil
+                case .superseded:
+                    break
+                }
+            }
         } else {
-            notice = row.sessionID == nil
-                ? String(localized: "Frame \(row.ordinal.formatted()) belongs to no session.")
-                : String(localized: "Frame \(row.ordinal.formatted())'s session is not in view in the main window.")
+            notice = String(localized: "Frame \(row.ordinal.formatted())'s session is not in view in the main window.")
+        }
+    }
+}
+
+// MARK: - Page retention
+
+/// The page a reload should come back to: the one the window is showing, or the
+/// first page before anything has been listed. A forced rescan that drops this
+/// throws the user back to frame 1 from wherever they were reading.
+private func retainedStart(_ state: CaptureFrameListState) -> Int {
+    state.list?.firstRetainedOrdinal ?? 1
+}
+
+/// Re-lists the frames the window is showing, on the page it is showing. A forced
+/// rescan that drops the page throws the user back to frame 1 from wherever they
+/// were reading.
+@MainActor
+private func rescan(_ coordinator: MainContentCoordinator, _ state: CaptureFrameListState) {
+    coordinator.loadAllFrames(force: true, retainedFrameStartOrdinal: retainedStart(state))
+}
+
+/// Confirms or explains a Frame Filter save, localized like every other notice.
+private func frameFilterSaveNotice(_ saved: Bool) -> String {
+    saved
+        ? String(localized: "Frame filter saved to this Project.")
+        : String(localized: "Could not save this Frame Filter. Choose a valid name and expression.")
+}
+
+// MARK: - Frame-list content
+
+/// `body` is one long modifier chain. Leaving the list's six states inline put
+/// the whole chain past what the type checker will solve on the toolchain CI
+/// builds with, so they are a separate expression here.
+extension AllFramesWindow {
+    @ViewBuilder
+    func framesContent(
+        state: CaptureFrameListState,
+        rows: [CaptureFrameRow],
+        pinnedRows: [CaptureFrameRow]
+    )
+        -> some View
+    {
+        if state.isLoading {
+            FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
+                loading(state)
+            }
+        } else if let error = state.error {
+            ContentUnavailableView {
+                Label("Frames Unavailable", systemImage: "list.number")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { coordinator.loadAllFrames(force: true) }
+            }
+        } else if state.list == nil {
+            ContentUnavailableView {
+                Label("No Frames Listed", systemImage: "list.number")
+            } actions: {
+                Button("List Frames") { coordinator.loadAllFrames(force: true) }
+            }
+        } else if state.isEvaluatingFrameExpression {
+            FrameListPinnedContent(pinnedRows: pinnedRows, state: state, onGoTo: selectFoundFrame) {
+                ProgressView("Filtering frames…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if rows.isEmpty, pinnedRows.isEmpty {
+            NoFramesMatchView(state: state)
+        } else {
+            frameListContent(rows: rows, pinnedRows: pinnedRows, state: state)
         }
     }
 }

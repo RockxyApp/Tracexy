@@ -41,6 +41,12 @@ struct DNSDecodeTests {
         #expect(packet.transport == .udp)
         #expect(packet.dnsQuery == "api.example.com")
         #expect(packet.dnsAnswers.isEmpty)
+        let transactionID = packet.layer(.dns)?.fields.first { $0.name == "Transaction ID" }
+        #expect(transactionID?.value == "4660")
+        #expect(transactionID?.byteRange == 42 ..< 44)
+        let truncatedFlag = packet.layer(.dns)?.fields.first { $0.name == "Truncated (TC)" }
+        #expect(truncatedFlag?.value == "No")
+        #expect(truncatedFlag?.byteRange == 44 ..< 46)
 
         // Endpoints: 192.168.1.42:54000 (default src port) → 1.1.1.1:53.
         #expect(packet.sourceEndpoint == IPEndpoint(ip: "192.168.1.42", port: 54_000))
@@ -67,6 +73,142 @@ struct DNSDecodeTests {
         #expect(titles.contains("Internet Protocol v4"))
         #expect(titles.contains("User Datagram Protocol"))
         #expect(titles.contains("Domain Name System"))
+    }
+
+    @Test("DNS over TCP exposes the same ranged transaction ID header field")
+    func dnsOverTCPTransactionIDField() throws {
+        let dns = PacketBuilder.dnsQuery(name: "tcp.example.test")
+        let lengthPrefix = [UInt8(dns.count >> 8), UInt8(dns.count & 0xFF)]
+        let frame = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "192.0.2.10", dst: "192.0.2.53",
+            payload: PacketBuilder.tcp(
+                srcPort: 50_000, dstPort: 53, flags: 0x18, payload: lengthPrefix + dns
+            )
+        )
+        let packet = decodeFrame(frame)
+        #expect(packet.dnsFacts?.transactionID == 0x1234)
+        let field = try #require(packet.layer(.dns)?.fields.first { $0.name == "Transaction ID" })
+        #expect(field.value == "4660")
+        #expect(field.byteRange == 56 ..< 58)
+        let truncatedFlag = packet.layer(.dns)?.fields.first { $0.name == "Truncated (TC)" }
+        #expect(truncatedFlag?.value == "No")
+        #expect(truncatedFlag?.byteRange == 58 ..< 60)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("tcp.port == 53 and dns.id == 4660")
+            .evaluate(FrameFilterFacts(packet: packet)) == .yes)
+    }
+
+    @Test("DNS over TCP validates its declared message length before publishing an ID")
+    func dnsOverTCPDeclaredLengthBoundsTransactionID() throws {
+        let validDNS = PacketBuilder.dnsQuery(name: "bounded.example.test")
+        let emptyDeclaredFrame = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "192.0.2.10", dst: "192.0.2.53",
+            payload: PacketBuilder.tcp(
+                srcPort: 50_000, dstPort: 53, flags: 0x18, payload: [0, 0] + validDNS
+            )
+        )
+        let emptyDeclared = decodeFrame(emptyDeclaredFrame)
+        #expect(emptyDeclared.dnsFacts == nil)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("dns.id == 4660")
+            .evaluate(FrameFilterFacts(packet: emptyDeclared)) == .unknown)
+
+        // Valid 12-byte header says a question follows, but that variable body was
+        // truncated. The fixed-header ID is still directly observed.
+        let header: [UInt8] = [0x12, 0x34, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+        let truncatedBodyFrame = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "192.0.2.10", dst: "192.0.2.53",
+            payload: PacketBuilder.tcp(
+                srcPort: 50_000, dstPort: 53, flags: 0x18, payload: [0, 12] + header
+            )
+        )
+        let truncatedBody = decodeFrame(truncatedBodyFrame)
+        #expect(truncatedBody.dnsFacts?.transactionID == 0x1234)
+        #expect(try parser.parse("dns.id == 4660")
+            .evaluate(FrameFilterFacts(packet: truncatedBody)) == .yes)
+
+        let segmentedMessageFrame = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "192.0.2.10", dst: "192.0.2.53",
+            payload: PacketBuilder.tcp(
+                srcPort: 50_000, dstPort: 53, flags: 0x18, payload: [0, 32] + header
+            )
+        )
+        let segmentedMessage = decodeFrame(segmentedMessageFrame)
+        #expect(segmentedMessage.decodeStop == .cutShort)
+        #expect(segmentedMessage.dnsFacts?.transactionID == 0x1234)
+    }
+
+    @Test("DNS truncation flag is shown over its original header bytes")
+    func dnsTruncationFlagFieldRange() throws {
+        var frame = PacketBuilder.dnsQueryFrame(name: "tc.example.test", src: "192.0.2.1", dst: "192.0.2.53")
+        frame[44] |= 0x02 // TC is bit 1 of the flags high byte.
+        let packet = decodeFrame(frame)
+        #expect(packet.dnsFacts?.isTruncated == true)
+        let field = try #require(packet.layer(.dns)?.fields.first { $0.name == "Truncated (TC)" })
+        #expect(field.value == "Yes")
+        #expect(field.byteRange == 44 ..< 46)
+    }
+
+    @Test("IPv4 Identification field filters an observed fragment without claiming reassembly")
+    func ipv4IdentificationFrameFilter() throws {
+        var frame = PacketBuilder.ethernetIPv4(
+            proto: 17, src: "192.0.2.1", dst: "192.0.2.2",
+            payload: PacketBuilder.udp(srcPort: 1_000, dstPort: 2_000, payload: [])
+        )
+        frame[18] = 0xAB
+        frame[19] = 0xCD
+        frame[20] = 0x20 // IPv4 More Fragments bit; this captured frame is not reassembled.
+        let packet = decodeFrame(frame)
+        #expect(packet.ipFragment?.identification == 0xABCD)
+        let field = try #require(packet.layer(.ipv4)?.fields.first { $0.name == "Identification" })
+        #expect(field.value.lowercased() == "0xabcd")
+        #expect(field.byteRange == 18 ..< 20)
+        #expect(DecodedFrameFilter.term(proto: .ipv4, field: "Identification", value: field.value) == "ip.id == 43981")
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("ip.id == 43981").evaluate(FrameFilterFacts(packet: packet)) == .yes)
+        #expect(try parser.parse("ip.id == 1").evaluate(FrameFilterFacts(packet: packet)) == .no)
+        #expect(packet.reassembly == nil)
+    }
+
+    @Test("IPv4 Don't Fragment field shows the observed flag bit")
+    func ipv4DontFragmentFieldAndFrameFilter() throws {
+        var frame = PacketBuilder.ethernetIPv4(
+            proto: 17, src: "192.0.2.1", dst: "192.0.2.2",
+            payload: PacketBuilder.udp(srcPort: 1_000, dstPort: 2_000, payload: [])
+        )
+        frame[20] = 0x40 // DF flag, with MF and the fragment offset clear.
+        let packet = decodeFrame(frame)
+        let field = try #require(packet.layer(.ipv4)?.fields.first { $0.name == "Don't Fragment" })
+        #expect(field.value == "Yes")
+        #expect(field.byteRange == 20 ..< 22)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("ip.flags.df").evaluate(FrameFilterFacts(packet: packet)) == .yes)
+        #expect(try parser.parse("ip.flags.mf").evaluate(FrameFilterFacts(packet: packet)) == .no)
+        #expect(try parser.parse("ip.frag_offset == 0").evaluate(FrameFilterFacts(packet: packet)) == .yes)
+        frame[20] = 0
+        let clearPacket = decodeFrame(frame)
+        let clearField = try #require(clearPacket.layer(.ipv4)?.fields.first { $0.name == "Don't Fragment" })
+        #expect(clearField.value == "No")
+        #expect(try parser.parse("ip.flags.df").evaluate(FrameFilterFacts(packet: clearPacket)) == .no)
+    }
+
+    @Test("TCP individual control flag fields preserve their wire bit and byte range")
+    func tcpControlFlagFieldRows() throws {
+        let frame = PacketBuilder.ethernetIPv4(
+            proto: 6, src: "192.0.2.1", dst: "192.0.2.2",
+            payload: PacketBuilder.tcp(srcPort: 1_000, dstPort: 2_000, flags: 0xFF, payload: [])
+        )
+        let packet = decodeFrame(frame)
+        let fields = try #require(packet.layer(.tcp)?.fields)
+        for name in ["FIN", "SYN", "RST", "PSH", "Acknowledgment (ACK)", "URG", "ECE", "CWR"] {
+            let field = try #require(fields.first { $0.name == name })
+            #expect(field.value == "Yes")
+            #expect(field.byteRange == 47 ..< 48)
+        }
+        #expect(fields.first { $0.name == "Ack" }?.byteRange == 42 ..< 46)
+        var parser = FrameExpressionParser()
+        #expect(try parser.parse("tcp.flags.ack").evaluate(FrameFilterFacts(packet: packet)) == .yes)
+        #expect(try parser.parse("tcp.ack_raw == 0").evaluate(FrameFilterFacts(packet: packet)) == .yes)
     }
 
     @Test("DNS response frame surfaces the answer addresses")

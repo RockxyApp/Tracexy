@@ -9,6 +9,7 @@ nonisolated enum ChecksumStatus: Equatable, Sendable {
     /// sending Mac before the network card filled the checksum in (offload).
     case partial
     case incorrect(expected: UInt16)
+    case incorrect32(expected: UInt32)
     /// A UDP-over-IPv4 checksum of zero: the sender chose not to compute one.
     case notPresent
     /// The bytes it covers were not all captured.
@@ -23,6 +24,8 @@ nonisolated enum ChecksumStatus: Equatable, Sendable {
         case .partial: String(localized: "[partial, likely checksum offload]")
         case let .incorrect(expected):
             String(localized: "[incorrect, should be \(PacketDecoder.hex(expected, digits: 4))]")
+        case let .incorrect32(expected):
+            String(localized: "[incorrect, should be \(PacketDecoder.hex(expected, digits: 8))]")
         case .notPresent: String(localized: "[not present]")
         case .unverified: String(localized: "[unverified, not fully captured]")
         }
@@ -32,7 +35,7 @@ nonisolated enum ChecksumStatus: Equatable, Sendable {
 // MARK: - ChecksumValidation
 
 /// View ▸ Validate Checksums (off by default, as in Wireshark): checks the IPv4
-/// header checksum and the TCP, UDP, ICMP and ICMPv6 checksums of one decoded frame
+/// header checksum and the TCP, UDP, SCTP, ICMP and ICMPv6 checksums of one decoded frame
 /// against its bytes and notes the result after each Checksum field's value. A
 /// presentation pass over the decode tree — the session fold never pays for it.
 nonisolated enum ChecksumValidation {
@@ -60,6 +63,9 @@ nonisolated enum ChecksumValidation {
     static func hasIncorrectChecksum(_ layers: [DecodedLayer], bytes: [UInt8]) -> Bool {
         statuses(layers, bytes: bytes).values.contains { status in
             if case .incorrect = status {
+                return true
+            }
+            if case .incorrect32 = status {
                 return true
             }
             return false
@@ -149,9 +155,34 @@ nonisolated enum ChecksumValidation {
              .icmp,
              .icmpv6:
             return transportStatus(layer, bytes: bytes, context: context)
+        case .sctp:
+            return sctpStatus(layer, bytes: bytes, context: context)
         default:
             return nil
         }
+    }
+
+    private static func sctpStatus(
+        _ layer: DecodedLayer,
+        bytes: [UInt8],
+        context: IPContext?
+    )
+        -> (String, ChecksumStatus)?
+    {
+        guard let context, let range = layer.byteRange,
+              layer.fields.contains(where: { $0.name == "CRC32C" }) else
+        {
+            return nil
+        }
+        let start = range.lowerBound
+        let end = context.payloadEnd
+        guard end >= start + 12, end <= bytes.count else {
+            return ("CRC32C", .unverified)
+        }
+        let stored = UInt32(bytes[start + 8]) << 24 | UInt32(bytes[start + 9]) << 16
+            | UInt32(bytes[start + 10]) << 8 | UInt32(bytes[start + 11])
+        let expected = SCTPChecksum.value(Array(bytes[start ..< end]))
+        return ("CRC32C", stored == expected ? .correct : .incorrect32(expected: expected))
     }
 
     private static func transportStatus(

@@ -14,6 +14,11 @@ final class CaptureObjectListState {
     var progress: (done: Int, total: Int)?
     var error: String?
     var search = ""
+    /// Kinds whose last read ended without a result — cancelled, or dropped
+    /// because the capture changed underneath it. `lists[kind] == nil` on its own
+    /// cannot tell that apart from "scanned, and this capture has none", so the
+    /// window would state the latter about a scan that never ran.
+    var unreadKinds: Set<CaptureObjectKind> = []
 
     @ObservationIgnored var task: Task<Void, Never>?
     @ObservationIgnored var requestID = 0
@@ -46,8 +51,12 @@ final class CaptureObjectListState {
         isLoading = false
         progress = nil
         error = nil
+        if lists[kind] == nil {
+            unreadKinds.insert(kind)
+        }
         if clearLists {
             lists = [:]
+            unreadKinds = Set(CaptureObjectKind.allCases)
         }
     }
 }

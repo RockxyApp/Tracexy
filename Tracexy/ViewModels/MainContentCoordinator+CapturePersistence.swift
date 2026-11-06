@@ -83,7 +83,9 @@ extension MainContentCoordinator {
         }
         let stamp = Self.fileStampFormatter.string(from: Date())
         let savedSource = activeSavedCapture?.url
-        let fileExtension = savedSource?.pathExtension ?? "pcapng"
+        let timeCorrection = activeSavedCapture?.timeCorrection
+        let savedIdentity = adoptedSavedCaptureIdentity
+        let fileExtension = timeCorrection == nil ? (savedSource?.pathExtension ?? "pcapng") : "pcapng"
         let baseURL = directory.appendingPathComponent("Capture \(stamp).\(fileExtension)")
         let url = pendingCaptureIOTask != nil || FileManager.default.fileExists(atPath: baseURL.path)
             ? directory.appendingPathComponent("Capture \(stamp)-\(UUID().uuidString).\(fileExtension)")
@@ -107,7 +109,27 @@ extension MainContentCoordinator {
             var failure: String?
             var warning: String?
             do {
-                try await operation.run(savedSource, spool, url)
+                if let savedSource, let timeCorrection {
+                    let expectedIdentity = savedIdentity
+                    let comment = timeCorrection.request.provenanceComment
+                    let summary = try await Task.detached(priority: .userInitiated) {
+                        try CaptureFrameExporter.export(
+                            from: savedSource,
+                            expectedIdentity: expectedIdentity,
+                            scope: .wholeCapture,
+                            options: FrameExportOptions(
+                                captureComments: [comment],
+                                baseTimeCorrection: timeCorrection
+                            ),
+                            to: url
+                        )
+                    }.value
+                    if case .incompleteTruncatedTail = summary.completeness {
+                        warning = "The corrected copy contains every complete frame before an incomplete file tail."
+                    }
+                } else {
+                    try await operation.run(savedSource, spool, url)
+                }
                 if savedSource == nil {
                     warning = await spool.incompletenessReason()
                 }
@@ -180,10 +202,15 @@ extension MainContentCoordinator {
     ) {
         let spool = liveCaptureSpool
         let savedSource = activeSavedCapture?.url
+        let timeCorrection = activeSavedCapture?.timeCorrection
+        let savedIdentity = adoptedSavedCaptureIdentity
         await ingestChain?.value
         if let savedSource {
             let capture = try await Task.detached(priority: .userInitiated) {
-                try SessionExporter.frames(matching: sessionID, streamingFrom: savedSource)
+                try SessionExporter.frames(
+                    matching: sessionID, streamingFrom: savedSource,
+                    expectedIdentity: savedIdentity, timeCorrection: timeCorrection
+                )
             }.value
             return (capture.linkType, capture.frames, nil)
         }

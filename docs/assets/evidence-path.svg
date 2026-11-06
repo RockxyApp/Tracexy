@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">Tracexy evidence path</title><desc id="desc">A local capture flows through sessions and findings to an exact cited frame.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111a36"/><stop offset="1" stop-color="#080e1e"/></linearGradient><linearGradient id="line" x2="1"><stop stop-color="#4676f5"/><stop offset="1" stop-color="#70d9e8"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="20"/></filter></defs>
+<rect width="1200" height="420" rx="28" fill="url(#bg)"/>
+<ellipse cx="630" cy="168" rx="340" ry="120" fill="#3269c8" opacity=".12" filter="url(#glow)"/>
+<text x="52" y="70" fill="#92a9d9" font-family="Arial,sans-serif" font-size="17" letter-spacing="3">THE EVIDENCE PATH</text>
+<path d="M 160 234 H 1020" fill="none" stroke="url(#line)" stroke-width="3" opacity=".8"/>
+<g font-family="Arial,sans-serif" text-anchor="middle">
+<g transform="translate(155 232)"><circle r="48" fill="#172b58" stroke="#5785fa" stroke-width="2"/><path d="M-17-8h34v22h-34z M-9-15v7 M9-15v7 M-9 15v6 M9 15v6" stroke="#9fc1ff" stroke-width="3" fill="none"/><text y="96" fill="#f4f7ff" font-size="23">Capture</text><text y="121" fill="#92a9d9" font-size="15">Local packets</text></g>
+<g transform="translate(449 232)"><circle r="48" fill="#172b58" stroke="#5785fa" stroke-width="2"/><path d="M-18-12h36v8h-36z M-18 3h36v8h-36z" stroke="#9fc1ff" stroke-width="3" fill="none"/><text y="96" fill="#f4f7ff" font-size="23">Session</text><text y="121" fill="#92a9d9" font-size="15">Observed conversation</text></g>
+<g transform="translate(743 232)"><circle r="48" fill="#172b58" stroke="#5785fa" stroke-width="2"/><path d="M0-20 19 15h-38z M0-8v11 M0 10v2" stroke="#9fc1ff" stroke-width="3" fill="none"/><text y="96" fill="#f4f7ff" font-size="23">Finding</text><text y="121" fill="#92a9d9" font-size="15">Bounded interpretation</text></g>
+<g transform="translate(1037 232)"><circle r="48" fill="#123b58" stroke="#69d4e7" stroke-width="2"/><path d="M-17-20h25l9 9v31h-34z M7-20v10h10 M-8 2h16 M-8 10h16" stroke="#b9f6ff" stroke-width="3" fill="none"/><text y="96" fill="#f4f7ff" font-size="23">Cited frame</text><text y="121" fill="#92a9d9" font-size="15">Exact bytes</text></g>
+</g></svg>

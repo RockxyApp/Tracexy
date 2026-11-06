@@ -18,6 +18,12 @@ nonisolated enum PcapWriter {
     ///   timestamp field with no way to spell "unknown", so writing one would
     ///   fabricate an instant; the caller is pointed at pcapng instead.
     static func data(linkType: UInt32, frames: [CapturedFrame]) throws -> Data {
+        guard frames.allSatisfy({ $0.direction == .unknown }) else {
+            throw SessionExportError.directionRequiresPcapng
+        }
+        guard frames.allSatisfy({ $0.packetID == nil }) else {
+            throw SessionExportError.packetIDRequiresPcapng
+        }
         guard frames.allSatisfy({ $0.timestamp != nil }) else {
             throw SessionExportError.untimedFramesRequirePcapng
         }
@@ -57,6 +63,9 @@ nonisolated enum PcapWriter {
     /// each carries a capture time. Lets a caller choose a format before building.
     static func canRepresent(frames: [CapturedFrame]) -> Bool {
         frames.allSatisfy { frame in
+            guard frame.direction == .unknown, frame.packetID == nil else {
+                return false
+            }
             guard let timestamp = frame.timestamp else {
                 return false
             }

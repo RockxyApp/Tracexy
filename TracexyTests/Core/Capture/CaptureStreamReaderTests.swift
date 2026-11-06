@@ -45,6 +45,51 @@ struct CaptureStreamReaderTests {
         }
     }
 
+    @Test("A saved-capture overlay retimes every frame without changing its source locator")
+    func appliesTimeCorrectionToEveryAdaptedFrame() throws {
+        let file = Self.pcapFile(linkType: 1, records: [
+            Record(payload: [0x11, 0x22], tsSec: 5, tsFrac: 0),
+            Record(payload: [0x33, 0x44], tsSec: 6, tsFrac: 0),
+        ])
+        let anchor = CaptureTimeCorrection.Anchor(
+            frameOrdinal: 1,
+            originalTime: Date(timeIntervalSince1970: 5),
+            correctedTime: Date(timeIntervalSince1970: 10)
+        )
+        let correction = try CaptureTimeCorrection(anchor: anchor)
+        try Self.withTempFile(file, ext: "pcap") { url in
+            let reader = try CaptureStreamReader(
+                contentsOf: url, configuration: .init(timestampTransform: correction.streamTransform)
+            )
+            let first = try Self.expectFrame(reader.next())
+            #expect(first.reference.timestamp == Date(timeIntervalSince1970: 10))
+            #expect(first.reference.payloadOffset == 40)
+            #expect(first.bytes == [0x11, 0x22])
+            let second = try Self.expectFrame(reader.next())
+            #expect(second.reference.timestamp == Date(timeIntervalSince1970: 11))
+            #expect(second.reference.payloadOffset == 58)
+            #expect(second.bytes == [0x33, 0x44])
+        }
+    }
+
+    @Test("A resolved overlay refuses a changed anchor timestamp")
+    func rejectsChangedTimeAnchor() throws {
+        let file = Self.pcapFile(linkType: 1, records: [Record(payload: [0xAA], tsSec: 5, tsFrac: 0)])
+        let correction = try CaptureTimeCorrection(anchor: .init(
+            frameOrdinal: 1,
+            originalTime: Date(timeIntervalSince1970: 4),
+            correctedTime: Date(timeIntervalSince1970: 10)
+        ))
+        try Self.withTempFile(file, ext: "pcap") { url in
+            let reader = try CaptureStreamReader(
+                contentsOf: url, configuration: .init(timestampTransform: correction.streamTransform)
+            )
+            #expect(throws: CaptureTimeCorrection.Error.changedAnchor(frameOrdinal: 1)) {
+                try reader.next()
+            }
+        }
+    }
+
     @Test
     func classicPcapPartialHeaderAndPayloadMapToUniformTerminals() throws {
         // Partial record header: a stray tail shorter than a 16-byte header.

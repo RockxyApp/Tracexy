@@ -50,6 +50,34 @@ struct SessionExporterTests {
         }
     }
 
+    @Test("Streaming session export carries the active timestamp correction")
+    func streamingFrameMatchUsesTimeCorrection() throws {
+        let frames = SampleCapture.frames(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let session = try #require(
+            SessionBuilder.build(from: frames, linkType: LinkType.ethernet)
+                .first { $0.host == "auth.example.com" }
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tracexy-corrected-session-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("capture.pcapng")
+        try PcapngWriter.write(defaultLinkType: LinkType.ethernet, frames: frames, to: source)
+        let correction = try CaptureTimeCorrection(shiftBy: 60)
+        let result = try SessionExporter.frames(
+            matching: session.id, streamingFrom: source, timeCorrection: correction
+        )
+        let expected = SessionExporter.frames(
+            matching: session.id, in: frames, defaultLinkType: LinkType.ethernet
+        ).map { $0.timestamp?.addingTimeInterval(60) }
+        #expect(zip(result.frames.map(\.timestamp), expected).allSatisfy { actual, target in
+            guard let actual, let target else {
+                return actual == nil && target == nil
+            }
+            return abs(actual.timeIntervalSince(target)) < 0.000001
+        })
+    }
+
     @Test("Classic pcap artifact round-trips only the selected session")
     func pcapRoundTrip() throws {
         let fixture = try makeFixture()
@@ -86,6 +114,30 @@ struct SessionExporterTests {
             return abs(left.timeIntervalSince(right)) < 0.00001
         })
         #expect(artifact.suggestedFileName.hasSuffix(".pcapng"))
+    }
+
+    @Test("Corrected session exports retain provenance in supported formats")
+    func correctedExportProvenance() throws {
+        let fixture = try makeFixture()
+        let comment = "Tracexy timestamp correction: Constant shift: 5 seconds."
+        let document = try SessionExporter.artifact(
+            for: fixture.session, frames: fixture.frames, defaultLinkType: LinkType.ethernet,
+            format: .session, timeCorrectionProvenance: comment
+        )
+        let object = try #require(JSONSerialization.jsonObject(with: document.data) as? [String: Any])
+        #expect(object["timeCorrectionProvenance"] as? String == comment)
+
+        let pcapng = try SessionExporter.artifact(
+            for: fixture.session, frames: fixture.frames, defaultLinkType: LinkType.ethernet,
+            format: .pcapng, timeCorrectionProvenance: comment
+        )
+        #expect(pcapng.data.range(of: Data(comment.utf8)) != nil)
+        #expect(throws: SessionExportError.correctedTimeRequiresProvenanceFormat) {
+            try SessionExporter.artifact(
+                for: fixture.session, frames: fixture.frames, defaultLinkType: LinkType.ethernet,
+                format: .pcap, timeCorrectionProvenance: comment
+            )
+        }
     }
 
     @Test("Classic pcap rejects mixed link types")

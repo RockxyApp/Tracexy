@@ -11,7 +11,12 @@ import Observation
 final class DecodeAsSettings {
     // MARK: Internal
 
+    static let maximumRules = 64
+
     private(set) var rules: [DecodeAsRule] = []
+    /// A packet-derived Decode As proposal. It is intentionally not persisted or
+    /// published to the decoder until the user applies it.
+    private(set) var ruleDraft: DecodeAsRule?
     /// Analyze ▸ Enabled Protocols: the protocols the decoder leaves unrecognized.
     private(set) var disabledProtocols: Set<ProtocolKind> = []
 
@@ -26,12 +31,79 @@ final class DecodeAsSettings {
     /// offer to reload it (Wireshark's Redissect).
     var needsRedecode = false
 
+    var canApplyRuleDraft: Bool {
+        guard let ruleDraft, ruleDraft.isValid else {
+            return false
+        }
+        let replacesExisting = rules.contains {
+            $0.transport == ruleDraft.transport && $0.port == ruleDraft.port
+        }
+        return replacesExisting || rules.count < Self.maximumRules
+    }
+
+    var ruleDraftCapacityReached: Bool {
+        guard ruleDraft?.isValid == true, !ruleDraftReplacesExisting else {
+            return false
+        }
+        return rules.count >= Self.maximumRules
+    }
+
+    var ruleDraftReplacesExisting: Bool {
+        guard let ruleDraft else {
+            return false
+        }
+        return rules.contains { $0.transport == ruleDraft.transport && $0.port == ruleDraft.port }
+    }
+
+    func prepareRuleDraft(transport: DecodeAsRule.Transport, port: UInt16) {
+        guard let initialProtocol = DecodeAsProtocol.allCases.first(where: { $0.transports.contains(transport) }) else {
+            return
+        }
+        ruleDraft = DecodeAsRule(transport: transport, port: port, decode: initialProtocol)
+        showsEnabledProtocols = false
+    }
+
+    func updateRuleDraft<Value>(
+        _ value: Value,
+        at keyPath: WritableKeyPath<DecodeAsRule, Value>,
+        draftID: UUID
+    ) {
+        guard var draft = ruleDraft, draft.id == draftID else {
+            return
+        }
+        draft[keyPath: keyPath] = value
+        ruleDraft = draft
+    }
+
+    func discardRuleDraft() {
+        ruleDraft = nil
+    }
+
+    func applyRuleDraft() {
+        guard let ruleDraft, canApplyRuleDraft else {
+            return
+        }
+        var updatedRules = rules
+        if let index = updatedRules.firstIndex(where: {
+            $0.transport == ruleDraft.transport && $0.port == ruleDraft.port
+        }) {
+            updatedRules[index] = ruleDraft
+        } else {
+            updatedRules.append(ruleDraft)
+        }
+        setRules(updatedRules)
+        self.ruleDraft = nil
+    }
+
     func bind(to defaults: UserDefaults) {
         self.defaults = nil
+        ruleDraft = nil
         let stored = defaults.data(forKey: ProjectScopedSettingsKeys.decodeAsRules)
             .flatMap { try? JSONDecoder().decode([DecodeAsRule].self, from: $0) } ?? []
         rules = Array(stored.prefix(Self.maximumRules))
-        DecodeAs.setRules(rules)
+        if publishesToDecoder {
+            DecodeAs.setRules(rules)
+        }
         disabledProtocols = Set((defaults.stringArray(forKey: ProjectScopedSettingsKeys.disabledProtocols) ?? [])
             .compactMap(ProtocolKind.init(rawValue:)))
         if publishesToDecoder {
@@ -43,7 +115,9 @@ final class DecodeAsSettings {
 
     func setRules(_ newRules: [DecodeAsRule]) {
         rules = Array(newRules.prefix(Self.maximumRules))
-        DecodeAs.setRules(rules)
+        if publishesToDecoder {
+            DecodeAs.setRules(rules)
+        }
         needsRedecode = true
         if let data = try? JSONEncoder().encode(rules) {
             defaults?.set(data, forKey: ProjectScopedSettingsKeys.decodeAsRules)
@@ -73,8 +147,6 @@ final class DecodeAsSettings {
     }
 
     // MARK: Private
-
-    private static let maximumRules = 64
 
     @ObservationIgnored private var defaults: UserDefaults?
 }

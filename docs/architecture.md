@@ -31,8 +31,11 @@ and capture statistics live here.
 (in `CaptureFormat/`) is a bounds-checked, zero-copy view over the frame: every read is
 offset-checked and **throws** on a short or malformed packet rather than trapping, and a partial
 decode keeps whatever layers parsed cleanly.
-`PacketDecoder` is a single-pass, stateless, per-frame decoder covering L2–L4 plus naming-level
-DNS/TLS/HTTP-1/QUIC (see [protocol support](protocol-support.md)).
+`PacketDecoder` is a single-pass, stateless, per-frame decoder covering L2–L4 — including SCTP, GRE and
+VXLAN tunnels, and bounded IPv4/IPv6 fragment reassembly — plus naming-level application protocols, with
+per-invocation Decode As overrides (see [protocol support](protocol-support.md)). Richer per-conversation
+reading (HTTP exchanges, HTTP/2, WebSocket) lives in separate on-demand readers rather than in the
+per-frame path, so the automatic decode stays stateless.
 
 **Session** (`Tracexy/Core/Session`) groups frames into conversations. `FiveTuple` canonically orders
 the two endpoints so both directions collapse into one session. `SessionBuilder` is a **batch**
@@ -77,10 +80,16 @@ interrupted initial History reads, but preserves loaded pages/cursors and does n
 ```text
 CaptureFormat/            PCAP/PCAPNG stream readers, container properties, preview scan, PacketBuffer
 Tracexy/Core/Capture/     packet acquisition, Library/import/export, capture-file writers
-Tracexy/Core/Protocol/    PacketDecoder, DecodedPacket/DecodedLayer
-Tracexy/Core/Session/     FiveTuple grouping, SessionBuilder, Activity correlation
+Tracexy/Core/Protocol/    PacketDecoder, DecodedPacket/DecodedLayer, tunnels, fragment reassembly
+Tracexy/Core/Session/     FiveTuple grouping, SessionBuilder, Activity correlation, on-demand stream readers
+Tracexy/Core/Analysis/    evidence-linked findings, Session Expressions, Wireshark filter translation
+Tracexy/Core/Storage/     History SQLite store and retention
+Tracexy/Core/Automation/  read-only History projection to JSON/CSV
+Tracexy/Core/Enrichment/  GeoIP/ASN lookup from user-supplied databases
+Tracexy/Core/Updates/     update check and install
 Tracexy/Core/Services/    helper client, signing diagnostics, process resolution, MCP grant issuing
 Tracexy/Core/Assistant/   bounded AI Assistant evidence brief, local-endpoint rules, local adapter
+Tracexy/CommandLine/      the read-only `tracexy` command line in the app binary
 Tracexy/Models/           session and UI value/state types, AppPolicy
 Tracexy/ViewModels/       MainContentCoordinator
 Tracexy/Views/            Overview, Sessions, Inspector, Flow, Settings, Sidebar
@@ -163,8 +172,8 @@ capability (`tools`) and exactly four read-only tools:
 | `list_sessions` | One ordinal-ascending page of a capture's session summaries, filtered on that single examined page |
 | `list_findings` | One ordinal-ascending page of a capture's evidence-linked findings — the Session Expression kind name, severity, coverage, cited/omitted counts and first cited instant — optionally for one session, kind or severity |
 
-History schema v3 stores each capture's findings beside its sessions (`findings` table, cascaded with the
-capture). A finding names its session only by ID, so it discloses nothing the grant withholds; notes are
+History schema v3 added each capture's findings beside its sessions (`findings` table, cascaded with
+the capture); the current schema is v4, which also stores a stable time basis per capture. A finding names its session only by ID, so it discloses nothing the grant withholds; notes are
 not stored in History and not exposed. The executable opens History read-only: a v2 file the app has not
 reopened yet still serves captures and sessions, and `list_findings` answers that findings were not
 recorded until the app upgrades it.
@@ -216,7 +225,7 @@ These are design intent — do not write code, or read these docs, as if they ex
   decoder);
 - general TCP **stream/record reassembly** beyond the bounded lifecycle/sequence connection table,
   first-record metadata probes, and explicit on-demand Follow Stream reader already in source;
-- deeper **analysis / security** policy beyond the selected evidence-linked TCP and datagram findings;
+- deeper **analysis / security** policy beyond the selected evidence-linked TCP, TLS, DNS and ICMP findings, each citing the frames it was read from;
 - raw capture/evidence persistence beyond the implemented terminal-summary SQLite History store;
 - any **remote or BYOK assistant provider**. The Community checkout implements local, credential-free
   models only, and there is no credential, Keychain item, entitlement or purchase path anywhere in

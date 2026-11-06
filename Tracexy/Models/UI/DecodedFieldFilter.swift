@@ -51,6 +51,23 @@ nonisolated enum DecodedFieldFilter {
             case .orNotSelected: return trimmed.isEmpty ? negated : "\(trimmed) or \(negated)"
             }
         }
+
+        /// Frame Expressions have their own grammar and may use uppercase keywords
+        /// or arbitrary whitespace. Group the entire accepted draft before adding
+        /// another condition so operator precedence cannot broaden it.
+        func combineFrame(_ existing: String, _ term: String) -> String {
+            let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+            let groupedTerm = "(\(term))"
+            let groupedExisting = trimmed.isEmpty ? "" : "(\(trimmed))"
+            switch self {
+            case .selected: return term
+            case .notSelected: return "not \(groupedTerm)"
+            case .andSelected: return trimmed.isEmpty ? term : "\(groupedExisting) and \(term)"
+            case .andNotSelected: return trimmed.isEmpty ? "not \(groupedTerm)" : "\(groupedExisting) and not \(groupedTerm)"
+            case .orSelected: return trimmed.isEmpty ? term : "\(groupedExisting) or \(term)"
+            case .orNotSelected: return trimmed.isEmpty ? "not \(groupedTerm)" : "\(groupedExisting) or not \(groupedTerm)"
+            }
+        }
     }
 
     /// The term for one decoded field, or `nil` when sessions cannot be found by it.

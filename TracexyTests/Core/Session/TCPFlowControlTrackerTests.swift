@@ -37,7 +37,7 @@ struct TCPFlowControlTrackerTests {
         _ = tracker.ingest(direction: .bToA, facts: facts(seq: 5_001, ack: 1_001, payload: 100), keepAlive: false)
         _ = tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 4_096), keepAlive: false)
         #expect(tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 8_192), keepAlive: false)
-            .isEmpty)
+            == [.windowUpdate])
     }
 
     @Test("Data segments, FINs and the first ACK are never duplicate acknowledgements")
@@ -129,6 +129,48 @@ struct TCPFlowControlTrackerTests {
         _ = tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 65_535), keepAlive: false)
         #expect(tracker.ingest(direction: .bToA, facts: facts(seq: 5_101, ack: 1_001, payload: 100), keepAlive: false)
             .isEmpty)
+    }
+
+    @Test("Zero-window probe ACK recognizes repeat and one accepted byte without inventing later bytes")
+    func zeroWindowProbeAcknowledgement() {
+        func trackerWithProbe() -> TCPFlowControlTracker {
+            var tracker = TCPFlowControlTracker()
+            handshake(&tracker)
+            _ = tracker.ingest(direction: .bToA, facts: facts(seq: 5_001, ack: 1_001, payload: 100), keepAlive: false)
+            _ = tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 0), keepAlive: false)
+            #expect(tracker.ingest(direction: .bToA, facts: facts(seq: 5_101, ack: 1_001, payload: 1), keepAlive: false)
+                == [.zeroWindowProbe])
+            return tracker
+        }
+
+        var repeated = trackerWithProbe()
+        #expect(repeated.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 0), keepAlive: false)
+            == [.zeroWindowProbeAcknowledgement, .zeroWindow])
+        #expect(repeated.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 0), keepAlive: false)
+            == [.zeroWindowProbeAcknowledgement, .zeroWindow])
+
+        var accepted = trackerWithProbe()
+        #expect(accepted.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_102, window: 0), keepAlive: false)
+            == [.zeroWindowProbeAcknowledgement, .zeroWindow])
+        #expect(accepted.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_102, window: 0), keepAlive: false)
+            == [.zeroWindowProbeAcknowledgement, .zeroWindow])
+        #expect(accepted.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_103, window: 0), keepAlive: false)
+            == [.zeroWindow, .ackedUnseenSegment])
+    }
+
+    @Test("A window-reopening ACK can accept the probe byte without reporting it as unseen")
+    func zeroWindowProbeWindowReopen() {
+        var tracker = TCPFlowControlTracker()
+        handshake(&tracker)
+        _ = tracker.ingest(direction: .bToA, facts: facts(seq: 5_001, ack: 1_001, payload: 100), keepAlive: false)
+        _ = tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_101, window: 0), keepAlive: false)
+        #expect(tracker.ingest(direction: .bToA, facts: facts(seq: 5_101, ack: 1_001, payload: 1), keepAlive: false)
+            == [.zeroWindowProbe])
+
+        #expect(tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_102, window: 4_096), keepAlive: false)
+            == [.windowUpdate])
+        #expect(tracker.ingest(direction: .aToB, facts: facts(seq: 1_001, ack: 5_103, window: 4_096), keepAlive: false)
+            == [.ackedUnseenSegment])
     }
 
     @Test("A one-byte segment is not a probe when the peer's window is open or it is off the edge")

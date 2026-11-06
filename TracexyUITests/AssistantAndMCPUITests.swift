@@ -224,7 +224,10 @@ final class AssistantAndMCPUITests: XCTestCase {
     /// machine without one.
     @MainActor
     func testAssistantStreamsARealAnswerAndNavigatesACitation() throws {
-        try XCTSkipUnless(Self.localModelIsReachable, "Requires a local model at \(Self.endpointText)")
+        try XCTSkipUnless(
+            Self.localModelIsReachable,
+            "Requires a local model served at \(Self.endpointText) — none is installed"
+        )
         let app = launch(assistantDemo: true)
 
         let status = app.descendants(matching: .any)["assistant.status"]
@@ -328,6 +331,12 @@ final class AssistantAndMCPUITests: XCTestCase {
     private static let endpointText = "http://127.0.0.1:11434"
 
     /// Whether a local model answers from *this* process, checked once.
+    ///
+    /// A server that answers with an empty model list is reachable but cannot
+    /// serve an answer, and the app correctly says so. Requiring a model here
+    /// keeps the skip reason accurate: otherwise this gate passes, the run
+    /// reaches the firewall gate below, and a machine that has simply pulled no
+    /// model is reported as one with a blocked connection.
     private static let localModelIsReachable: Bool = {
         guard let url = URL(string: "\(endpointText)/api/tags") else {
             return false
@@ -335,13 +344,18 @@ final class AssistantAndMCPUITests: XCTestCase {
         var request = URLRequest(url: url)
         request.timeoutInterval = 3
         let semaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var reachable = false
-        URLSession.shared.dataTask(with: request) { _, response, _ in
-            reachable = (response as? HTTPURLResponse)?.statusCode == 200
-            semaphore.signal()
+        nonisolated(unsafe) var servesAModel = false
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            defer { semaphore.signal() }
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let data else {
+                return
+            }
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let models = (payload?["models"] as? [Any]) ?? []
+            servesAModel = !models.isEmpty
         }.resume()
         _ = semaphore.wait(timeout: .now() + 6)
-        return reachable
+        return servesAModel
     }()
 
     private var app: XCUIApplication?

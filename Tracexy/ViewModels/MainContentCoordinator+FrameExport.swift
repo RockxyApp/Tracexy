@@ -28,18 +28,26 @@ extension MainContentCoordinator {
         if isViewingSavedCapture {
             return savedCaptureEvidenceURL != nil && (activeSavedCapture?.isReadable ?? false)
         }
-        return stoppedCaptureReadyGeneration == startGeneration && !sessions.isEmpty
+        return stoppedCaptureReadyGeneration == startGeneration
     }
 
     /// Present the panel. `preselectedSessions` (a row's Export preset) selects the
     /// "Selected session" scope; otherwise the whole capture is preselected.
-    func presentFrameExportPanel(preselectedSessions: Set<UUID>? = nil, prefersMarkedFrames: Bool = false) {
+    func presentFrameExportPanel(
+        preselectedSessions: Set<UUID>? = nil,
+        preselectedFrameOrdinals: Set<UInt64>? = nil,
+        prefersMarkedFrames: Bool = false,
+        prefersAppliedFrameExpression: Bool = false
+    ) {
         guard canExportFrames else {
             captureError = captureSourceHoldMessage ?? "Open a saved capture or stop the live capture before exporting frames."
             return
         }
         let context = frameExportContext(
-            preselectedSessions: preselectedSessions, prefersMarkedFrames: prefersMarkedFrames
+            preselectedSessions: preselectedSessions,
+            preselectedFrameOrdinals: preselectedFrameOrdinals,
+            prefersMarkedFrames: prefersMarkedFrames,
+            prefersAppliedFrameExpression: prefersAppliedFrameExpression
         )
         let originProjectID = activeRuntime.projectID
         let originGeneration = startGeneration
@@ -53,12 +61,9 @@ extension MainContentCoordinator {
             setSessionExporting(false)
             return
         }
-        guard activeRuntime.projectID == originProjectID, startGeneration == originGeneration, canExportFrames else {
-            setSessionExporting(false)
-            captureError = "The capture changed while the export panel was open. Export again."
-            return
-        }
-        runFrameExport(choice, originProjectID: originProjectID, originGeneration: originGeneration)
+        continueFrameExportAfterPanel(
+            choice, originProjectID: originProjectID, originGeneration: originGeneration
+        )
     }
 
     /// The panel-free route (tests and automation): export with an explicit
@@ -89,6 +94,27 @@ extension MainContentCoordinator {
         task.cancel()
     }
 
+    /// Resume after the modal save panel. `canExportFrames` is intentionally false
+    /// here because this export itself holds the source while the panel is open.
+    func continueFrameExportAfterPanel(
+        _ choice: FrameExportPanel.Choice,
+        originProjectID: UUID?,
+        originGeneration: Int
+    ) {
+        guard activeRuntime.projectID == originProjectID,
+              startGeneration == originGeneration,
+              isExportingSession,
+              !isProjectBoundaryBusy,
+              !isCapturing,
+              !isStarting else
+        {
+            setSessionExporting(false)
+            captureError = "The capture changed while the export panel was open. Export again."
+            return
+        }
+        runFrameExport(choice, originProjectID: originProjectID, originGeneration: originGeneration)
+    }
+
     /// Test/diagnostic seam.
     func waitForFrameExport() async {
         let task = frameExportTask
@@ -99,7 +125,9 @@ extension MainContentCoordinator {
     /// best-effort estimates, whether PCAP is representable, and the time bounds.
     func frameExportContext(
         preselectedSessions: Set<UUID>?,
-        prefersMarkedFrames: Bool = false
+        preselectedFrameOrdinals: Set<UInt64>? = nil,
+        prefersMarkedFrames: Bool = false,
+        prefersAppliedFrameExpression: Bool = false
     )
         -> FrameExportPanel.Context
     {
@@ -136,6 +164,20 @@ extension MainContentCoordinator {
                 frameEstimate: allFrames.marked.count
             ))
         }
+        if let preselectedFrameOrdinals, !preselectedFrameOrdinals.isEmpty {
+            scopes.append(.init(
+                scope: .frames(preselectedFrameOrdinals),
+                title: String(localized: "Selected frames (\(preselectedFrameOrdinals.count.formatted()))"),
+                frameEstimate: preselectedFrameOrdinals.count
+            ))
+        }
+        if let expression = allFrames.acceptedFrameExpression {
+            scopes.append(.init(
+                scope: .frameExpression(expression),
+                title: String(localized: "Frames matching the applied Frame Expression"),
+                frameEstimate: allFrames.captureExpressionCoverage?.matchingCount
+            ))
+        }
         var bounds: ClosedRange<Date>?
         if let first = properties?.firstTimestamp, let last = properties?.lastTimestamp, first <= last {
             bounds = first ... last
@@ -145,15 +187,26 @@ extension MainContentCoordinator {
                 frameEstimate: nil
             ))
         }
-        let initialIndex = preselectedSessions != nil || prefersMarkedFrames ? scopes.firstIndex { choice in
-            if case let .sessions(ids) = choice.scope, ids == preselectedSessions {
-                return true
-            }
-            if prefersMarkedFrames, case .frames = choice.scope {
-                return true
-            }
-            return false
-        } ?? 0 : 0
+        let initialIndex = preselectedSessions != nil || preselectedFrameOrdinals != nil
+            || prefersMarkedFrames || prefersAppliedFrameExpression
+            ? scopes.firstIndex { choice in
+                if case let .sessions(ids) = choice.scope, ids == preselectedSessions {
+                    return true
+                }
+                if let preselectedFrameOrdinals,
+                   case let .frames(ordinals) = choice.scope,
+                   ordinals == preselectedFrameOrdinals
+                {
+                    return true
+                }
+                if prefersMarkedFrames, case .frames = choice.scope {
+                    return true
+                }
+                if prefersAppliedFrameExpression, case .frameExpression = choice.scope {
+                    return true
+                }
+                return false
+            } ?? 0 : 0
 
         var pcapReason: String?
         if let metadata = savedCaptureMetadata {
@@ -163,10 +216,12 @@ extension MainContentCoordinator {
                 pcapReason = String(localized: "some frames carry no capture time")
             }
         }
-        let averageBytes: Int = if let activity = savedCaptureActivity, activity.totalFrames > 0 {
+        // A measurement or nothing. The panel omits the size rather than render a
+        // substituted figure as if it had been measured.
+        let averageBytes: Int? = if let activity = savedCaptureActivity, activity.totalFrames > 0 {
             max(1, activity.totalBytes / activity.totalFrames)
         } else {
-            512
+            nil
         }
         let sourceIsPcapng: Bool = if case .pcapng = properties?.container {
             true
@@ -174,8 +229,17 @@ extension MainContentCoordinator {
             !isViewingSavedCapture
         }
         let stem = activeSavedCapture?.name ?? String(localized: "Capture on \(captureInterface)")
+        let baseName: String = if let preselectedFrameOrdinals, preselectedFrameOrdinals.count == 1,
+                                  let ordinal = preselectedFrameOrdinals.first
+        {
+            "\(stem) – frame \(ordinal.formatted())"
+        } else if preselectedSessions != nil {
+            "\(stem) – session"
+        } else {
+            stem
+        }
         var context = FrameExportPanel.Context(
-            baseName: preselectedSessions != nil ? "\(stem) – session" : stem,
+            baseName: baseName,
             scopes: scopes,
             initialScopeIndex: initialIndex,
             timeBounds: bounds,
@@ -186,6 +250,7 @@ extension MainContentCoordinator {
         // Session notes and frame comments both travel under the notes checkbox.
         context.noteCount = investigationNotes.annotatedSessionIDs.count + allFrames.frameComments.count
         context.nameCount = frameExportNameRecords().count
+        context.ignoredFrameOrdinals = allFrames.ignored
         return context
     }
 
@@ -218,6 +283,10 @@ extension MainContentCoordinator {
         guard !annotated.isEmpty else {
             return []
         }
+        // One membership pass over the frame rows, not one search per session:
+        // the repeated `contains` was quadratic on the main actor and stalled the
+        // window between pressing Save and the export's own progress.
+        let framedSessionIDs = frameScopeSessionIDs(scope)
         let included = presentedSessions.filter { session in
             guard annotated.contains(session.id) else {
                 return false
@@ -232,9 +301,12 @@ extension MainContentCoordinator {
                     return false
                 }
                 return begin <= end && begin.addingTimeInterval(session.duration ?? 0) >= start
-            case let .frames(ordinals):
-                return allFrames.list?.rows
-                    .contains { ordinals.contains($0.ordinal) && $0.sessionID == session.id } == true
+            case .frames:
+                return framedSessionIDs.contains(session.id)
+            case .frameExpression:
+                // Per-session notes are added only to matching packets by the
+                // streaming exporter; do not copy unrelated notes into comments.
+                return false
             }
         }
         let titles = Dictionary(findings.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
@@ -253,7 +325,37 @@ extension MainContentCoordinator {
 
     // MARK: Private
 
+    /// Sessions that own any frame in a `.frames` scope, gathered in a single pass
+    /// over the marked ordinals and the listed rows. Empty for every other scope.
+    private func frameScopeSessionIDs(_ scope: FrameExportScope) -> Set<UUID> {
+        guard case let .frames(ordinals) = scope else {
+            return []
+        }
+        var ids = Set<UUID>()
+        for (ordinal, sessionID) in allFrames.markedSessionIDs where ordinals.contains(ordinal) {
+            ids.insert(sessionID)
+        }
+        for row in allFrames.list?.rows ?? [] where ordinals.contains(row.ordinal) {
+            if let sessionID = row.sessionID {
+                ids.insert(sessionID)
+            }
+        }
+        return ids
+    }
+
     private func runFrameExport(_ choice: FrameExportPanel.Choice, originProjectID: UUID?, originGeneration: Int) {
+        if let captureComment = choice.captureComment {
+            guard choice.options.format == .pcapng,
+                  !choice.options.anonymizesAddresses,
+                  captureComment.utf8.count <= FrameExportOptions.maximumCommentBytes else
+            {
+                captureError = String(
+                    localized: "The additional capture comment needs PCAPNG without address replacement and must be no more than \(FrameExportOptions.maximumCommentBytes.formatted()) UTF-8 bytes."
+                )
+                setSessionExporting(false)
+                return
+            }
+        }
         frameExportRequestID &+= 1
         let requestID = frameExportRequestID
         frameExportName = choice.url.lastPathComponent
@@ -269,12 +371,27 @@ extension MainContentCoordinator {
         let identity = adoptedSavedCaptureIdentity
         let spool = liveCaptureSpool
         var options = choice.options
-        if choice.includesNotes, options.format == .pcapng {
-            options.captureComments = frameExportNoteComments(for: choice.scope)
-            options.sessionFrameComments = frameExportSessionFrameComments()
-            // Comments written on frames in View ▸ All Frames, as Wireshark saves its
-            // packet comments into the file.
-            options.frameComments = allFrames.frameComments
+        if options.format == .pcapng {
+            if let captureComment = choice.captureComment {
+                options.captureComments.insert(captureComment, at: 0)
+            }
+            if choice.includesNotes {
+                options.captureComments.append(contentsOf: frameExportNoteComments(for: choice.scope))
+                options.sessionFrameComments = frameExportSessionFrameComments()
+                // Comments written on frames in View ▸ All Frames, as Wireshark saves its
+                // packet comments into the file.
+                options.frameComments = allFrames.frameComments
+            }
+            if let correction = choice.timeCorrectionRequest {
+                options.timeCorrection = correction
+                options.captureComments.insert(correction.provenanceComment, at: 0)
+            }
+            if let correction = activeSavedCapture?.timeCorrection {
+                options.baseTimeCorrection = correction
+                if choice.timeCorrectionRequest == nil {
+                    options.captureComments.insert(correction.request.provenanceComment, at: 0)
+                }
+            }
         }
         if choice.includesNames, options.format == .pcapng {
             options.nameRecords = frameExportNameRecords()
@@ -286,7 +403,8 @@ extension MainContentCoordinator {
             var warning: String?
             var didWrite = false
             do {
-                let summary = try await Task.detached(priority: .userInitiated) { () throws -> FrameExportSummary in
+                try Task.checkCancellation()
+                let worker = Task.detached(priority: .userInitiated) { () throws -> FrameExportSummary in
                     if let savedSource {
                         return try CaptureFrameExporter.export(
                             from: savedSource, expectedIdentity: identity, scope: choice.scope,
@@ -296,12 +414,25 @@ extension MainContentCoordinator {
                     let temporaryURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent("tracexy-frame-export-\(UUID().uuidString).pcapng")
                     defer { try? FileManager.default.removeItem(at: temporaryURL) }
+                    try Task.checkCancellation()
+                    guard let ordinalOffset = await spool.currentSegmentFrameOrdinalOffset() else {
+                        throw FrameExportError.frameOrdinalOverflow
+                    }
+                    let scope = try choice.scope.addingFrameOrdinalOffset(ordinalOffset)
+                    var options = exportOptions
+                    try options.addFrameOrdinalOffset(ordinalOffset)
                     try await spool.copyWholeCapture(to: temporaryURL)
+                    try Task.checkCancellation()
                     return try CaptureFrameExporter.export(
-                        from: temporaryURL, scope: choice.scope, options: exportOptions,
+                        from: temporaryURL, scope: scope, options: options,
                         to: choice.url, onProgress: relay.submit
                     )
-                }.value
+                }
+                let summary = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
                 didWrite = true
                 warning = Self.frameExportWarning(summary)
             } catch is CancellationError {
@@ -321,6 +452,20 @@ extension MainContentCoordinator {
                 failure: failure, warning: warning, didWrite: didWrite,
                 originProjectID: originProjectID, originGeneration: originGeneration
             )
+            guard didWrite, choice.timeCorrectionRequest != nil,
+                  self.activeRuntime.projectID == originProjectID,
+                  self.startGeneration == originGeneration,
+                  !self.isProjectBoundaryBusy else
+            {
+                return
+            }
+            let values = try? choice.url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            self.openSavedCapture(SavedCapture(
+                url: choice.url,
+                name: choice.url.deletingPathExtension().lastPathComponent,
+                date: values?.contentModificationDate ?? Date(),
+                byteCount: values?.fileSize ?? 0
+            ))
         }
     }
 
@@ -338,11 +483,25 @@ extension MainContentCoordinator {
 
     nonisolated static func frameExportWarning(_ summary: FrameExportSummary) -> String? {
         var notes: [String] = []
+        if summary.excludedIgnoredFrameCount > 0 {
+            notes.append(
+                "\(summary.excludedIgnoredFrameCount.formatted()) ignored frame(s) were excluded from the selected export scope"
+            )
+        }
         if summary.omittedFrameOptionCount > 0 {
-            notes.append("\(summary.omittedFrameOptionCount.formatted()) frame comment(s) could not be copied")
+            notes.append("\(summary.omittedFrameOptionCount.formatted()) packet option list(s) could not be copied")
         }
         if summary.omittedInterfaceOptionCount > 0 {
             notes.append("\(summary.omittedInterfaceOptionCount.formatted()) interface option(s) were omitted")
+        }
+        if summary.omittedSectionOptionCount > 0 {
+            notes.append("\(summary.omittedSectionOptionCount.formatted()) section option(s) were omitted or truncated")
+        }
+        if summary.sourceMetadataInventoryTruncated {
+            notes
+                .append(
+                    "The source container inventory was bounded; some section or interface metadata may not have been copied"
+                )
         }
         if case .incompleteTruncatedTail = summary.completeness {
             notes.append("the source ends mid-record, so the export holds every complete frame")
@@ -364,6 +523,11 @@ extension MainContentCoordinator {
         }
         if summary.truncatedFrameCount > 0 {
             notes.append("\(summary.truncatedFrameCount.formatted()) frame(s) were cut to the byte limit")
+        }
+        if summary.unknownExpressionFrameCount > 0 {
+            notes.append(
+                "\(summary.unknownExpressionFrameCount.formatted()) frame(s) were omitted because the expression result was unknown"
+            )
         }
         if summary.replacedAddressCount > 0 {
             notes.append(

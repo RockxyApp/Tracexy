@@ -99,15 +99,6 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
             && lhs.linkType == rhs.linkType && lhs.locator == rhs.locator
     }
 
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(ordinal)
-        hasher.combine(timestamp)
-        hasher.combine(capturedLength)
-        hasher.combine(originalLength)
-        hasher.combine(linkType)
-        hasher.combine(locator)
-    }
-
     /// A documented total order over optional capture times, used **only** as a
     /// deterministic tie-break in orderings that already agree on ordinal-level
     /// facts. A known time precedes an unknown one and two known times compare
@@ -120,6 +111,15 @@ nonisolated struct SessionFrameProvenance: Hashable, Sendable {
         case (.none, .some),
              (.none, .none): false
         }
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ordinal)
+        hasher.combine(timestamp)
+        hasher.combine(capturedLength)
+        hasher.combine(originalLength)
+        hasher.combine(linkType)
+        hasher.combine(locator)
     }
 }
 
@@ -351,6 +351,12 @@ nonisolated enum ConnectionEventKind: Hashable, Sendable {
     /// A one-byte segment sent at this direction's edge while the peer's last
     /// advertised window was zero (a zero-window probe).
     case zeroWindowProbe
+    /// A zero-window ACK immediately following the peer's probe, repeating its
+    /// edge or acknowledging that probe's single byte.
+    case zeroWindowProbeAcknowledgement
+    /// A pure ACK advertised a changed nonzero receive window at the current
+    /// sequence and acknowledgement edges.
+    case windowUpdate
     /// A data segment ended exactly at the peer's acknowledged edge plus its
     /// scaled advertised window (the receive window is full).
     case windowFull

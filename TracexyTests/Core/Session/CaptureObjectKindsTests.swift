@@ -64,11 +64,14 @@ struct CaptureObjectKindsTests {
         let loaded = try SavedCaptureStreamLoader(contentsOf: url).load()
         let control = try #require(loaded.connections.summaries
             .first { $0.tuple.a.port == 21 || $0.tuple.b.port == 21 })
-        let result = try FollowStreamReader(contentsOf: url, expectedIdentity: loaded.identity, tuple: control.tuple)
-            .read()
+        let result = try FollowStreamReader(
+            contentsOf: url, expectedIdentity: loaded.identity, tuple: control.tuple,
+            sourceToken: SavedCaptureStreamLoader.sourceToken(for: loaded.identity)
+        ).read()
         let transfers = FTPDataObjectReader.transfers(in: result)
-        #expect(transfers.map(\.command) == ["RETR docs/report.txt", "STOR upload.bin"])
-        #expect(transfers.map(\.endpoints) == [
+        #expect(!transfers.chronologyUnavailable)
+        #expect(transfers.transfers.map(\.command) == ["RETR docs/report.txt", "STOR upload.bin"])
+        #expect(transfers.transfers.map(\.endpoints) == [
             [IPEndpoint(ip: "198.51.100.21", port: 50_000)], [IPEndpoint(ip: "198.51.100.21", port: 50_001)],
         ])
     }
