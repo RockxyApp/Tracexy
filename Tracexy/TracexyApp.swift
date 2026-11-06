@@ -1161,8 +1161,10 @@ private struct TracexyCaptureFileCommands: Commands {
         // Capture ▸ Start/Stop (⌘E, as in Wireshark): the toolbar's primary
         // command also belongs in the menu bar and on the keyboard.
         CommandMenu("Capture") {
-            Button(coordinator.isCapturing || coordinator.isStarting ? "Stop Capture" : "Start Capture") {
+            Button {
                 coordinator.toggleCapture()
+            } label: {
+                CaptureCommandLabel(coordinator: coordinator)
             }
             .keyboardShortcut("e", modifiers: .command)
             Button("Restart Capture") {
@@ -1281,6 +1283,31 @@ private struct TracexyCaptureFileCommands: Commands {
             return nil
         }
         return target
+    }
+}
+
+// MARK: - CaptureCommandLabel
+
+/// The primary capture command's title, built inside a `View` so that it tracks
+/// the coordinator.
+///
+/// Measured 2026-11-06: with a capture running, the toolbar's button reported
+/// `Stop` while the Capture menu still reported `Start Capture` at the same
+/// instant, where the title was a ternary in the enclosing `Commands` body.
+/// Why that body had not been re-evaluated is *not* established — other state
+/// in the same struct does refresh, the export gates among them — so this does
+/// not try to explain it, and the stale title has not been reproduced under
+/// test: a capture cannot be started on a host with no usable BPF device, which
+/// is why `CaptureMenuStateUITests` skips rather than passes there.
+///
+/// Reading the observable inside a `View` registers the dependency the ordinary
+/// way, which makes the title's correctness independent of whatever does or
+/// does not re-run that body.
+private struct CaptureCommandLabel: View {
+    let coordinator: MainContentCoordinator
+
+    var body: some View {
+        Text(coordinator.isCapturing || coordinator.isStarting ? "Stop Capture" : "Start Capture")
     }
 }
 
