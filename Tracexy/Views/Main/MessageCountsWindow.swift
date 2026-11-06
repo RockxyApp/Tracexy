@@ -71,11 +71,19 @@ struct MessageCountsWindow: View {
         return HStack(spacing: Theme.Metrics.spacingM) {
             Text(omitted == 0
                 ? "Counted from each frame's first 512 bytes"
-                : "\(omitted.formatted()) more messages had kinds past the per-session bound")
+                // The fact alone: at this window's own minimum width the longer
+                // sentence truncated mid-clause, which left a caption that no
+                // longer said what the number meant. The bound is named in the
+                // help text below instead.
+                : "\(omitted.formatted()) more messages not counted")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .help("A message whose first line did not begin a captured frame is not counted.")
+                .help(
+                    omitted == 0
+                        ? "A message whose first line did not begin a captured frame is not counted."
+                        : "These messages had kinds past the per-session bound, so their kinds were not kept."
+                )
             Spacer()
             Button("Show Sessions") {
                 if let term = selected?.term {

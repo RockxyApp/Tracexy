@@ -129,6 +129,10 @@ struct ResolvedAddressesWindow: View {
                 "\(rows.count.formatted()) of \(total.formatted()) names")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
+                // Three controls share this row and the counts grow with the
+                // capture. Without a limit the summary is what gives: it wraps
+                // and the whole bar grows a second line under the table.
+                .lineLimit(1)
             Spacer()
             Menu("Manage Names", systemImage: "character.book.closed") {
                 Button("Name Subnet…") {

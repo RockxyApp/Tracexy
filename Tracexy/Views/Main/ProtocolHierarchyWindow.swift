@@ -85,6 +85,10 @@ struct ProtocolHierarchyWindow: View {
                 : "\(sessionCount.formatted()) of \(coordinator.presentedSessions.count.formatted()) sessions in view")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
+                // As on the notice beside it: the row fits with no margin, so
+                // once a save shows that notice this summary would wrap and
+                // take the bar with it.
+                .lineLimit(1)
             Spacer()
             if let notice {
                 Text(notice).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)
