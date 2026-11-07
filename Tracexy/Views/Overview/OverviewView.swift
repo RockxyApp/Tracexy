@@ -740,7 +740,12 @@ struct OverviewView: View {
         let total = report.findings.count
         let scopedIncomplete = report.scopedPoints != nil && !timeline.sessionSeriesComplete
         if !markers.isEmpty || timeline.untimedFrameCount > 0 || timeline.directionMayHaveChanged || scopedIncomplete {
-            HStack(spacing: Theme.Metrics.spacingL) {
+            // Stacked, not side by side. Up to four notices can appear at once
+            // and the two longest run 86 and 92 characters; in one row, inside
+            // a panel whose minimum is 640pt, each was left wrapping to three
+            // or four lines against its neighbour. With a single notice — the
+            // ordinary case — this renders the same as a row did.
+            VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
                 if !markers.isEmpty {
                     HStack(spacing: Theme.Metrics.spacingS) {
                         Image(systemName: "diamond.fill")
@@ -771,8 +776,8 @@ struct OverviewView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

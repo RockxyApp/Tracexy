@@ -159,18 +159,46 @@ struct DecodeAsWindow: View {
         .help("This proposal is not saved or used until you apply it.")
     }
 
+    /// The notices above the controls rather than beside them.
+    ///
+    /// With a draft open, the rule limit reached and a redecode pending, this
+    /// bar carries four buttons and two sentences. Side by side they want about
+    /// 600pt against the 496 this window has at its own declared minimum, and
+    /// neither sentence had a line limit, so they wrapped and took the bar with
+    /// them. Giving the sentences their own line costs height only when there
+    /// is something to say, keeps every control reachable on one line, and
+    /// leaves both messages readable in full rather than truncated mid-clause.
     private func footer(_ settings: DecodeAsSettings) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
+            footerNotices(settings)
+            footerControls(settings)
+        }
+        .font(Theme.Typography.caption)
+        .controlSize(.small)
+        .padding(.horizontal, Theme.Metrics.spacingL)
+        .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    @ViewBuilder
+    private func footerNotices(_ settings: DecodeAsSettings) -> some View {
+        if settings.ruleDraft != nil, settings.ruleDraftCapacityReached {
+            Text("This Project has reached its 64-rule limit. Remove a rule before applying this proposal.")
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Decode As rule limit reached. Remove a rule before applying.")
+        }
+        if settings.needsRedecode {
+            Text("Rules apply to captures decoded from now on.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func footerControls(_ settings: DecodeAsSettings) -> some View {
         HStack(spacing: Theme.Metrics.spacingM) {
             if settings.ruleDraft != nil {
                 Button("Discard") { settings.discardRuleDraft() }
                 Button("Apply Rule") { settings.applyRuleDraft() }
                     .disabled(!settings.canApplyRuleDraft)
                     .help("Save this rule to the active Project and request Decode Again for an open capture.")
-                if settings.ruleDraftCapacityReached {
-                    Text("This Project has reached its 64-rule limit. Remove a rule before applying this proposal.")
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Decode As rule limit reached. Remove a rule before applying.")
-                }
             }
             if !settings.rules.isEmpty {
                 Button("Add Rule") { addRule() }
@@ -179,8 +207,6 @@ struct DecodeAsWindow: View {
             }
             Spacer()
             if settings.needsRedecode {
-                Text("Rules apply to captures decoded from now on.")
-                    .foregroundStyle(.secondary)
                 Button("Decode Again") {
                     coordinator.redecodeActiveSavedCapture()
                 }
@@ -188,10 +214,6 @@ struct DecodeAsWindow: View {
                 .help("Read the open capture file again with these rules, like Wireshark's Redissect")
             }
         }
-        .font(Theme.Typography.caption)
-        .controlSize(.small)
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingM)
     }
 
     private func draftBinding<Value>(
