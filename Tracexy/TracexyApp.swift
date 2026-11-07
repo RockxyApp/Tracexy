@@ -390,7 +390,11 @@ struct TracexyApp: App {
                 .id(coordinator.projectStore.activeProjectID)
                 .preferredColorScheme(colorScheme)
         }
-        .defaultSize(width: 760, height: 420)
+        // Wider than the window's own 820pt minimum, which the 760 declared
+        // here could not honour: the window opened clamped to its minimum and
+        // the table's columns were squeezed below their ideal widths from the
+        // first frame. Their ideal widths total about 730pt before chrome.
+        .defaultSize(width: 880, height: 460)
         .windowResizability(.contentMinSize)
         .handlesExternalEvents(matching: [])
         if #available(macOS 15.0, *) {
