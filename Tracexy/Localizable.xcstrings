@@ -521,6 +521,16 @@
         }
       }
     },
+    "%@ more messages not counted": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ thông điệp nữa không được đếm"
+          }
+        }
+      }
+    },
     "%@ ms at packet %@": {
       "localizations": {
         "vi": {
@@ -6597,6 +6607,16 @@
         }
       }
     },
+    "Export the marked frames, or everything matching the applied Frame Expression": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Xuất các khung đã đánh dấu, hoặc mọi khung khớp với Biểu thức khung đang áp dụng"
+          }
+        }
+      }
+    },
     "Export the selected session": {
       "localizations": {
         "vi": {
@@ -7668,12 +7688,32 @@
         }
       }
     },
+    "Frames of the %@ sessions in view": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Khung của %@ phiên đang xem"
+          }
+        }
+      }
+    },
     "Frames of the %@ sessions in view; frames outside any session are not counted": {
       "localizations": {
         "vi": {
           "stringUnit": {
             "state": "needs_review",
             "value": "Khung của %@ phiên đang hiện; khung không thuộc phiên nào không được đếm"
+          }
+        }
+      }
+    },
+    "Frames outside any session are not counted": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Khung không thuộc phiên nào thì không được đếm"
           }
         }
       }
@@ -9970,6 +10010,16 @@
         }
       }
     },
+    "Mark, unmark, ignore or unignore every frame displayed in this list": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Đánh dấu, bỏ đánh dấu, bỏ qua hoặc hiện lại mọi khung đang hiển thị trong danh sách này"
+          }
+        }
+      }
+    },
     "Marked": {
       "localizations": {
         "vi": {
@@ -10006,6 +10056,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Thiếu marker?"
+          }
+        }
+      }
+    },
+    "Marks": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dấu"
           }
         }
       }
@@ -13014,6 +13074,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Tối ưu hóa BPF cho %@"
+          }
+        }
+      }
+    },
+    "These messages had kinds past the per-session bound, so their kinds were not kept.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Những thông điệp này có loại vượt quá giới hạn mỗi phiên, nên loại của chúng không được giữ lại."
           }
         }
       }

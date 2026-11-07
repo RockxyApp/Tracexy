@@ -38,6 +38,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Split Capture and the capture file-set settings now name the menu that walks a file set correctly, File ▸ File Set ▸ Next File, in English and Vietnamese. The old text named an item that does not exist.
 - Overview's Measure and Series chart choices are kept per Project instead of being shared by every Project on this Mac, including a Synthetic Project. Both reset to their defaults once, because they move to a Project-owned setting.
 - The All Frames footer reads `Showing 37 of frames 200,001–400,000, 500,000 scanned` rather than repeating "of" twice, and it is now translated.
+- The All Frames expression field and its Highlight button are no longer drawn hard against the window edge with their leading corners clipped.
+- The All Frames footer no longer truncates its own commands to "Mark All Di…" and "Unignore D…" at the window's ordinary width: the bulk mark and ignore commands share a Marks menu, the export and print commands an Export menu, and each is unavailable when it has nothing to act on. The Relative TCP Seq/Ack toggle reads on one line again instead of three.
+- The IP Statistics and Service Response Time choosers sit under the titlebar instead of floating down the middle of an otherwise empty window.
+- The Packet Lengths, Resolved Addresses, Protocol Hierarchy and Message Counts footers stay on one line at any window width; a caption that used to stop mid-clause now states the fact and names the bound it counts to in its tooltip.
+- Decode As shows its rule-limit and redecode notices on their own line, so its buttons stay reachable on one line when a draft, the rule limit and a pending redecode coincide. Overview's chart notices stack for the same reason.
+- Manage Interfaces opens at the size it declares rather than clamped to its minimum with the interface columns already squeezed.
 
 ### Changed
 

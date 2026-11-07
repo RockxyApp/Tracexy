@@ -1701,6 +1701,9 @@ the capture-wide endpoints. **Mark Selected Frame** / **Unmark Selected Frame** 
 row while it remains visible in the main list, including sessionless frames. Right-click a frame in All Frames to
 **Mark** or **Ignore** it, as Wireshark's context actions do: a marked
 frame shows a bookmark, an ignored one is hidden (or, with **Show Ignored**, dimmed and struck through).
+The All Frames footer groups these: the **Marks** menu holds the four displayed-set mark and ignore
+commands, and the **Export** menu holds the export and print commands. Each menu is unavailable when
+nothing it offers could act on anything.
 **Mark All Displayed** marks the rows currently shown after session scope, search, decode-problem,
 Frame Expression and ignore filters, including pinned time-reference rows. Existing marks outside that visible result stay marked.
 **Unmark All Displayed** clears marks only for those rows; **Ignore All Displayed** ignores only those shown rows;
