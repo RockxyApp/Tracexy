@@ -88,6 +88,12 @@ jobs:
       - name: Run tests
         run: |
           mkdir -p build/test-results
+          set -o pipefail
+          # Tee'd rather than printed straight through: the step log is
+          # truncated when it is downloaded, and the truncation point fell
+          # before the failure summary, so a failing run could not be
+          # diagnosed at all. The summary is reprinted at the end, where it
+          # survives.
           xcodebuild -project Tracexy.xcodeproj \
             -scheme Tracexy \
             -destination 'platform=macOS' \
@@ -100,7 +106,30 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            test
+            test 2>&1 | tee build/test-results/xcodebuild.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Summarise failures
+        if: failure()
+        run: |
+          log=build/test-results/xcodebuild.log
+          [ -f "$log" ] || exit 0
+          echo "::group::Failing tests"
+          grep -A40 "Failing tests:" "$log" | head -60 || true
+          echo "::endgroup::"
+          echo "::group::Assertion messages"
+          grep -E "\.swift:[0-9]+: error:" "$log" | tail -40 || true
+          echo "::endgroup::"
+          echo "::group::Last 80 lines"
+          tail -80 "$log" || true
+          echo "::endgroup::"
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/test-results
+          retention-days: 7
   build:
     name: Build (Release, unsigned)
     needs:
