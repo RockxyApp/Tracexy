@@ -19,6 +19,12 @@ enum UITestWindowPlacement {
     /// Passed by the UI-test harness; absent everywhere else.
     static let launchArgument = "--ui-test-main-screen"
 
+    /// Shrinks each window to the smallest size it declares, so a test can
+    /// measure the layout at the width the window actually has to survive.
+    /// Several footer defects only appear there: at a window's ordinary size
+    /// the row fits, and at its minimum the labels truncate or wrap.
+    static let minimumSizeArgument = "--ui-test-minimum-size"
+
     static func installIfRequested() {
         guard CommandLine.arguments.contains(launchArgument), !isInstalled else {
             return
@@ -65,12 +71,31 @@ enum UITestWindowPlacement {
         NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
     }
 
+    /// Resizes the window to the minimum it declares, when the harness asked
+    /// for it. The size comes from the window's own `contentMinSize`, which the
+    /// scene's resizability sets from the view's `frame(minWidth:minHeight:)`,
+    /// so nothing here repeats a number that lives in the view.
+    private static func shrinkToMinimum(_ window: NSWindow) {
+        guard CommandLine.arguments.contains(minimumSizeArgument) else {
+            return
+        }
+        let minimum = window.contentMinSize
+        guard minimum.width > 0, minimum.height > 0 else {
+            return
+        }
+        guard window.contentRect(forFrameRect: window.frame).size != minimum else {
+            return
+        }
+        window.setContentSize(minimum)
+    }
+
     /// Moves the window onto the main screen, keeping its size. A sheet is left
     /// alone: it is positioned by its parent, and moving it detaches it.
     private static func center(_ window: NSWindow) {
         guard window.parent == nil, !window.isSheet, let screen = primaryScreen else {
             return
         }
+        shrinkToMinimum(window)
         let visible = screen.visibleFrame
         // The whole frame, not just its origin. A window whose bottom-left
         // corner sits inside the primary screen can still extend off it, and

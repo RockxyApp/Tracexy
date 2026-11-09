@@ -26,35 +26,17 @@ final class ToolWindowLayoutSweepUITests: XCTestCase {
 
     @MainActor
     func testEveryToolWindowKeepsItsControlsInsideAndOnOneLine() throws {
-        let capture = try UITestCapture.write()
-        defer { try? FileManager.default.removeItem(at: capture) }
+        try sweep(token: "tool-window-sweep", extraArguments: [])
+    }
 
-        let app = launchAppWithCapture("tool-window-sweep", capture: capture)
-        defer { app.terminate() }
-
-        var findings: [String] = []
-        var opened = 0
-
-        for route in Self.routes {
-            guard let window = openAndIdentify(app, route: route) else {
-                findings.append("\(route.item): the menu item opened no window")
-                continue
-            }
-            opened += 1
-            findings.append(contentsOf: violations(in: window, named: route.item))
-            window.typeKey("w", modifierFlags: .command)
-            _ = waitUntil(5) { !window.exists }
-        }
-
-        XCTAssertGreaterThanOrEqual(
-            opened,
-            Self.routes.count - 1,
-            "Most routes must open a window to make this a sweep"
-        )
-        XCTAssertTrue(
-            findings.isEmpty,
-            "Layout defects measured in \(opened) tool windows:\n" + findings.joined(separator: "\n")
-        )
+    /// The same sweep with every window shrunk to the smallest size it
+    /// declares. A footer that fits at the default width can still overflow at
+    /// the minimum, and the minimum is the width the window promises to stay
+    /// usable at — so this is where a row of controls and a long sentence
+    /// compete for the same space.
+    @MainActor
+    func testEveryToolWindowSurvivesItsOwnMinimumSize() throws {
+        try sweep(token: "tool-window-sweep-min", extraArguments: [UITestLaunch.minimumSize])
     }
 
     // MARK: Private
@@ -113,6 +95,56 @@ final class ToolWindowLayoutSweepUITests: XCTestCase {
         Route(menu: "Statistics", item: "Message Counts"),
         Route(menu: "Statistics", item: "Resolved Addresses"),
     ]
+
+    /// Closes exactly this window, through its own close button.
+    ///
+    /// `⌘W` is sent to the application, not to a window, so it closes whatever
+    /// happens to be key. Measured: after a tool window had lost key status the
+    /// shortcut closed the main window instead, and from the third route on
+    /// every Statistics item then opened nothing at all — which read as a
+    /// broken menu rather than as a harness that had shut the app's own window.
+    @MainActor
+    private func close(_ window: XCUIElement) {
+        let button = window.buttons[XCUIIdentifierCloseWindow].firstMatch
+        if button.waitForExistence(timeout: 5) {
+            button.click()
+        } else {
+            window.typeKey("w", modifierFlags: .command)
+        }
+        _ = waitUntil(5) { !window.exists }
+    }
+
+    @MainActor
+    private func sweep(token: String, extraArguments: [String]) throws {
+        let capture = try UITestCapture.write()
+        defer { try? FileManager.default.removeItem(at: capture) }
+
+        let app = launchAppWithCapture(token, capture: capture, extraArguments: extraArguments)
+        defer { app.terminate() }
+
+        var findings: [String] = []
+        var opened = 0
+
+        for route in Self.routes {
+            guard let window = openAndIdentify(app, route: route) else {
+                findings.append("\(route.item): the menu item opened no window")
+                continue
+            }
+            opened += 1
+            findings.append(contentsOf: violations(in: window, named: route.item))
+            close(window)
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            opened,
+            Self.routes.count - 1,
+            "Most routes must open a window to make this a sweep"
+        )
+        XCTAssertTrue(
+            findings.isEmpty,
+            "Layout defects measured in \(opened) tool windows:\n" + findings.joined(separator: "\n")
+        )
+    }
 
     /// Clicks the route and returns whichever window it opened. The title is
     /// discovered rather than declared, so a menu item wired to the wrong scene

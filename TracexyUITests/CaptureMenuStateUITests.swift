@@ -24,7 +24,11 @@ final class CaptureMenuStateUITests: XCTestCase {
 
     @MainActor
     func testCaptureMenuOffersToStopWhileACaptureRuns() throws {
-        let app = launchEmptyApp("capture-menu-running")
+        // Without this the app asks for the privileged helper, which no test
+        // host has, and no capture can start at all. Direct mode reads the
+        // interface through libpcap instead and needs only an openable BPF
+        // device, which this machine has.
+        let app = launchEmptyApp("capture-menu-running", extraArguments: [UITestLaunch.directCapture])
         defer { app.terminate() }
 
         let menu = app.menuBars.menuBarItems["Capture"]
@@ -40,8 +44,11 @@ final class CaptureMenuStateUITests: XCTestCase {
         // BPF device never gets that far, and a vacuous pass would be worse
         // than no coverage at all.
         let stopButton = app.buttons["Stop"].firstMatch
-        guard waitUntil(20, { stopButton.exists }) else {
-            throw XCTSkip("No capture could start on this host, so there is no running state to check.")
+        guard waitUntil(30, { stopButton.exists }) else {
+            throw XCTSkip(
+                "No capture started: direct mode still needs an openable /dev/bpf device, "
+                    + "and a vacuous pass would be worse than no coverage."
+            )
         }
 
         XCTAssertEqual(

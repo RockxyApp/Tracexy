@@ -122,6 +122,16 @@ enum UITestLaunch {
     /// every element as not hittable and the run fails on hit testing rather
     /// than on the behaviour under test.
     static let mainScreen = "--ui-test-main-screen"
+
+    /// Sizes every window to the smallest size it declares. A footer that fits
+    /// at the default width can still overflow at the minimum, which is the
+    /// width the window promises to stay usable at.
+    static let minimumSize = "--ui-test-minimum-size"
+
+    /// Captures through libpcap rather than the privileged helper, which no
+    /// test host has installed. It still needs an openable BPF device, so a
+    /// test that uses it must say what it does when there is none.
+    static let directCapture = "--direct-capture"
 }
 
 extension XCTestCase {
@@ -129,10 +139,10 @@ extension XCTestCase {
     /// under test. Each launch gets its own preferences token, as the project's
     /// other UI tests do, so a run never inherits or leaves a defaults domain.
     @MainActor
-    func launchEmptyApp(_ token: String) -> XCUIApplication {
+    func launchEmptyApp(_ token: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["TRACEXY_TEST_RUN_TOKEN"] = "ui-\(token)-\(UUID().uuidString)"
-        app.launchArguments = [UITestLaunch.mainScreen]
+        app.launchArguments = [UITestLaunch.mainScreen] + extraArguments
         app.launch()
         // Keyboard routes need the app frontmost; launch() alone does not
         // guarantee it, and this host has a second display where a window can
@@ -145,9 +155,13 @@ extension XCTestCase {
     /// Launches the app with the fixture already opened through the normal
     /// external-open flow, the way Finder opens a capture.
     @MainActor
-    func launchAppWithCapture(_ token: String, capture: URL) -> XCUIApplication {
+    func launchAppWithCapture(
+        _ token: String, capture: URL, extraArguments: [String] = []
+    )
+        -> XCUIApplication
+    {
         let app = XCUIApplication()
-        app.launchArguments = ["--open-capture-ui-test", UITestLaunch.mainScreen]
+        app.launchArguments = ["--open-capture-ui-test", UITestLaunch.mainScreen] + extraArguments
         app.launchEnvironment = [
             "TRACEXY_TEST_RUN_TOKEN": "ui-\(token)-\(UUID().uuidString)",
             "TRACEXY_UI_TEST_CAPTURE": capture.path,
