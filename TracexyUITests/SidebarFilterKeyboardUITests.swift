@@ -27,7 +27,14 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
         viewMenu.click()
         let item = viewMenu.menuItems["Filter Sidebar"].firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 10), viewMenu.debugDescription)
-        XCTAssertTrue(item.isEnabled, "The workspace scene must publish the focus action")
+        // Waited for, not asserted outright. The action is a focused scene
+        // value, so it is published only once the workspace window has taken
+        // key status, and that can land after the menu is already open. The
+        // assertion held on a fast developer machine and lost the race on CI.
+        XCTAssertTrue(
+            waitUntil(20) { item.isEnabled },
+            "The workspace scene must publish the focus action: \(viewMenu.debugDescription)"
+        )
         item.click()
 
         app.typeText("dns")
@@ -46,6 +53,11 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
         defer { app.terminate() }
 
         let field = awaitFilterField(app)
+        // The shortcut is the same focused scene value as the menu item, so it
+        // does nothing until that value is published. Waiting for the menu item
+        // to go live is the only way to know it has been, and sending the keys
+        // before then simply loses them.
+        XCTAssertTrue(awaitFocusAction(app), "The workspace scene must publish the focus action")
         app.typeKey("j", modifierFlags: [.command, .option])
         app.typeText("tcp")
         XCTAssertTrue(
@@ -82,6 +94,23 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
     /// Mirrors `SidebarFilterFocusAction.fieldIdentifier` in the app target,
     /// which the UI test bundle does not import.
     private static let fieldIdentifier = "tracexy.sidebar.filter-field"
+
+    /// Whether the workspace has published its sidebar-filter focus action,
+    /// read from the real View menu and then dismissed again.
+    @MainActor
+    private func awaitFocusAction(_ app: XCUIApplication) -> Bool {
+        let menu = app.menuBars.menuBarItems["View"]
+        guard menu.waitForExistence(timeout: 30) else {
+            return false
+        }
+        menu.click()
+        defer { app.typeKey(XCUIKeyboardKey.escape, modifierFlags: []) }
+        let item = menu.menuItems["Filter Sidebar"].firstMatch
+        guard item.waitForExistence(timeout: 10) else {
+            return false
+        }
+        return waitUntil(20) { item.isEnabled }
+    }
 
     /// Waits for the sidebar filter field, checks the label VoiceOver reads, and
     /// proves focus is not already in it — macOS XCUITest exposes no focus
