@@ -97,10 +97,16 @@ enum UITestWindowPlacement {
         }
         shrinkToMinimum(window)
         let visible = screen.visibleFrame
-        // The whole frame, not just its origin. A window whose bottom-left
-        // corner sits inside the primary screen can still extend off it, and
-        // the part that hangs over reports `is not hittable` all the same.
-        guard !visible.contains(window.frame) else {
+        // Judged by the window's centre, not by whether the whole frame fits.
+        // Requiring containment looked stricter and was wrong: a window simply
+        // larger than the screen never satisfies it, so the hook moved it again
+        // on every key and main notification. On CI, where the display is
+        // smaller than this app's default window, that re-centring ran
+        // constantly and took keyboard focus with it — three sidebar-focus
+        // tests failed there while passing on a larger display. A window whose
+        // centre is on the primary screen is reachable, which is all this hook
+        // needs to guarantee.
+        guard !visible.contains(CGPoint(x: window.frame.midX, y: window.frame.midY)) else {
             return
         }
         let size = window.frame.size
