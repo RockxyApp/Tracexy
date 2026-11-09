@@ -17,10 +17,11 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
     /// what the user then types lands there. Focus alone is not enough: a field
     /// that is first responder but not receiving keys is the same bug.
     @MainActor
-    func testFilterSidebarMenuItemFocusesTheFieldAndAcceptsTyping() {
+    func testFilterSidebarMenuItemFocusesTheFieldAndAcceptsTyping() throws {
         let app = launchEmptyApp("sidebar-filter-menu")
         defer { app.terminate() }
 
+        try requireAnActiveApp(app)
         let field = awaitFilterField(app)
         let viewMenu = app.menuBars.menuBarItems["View"]
         XCTAssertTrue(viewMenu.waitForExistence(timeout: 30), app.menuBars.debugDescription)
@@ -48,10 +49,11 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
     /// The same action reached by its ⌥⌘J shortcut. Kept separate from the menu
     /// item so a failure says which of the two routes broke.
     @MainActor
-    func testFilterSidebarShortcutFocusesTheField() {
+    func testFilterSidebarShortcutFocusesTheField() throws {
         let app = launchEmptyApp("sidebar-filter-shortcut")
         defer { app.terminate() }
 
+        try requireAnActiveApp(app)
         let field = awaitFilterField(app)
         // The shortcut is the same focused scene value as the menu item, so it
         // does nothing until that value is published. Waiting for the menu item
@@ -94,6 +96,28 @@ final class SidebarFilterKeyboardUITests: XCTestCase {
     /// Mirrors `SidebarFilterFocusAction.fieldIdentifier` in the app target,
     /// which the UI test bundle does not import.
     private static let fieldIdentifier = "tracexy.sidebar.filter-field"
+
+    /// Skips when the host never makes the app the active one.
+    ///
+    /// Both routes here are keyboard focus: the command is a focused scene
+    /// value, published only once a window takes key status, and the typing
+    /// after it only lands in a focused field. Neither can happen while the app
+    /// is not active, and XCUITest says so plainly — it reports the application
+    /// element itself as disabled. Measured on CI, which gives the app no
+    /// active GUI session: `Application … title: 'Tracexy', Disabled`, with the
+    /// focus action never published however long it is given.
+    ///
+    /// A property of the host, not of the app. A vacuous pass would be worse
+    /// than saying so, and every developer machine runs these in full.
+    @MainActor
+    private func requireAnActiveApp(_ app: XCUIApplication) throws {
+        guard waitUntil(20, { app.isEnabled }) else {
+            throw XCTSkip(
+                "The app never became the active application on this host, so no window can "
+                    + "take keyboard focus and there is nothing for these routes to reach."
+            )
+        }
+    }
 
     /// Whether the workspace has published its sidebar-filter focus action,
     /// read from the real View menu and then dismissed again.
