@@ -123,13 +123,6 @@ jobs:
           echo "::group::Last 80 lines"
           tail -80 "$log" || true
           echo "::endgroup::"
-      - name: Upload test results
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: build/test-results
-          retention-days: 7
   build:
     name: Build (Release, unsigned)
     needs:
