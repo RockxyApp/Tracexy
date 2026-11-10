@@ -35,6 +35,12 @@ struct ExportObjectsWindow: View {
                 ContentUnavailableView(
                     "Objects Unavailable", systemImage: "doc.on.doc", description: Text(error)
                 )
+            } else if state.unreadKinds.contains(state.kind) {
+                ContentUnavailableView(
+                    "Objects Not Read",
+                    systemImage: "doc.on.doc",
+                    description: Text("This read stopped before it finished. Rescan to list these objects.")
+                )
             } else if objects.isEmpty {
                 ContentUnavailableView(
                     "No Objects",
@@ -49,6 +55,7 @@ struct ExportObjectsWindow: View {
         }
         .searchable(text: $state.search, placement: .toolbar, prompt: "File name, host or content type")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .top) {
             HStack {
                 Picker("Objects", selection: Binding(
@@ -76,8 +83,22 @@ struct ExportObjectsWindow: View {
 
     // MARK: Private
 
+    private struct SaveAllProgress: Equatable {
+        let done: Int
+        let total: Int
+    }
+
+    /// What the off-main-actor writer reports back while it saves.
+    private enum SaveAllEvent: Sendable {
+        case progress(done: Int)
+        case finished(saved: Int, firstError: String?)
+        case cancelled(saved: Int)
+    }
+
     @State private var selection: CaptureObject.ID?
     @State private var notice: String?
+    @State private var saveAllProgress: SaveAllProgress?
+    @State private var saveAllTask: Task<Void, Never>?
 
     private func table(_ objects: [CaptureObject]) -> some View {
         Table(objects, selection: $selection) {
@@ -134,31 +155,119 @@ struct ExportObjectsWindow: View {
 
     private func footer(_ objects: [CaptureObject], state: CaptureObjectListState) -> some View {
         let selected = objects.first { $0.id == selection }
+        let saving = saveAllProgress
         return HStack(spacing: Theme.Metrics.spacingM) {
-            if let notice {
+            if let saving {
+                ProgressView(value: Double(saving.done), total: Double(max(1, saving.total)))
+                    .frame(width: 120)
+                Text("Saving \(saving.done.formatted()) of \(saving.total.formatted()) objects")
+                    .lineLimit(1)
+                    .accessibilityIdentifier("exportObjects.saveAllProgress")
+            } else if let notice {
                 Text(notice).lineLimit(1)
             } else if let list = state.list {
                 Text(summary(list, shown: objects.count)).lineLimit(1)
             }
             Spacer()
+            if saving != nil {
+                Button("Cancel", role: .cancel) { cancelSaveAll() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("exportObjects.saveAllCancel")
+            }
             Button("Save…") {
                 if let selected {
                     save(selected)
                 }
             }
+            .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("exportObjects.saveSelected")
-            .disabled(selected == nil)
+            .disabled(selected == nil || saving != nil)
             Button("Save All…") { saveAll(objects) }
-                .disabled(objects.isEmpty)
+                .disabled(objects.isEmpty || saving != nil)
                 .accessibilityIdentifier("exportObjects.saveAll")
             Button("Rescan") { coordinator.loadExportObjects(state.kind, force: true) }
-                .disabled(state.isLoading)
+                .disabled(state.isLoading || saving != nil)
         }
         .font(Theme.Typography.caption)
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    /// The one workspace window, found the way the GeoIP sheet finds its host: by
+    /// the managed workspace toolbar, then AppKit's own main window.
+    private static func workspaceWindow() -> NSWindow? {
+        let visible = NSApp.windows.filter { $0.isVisible && $0.sheetParent == nil && !($0 is NSPanel) }
+        return visible.first { $0.toolbar?.identifier == NativeWorkspaceToolbar.toolbarIdentifier }
+            ?? NSApp.mainWindow
+            ?? visible.first { $0.canBecomeMain }
+    }
+
+    /// Selecting the session changes nothing the user can see while this window is
+    /// in front, so the workspace window is brought forward with the selection.
+    private static func activateWorkspaceWindow() {
+        guard let window = workspaceWindow() else {
+            return
+        }
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private static func saveAllNotice(saved: Int, total: Int, firstError: String?, cancelled: Bool) -> String {
+        if cancelled {
+            return String(
+                localized: "Cancelled after saving \(saved.formatted()) of \(total.formatted()) objects."
+            )
+        }
+        if let firstError {
+            return String(
+                localized: "Saved \(saved.formatted()) of \(total.formatted()) objects. Couldn’t save the rest: \(firstError)"
+            )
+        }
+        return String(localized: "Saved \(saved.formatted()) objects.")
+    }
+
+    /// Writes every object body on a detached task. One object that can’t be
+    /// written does not stop the others, and cancellation stops between objects.
+    private static func writeObjects(
+        _ objects: [CaptureObject], into folder: URL
+    )
+        -> AsyncStream<SaveAllEvent>
+    {
+        AsyncStream { continuation in
+            let writer = Task.detached(priority: .userInitiated) {
+                var taken = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+                var saved = 0
+                var firstError: String?
+                for (index, object) in objects.enumerated() {
+                    if Task.isCancelled {
+                        continuation.yield(.cancelled(saved: saved))
+                        continuation.finish()
+                        return
+                    }
+                    let name = CaptureObjectScanner.uniqueName(
+                        CaptureObjectScanner.savableName(object.fileName), taken: taken
+                    )
+                    taken.insert(name)
+                    do {
+                        try Data(object.body)
+                            .write(to: folder.appendingPathComponent(name), options: .withoutOverwriting)
+                        saved += 1
+                    } catch {
+                        firstError = firstError ?? error.localizedDescription
+                    }
+                    // Progress is reported in small batches: one hop per object
+                    // would cost more than the write for a long list of small ones.
+                    if (index + 1).isMultiple(of: 8) || index + 1 == objects.count {
+                        continuation.yield(.progress(done: index + 1))
+                    }
+                }
+                continuation.yield(.finished(saved: saved, firstError: firstError))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in writer.cancel() }
+        }
     }
 
     private func emptyReason(_ kind: CaptureObjectKind) -> String {
@@ -185,6 +294,10 @@ struct ExportObjectsWindow: View {
         if list.skippedStreamCount > 0 {
             text += String(localized: "; \(list.skippedStreamCount.formatted()) more streams not read")
         }
+        if list.ambiguousStreamCount > 0 {
+            text +=
+                String(localized: "; \(list.ambiguousStreamCount.formatted()) FTP streams lacked a proven packet order")
+        }
         if list.omittedObjectCount > 0 {
             text += String(localized: "; \(list.omittedObjectCount.formatted()) objects past the size limit")
         }
@@ -192,9 +305,12 @@ struct ExportObjectsWindow: View {
     }
 
     private func reveal(_ object: CaptureObject) {
-        notice = coordinator.revealExportedObject(object)
-            ? nil
-            : String(localized: "This object's session is not in view in the main window.")
+        guard coordinator.revealExportedObject(object) else {
+            notice = String(localized: "This object's session is not in view in the main window.")
+            return
+        }
+        notice = nil
+        Self.activateWorkspaceWindow()
     }
 
     private func inspect(_ object: CaptureObject, provenance: SessionFrameProvenance) {
@@ -204,9 +320,16 @@ struct ExportObjectsWindow: View {
         }
         coordinator.inspectCitedFrame(sessionID: object.sessionID, provenance: provenance)
         notice = nil
+        // Deliberately does not bring the workspace forward. Citing a frame is a
+        // step taken from this list and usually followed by another one here, so
+        // taking key away would interrupt the very workflow it serves. Show
+        // Session is the action that means "take me there", and it activates.
     }
 
     private func save(_ object: CaptureObject) {
+        guard coordinator.presentRawExportAcknowledgement(formatName: "Object body") else {
+            return
+        }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = CaptureObjectScanner.savableName(object.fileName)
         panel.canCreateDirectories = true
@@ -230,6 +353,9 @@ struct ExportObjectsWindow: View {
     }
 
     private func saveAll(_ objects: [CaptureObject]) {
+        guard coordinator.presentRawExportAcknowledgement(formatName: "Object body") else {
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -239,28 +365,41 @@ struct ExportObjectsWindow: View {
         guard panel.runModal() == .OK, let folder = panel.url else {
             return
         }
-        var taken = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
-        // One object that can't be written does not stop the others.
-        var saved = 0
-        var firstError: Error?
-        for object in objects {
-            let name = CaptureObjectScanner.uniqueName(
-                CaptureObjectScanner.savableName(object.fileName), taken: taken
-            )
-            taken.insert(name)
-            do {
-                try Data(object.body).write(to: folder.appendingPathComponent(name), options: .withoutOverwriting)
-                saved += 1
-            } catch {
-                firstError = firstError ?? error
+        startSaveAll(objects, into: folder)
+    }
+
+    /// Writing happens off the main actor, one object at a time, reporting progress
+    /// back here; the synchronous loop this replaced froze the window for the whole
+    /// save with no progress and no way out.
+    private func startSaveAll(_ objects: [CaptureObject], into folder: URL) {
+        let total = objects.count
+        notice = nil
+        saveAllProgress = SaveAllProgress(done: 0, total: total)
+        saveAllTask = Task { @MainActor in
+            var saved = 0
+            var firstError: String?
+            // Cancelling this task ends the stream without any further event, so
+            // only an explicit `finished` counts as a complete save.
+            var finished = false
+            for await event in Self.writeObjects(objects, into: folder) {
+                switch event {
+                case let .progress(done):
+                    saveAllProgress = SaveAllProgress(done: done, total: total)
+                case let .finished(count, error):
+                    saved = count
+                    firstError = error
+                    finished = true
+                case let .cancelled(count):
+                    saved = count
+                }
             }
+            saveAllProgress = nil
+            saveAllTask = nil
+            notice = Self.saveAllNotice(saved: saved, total: total, firstError: firstError, cancelled: !finished)
         }
-        if let firstError {
-            notice = String(
-                localized: "Saved \(saved.formatted()) of \(objects.count.formatted()) objects. Couldn’t save the rest: \(firstError.localizedDescription)"
-            )
-        } else {
-            notice = String(localized: "Saved \(objects.count.formatted()) objects.")
-        }
+    }
+
+    private func cancelSaveAll() {
+        saveAllTask?.cancel()
     }
 }

@@ -27,13 +27,38 @@ struct PacketBytesWindow: View {
                 )
             }
         }
-        .frame(minWidth: 560, minHeight: 360)
+        // A constant minimum: under .windowResizability(.contentMinSize) a minimum
+        // computed from live state resizes a window the user already sized by hand
+        // whenever "Show as" changes. 720 covers the widest mode (frame details).
+        .frame(minWidth: 720, minHeight: 360)
+        .alert("Couldn’t Save Rendering", isPresented: Binding(
+            get: { renderingSaveError != nil },
+            set: {
+                if !$0 {
+                    renderingSaveError = nil
+                }
+            }
+        )) {
+            Button("OK") { renderingSaveError = nil }
+        } message: {
+            Text(renderingSaveError ?? "The rendering could not be saved.")
+        }
+        .onDisappear {
+            renderingSaveRequest = UUID()
+            isSavingRendering = false
+        }
         .onChange(of: coordinator.packetBytesInspection.revision, initial: true) { _, _ in
             if let subject = coordinator.packetBytesInspection.subject {
                 decoding = subject.suggestedDecoding
                 presentation = subject.suggestedPresentation
                 rangeStart = 0
                 rangeEnd = subject.bytes.count
+                selectedLayerRange = nil
+                collapsedLayers = []
+                fieldQuery = ""
+                isLayerTreeFocused = false
+                hiddenByteOwnerMessage = nil
+                byteRevealToken &+= 1
             }
         }
     }
@@ -44,6 +69,38 @@ struct PacketBytesWindow: View {
     @State private var presentation: PacketBytesPresentation = .text
     @State private var rangeStart = 0
     @State private var rangeEnd = 0
+    @State private var selectedLayerRange: Range<Int>?
+    @State private var collapsedLayers: Set<String> = []
+    @State private var fieldQuery = ""
+    @FocusState private var isLayerTreeFocused: Bool
+    @State private var hiddenByteOwnerMessage: String?
+    @State private var byteRevealToken = 0
+    @State private var isSavingRendering = false
+    @State private var renderingSaveError: String?
+    @State private var renderingSaveRequest = UUID()
+
+    private var layerFilterControl: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: Theme.Icon.small))
+            TextField("Filter Fields", text: $fieldQuery)
+                .textFieldStyle(.plain)
+                .font(Theme.Typography.caption)
+                .accessibilityLabel("Filter decoded fields")
+            if !fieldQuery.isEmpty {
+                Button { fieldQuery = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel("Clear field filter")
+                .help("Clear the field filter")
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .tracexyContentSurface(in: Capsule(style: .continuous))
+        .padding(.horizontal, Theme.Metrics.spacingM)
+    }
 
     private func content(_ subject: PacketBytesSubject) -> some View {
         let start = min(max(0, rangeStart), subject.bytes.count)
@@ -56,7 +113,13 @@ struct PacketBytesWindow: View {
             Divider()
             switch decoded {
             case let .success(bytes):
-                output(bytes)
+                if !subject.layers.isEmpty, presentation == .hexDump, decoding == .none,
+                   start == 0, end == subject.bytes.count
+                {
+                    frameDetails(subject)
+                } else {
+                    output(bytes)
+                }
             case let .failure(failure):
                 ContentUnavailableView(
                     "Can’t Decode as \(decoding.title)",
@@ -66,8 +129,116 @@ struct PacketBytesWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
-            footer(inputCount: input.count, decoded: try? decoded.get(), title: subject.title)
+            footer(
+                inputCount: input.count, decoded: try? decoded.get(), title: subject.title,
+                subject: subject, start: start, end: end,
+                isFullFrameDetails: !subject.layers.isEmpty && presentation == .hexDump && decoding == .none
+                    && start == 0 && end == subject.bytes.count
+            )
+        }
+    }
+
+    private func frameDetails(_ subject: PacketBytesSubject) -> some View {
+        let layers = DecodedLayerSearchProjection.filter(subject.layers, query: fieldQuery)
+        return ScrollViewReader { proxy in
+            HSplitView {
+                VStack(spacing: 0) {
+                    layerFilterControl
+                        .padding(Theme.Metrics.spacingM)
+                    if let hiddenByteOwnerMessage {
+                        Label(hiddenByteOwnerMessage, systemImage: "eye.slash")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Theme.Metrics.spacingM)
+                            .padding(.bottom, Theme.Metrics.spacingS)
+                            .accessibilityLabel(hiddenByteOwnerMessage)
+                    }
+                    Divider()
+                    if layers.isEmpty {
+                        ContentUnavailableView(
+                            "No Matching Fields",
+                            systemImage: "magnifyingglass",
+                            description: Text("No decoded layer, field name or value contains ‘\(fieldQuery)’.")
+                        )
+                    } else {
+                        ScrollView {
+                            DecodedLayerTree(
+                                layers: layers, selectedRange: selectedLayerRange, collapsed: $collapsedLayers,
+                                onSelect: { range in
+                                    selectedLayerRange = range == selectedLayerRange ? nil : range
+                                    hiddenByteOwnerMessage = nil
+                                    isLayerTreeFocused = true
+                                },
+                                allowsFieldFilters: false
+                            )
+                            .padding(Theme.Metrics.spacingL)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .focusable()
+                        .focused($isLayerTreeFocused)
+                        .focusEffectDisabled()
+                        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+                            navigate(press, layers: layers, proxy: proxy)
+                        }
+                        .onKeyPress(.return, phases: .down) { press in
+                            guard press.modifiers.isEmpty else {
+                                return .ignored
+                            }
+                            return navigate(.toggleLayer, layers: layers)
+                        }
+                    }
+                }
+                .frame(minWidth: 260)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Frame protocol details")
+                .onChange(of: fieldQuery) {
+                    selectedLayerRange = nil
+                    hiddenByteOwnerMessage = nil
+                    isLayerTreeFocused = false
+                }
+                .onChange(of: selectedLayerRange) {
+                    if let selectedLayerRange {
+                        proxy.scrollTo(DecodedLayerTree.rowID(selectedLayerRange), anchor: .center)
+                    }
+                }
+                .onChange(of: byteRevealToken) {
+                    if let selectedLayerRange {
+                        proxy.scrollTo(DecodedLayerTree.rowID(selectedLayerRange), anchor: .center)
+                    }
+                }
+                ScrollView {
+                    PacketBytesPane(
+                        bytes: subject.bytes, highlight: selectedLayerRange,
+                        onShowBytes: { bytes in
+                            coordinator.packetBytesInspection.show(PacketBytesSubject(
+                                title: String(localized: "\(subject.title) — Selected Bytes"), bytes: bytes
+                            ))
+                        },
+                        layers: subject.layers,
+                        onSelectRange: { range in
+                            selectedLayerRange = range
+                            hiddenByteOwnerMessage = nil
+                            isLayerTreeFocused = false
+                        },
+                        onRevealByteOwner: { index, owner in
+                            revealByteOwner(owner, byte: index, displayedLayers: layers)
+                        },
+                        dumpStyle: Binding(
+                            get: { coordinator.packetDetailOptions.byteDumpStyle },
+                            set: { coordinator.packetDetailOptions.byteDumpStyle = $0 }
+                        ),
+                        onScrollToRow: { proxy.scrollTo($0, anchor: .center) },
+                        sourceIdentity: "subject-\(coordinator.packetBytesInspection.revision)"
+                    )
+                    .padding(Theme.Metrics.spacingM)
+                    .frame(minWidth: 360)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Frame bytes")
+                }
+            }
         }
     }
 
@@ -139,7 +310,12 @@ struct PacketBytesWindow: View {
         }
     }
 
-    private func footer(inputCount: Int, decoded: [UInt8]?, title: String) -> some View {
+    private func footer(
+        inputCount: Int, decoded: [UInt8]?, title: String, subject: PacketBytesSubject, start: Int, end: Int,
+        isFullFrameDetails: Bool
+    )
+        -> some View
+    {
         HStack(spacing: Theme.Metrics.spacingM) {
             Text(decoded.map { "\(inputCount.formatted()) bytes in, \($0.count.formatted()) bytes out" }
                 ?? "\(inputCount.formatted()) bytes in")
@@ -157,16 +333,31 @@ struct PacketBytesWindow: View {
                     return
                 }
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(presentation.text(for: decoded) ?? "", forType: .string)
+                NSPasteboard.general.setString(
+                    renderingText(decoded, isFullFrameDetails: isFullFrameDetails) ?? "", forType: .string
+                )
             }
             .disabled(decoded == nil || presentation == .image)
+            Button("Save Rendering…") {
+                guard let decoded else {
+                    return
+                }
+                saveRendering(
+                    decoded, subject: subject, start: start, end: end, isFullFrameDetails: isFullFrameDetails
+                )
+            }
+            .disabled(decoded == nil || presentation == .image || isSavingRendering)
+            .help("Save the text currently shown, encoded as UTF-8")
             Button("Save As…") {
                 if let decoded {
                     save(decoded, suggestedName: title)
                 }
             }
             .disabled(decoded == nil)
-            .help("Save the decoded bytes exactly, before any text rendering")
+            .help("Save decoded bytes exactly, before any text rendering")
+            if isSavingRendering {
+                ProgressView().controlSize(.small).accessibilityLabel("Preparing rendering")
+            }
         }
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
@@ -181,6 +372,74 @@ struct PacketBytesWindow: View {
         }
     }
 
+    private static func contentType(for fileExtension: String) -> UTType {
+        switch fileExtension {
+        case "json": .json
+        case "c": UTType(filenameExtension: "c") ?? .plainText
+        default: .plainText
+        }
+    }
+
+    private func revealByteOwner(
+        _ owner: DecodedByteMap.Hit, byte: Int, displayedLayers: [DecodedLayer]
+    ) {
+        guard DecodedByteMap.owner(ofByte: byte, in: displayedLayers) == owner else {
+            hiddenByteOwnerMessage = "Selected field is hidden by Filter Fields. Clear the query, then click the byte again."
+            return
+        }
+        collapsedLayers.subtract(owner.path.dropLast())
+        hiddenByteOwnerMessage = nil
+        isLayerTreeFocused = false
+        byteRevealToken &+= 1
+    }
+
+    private func navigate(
+        _ press: KeyPress, layers: [DecodedLayer], proxy: ScrollViewProxy
+    )
+        -> KeyPress.Result
+    {
+        guard isLayerTreeFocused else {
+            return .ignored
+        }
+        let arrow: DecodeTreeNavigation.Arrow = switch press.key {
+        case .upArrow: .up
+        case .downArrow: .down
+        case .leftArrow: .left
+        default: .right
+        }
+        let key = DecodeTreeNavigation.key(
+            for: arrow, command: press.modifiers.contains(.command), shift: press.modifiers.contains(.shift)
+        )
+        guard let outcome = DecodeTreeNavigation.press(
+            key, layers: layers, selection: selectedLayerRange, collapsed: collapsedLayers
+        ) else {
+            return .ignored
+        }
+        collapsedLayers = outcome.collapsed
+        selectedLayerRange = outcome.selection
+        if let selection = outcome.selection {
+            proxy.scrollTo(DecodedLayerTree.rowID(selection), anchor: .center)
+        }
+        return .handled
+    }
+
+    private func navigate(
+        _ key: DecodeTreeNavigation.Key, layers: [DecodedLayer]
+    )
+        -> KeyPress.Result
+    {
+        guard isLayerTreeFocused,
+              let outcome = DecodeTreeNavigation.press(
+                  key, layers: layers, selection: selectedLayerRange, collapsed: collapsedLayers
+              ) else
+        {
+            return .ignored
+        }
+        collapsedLayers = outcome.collapsed
+        selectedLayerRange = outcome.selection
+        return .handled
+    }
+
     private func save(_ bytes: [UInt8], suggestedName: String) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "bytes.bin"
@@ -190,5 +449,115 @@ struct PacketBytesWindow: View {
             return
         }
         try? Data(bytes).write(to: url, options: .atomic)
+    }
+
+    private func saveRendering(
+        _ bytes: [UInt8], subject: PacketBytesSubject, start: Int, end: Int, isFullFrameDetails: Bool
+    ) {
+        let request = UUID()
+        renderingSaveRequest = request
+        isSavingRendering = true
+        renderingSaveError = nil
+        let selectedPresentation = presentation
+        let selectedDecoding = decoding
+        let selectedDumpStyle = isFullFrameDetails ? coordinator.packetDetailOptions.byteDumpStyle : nil
+        let revision = coordinator.packetBytesInspection.revision
+        let projectID = coordinator.projectStore.activeProjectID
+
+        Task {
+            do {
+                let data = try await Task.detached(priority: .userInitiated) {
+                    try PacketBytesRenderingSave.outputData(
+                        bytes, presentation: selectedPresentation, byteDumpStyle: selectedDumpStyle
+                    )
+                }.value
+                guard renderingSaveRequest == request else {
+                    return
+                }
+                guard renderingScopeIsCurrent(
+                    subject: subject, revision: revision, projectID: projectID, start: start, end: end,
+                    selectedDecoding: selectedDecoding, selectedPresentation: selectedPresentation,
+                    selectedDumpStyle: selectedDumpStyle, isFullFrameDetails: isFullFrameDetails
+                ) else {
+                    renderingSaveError = "The inspected bytes or view changed while preparing the rendering. Choose Save Rendering again."
+                    isSavingRendering = false
+                    return
+                }
+
+                let jsonIsValid = selectedPresentation == .json && PacketBytesPresentation.isJSON(bytes)
+                let fileExtension: String = switch selectedPresentation {
+                case .text,
+                     .utf16LittleEndian,
+                     .utf16BigEndian,
+                     .hexDump: "txt"
+                case .json: jsonIsValid ? "json" : "txt"
+                case .cArray: "c"
+                case .image: "txt"
+                }
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "bytes.\(fileExtension)"
+                panel.allowedContentTypes = [Self.contentType(for: fileExtension)]
+                panel.canCreateDirectories = true
+                guard panel.runModal() == .OK, let url = panel.url else {
+                    guard renderingSaveRequest == request else {
+                        return
+                    }
+                    isSavingRendering = false
+                    return
+                }
+                guard renderingSaveRequest == request else {
+                    return
+                }
+                guard renderingScopeIsCurrent(
+                    subject: subject, revision: revision, projectID: projectID, start: start, end: end,
+                    selectedDecoding: selectedDecoding, selectedPresentation: selectedPresentation,
+                    selectedDumpStyle: selectedDumpStyle, isFullFrameDetails: isFullFrameDetails
+                ) else {
+                    renderingSaveError = "The inspected bytes or view changed while the save panel was open. Choose Save Rendering again."
+                    isSavingRendering = false
+                    return
+                }
+                try await Task.detached(priority: .utility) {
+                    try data.write(to: url, options: .atomic)
+                }.value
+                guard renderingSaveRequest == request else {
+                    return
+                }
+                isSavingRendering = false
+            } catch {
+                guard renderingSaveRequest == request else {
+                    return
+                }
+                renderingSaveError = error.localizedDescription
+                isSavingRendering = false
+            }
+        }
+    }
+
+    private func renderingScopeIsCurrent(
+        subject: PacketBytesSubject, revision: Int, projectID: UUID, start: Int, end: Int,
+        selectedDecoding: PacketBytesDecoding, selectedPresentation: PacketBytesPresentation,
+        selectedDumpStyle: ByteDumpStyle?, isFullFrameDetails: Bool
+    )
+        -> Bool
+    {
+        let byteCount = coordinator.packetBytesInspection.subject?.bytes.count ?? 0
+        let currentStart = min(max(0, rangeStart), byteCount)
+        let currentEnd = min(max(currentStart, rangeEnd), byteCount)
+        return coordinator.packetBytesInspection.revision == revision
+            && coordinator.packetBytesInspection.subject == subject
+            && coordinator.projectStore.activeProjectID == projectID
+            && currentStart == start && currentEnd == end
+            && decoding == selectedDecoding && presentation == selectedPresentation
+            && (!isFullFrameDetails || coordinator.packetDetailOptions.byteDumpStyle == selectedDumpStyle)
+            && isFullFrameDetails == (!subject.layers.isEmpty && presentation == .hexDump && decoding == .none
+                && currentStart == 0 && currentEnd == subject.bytes.count)
+    }
+
+    private func renderingText(_ bytes: [UInt8], isFullFrameDetails: Bool) -> String? {
+        PacketBytesRenderingSave.text(
+            for: bytes, presentation: presentation,
+            byteDumpStyle: isFullFrameDetails ? coordinator.packetDetailOptions.byteDumpStyle : nil
+        )
     }
 }

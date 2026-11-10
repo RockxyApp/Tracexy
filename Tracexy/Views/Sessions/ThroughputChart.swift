@@ -8,6 +8,8 @@ import SwiftUI
 /// live strip, or a footer sparkline). Reads only `samples`, so its ~1×/sec
 /// updates never re-run a host view that also drives the NSTableView.
 struct ThroughputChart: View {
+    // MARK: Internal
+
     let samples: [ThroughputSample]
     var showYAxis = true
 
@@ -39,54 +41,29 @@ struct ThroughputChart: View {
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Throughput chart. Bytes per second over the recent capture window.")
+        .accessibilityValue(Self.accessibilityValue(for: samples))
     }
-}
 
-// MARK: - RealtimeChart
-
-/// A live throughput chart (bytes/sec) with a labeled header + card — used on the
-/// Overview surface. The always-on real-time graph.
-struct RealtimeChart: View {
-    // MARK: Internal
-
-    let samples: [ThroughputSample]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: Theme.Icon.small)).foregroundStyle(.secondary)
-                Text("Throughput").font(Theme.Typography.badge).foregroundStyle(.secondary)
-                Spacer()
-                Text(currentRate)
-                    .font(Theme.Typography.monoSmall)
-                    .foregroundStyle(Color.accentColor)
-            }
-            chart
+    /// Spoken summary of the plot: VoiceOver cannot read the marks, so the
+    /// current rate, the peak and the range carry the same reading the shape does.
+    static func accessibilityValue(for samples: [ThroughputSample]) -> String {
+        let rates = samples.map(\.bytesPerSecond)
+        guard let low = rates.min(), let high = rates.max(), let current = rates.last else {
+            return "No throughput samples yet"
         }
-        .padding(8)
-        .tracexyContentSurface(
-            in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius, style: .continuous)
-        )
+        let sampleWord = samples.count == 1 ? "sample" : "samples"
+        return "\(samples.count.formatted()) \(sampleWord). "
+            + "Now \(Self.rate(current)). Peak \(Self.rate(high)). "
+            + "Range \(Self.rate(low)) to \(Self.rate(high))."
     }
 
     // MARK: Private
 
-    private var currentRate: String {
-        let bps = samples.last?.bytesPerSecond ?? 0
-        return "\(ByteUnits.string(Int64(bps)))/s"
-    }
-
-    @ViewBuilder private var chart: some View {
-        if samples.isEmpty {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(.quaternary.opacity(0.4))
-                .overlay {
-                    Text("Waiting for traffic…")
-                        .font(Theme.Typography.micro).foregroundStyle(.tertiary)
-                }
-        } else {
-            ThroughputChart(samples: samples)
-        }
+    private static func rate(_ bytesPerSecond: Double) -> String {
+        let clamped = bytesPerSecond.rounded()
+        let bytes = Int64(exactly: clamped.isFinite ? max(clamped, 0) : 0) ?? Int64.max
+        return "\(ByteUnits.string(bytes)) per second"
     }
 }

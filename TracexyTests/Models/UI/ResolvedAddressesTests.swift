@@ -41,6 +41,23 @@ struct ResolvedAddressesTests {
     }
 
     @Test
+    func captureFileMappingsRemainDistinctFromDnsAndProjectNames() throws {
+        let mapping = CaptureNameResolutionRecord(
+            address: "2001:db8:0:0:0:0:0:1", name: CaptureBoundedText(text: "router.example.test")
+        )
+        let rows = ResolvedAddresses.rows(
+            sessions: [], namedAddresses: [:], captureFileRecords: [mapping]
+        )
+        let row = try #require(rows.first)
+        #expect(row.address == "2001:db8::1")
+        #expect(row.name == "router.example.test")
+        #expect(row.source == .captureFile)
+        #expect(row.sessionID == nil)
+        #expect(row.source.label == "Capture file")
+        #expect(ResolvedAddresses.term(row) == "ip == 2001:db8::1")
+    }
+
+    @Test
     func filterMatchesAddressOrName() {
         let row = ResolvedAddressRow(
             address: "192.0.2.10", name: "api.example.test", source: .dns, sessionID: nil,

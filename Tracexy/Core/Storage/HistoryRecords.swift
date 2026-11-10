@@ -70,6 +70,12 @@ nonisolated enum HistoryCaptureTimeBasis: Int, Sendable, Equatable, CaseIterable
     case opened = 1
     /// Saved by schema v1, before capture-time provenance was recorded.
     case legacy = 2
+    /// The capture supplies complete frame timing, but its timestamp correction
+    /// marker says those times are a derived clock, not the source clock.
+    case correctedCaptured = 3
+    /// A corrected capture has untimed frames, so History stores the app-open
+    /// event while still disclosing that the file's timed frames were corrected.
+    case openedCorrected = 4
 }
 
 // MARK: - HistoryCaptureRecord

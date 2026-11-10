@@ -12,12 +12,13 @@ import Observation
 final class AddressNameBook {
     // MARK: Internal
 
-    static let maximumEntries = 500
-    static let maximumNameCharacters = 60
+    nonisolated static let maximumEntries = 500
+    nonisolated static let maximumNameCharacters = 60
 
-    static let maximumSubnets = 200
+    nonisolated static let maximumSubnets = 200
 
     private(set) var names: [String: String] = [:]
+    private(set) var canEditNames = true
     /// ``subnetNames`` as validated blocks.
     private(set) var subnets: [SubnetName] = []
 
@@ -32,8 +33,21 @@ final class AddressNameBook {
 
     func bind(to defaults: UserDefaults) {
         self.defaults = defaults
-        let data = defaults.data(forKey: ProjectScopedSettingsKeys.addressNames) ?? Data()
-        names = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        if let data = defaults.data(forKey: ProjectScopedSettingsKeys.addressNames) {
+            do {
+                storedNames = try JSONDecoder().decode([String: String].self, from: data)
+                canEditNames = true
+            } catch {
+                // Keep corrupt user data intact until it can be recovered; never
+                // replace it with an empty dictionary during an unrelated save.
+                storedNames = [:]
+                canEditNames = false
+            }
+        } else {
+            storedNames = [:]
+            canEditNames = true
+        }
+        names = Self.canonicalProjection(storedNames)
         let subnetData = defaults.data(forKey: ProjectScopedSettingsKeys.subnetNames) ?? Data()
         subnetNames = (try? JSONDecoder().decode([String: String].self, from: subnetData)) ?? [:]
     }
@@ -71,23 +85,85 @@ final class AddressNameBook {
         names[Self.canonical(address)]
     }
 
+    /// Distinct names stored for alternative spellings of one canonical IP.
+    /// Callers can surface the conflict before an explicit save resolves it.
+    func conflictingNames(for address: String) -> [String] {
+        let key = Self.canonical(address)
+        let values = Set(storedNames.compactMap { storedAddress, name in
+            Self.canonical(storedAddress) == key ? name : nil
+        })
+        return values.count > 1 ? values.sorted() : []
+    }
+
+    /// Adds imported names only for addresses this Project does not already name.
+    /// Existing and conflicting aliases are deliberately preserved for review.
+    func importNames(_ imported: [String: String]) -> AddressNameImportResult {
+        guard canEditNames else {
+            return AddressNameImportResult(added: 0, alreadyNamed: imported.count, invalid: 0, full: false)
+        }
+        var added = 0
+        var alreadyNamed = 0
+        var invalid = 0
+        let existingAddresses = Set(storedNames.keys.map(Self.canonical))
+        var addresses = existingAddresses
+        for address in imported.keys.sorted() {
+            guard let value = IPAddressValue(parsing: address),
+                  let name = imported[address]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else
+            {
+                invalid += 1
+                continue
+            }
+            let key = Self.canonical(value.compressedText)
+            guard !addresses.contains(key) else {
+                alreadyNamed += 1
+                continue
+            }
+            guard addresses.count < Self.maximumEntries else {
+                names = Self.canonicalProjection(storedNames)
+                persist()
+                return AddressNameImportResult(
+                    added: added, alreadyNamed: alreadyNamed, invalid: invalid, full: true
+                )
+            }
+            storedNames[key] = String(name.prefix(Self.maximumNameCharacters))
+            addresses.insert(key)
+            added += 1
+        }
+        names = Self.canonicalProjection(storedNames)
+        if added > 0 {
+            persist()
+        }
+        return AddressNameImportResult(added: added, alreadyNamed: alreadyNamed, invalid: invalid, full: false)
+    }
+
     /// Set, replace or (blank) remove the name for `address`. Returns `false` for a
     /// string that is not an IP address, or when the book is full and the address new.
     @discardableResult
     func setName(_ name: String, for address: String) -> Bool {
-        guard IPAddressValue(parsing: address) != nil else {
+        guard canEditNames, IPAddressValue(parsing: address) != nil else {
             return false
         }
         let key = Self.canonical(address)
         let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maximumNameCharacters))
+        let matchingKeys = storedNames.keys.filter { Self.canonical($0) == key }
         if trimmed.isEmpty {
-            names.removeValue(forKey: key)
+            for matchingKey in matchingKeys {
+                storedNames.removeValue(forKey: matchingKey)
+            }
         } else {
-            guard names[key] != nil || names.count < Self.maximumEntries else {
+            let distinctAddresses = Set(storedNames.keys.map(Self.canonical))
+            guard distinctAddresses.contains(key) || distinctAddresses.count < Self.maximumEntries else {
                 return false
             }
-            names[key] = trimmed
+            // Saving is an explicit conflict resolution for this IP. Other
+            // addresses and their original key/value pairs remain untouched.
+            for matchingKey in matchingKeys {
+                storedNames.removeValue(forKey: matchingKey)
+            }
+            storedNames[key] = trimmed
         }
+        names = Self.canonicalProjection(storedNames)
         persist()
         return true
     }
@@ -104,16 +180,46 @@ final class AddressNameBook {
     // MARK: Private
 
     @ObservationIgnored private var defaults: UserDefaults?
+    @ObservationIgnored private var storedNames: [String: String] = [:]
 
     /// One spelling per address, so `2001:DB8::1` and `2001:db8::1` share a name.
     private static func canonical(_ address: String) -> String {
-        address.lowercased()
+        IPAddressValue(parsing: address)?.compressedText.lowercased() ?? address.lowercased()
+    }
+
+    /// Build a stable display projection without rewriting the user's stored keys.
+    /// A canonical spelling wins display; collisions remain intact until explicit edit.
+    private static func canonicalProjection(_ storedNames: [String: String]) -> [String: String] {
+        storedNames.keys.sorted { lhs, rhs in
+            let lhsCanonical = canonical(lhs)
+            let rhsCanonical = canonical(rhs)
+            let lhsIsCanonical = lhs == lhsCanonical
+            let rhsIsCanonical = rhs == rhsCanonical
+            if lhsIsCanonical != rhsIsCanonical {
+                return lhsIsCanonical
+            }
+            return lhs < rhs
+        }.reduce(into: [:]) { result, key in
+            let canonicalKey = canonical(key)
+            if result[canonicalKey] == nil {
+                result[canonicalKey] = storedNames[key]
+            }
+        }
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(names) else {
+        guard canEditNames, let data = try? JSONEncoder().encode(storedNames) else {
             return
         }
         defaults?.set(data, forKey: ProjectScopedSettingsKeys.addressNames)
     }
+}
+
+// MARK: - AddressNameImportResult
+
+struct AddressNameImportResult: Equatable {
+    let added: Int
+    let alreadyNamed: Int
+    let invalid: Int
+    let full: Bool
 }

@@ -35,7 +35,7 @@ struct L2L3DecodeTests {
     }
 
     @Test
-    func icmpFactsPinFamilyTypeCode() {
+    func icmpFactsPinFamilyTypeCode() throws {
         // IPv4 Echo Request: family ipv4, type 8, code 0.
         let v4 = PacketBuilder.icmpEchoRequestFrame(src: "192.168.1.10", dst: "8.8.8.8")
         let v4Facts = try? #require(decode(v4).icmpFacts)
@@ -57,6 +57,16 @@ struct L2L3DecodeTests {
             #expect(v6Facts.type == 128)
             #expect(v6Facts.code == 0)
         }
+
+        var expressionParser = FrameExpressionParser()
+        #expect(
+            try expressionParser.parse("icmp.type == 8 and icmp.code == 0")
+                .evaluate(FrameFilterFacts(packet: decode(v4))) == .yes
+        )
+        #expect(
+            try expressionParser.parse("icmpv6.type == 128 and icmpv6.code == 0")
+                .evaluate(FrameFilterFacts(packet: decode(v6))) == .yes
+        )
     }
 
     @Test

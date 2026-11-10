@@ -40,6 +40,9 @@ nonisolated struct IPFrameFact: Hashable, Sendable {
         case .udp:
             portType = "UDP"
             destinationPort = packet.destinationEndpoint?.port ?? 0
+        case .sctp:
+            portType = "SCTP"
+            destinationPort = packet.destinationEndpoint?.port ?? 0
         default:
             portType = "NONE"
             destinationPort = 0

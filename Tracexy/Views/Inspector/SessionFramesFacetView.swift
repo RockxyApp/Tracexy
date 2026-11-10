@@ -14,6 +14,7 @@ struct SessionFramesFacetView: View {
     let coordinator: MainContentCoordinator
     let session: SessionSummary
     let selectedOrdinal: UInt64?
+    let onFrameTimeSelection: (FrameTimeReference?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingM) {
@@ -68,39 +69,6 @@ struct SessionFramesFacetView: View {
         }
     }
 
-    /// Column groups, not views: SwiftFormat rewrites `Group` inside a
-    /// `@ViewBuilder` body, so the builder is named explicitly.
-    @TableColumnBuilder<SessionFrameReference, KeyPathComparator<SessionFrameReference>>
-    private var leadingColumns: some TableColumnContent<
-        SessionFrameReference,
-        KeyPathComparator<SessionFrameReference>
-    > {
-        TableColumn("No.", value: \SessionFrameReference.ordinal) { frame in
-            Text(frame.ordinal.formatted()).monospacedDigit()
-        }
-        .width(min: 56, ideal: 72)
-        TableColumn(coordinator.sessionTimeDisplay.frameFormat.columnTitle) { frame in
-            Text(timeText(frame))
-                .monospacedDigit()
-                .fontWeight(frameReference?.ordinal == frame.ordinal ? .semibold : .regular)
-        }
-        .width(min: 84, ideal: 110)
-        TableColumn("Direction") { frame in
-            Label(Self.directionText(frame.direction), systemImage: Self.directionSymbol(frame.direction))
-                .labelStyle(.titleAndIcon)
-        }
-        .width(min: 90, ideal: 120)
-        TableColumn("Length", value: \SessionFrameReference.provenance.originalLength) { frame in
-            Text(Self.lengthText(frame)).monospacedDigit()
-        }
-        .width(min: 64, ideal: 88)
-        TableColumn("Flags") { frame in
-            Text(frame.tcpFlags.map(Self.flagsText) ?? "")
-                .font(Theme.Typography.monoSmall)
-        }
-        .width(min: 70, ideal: 96)
-    }
-
     private var summaryColumn: some TableColumnContent<SessionFrameReference, Never> {
         TableColumn("Summary") { frame in
             HStack(spacing: Theme.Metrics.spacingS) {
@@ -115,30 +83,6 @@ struct SessionFramesFacetView: View {
         }
     }
 
-    /// The reference, when it was set on this session's list.
-    private var frameReference: FrameTimeReference? {
-        coordinator.sessionTimeDisplay.frameReference.flatMap { $0.sessionID == session.id ? $0 : nil }
-    }
-
-    /// Each listed frame's predecessor in capture order, for the delta format.
-    private var previousTimestamps: [UInt64: Date?] {
-        guard let frames = coordinator.sessionFramesResult?.frames else {
-            return [:]
-        }
-        var result: [UInt64: Date?] = [:]
-        var previous: Date?
-        for frame in frames.sorted(by: { $0.ordinal < $1.ordinal }) {
-            result[frame.ordinal] = previous
-            previous = frame.provenance.timestamp
-        }
-        return result
-    }
-
-    /// The session's first listed frame's time, the origin of the default format.
-    private var sessionStart: Date? {
-        coordinator.sessionFramesResult?.frames.min { $0.ordinal < $1.ordinal }?.provenance.timestamp
-    }
-
     private var header: some View {
         HStack(alignment: .center, spacing: Theme.Metrics.spacingM) {
             VStack(alignment: .leading, spacing: 3) {
@@ -147,6 +91,18 @@ struct SessionFramesFacetView: View {
                 Text("Rescanned on demand from the local capture source. Select a row to load that exact frame.")
                     .font(Theme.Typography.caption)
                     .foregroundStyle(.secondary)
+                if coordinator.sessionTimeDisplay.referenceLimitReached
+                    || coordinator.sessionTimeDisplay.frameTimeReferences.count
+                    >= SessionTimeDisplay.maximumTimeReferences
+                {
+                    Label(
+                        "Time reference limit reached (\(SessionTimeDisplay.maximumTimeReferences)). Remove one to add another.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Time reference limit reached. Remove one reference to add another.")
+                }
             }
             Spacer(minLength: Theme.Metrics.spacingM)
             if coordinator.isLoadingSessionFrames {
@@ -195,10 +151,18 @@ struct SessionFramesFacetView: View {
     }
 
     private func table(_ result: SessionFramesResult) -> some View {
-        Group {
+        let previousDisplayedFrames = coordinator.sessionTimeDisplay.frameFormat == .sincePreviousFrame
+            ? Self.previousDisplayedFrames(in: result.frames) : [:]
+        let sessionStart = result.frames.min { $0.ordinal < $1.ordinal }?.provenance.timestamp
+        let frameReferences = coordinator.sessionTimeDisplay.references(forSession: session.id)
+        return Group {
             if let interfaceNames {
                 Table(result.frames, selection: $selection, sortOrder: $sortOrder) {
-                    leadingColumns
+                    leadingColumns(
+                        previousDisplayedFrames: previousDisplayedFrames,
+                        sessionStart: sessionStart,
+                        frameReferences: frameReferences
+                    )
                     TableColumn("Interface", value: \SessionFrameReference.interfaceID) { frame in
                         Text(interfaceNames[frame.interfaceID] ?? "Interface \(frame.interfaceID)")
                             .lineLimit(1)
@@ -209,7 +173,11 @@ struct SessionFramesFacetView: View {
                 }
             } else {
                 Table(result.frames, selection: $selection, sortOrder: $sortOrder) {
-                    leadingColumns
+                    leadingColumns(
+                        previousDisplayedFrames: previousDisplayedFrames,
+                        sessionStart: sessionStart,
+                        frameReferences: frameReferences
+                    )
                     summaryColumn
                 }
             }
@@ -220,24 +188,38 @@ struct SessionFramesFacetView: View {
                let timestamp = frame.provenance.timestamp
             {
                 let reference = FrameTimeReference(sessionID: session.id, ordinal: ordinal, timestamp: timestamp)
-                if frameReference == reference {
+                if coordinator.sessionTimeDisplay.isSessionTimeReference(sessionID: session.id, ordinal: ordinal) {
                     Button("Clear Time Reference") {
-                        coordinator.sessionTimeDisplay.frameReference = nil
+                        coordinator.sessionTimeDisplay.toggleTimeReference(reference)
+                    }
+                } else if coordinator.sessionTimeDisplay.isCaptureTimeReference(ordinal: ordinal) {
+                    Button("Clear Capture Time Reference") {
+                        coordinator.sessionTimeDisplay.toggleTimeReference(
+                            .init(sessionID: nil, ordinal: ordinal, timestamp: timestamp)
+                        )
+                        coordinator.allFrames.removeCaptureTimeReferenceRow(ordinal)
                     }
                 } else {
                     Button("Set as Time Reference") {
-                        coordinator.sessionTimeDisplay.frameReference = reference
+                        coordinator.sessionTimeDisplay.toggleTimeReference(reference)
                     }
+                    .disabled(coordinator.sessionTimeDisplay.frameTimeReferences.count
+                        >= SessionTimeDisplay.maximumTimeReferences)
+                    .help("Up to \(SessionTimeDisplay.maximumTimeReferences) temporary references per capture")
                 }
             }
         }
         .onChange(of: selection) { _, ordinal in
+            let frame = ordinal.flatMap { ordinal in result.frames.first { $0.ordinal == ordinal } }
+            onFrameTimeSelection(frame.flatMap { frame in
+                frame.provenance.timestamp.map {
+                    FrameTimeReference(sessionID: session.id, ordinal: frame.ordinal, timestamp: $0)
+                }
+            })
             // Re-showing the already cited frame's row (on return to this facet) is
             // not a new choice: loading it again would bounce the inspector straight
             // back to Layers and make this facet unreachable while a citation is up.
-            guard let ordinal, ordinal != selectedOrdinal,
-                  let frame = result.frames.first(where: { $0.ordinal == ordinal }) else
-            {
+            guard let ordinal, ordinal != selectedOrdinal, let frame else {
                 return
             }
             coordinator.inspectSessionFrame(frame)
@@ -295,15 +277,89 @@ struct SessionFramesFacetView: View {
         }
     }
 
-    private func timeText(_ frame: SessionFrameReference) -> String {
+    private static func previousDisplayedFrames(
+        in frames: [SessionFrameReference]
+    )
+        -> [UInt64: FrameTimePredecessor]
+    {
+        let ordered = frames.sorted { $0.ordinal < $1.ordinal }
+        var result: [UInt64: FrameTimePredecessor] = [:]
+        for (index, frame) in ordered.enumerated() {
+            if index > 0 {
+                result[frame.ordinal] = ordered[index - 1]
+                    .provenance.timestamp.map(FrameTimePredecessor.timestamp) ?? .unknown
+            } else {
+                result[frame.ordinal] = FrameTimePredecessor.none
+            }
+        }
+        return result
+    }
+
+    /// Column groups, not views: SwiftFormat rewrites `Group` inside a
+    /// `@ViewBuilder` body, so the builder is named explicitly.
+    @TableColumnBuilder<SessionFrameReference, KeyPathComparator<SessionFrameReference>>
+    private func leadingColumns(
+        previousDisplayedFrames: [UInt64: FrameTimePredecessor],
+        sessionStart: Date?,
+        frameReferences: [FrameTimeReference]
+    )
+        -> some TableColumnContent<
+            SessionFrameReference,
+            KeyPathComparator<SessionFrameReference>
+        >
+    {
+        TableColumn("No.", value: \SessionFrameReference.ordinal) { frame in
+            Text(frame.ordinal.formatted()).monospacedDigit()
+        }
+        .width(min: 56, ideal: 72)
+        TableColumn(coordinator.sessionTimeDisplay.frameFormat.columnTitle) { frame in
+            let time = timeText(
+                frame, previousDisplayedFrames: previousDisplayedFrames,
+                sessionStart: sessionStart, frameReferences: frameReferences
+            )
+            let isReference = coordinator.sessionTimeDisplay
+                .isTimeReference(sessionID: session.id, ordinal: frame.ordinal)
+            Text(time)
+                .monospacedDigit()
+                .accessibilityLabel(isReference ? "Time reference" : time)
+                .fontWeight(isReference ? .semibold : .regular)
+        }
+        .width(min: 84, ideal: 110)
+        TableColumn("Direction") { frame in
+            Label(Self.directionText(frame.direction), systemImage: Self.directionSymbol(frame.direction))
+                .labelStyle(.titleAndIcon)
+        }
+        .width(min: 90, ideal: 120)
+        TableColumn("Length", value: \SessionFrameReference.provenance.originalLength) { frame in
+            Text(Self.lengthText(frame)).monospacedDigit()
+        }
+        .width(min: 64, ideal: 88)
+        TableColumn("Flags") { frame in
+            Text(frame.tcpFlags.map(Self.flagsText) ?? "")
+                .font(Theme.Typography.monoSmall)
+        }
+        .width(min: 70, ideal: 96)
+    }
+
+    private func timeText(
+        _ frame: SessionFrameReference,
+        previousDisplayedFrames: [UInt64: FrameTimePredecessor],
+        sessionStart: Date?,
+        frameReferences: [FrameTimeReference]
+    )
+        -> String
+    {
         FrameTimeFormat.text(
             coordinator.sessionTimeDisplay.frameFormat,
             timestamp: frame.provenance.timestamp,
             ordinal: frame.ordinal,
-            previous: previousTimestamps[frame.ordinal] ?? nil,
+            previous: previousDisplayedFrames[frame.ordinal] ?? .unknown,
+            previousCaptured: frame.previousCapturedFrame,
             sessionStart: sessionStart,
-            captureStart: coordinator.trafficTimeline.firstTimedFrame,
-            reference: frameReference
+            captureStart: coordinator.trafficTimeline.captureStartFrame,
+            precision: coordinator.sessionTimeDisplay.framePrecision,
+            references: frameReferences,
+            sessionID: session.id
         )
     }
 }

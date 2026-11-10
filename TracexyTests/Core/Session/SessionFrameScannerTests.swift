@@ -54,6 +54,61 @@ struct SessionFrameScannerTests {
     }
 
     @Test
+    func previousCapturedTimeIncludesUntimedAndOtherSessionPackets() throws {
+        let tcpFrames = ReplayCorpus.tcpConnectionCapturedFrames()
+        let firstTCP = try #require(tcpFrames.first)
+        let secondTCP = try #require(tcpFrames.dropFirst().first)
+        let session = try #require(SessionBuilder.build(from: [firstTCP], linkType: LinkType.ethernet).first)
+        let firstTime = Date(timeIntervalSince1970: 10)
+        let secondTime = Date(timeIntervalSince1970: 11)
+        let frames = [
+            CapturedFrame(bytes: [1], timestamp: nil, originalLength: 1, linkType: LinkType.ethernet),
+            CapturedFrame(
+                bytes: firstTCP.bytes, timestamp: firstTime, originalLength: firstTCP.originalLength,
+                linkType: LinkType.ethernet
+            ),
+            CapturedFrame(
+                bytes: secondTCP.bytes, timestamp: secondTime, originalLength: secondTCP.originalLength,
+                linkType: LinkType.ethernet
+            ),
+        ]
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-frame-time-reference-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("predecessors.pcapng")
+        try PcapngWriter.write(defaultLinkType: LinkType.ethernet, frames: frames, to: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        let identity = PcapFileIdentity.snapshot(of: handle)
+        try handle.close()
+        let result = try SessionFrameScanner(
+            contentsOf: url, expectedIdentity: identity, sessionID: session.id,
+            sourceToken: UUID(), clientEndpoint: session.sourceEndpointValue
+        ).scan()
+
+        #expect(result.frames.map(\.ordinal) == [2, 3])
+        #expect(result.frames.map(\.previousCapturedFrame) == [.unknown, .timestamp(firstTime)])
+        #expect(FrameTimeFormat.text(
+            .sincePreviousCapturedFrame,
+            timestamp: result.frames[0].provenance.timestamp,
+            ordinal: result.frames[0].ordinal,
+            previousCaptured: result.frames[0].previousCapturedFrame,
+            sessionStart: nil,
+            captureStart: nil,
+            sessionID: session.id
+        ) == "—")
+        #expect(FrameTimeFormat.text(
+            .sincePreviousCapturedFrame,
+            timestamp: result.frames[1].provenance.timestamp,
+            ordinal: result.frames[1].ordinal,
+            previousCaptured: result.frames[1].previousCapturedFrame,
+            sessionStart: nil,
+            captureStart: nil,
+            sessionID: session.id
+        ) == "1.000000")
+    }
+
+    @Test
     func retentionIsBoundedAndOverflowIsCounted() throws {
         let frames = ReplayCorpus.tcpConnectionFrames()
         try ReplayCorpus.withTemporaryFile(ReplayCorpus.classicPcapBytes(frames)) { url in

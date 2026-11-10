@@ -38,6 +38,7 @@ enum KeyboardShortcutReference {
         Group(title: "Investigate", entries: [
             Entry(command: "Find", keys: "⌘F"),
             Entry(command: "Investigate Sessions…", keys: "⌥⌘I"),
+            Entry(command: "Filter Sidebar", keys: "⌥⌘J"),
             Entry(command: "Next Session With a Finding", keys: "⌥⌘↓"),
             Entry(command: "Previous Session With a Finding", keys: "⌥⌘↑"),
             Entry(command: "Findings", keys: "⌥⌘E"),

@@ -29,6 +29,9 @@ nonisolated enum PacketDecoder {
         let isComplete: Bool
     }
 
+    /// IPv6 extension-header protocol numbers (RFC 8200 order).
+    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+
     /// Decode one frame. `timestamp` is the source's capture time, or `nil` when the
     /// source carried none; decoding never invents one.
     static func decode(
@@ -46,6 +49,10 @@ nonisolated enum PacketDecoder {
             try linkLayer(frame, linkType: linkType, into: &packet)
         } catch let PacketError.malformed(reason) {
             packet.decodeStop = .malformed(reason)
+        } catch PacketError.outOfBounds where packet.decodeStop == .cutShort {
+            // A complete TCP frame can still end before its declared DNS message
+            // length when the application record spans TCP segments.
+            return packet
         } catch {
             packet.decodeStop = frame.length < originalLength
                 ? .cutShort
@@ -177,7 +184,6 @@ nonisolated enum PacketDecoder {
         let src = try ipv4Address(buf, 12)
         let dst = try ipv4Address(buf, 16)
         let identification = try buf.u16(4)
-        let checksum = try buf.u16(10)
         var fields: [DecodedField] = try [
             ranged("Version", "4", in: buf, at: 0, 1),
             ranged("Header Length", "\(ihl) bytes", in: buf, at: 0, 1),
@@ -191,14 +197,16 @@ nonisolated enum PacketDecoder {
                 "Fragment", "offset \(fragmentOffset)\(moreFragments ? ", more fragments" : ", last fragment")",
                 in: buf, at: 6, 2
             ))
-        } else {
-            // Wireshark's ip.frag_offset: the 13 offset bits across bytes 6–7.
-            fields.append(ranged("Fragment Offset", "0", in: buf, at: 6, 2))
         }
-        fields += [
+        // Keep the byte offset available on every IPv4 header, including fragments;
+        // this is the numeric value of Wireshark's ip.frag_offset field.
+        fields.append(ranged("Fragment Offset", "\(fragmentOffset)", in: buf, at: 6, 2))
+        fields.append(ranged("More Fragments", moreFragments ? "Yes" : "No", in: buf, at: 6, 2))
+        fields.append(ranged("Don't Fragment", flagsFragment & 0x4000 != 0 ? "Yes" : "No", in: buf, at: 6, 2))
+        fields += try [
             ranged("TTL", "\(ttl)", in: buf, at: 8, 1),
             ranged("Protocol", ipProtoName(proto), in: buf, at: 9, 1),
-            ranged("Header Checksum", hex(checksum, digits: 4), in: buf, at: 10, 2),
+            ranged("Header Checksum", hex(buf.u16(10), digits: 4), in: buf, at: 10, 2),
             ranged("Source", src, in: buf, at: 12, 4),
             ranged("Destination", dst, in: buf, at: 16, 4),
         ]
@@ -236,7 +244,11 @@ nonisolated enum PacketDecoder {
         // unset; a declared length below the header is bogus. Both keep the
         // captured bytes rather than guessing a tighter bound.
         let payload = try ipPayload(buf, headerLength: ihl, declaredEnd: totalLength)
-        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
+        let transportIsComplete: Bool? = totalLength == 0 ? nil : totalLength <= buf.length
+        try transport(
+            payload, proto: proto, src: src, dst: dst, into: &packet,
+            transportIsComplete: transportIsComplete
+        )
     }
 
     static func ipv6(_ buf: PacketBuffer, into packet: inout DecodedPacket) throws {
@@ -304,10 +316,21 @@ nonisolated enum PacketDecoder {
         }
 
         guard offset < buf.length else {
+            // A nonempty IPv6 payload that ends before its terminal protocol header
+            // is incomplete even when no bounded read threw (for example, a capture
+            // cut exactly after the fixed header). Preserve that evidence for
+            // three-valued packet predicates instead of treating fields as absent.
+            if proto != 59, payloadLength > offset - 40 {
+                packet.decodeStop = .cutShort
+            }
             return
         }
         let payload = try ipPayload(buf, headerLength: offset, declaredEnd: min(declaredEnd, buf.length))
-        try transport(payload, proto: proto, src: src, dst: dst, into: &packet)
+        let transportIsComplete: Bool? = payloadLength == 0 ? nil : declaredEnd <= buf.length
+        try transport(
+            payload, proto: proto, src: src, dst: dst, into: &packet,
+            transportIsComplete: transportIsComplete
+        )
     }
 
     // MARK: Application layer
@@ -322,8 +345,23 @@ nonisolated enum PacketDecoder {
     )
         throws
     {
-        // DNS over TCP is length-prefixed (2 bytes).
-        let buf = tcp ? try input.subset(from: 2) : input
+        // DNS over TCP is length-prefixed (2 bytes). Restrict parsing to this message;
+        // bytes from a following message must not satisfy its declared sections.
+        let buf: PacketBuffer
+        if tcp {
+            let declaredLength = try Int(input.u16(0))
+            guard declaredLength >= 12 else {
+                throw PacketError.malformed("DNS over TCP message is shorter than its fixed header")
+            }
+            let availableLength = input.length - 2
+            let messageLength = min(declaredLength, availableLength)
+            if messageLength < declaredLength {
+                packet.decodeStop = .cutShort
+            }
+            buf = try input.subset(from: 2, count: messageLength)
+        } else {
+            buf = input
+        }
         // Read the fixed 12-byte header exactly once and retain neutral facts before any
         // variable-body parsing. A short header throws inside the initializer, so
         // `dnsFacts` stays nil; an intact header with a malformed/truncated body keeps it.
@@ -387,6 +425,8 @@ nonisolated enum PacketDecoder {
         packet.dnsAnswersOmittedCount = omittedAnswers
         packet.dnsAnswerRecords = displayAnswers
         var fields: [DecodedField] = [
+            ranged("Transaction ID", String(facts.transactionID), in: buf, at: 0, 2),
+            ranged("Truncated (TC)", facts.isTruncated ? "Yes" : "No", in: buf, at: 2, 2),
             ranged("Type", isResponse ? "Response" : "Query", in: buf, at: 2, 2),
             DecodedField(name: "Query", value: firstName, byteRange: firstNameRange),
             .init(name: "Answers", value: displayAnswers.isEmpty ? "—" : displayAnswers.joined(separator: ", ")),
@@ -504,10 +544,64 @@ nonisolated enum PacketDecoder {
         ))
     }
 
-    // MARK: Private
+    /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
+    /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
+    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
+        switch proto {
+        case 44: 8 // Fragment header is fixed-size
+        case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
+        default: try (Int(buf.u8(offset + 1)) + 1) * 8
+        }
+    }
 
-    /// IPv6 extension-header protocol numbers (RFC 8200 order).
-    static let ipv6ExtensionHeaders: Set<UInt8> = [0, 43, 44, 51, 60, 135]
+    static func ipv6ExtensionName(_ proto: UInt8) -> String {
+        switch proto {
+        case 0: "Hop-by-Hop Options"
+        case 43: "Routing"
+        case 44: "Fragment"
+        case 51: "Authentication Header"
+        case 60: "Destination Options"
+        case 135: "Mobility"
+        default: "Extension"
+        }
+    }
+
+    // MARK: Transport layer
+
+    static func transport(
+        _ buf: PacketBuffer,
+        proto: UInt8,
+        src: String,
+        dst: String,
+        into packet: inout DecodedPacket,
+        transportIsComplete: Bool? = true
+    )
+        throws
+    {
+        switch proto {
+        case 6: try tcp(buf, src: src, dst: dst, into: &packet)
+        case 17: try udp(buf, src: src, dst: dst, into: &packet)
+        case 132: try sctp(buf, src: src, dst: dst, isComplete: transportIsComplete, into: &packet)
+        case 1: try icmp(buf, src: src, dst: dst, isV6: false, into: &packet)
+        case 58: try icmp(buf, src: src, dst: dst, isV6: true, into: &packet)
+        case 47: try gre(buf, into: &packet)
+        case 4,
+             41: try ipInIP(buf, version: proto == 4 ? 4 : 6, into: &packet)
+        default: break
+        }
+    }
+
+    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
+        DecodedLayer(
+            proto: layer.proto,
+            title: layer.title,
+            summary: layer.summary,
+            fields: layer.fields.map { DecodedField(name: $0.name, value: $0.value) },
+            children: layer.children.map(withoutByteRanges)
+        )
+    }
+
+    // MARK: Private
 
     /// STUN magic cookie (RFC 5389 §6): the fixed value at header offset 4 that
     /// disambiguates STUN from other UDP payloads regardless of port.
@@ -517,11 +611,6 @@ nonisolated enum PacketDecoder {
     /// (values + display fields). Records beyond this are counted, not stored, so a
     /// pathological response cannot grow the decoded packet without bound.
     private static let dnsAnswerRetentionCap = 64
-
-    /// The RFC 7323 window-scale semantic cap. A byte above this is not a valid
-    /// scale; the raw value is still rendered, but no typed scale is retained and
-    /// no shift is ever computed for it.
-    private static let tcpMaxWindowScale: UInt8 = 14
 
     // MARK: Network layer
 
@@ -610,51 +699,6 @@ nonisolated enum PacketDecoder {
         }
     }
 
-    /// Byte length of an IPv6 extension header. Fragment is fixed 8 bytes; AH is
-    /// counted in 4-byte units (+2); the rest in 8-byte units (+1) per RFC 8200.
-    static func ipv6ExtensionLength(proto: UInt8, buf: PacketBuffer, at offset: Int) throws -> Int {
-        switch proto {
-        case 44: 8 // Fragment header is fixed-size
-        case 51: try (Int(buf.u8(offset + 1)) + 2) * 4 // Authentication Header
-        default: try (Int(buf.u8(offset + 1)) + 1) * 8
-        }
-    }
-
-    static func ipv6ExtensionName(_ proto: UInt8) -> String {
-        switch proto {
-        case 0: "Hop-by-Hop Options"
-        case 43: "Routing"
-        case 44: "Fragment"
-        case 51: "Authentication Header"
-        case 60: "Destination Options"
-        case 135: "Mobility"
-        default: "Extension"
-        }
-    }
-
-    // MARK: Transport layer
-
-    static func transport(
-        _ buf: PacketBuffer,
-        proto: UInt8,
-        src: String,
-        dst: String,
-        into packet: inout DecodedPacket
-    )
-        throws
-    {
-        switch proto {
-        case 6: try tcp(buf, src: src, dst: dst, into: &packet)
-        case 17: try udp(buf, src: src, dst: dst, into: &packet)
-        case 1: try icmp(buf, src: src, dst: dst, isV6: false, into: &packet)
-        case 58: try icmp(buf, src: src, dst: dst, isV6: true, into: &packet)
-        case 47: try gre(buf, into: &packet)
-        case 4,
-             41: try ipInIP(buf, version: proto == 4 ? 4 : 6, into: &packet)
-        default: break
-        }
-    }
-
     private static func tcp(_ buf: PacketBuffer, src: String, dst: String, into packet: inout DecodedPacket) throws {
         let srcPort = try buf.u16(0)
         let dstPort = try buf.u16(2)
@@ -686,6 +730,7 @@ nonisolated enum PacketDecoder {
             ranged("Checksum", hex(buf.u16(16), digits: 4), in: buf, at: 16, 2),
             ranged("Urgent Pointer", "\(buf.u16(18))", in: buf, at: 18, 2),
         ]
+        fields += tcpControlFlagFields(flags, in: buf)
         // Parse TCP options once (between the fixed 20-byte header and dataOffset)
         // for both the rendered fields and the typed option facts.
         var optionFacts = TCPOptionFacts()
@@ -729,81 +774,6 @@ nonisolated enum PacketDecoder {
             context: ApplicationMatchContext(payload: payload, sourcePort: srcPort, destinationPort: dstPort),
             into: &packet
         )
-    }
-
-    /// Parses the TCP option list (offset 20 → `end`) into decoded fields. Our
-    /// own walk of the kind/length/value TLV format (RFC 793/7323), referencing
-    /// the option-parsing approach in PcapPlusPlus/libtins.
-    private static func tcpOptions(
-        _ buf: PacketBuffer, end: Int
-    )
-        throws -> (fields: [DecodedField], facts: TCPOptionFacts)
-    {
-        var fields: [DecodedField] = []
-        var facts = TCPOptionFacts()
-        var offset = 20
-        var guardCounter = 0
-        while offset < end, guardCounter < 40 {
-            guardCounter += 1
-            let kind = try buf.u8(offset)
-            if kind == 0 { // End of Option List
-                break
-            }
-            if kind == 1 { // No-Operation (single byte, no length)
-                offset += 1
-                continue
-            }
-            guard offset + 1 < end else {
-                break
-            }
-            let length = try Int(buf.u8(offset + 1))
-            guard length >= 2, offset + length <= end else {
-                break
-            }
-            fields.append(tcpOptionField(kind: kind, buf: buf, at: offset, length: length, facts: &facts))
-            offset += length
-        }
-        return (fields, facts)
-    }
-
-    private static func tcpOptionField(
-        kind: UInt8, buf: PacketBuffer, at offset: Int, length: Int, facts: inout TCPOptionFacts
-    )
-        -> DecodedField
-    {
-        let range = (buf.start + offset) ..< (buf.start + offset + length)
-        switch kind {
-        case 2 where length == 4:
-            let mss = (try? buf.u16(offset + 2)) ?? 0
-            facts.maximumSegmentSize = mss
-            return DecodedField(name: "Option: MSS", value: "\(mss)", byteRange: range)
-        case 3 where length == 3:
-            let shift = (try? buf.u8(offset + 2)) ?? 0
-            facts.windowScaleRaw = shift
-            // RFC 7323 section 2.3 requires an observed value above 14 to be
-            // treated as 14. Preserve both raw and effective values and never
-            // shift by the invalid raw byte.
-            if shift <= tcpMaxWindowScale {
-                facts.windowScale = shift
-                return DecodedField(name: "Option: Window Scale", value: "\(shift) (×\(1 << shift))", byteRange: range)
-            }
-            facts.windowScale = tcpMaxWindowScale
-            return DecodedField(
-                name: "Option: Window Scale", value: "\(shift) (effective 14)", byteRange: range
-            )
-        case 4 where length == 2:
-            facts.sackPermitted = true
-            return DecodedField(name: "Option: SACK Permitted", value: "yes", byteRange: range)
-        case 5:
-            return DecodedField(name: "Option: SACK", value: "\(length - 2) bytes", byteRange: range)
-        case 8 where length == 10:
-            let tsval = (try? buf.u32(offset + 2)) ?? 0
-            let tsecr = (try? buf.u32(offset + 6)) ?? 0
-            facts.timestamps = TCPTimestamps(value: tsval, echoReply: tsecr)
-            return DecodedField(name: "Option: Timestamps", value: "tsval=\(tsval) tsecr=\(tsecr)", byteRange: range)
-        default:
-            return DecodedField(name: "Option: kind \(kind)", value: "\(length) bytes", byteRange: range)
-        }
     }
 
     private static func udp(_ buf: PacketBuffer, src: String, dst: String, into packet: inout DecodedPacket) throws {
@@ -1190,16 +1160,6 @@ nonisolated enum PacketDecoder {
         return false
     }
 
-    static func withoutByteRanges(_ layer: DecodedLayer) -> DecodedLayer {
-        DecodedLayer(
-            proto: layer.proto,
-            title: layer.title,
-            summary: layer.summary,
-            fields: layer.fields.map { DecodedField(name: $0.name, value: $0.value) },
-            children: layer.children.map(withoutByteRanges)
-        )
-    }
-
     /// Conservative QUIC long-header recognition. A high bit by itself is far
     /// too weak on busy UDP/443 traffic, so require the complete clear-text
     /// prefix and RFC-bounded connection IDs. Non-zero versions also carry the
@@ -1272,19 +1232,6 @@ nonisolated enum PacketDecoder {
         return (labels.joined(separator: "."), next < 0 ? offset : next)
     }
 
-    static func ipProtoName(_ proto: UInt8) -> String {
-        switch proto {
-        case 6: "TCP (6)"
-        case 17: "UDP (17)"
-        case 1: "ICMP (1)"
-        case 58: "ICMPv6 (58)"
-        case 4: "IPIP (4)"
-        case 41: "IPv6 (41)"
-        case 47: "GRE (47)"
-        default: "\(proto)"
-        }
-    }
-
     /// Human-readable TLS record content-type name (RFC 8446 §5.1). Only 20…24 are
     /// defined; anything else is rendered honestly rather than guessed.
     private static func tlsContentTypeName(_ type: UInt8) -> String {
@@ -1337,7 +1284,7 @@ extension PacketDecoder {
     /// the reassembled `isComplete` value, or nil to abort a reassembled decode; the
     /// whole-frame driver ignores the returned value. A candidate whose `decode`
     /// throws never falls through to a lower-priority candidate.
-    struct ApplicationCandidate {
+    nonisolated struct ApplicationCandidate {
         let matches: (ApplicationMatchContext) -> Bool
         let decode: (ApplicationMatchContext, inout DecodedPacket) throws -> Bool?
     }
@@ -1456,37 +1403,4 @@ extension PacketDecoder {
             }
         ),
     ]
-
-    /// Runs the whole-frame application chain: the first candidate whose gate passes
-    /// decodes and returns; a throw propagates (kept partial by `decode`'s top-level
-    /// catch) and never falls through. No match leaves the frame at its transport layer.
-    static func decodeFrameApplication(
-        _ candidates: [ApplicationCandidate],
-        context: ApplicationMatchContext,
-        into packet: inout DecodedPacket
-    )
-        throws
-    {
-        for candidate in candidates where candidate.matches(context) {
-            _ = try candidate.decode(context, &packet)
-            return
-        }
-    }
-
-    /// Runs the reassembled TCP application chain: the first passing gate decodes and
-    /// returns its `isComplete`; a nil result, a throw, or no match fails the decode
-    /// (nil) without falling through to a lower-priority candidate.
-    static func decodeReassembledApplication(
-        context: ApplicationMatchContext,
-        into packet: inout DecodedPacket
-    )
-        -> Bool?
-    {
-        for candidate in DecodeAs.enabled(reassembledApplicationCandidates) where candidate.matches(context) {
-            // A throwing candidate fails the whole reassembled decode (nil) rather than
-            // falling through to a lower-priority gate — `try?` flattens both to nil.
-            return try? candidate.decode(context, &packet)
-        }
-        return nil
-    }
 }

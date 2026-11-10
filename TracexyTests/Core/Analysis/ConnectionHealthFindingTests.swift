@@ -76,6 +76,152 @@ struct ConnectionHealthFindingTests {
         #expect(!result.findings.contains { $0.kind == .retransmissionObserved })
     }
 
+    @Test("A zero-window probe ACK is cited once in the existing zeroWindowObserved finding")
+    func zeroWindowProbeAcknowledgementFromFold() throws {
+        var table = ConnectionTable()
+        handshake(&table)
+        ingest(
+            &table,
+            from: server,
+            to: client,
+            flags: [.psh, .ack],
+            seq: 5_001,
+            ack: 1_001,
+            payload: 100,
+            ordinal: 4,
+            at: 4
+        )
+        ingest(&table, from: client, to: server, flags: [.ack], seq: 1_001, ack: 5_101, window: 0, ordinal: 5, at: 5)
+        ingest(
+            &table,
+            from: server,
+            to: client,
+            flags: [.ack],
+            seq: 5_101,
+            ack: 1_001,
+            payload: 1,
+            ordinal: 6,
+            at: 6
+        )
+        ingest(&table, from: client, to: server, flags: [.ack], seq: 1_001, ack: 5_102, window: 0, ordinal: 7, at: 7)
+
+        let snapshot = table.snapshot()
+        let summary = try #require(snapshot.summaries.first)
+        #expect(summary.events.filter { $0.kind == .zeroWindowProbeAcknowledgement }
+            .map(\.occurrenceOrdinal) == [FrameOrdinal(7)])
+        #expect(!summary.events.contains { $0.kind == .ackedUnseenSegment })
+        let result = ConnectionAssessor().assess(snapshot)
+        let zero = try #require(result.findings.first { $0.kind == .zeroWindowObserved })
+        #expect(zero.citations.map(\.sourceEventKind) == [
+            .zeroWindow,
+            .zeroWindowProbe,
+            .zeroWindowProbeAcknowledgement
+        ])
+        #expect(result.findings.map(\.kind) == [.zeroWindowObserved])
+    }
+
+    @Test("A window-reopening probe ACK accounts for the captured byte before unseen-segment analysis")
+    func zeroWindowProbeWindowReopenFromFold() throws {
+        var table = ConnectionTable()
+        handshake(&table)
+        ingest(
+            &table,
+            from: server,
+            to: client,
+            flags: [.psh, .ack],
+            seq: 5_001,
+            ack: 1_001,
+            payload: 100,
+            ordinal: 4,
+            at: 4
+        )
+        ingest(&table, from: client, to: server, flags: [.ack], seq: 1_001, ack: 5_101, window: 0, ordinal: 5, at: 5)
+        ingest(
+            &table,
+            from: server,
+            to: client,
+            flags: [.ack],
+            seq: 5_101,
+            ack: 1_001,
+            payload: 1,
+            ordinal: 6,
+            at: 6
+        )
+        ingest(
+            &table,
+            from: client,
+            to: server,
+            flags: [.ack],
+            seq: 1_001,
+            ack: 5_102,
+            window: 4_096,
+            ordinal: 7,
+            at: 7
+        )
+
+        let snapshot = table.snapshot()
+        let summary = try #require(snapshot.summaries.first)
+        #expect(!summary.events.contains { $0.kind == .ackedUnseenSegment })
+        #expect(!summary.events.contains { $0.kind == .zeroWindowProbeAcknowledgement })
+        #expect(summary.events.filter { $0.kind == .windowUpdate }.map(\.occurrenceOrdinal) == [FrameOrdinal(7)])
+        #expect(ConnectionAssessor().assess(snapshot).findings.map(\.kind) == [.zeroWindowObserved])
+    }
+
+    @Test("A repeated pure ACK that changes the nonzero receive window is retained as an observation")
+    func windowUpdateFromFold() throws {
+        var table = ConnectionTable()
+        handshake(&table)
+        ingest(
+            &table,
+            from: server,
+            to: client,
+            flags: [.psh, .ack],
+            seq: 5_001,
+            ack: 1_001,
+            payload: 100,
+            ordinal: 4,
+            at: 4
+        )
+        ingest(
+            &table,
+            from: client,
+            to: server,
+            flags: [.ack],
+            seq: 1_001,
+            ack: 5_101,
+            window: 4_096,
+            ordinal: 5,
+            at: 5
+        )
+        ingest(
+            &table,
+            from: client,
+            to: server,
+            flags: [.ack],
+            seq: 1_001,
+            ack: 5_101,
+            window: 8_192,
+            ordinal: 6,
+            at: 6
+        )
+
+        let snapshot = table.snapshot()
+        let summary = try #require(snapshot.summaries.first)
+        #expect(summary.events.filter { $0.kind == .windowUpdate }.map(\.occurrenceOrdinal) == [FrameOrdinal(6)])
+        #expect(ConnectionAssessor().assess(snapshot).findings.isEmpty)
+        #expect(SessionEvidenceCopy.connectionEventTitle(.windowUpdate) == "Receive window updated")
+        let selection = SessionEvidenceSelection(
+            sessionID: SessionBuilder.sessionID(for: summary.tuple),
+            connections: [summary],
+            tls: nil,
+            datagrams: nil,
+            connectionCoverage: .empty,
+            tlsCoverage: .empty,
+            datagramCoverage: .empty
+        )
+        #expect(SessionLadder.build(selection).steps.map(\.label).contains("Window update"))
+    }
+
     @Test("A segment ending exactly at the peer's window edge folds into windowFullObserved")
     func windowFullFromFold() throws {
         var table = ConnectionTable()

@@ -521,6 +521,16 @@
         }
       }
     },
+    "%@ more messages not counted": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ thông điệp nữa không được đếm"
+          }
+        }
+      }
+    },
     "%@ ms at packet %@": {
       "localizations": {
         "vi": {
@@ -5844,12 +5854,12 @@
         }
       }
     },
-    "Each file is named prefix_00001_date.pcapng, so File ▸ Next File in Set walks them.": {
+    "Each file is named prefix_00001_date.pcapng, so File ▸ File Set ▸ Next File walks them.": {
       "localizations": {
         "vi": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Mỗi tệp được đặt tên tiền_tố_00001_ngày.pcapng, để Tệp ▸ Tệp tiếp theo trong bộ có thể duyệt qua chúng."
+            "value": "Mỗi tệp được đặt tên tiền_tố_00001_ngày.pcapng, để Tệp ▸ Bộ tệp ▸ Tệp tiếp theo có thể duyệt qua chúng."
           }
         }
       }
@@ -6593,6 +6603,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Chỉ xuất các khung đã đánh dấu dạng PCAPNG hoặc PCAP"
+          }
+        }
+      }
+    },
+    "Export the marked frames, or everything matching the applied Frame Expression": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Xuất các khung đã đánh dấu, hoặc mọi khung khớp với Biểu thức khung đang áp dụng"
           }
         }
       }
@@ -7668,12 +7688,32 @@
         }
       }
     },
+    "Frames of the %@ sessions in view": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Khung của %@ phiên đang xem"
+          }
+        }
+      }
+    },
     "Frames of the %@ sessions in view; frames outside any session are not counted": {
       "localizations": {
         "vi": {
           "stringUnit": {
             "state": "needs_review",
             "value": "Khung của %@ phiên đang hiện; khung không thuộc phiên nào không được đếm"
+          }
+        }
+      }
+    },
+    "Frames outside any session are not counted": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Khung không thuộc phiên nào thì không được đếm"
           }
         }
       }
@@ -9970,6 +10010,16 @@
         }
       }
     },
+    "Mark, unmark, ignore or unignore every frame displayed in this list": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Đánh dấu, bỏ đánh dấu, bỏ qua hoặc hiện lại mọi khung đang hiển thị trong danh sách này"
+          }
+        }
+      }
+    },
     "Marked": {
       "localizations": {
         "vi": {
@@ -10006,6 +10056,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Thiếu marker?"
+          }
+        }
+      }
+    },
+    "Marks": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dấu"
           }
         }
       }
@@ -13014,6 +13074,16 @@
           "stringUnit": {
             "state": "needs_review",
             "value": "Tối ưu hóa BPF cho %@"
+          }
+        }
+      }
+    },
+    "These messages had kinds past the per-session bound, so their kinds were not kept.": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Những thông điệp này có loại vượt quá giới hạn mỗi phiên, nên loại của chúng không được giữ lại."
           }
         }
       }
@@ -17264,6 +17334,16 @@
         }
       }
     },
+    "Showing %@ of frames %@–%@, %@ scanned": {
+      "localizations": {
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang hiện %@ trong các khung %@–%@, đã quét %@"
+          }
+        }
+      }
+    },
     "Showing %@ of %@ frames": {
       "localizations": {
         "vi": {
@@ -20239,13 +20319,13 @@
         }
       }
     },
-    "While capturing, Tracexy starts a new file at whichever limit comes first and keeps the set in this Project’s Captures folder, named so File ▸ Next File in Set walks it. Keeping only the newest files deletes older ones as the capture runs; a finding that cites a deleted file says so. Follow and Frames read the newest file; Save Capture keeps every file still kept.": {
+    "While capturing, Tracexy starts a new file at whichever limit comes first and keeps the set in this Project’s Captures folder, named so File ▸ File Set ▸ Next File walks it. Keeping only the newest files deletes older ones as the capture runs; a finding that cites a deleted file says so. Follow and Frames read the newest file; Save Capture keeps every file still kept.": {
       "extractionState": "manual",
       "localizations": {
         "vi": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Khi đang bắt gói, Tracexy tạo tệp mới ở giới hạn nào đến trước và giữ bộ tệp trong thư mục Captures của Dự án này, đặt tên để Tệp ▸ Tệp tiếp theo trong bộ duyệt qua được. Chỉ giữ các tệp mới nhất sẽ xóa tệp cũ hơn trong lúc bắt gói; một phát hiện trích dẫn tệp đã bị xóa sẽ nói rõ điều đó. Theo dõi và Khung đọc tệp mới nhất; Lưu bản bắt giữ mọi tệp còn được giữ."
+            "value": "Khi đang bắt gói, Tracexy tạo tệp mới ở giới hạn nào đến trước và giữ bộ tệp trong thư mục Captures của Dự án này, đặt tên để Tệp ▸ Bộ tệp ▸ Tệp tiếp theo duyệt qua được. Chỉ giữ các tệp mới nhất sẽ xóa tệp cũ hơn trong lúc bắt gói; một phát hiện trích dẫn tệp đã bị xóa sẽ nói rõ điều đó. Theo dõi và Khung đọc tệp mới nhất; Lưu bản bắt giữ mọi tệp còn được giữ."
           }
         }
       }

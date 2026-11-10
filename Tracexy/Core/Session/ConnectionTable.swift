@@ -1180,7 +1180,14 @@ nonisolated struct ConnectionTable {
         if flow.contains(.windowFull) {
             events.append(event(state.id, .windowFull, provenance, direction: direction, facts: facts))
         }
-        if flow.contains(.zeroWindow) {
+        if flow.contains(.windowUpdate) {
+            events.append(event(state.id, .windowUpdate, provenance, direction: direction, facts: facts))
+        }
+        if flow.contains(.zeroWindowProbeAcknowledgement) {
+            events.append(event(
+                state.id, .zeroWindowProbeAcknowledgement, provenance, direction: direction, facts: facts
+            ))
+        } else if flow.contains(.zeroWindow) {
             events.append(event(state.id, .zeroWindow, provenance, direction: direction, facts: facts))
         }
         if flow.contains(.duplicateAcknowledgement) {

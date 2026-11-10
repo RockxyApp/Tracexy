@@ -27,7 +27,7 @@ enum CaptureDisplayState {
 /// capture that stays in place (`.tracexyref` sidecar). `url` is always the file
 /// whose bytes are read; a reference additionally carries the sidecar and the
 /// availability of its target at the last Library refresh.
-struct SavedCapture: Identifiable, Hashable, Sendable {
+nonisolated struct SavedCapture: Identifiable, Hashable, Sendable {
     // MARK: Lifecycle
 
     init(
@@ -37,7 +37,8 @@ struct SavedCapture: Identifiable, Hashable, Sendable {
         byteCount: Int,
         reference: CaptureReference? = nil,
         sidecarURL: URL? = nil,
-        availability: CaptureSourceAvailability = .managed
+        availability: CaptureSourceAvailability = .managed,
+        timeCorrection: CaptureTimeCorrection? = nil
     ) {
         self.url = url
         self.name = name
@@ -46,6 +47,7 @@ struct SavedCapture: Identifiable, Hashable, Sendable {
         self.reference = reference
         self.sidecarURL = sidecarURL
         self.availability = availability
+        self.timeCorrection = timeCorrection
     }
 
     // MARK: Internal
@@ -59,6 +61,8 @@ struct SavedCapture: Identifiable, Hashable, Sendable {
     /// The `.tracexyref` sidecar for a reference; `nil` for a managed copy.
     let sidecarURL: URL?
     let availability: CaptureSourceAvailability
+    /// Unsaved timestamp overlay for this open only; never written into a Project or Library entry.
+    let timeCorrection: CaptureTimeCorrection?
 
     /// Managed copies are identified by their file; references by their sidecar,
     /// so a relocated reference keeps its identity in the list.
@@ -73,6 +77,22 @@ struct SavedCapture: Identifiable, Hashable, Sendable {
     /// Whether the bytes can be opened right now.
     var isReadable: Bool {
         availability.isReadable
+    }
+
+    func withAvailability(_ availability: CaptureSourceAvailability) -> SavedCapture {
+        SavedCapture(
+            url: url, name: name, date: date, byteCount: byteCount,
+            reference: reference, sidecarURL: sidecarURL, availability: availability,
+            timeCorrection: timeCorrection
+        )
+    }
+
+    func withTimeCorrection(_ correction: CaptureTimeCorrection?) -> SavedCapture {
+        SavedCapture(
+            url: url, name: name, date: date, byteCount: byteCount,
+            reference: reference, sidecarURL: sidecarURL, availability: availability,
+            timeCorrection: correction
+        )
     }
 }
 

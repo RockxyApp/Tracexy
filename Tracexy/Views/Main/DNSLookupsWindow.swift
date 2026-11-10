@@ -82,6 +82,7 @@ struct DNSLookupsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             if mode == .encrypted {
                 encryptedFooter

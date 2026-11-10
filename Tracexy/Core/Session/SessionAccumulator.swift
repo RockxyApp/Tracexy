@@ -352,7 +352,7 @@ private extension SessionAccumulator {
             let observedClient = untimedFrameCount > 0 ? firstSource : earliest.sourceEndpoint
             let observedServer = untimedFrameCount > 0 ? firstDestination : earliest.destinationEndpoint
             return Self.orient(
-                client: observedClient, server: observedServer, synSource: synSource, proto: proto
+                client: observedClient, server: observedServer, opener: synSource ?? initSource, proto: proto
             )
         }
 
@@ -520,6 +520,10 @@ private extension SessionAccumulator {
         /// The endpoint that sent the first pure SYN, when one was captured: the
         /// strongest evidence of which side opened the connection.
         private var synSource: IPEndpoint?
+        /// The endpoint that sent the first SCTP INIT chunk (RFC 4960 §3.3.2), the
+        /// association's opener and the exact analogue of a pure SYN. Read from
+        /// typed chunk facts, so a rendered field can never name an opener.
+        private var initSource: IPEndpoint?
 
         /// Cumulative `originalLength` per source endpoint. Within a canonical
         /// five-tuple this holds at most the two directions; "up" vs "down" is
@@ -553,15 +557,18 @@ private extension SessionAccumulator {
         private var dnsResponseTime: Date?
 
         private var anyTCPRST = false
+        private var anySCTPAbort = false
 
         private var status: SessionStatus {
             // Only observed evidence sets status. An explicit TCP RST is a real
-            // reset and reads as an error. The absence of a decoded application
+            // reset and reads as an error, as does an SCTP ABORT chunk (RFC 4960
+            // §3.3.7), which tears an association down without an orderly
+            // shutdown. The absence of a decoded application
             // protocol is *not* evidence of anything — a bare SYN, a midstream
             // TCP payload we could not classify, or a tunnel we do not parse are
             // all normal traffic, so they stay `.ok` rather than being invented
             // into a warning that then feeds Security/findings.
-            anyTCPRST ? .error : .ok
+            anyTCPRST || anySCTPAbort ? .error : .ok
         }
 
         /// The DNS handshake latency, and only when every contributing frame was
@@ -588,24 +595,25 @@ private extension SessionAccumulator {
             port != 0 && (port < 1_024 || likelyServerPorts.contains(port))
         }
 
-        /// Decide which observed endpoint is the client. A captured SYN names the
-        /// opener outright. Without one, a connection first seen from a service
+        /// Decide which observed endpoint is the client. A captured opener — a pure
+        /// TCP SYN, or an SCTP INIT chunk, which is its exact analogue — names the
+        /// client outright. Without one, a flow first seen from a service
         /// port toward an ephemeral port is flipped so the remote service — not
         /// this Mac's ephemeral socket — reads as the host. Anything else keeps
         /// the first-observed direction: nothing is inferred from two ephemeral
         /// or two service ports, and port-0 sessions (ARP, ICMP) never flip.
         private static func orient(
-            client: IPEndpoint?, server: IPEndpoint?, synSource: IPEndpoint?, proto: ProtocolKind
+            client: IPEndpoint?, server: IPEndpoint?, opener: IPEndpoint?, proto: ProtocolKind
         )
             -> (client: IPEndpoint?, server: IPEndpoint?)
         {
             guard let client, let server else {
                 return (client, server)
             }
-            if let synSource {
-                return synSource == server ? (server, client) : (client, server)
+            if let opener {
+                return opener == server ? (server, client) : (client, server)
             }
-            guard proto == .tcp || proto == .udp,
+            guard proto == .tcp || proto == .udp || proto == .sctp,
                   isLikelyServerPort(client.port), !isLikelyServerPort(server.port) else
             {
                 return (client, server)
@@ -708,6 +716,14 @@ private extension SessionAccumulator {
 
             if !anyTCPRST, Self.hasTCPRST(packet) {
                 anyTCPRST = true
+            }
+            if !anySCTPAbort, packet.sctpFacts?.containsAbort == true {
+                anySCTPAbort = true
+            }
+            if initSource == nil,
+               packet.sctpFacts?.chunkTypes.contains(SCTPChunkType.initiation) == true
+            {
+                initSource = packet.sourceEndpoint
             }
             if synSource == nil, let facts = packet.tcpFacts,
                facts.flags.contains(.syn), !facts.flags.contains(.ack)

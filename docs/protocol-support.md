@@ -13,7 +13,7 @@ below reflects what the decoder actually produces today.
 | Loopback / null (BSD) | 4-byte address-family header → IPv4 or IPv6 |
 | Tunnel / raw IP (utun, VPN) | Auto-detects bare IPv4/IPv6 or a 4-byte address-family prefix |
 | ARP | Operation (request/reply), sender/target MAC and IPv4; surfaced as a session |
-| IPv4 | Version, header length, total length, fragment flags/offset, TTL, protocol, addresses, **and option TLVs** |
+| IPv4 | Version, header length, total length, 16-bit Identification, Don’t Fragment / More Fragments flags and offset, TTL, protocol, addresses, **and option TLVs** |
 | IPv6 | Version, traffic class, flow label, next header, hop limit, addresses, **and the extension-header chain** (Hop-by-Hop, Routing, Fragment, AH, Destination Options, Mobility) |
 | ICMP / ICMPv6 | Type + code with named types (echo, unreachable, neighbor/router discovery); surfaced as a session |
 
@@ -28,7 +28,8 @@ padding of sub-60-byte Ethernet frames, an FCS) are never read as TCP or UDP pay
 length of zero (segmentation offload) or one beyond the captured bytes (snapshot truncation)
 keeps the captured bytes.
 
-**Fragmented IP datagrams are reassembled**, IPv4 and IPv6, as Wireshark does with reassembly on.
+**Fragmented IP datagrams are reassembled**, IPv4 and IPv6, under the bounds below — not
+Wireshark's reassembly engine.
 Every fragment stops at the IP layer (the frame list reads "Fragmented IP protocol (proto=UDP 17,
 off=1480, ID=2001)"); the frame whose fragment completes the datagram carries a "Reassembled IPv4
 Datagram" layer naming the fragment frames, then the transport and application layers decoded from
@@ -37,7 +38,8 @@ its session, its findings cite it, and opening it from a citation reads its frag
 the datagram. A session export, and Export Frames by session, keep every fragment frame. A datagram
 is rebuilt only when every byte up to the end the last fragment declares is present: a missing or
 snapshot-truncated fragment, overlapping fragments that disagree, a datagram over 65,535 bytes or 64
-fragments, or one still incomplete 30 seconds (capture time) after its first fragment is not rebuilt,
+fragments, or one still incomplete 30 seconds (capture time) or 100,000 frames after its first fragment — the
+frame span also bounds captures with no timestamps — is not rebuilt,
 and its fragments stay plain IP frames. At most 256 datagrams wait at once. The classic
 pcap link-type word is masked to its low 16 bits, so a libpcap FCS-length hint does not hide the
 link type.
@@ -46,10 +48,11 @@ link type.
 
 | Protocol | Support |
 |---|---|
-| TCP | Ports, sequence number, data offset, flags (SYN/ACK/PSH/FIN/RST), **and option TLVs** (MSS, Window Scale, SACK, SACK-permitted, Timestamps) |
+| TCP | Ports, sequence number, data offset, flags (SYN/ACK/PSH/FIN/RST/URG/ECE/CWR), and option TLVs (MSS, Window Scale, SACK-permitted, Timestamps). SACK options expose up to four receiver-reported block ranges in wire order, plotted in the peer's relative sequence space at the citing ACK when both edges fit one unambiguous half-space; unplaceable ranges are counted. TCP Health plots each observed payload byte interval and its exclusive sequence edge alongside reached and acknowledged edges. The Throughput chart also derives receiver-reported Goodput from newly covered SACK and cumulative-ACK ranges, de-duplicating overlaps as the cumulative edge advances and excluding RFC 2883 D-SACK block patterns from new-byte credit. These marks and rates do not prove application consumption; D-SACK remains observation-only. TCP Health also plots wire throughput, Karn-safe RTT and receive-window evidence. The connection fold recognizes pure-ACK nonzero window updates at an unchanged sequence/acknowledgement edge, zero-window probe acknowledgements, and a one-byte window-reopening ACK without claiming later bytes. |
 | UDP | Source and destination ports |
+| SCTP | Common header, endpoints, verification tag, raw CRC32C, and at most 64 bounded chunk headers; DATA TSN and PPI. **View → Validate Checksums** checks CRC32C only when the IP-declared packet boundary is fully captured. Flows fold into sessions on their endpoint pair and into the SCTP conversation and endpoint tabs; an INIT names the opener and an ABORT marks the session as an error. Association identity (the verification tag) and stream reconstruction are not implemented. |
 
-The TCP acknowledgement number, window, and checksum fields are not surfaced. A one-byte probe
+TCP acknowledgement, window, and checksum values are shown in the packet inspector. A one-byte probe
 sent exactly one sequence number behind the expected sequence is classified as a keep-alive, not a
 retransmission, and produces no finding.
 
@@ -60,11 +63,17 @@ field-by-field parse.
 
 | Protocol | Support | Not covered |
 |---|---|---|
-| DNS | Question name; answer records A, AAAA, CNAME, NS, PTR, MX, TXT, SRV, SOA (others shown by type); compression pointers; DNS-over-TCP length prefix | Full record-set decode; DNSSEC |
-| TLS | Record metadata for all coalesced records in a payload; ClientHello (offered version, cipher-suite count, **SNI**, **ALPN**) and ServerHello (chosen version and cipher); bounded per-direction TCP prefix recovery when the first record is segmented | **No decryption**; no certificate parsing; no application data; no general stream tracking |
-| HTTP/1 | **Request-line recognition only** — the first line (method / target / version) plus the `Host` header | Full header set, response/status parsing, bodies, chunked/compressed content |
+| DNS | Transaction ID and TC flag from the fixed header; question name; answer records A, AAAA, CNAME, NS, PTR, MX, TXT, SRV, SOA (others shown by type); compression pointers; DNS-over-TCP length prefix; bounded Frame Expression equality on the observed transaction ID and filter on TC | Full record-set decode; DNSSEC; encrypted or stream-only DNS |
+| TLS | Record metadata for all coalesced records in a payload; ClientHello (offered version, cipher-suite count, **SNI**, **ALPN**) and ServerHello (chosen version and cipher); bounded per-direction TCP prefix recovery when the first record is segmented | **No decryption**; certificates parsed only in an explicit Follow Stream, never automatically; no application data; no general stream tracking |
+| HTTP/1 | **Request and status lines** — the first line, a request's `Host`, and a response's status code, reason, version and named content/transport headers (Content-Type, Content-Length, Content-Encoding, Transfer-Encoding, Server, Location, Cache-Control) across at most 32 header lines, with Set-Cookie and WWW-Authenticate named as present only | Arbitrary header sets; bodies in the per-frame decode — bodies are reconstructed only in Follow Stream and **File ▸ Export Objects** |
 | STUN | Detected by the magic cookie (port-independent): message type, length, magic cookie, transaction ID, and a bounds-checked walk of the RFC 5389 attribute TLVs — attributes named where known (else an honest hex type), with MAPPED-ADDRESS / XOR-MAPPED-ADDRESS **IPv4** reflexive `address:port` decoded when fully present | IPv6 reflexive addresses (metadata-only); attribute value bodies beyond addresses; ICE negotiation and TURN allocation state |
 | QUIC | **Long-header metadata only** — conservatively detected on UDP/443 from a complete clear-text prefix, valid fixed-bit semantics, and bounded connection IDs: packet type (Initial / 0-RTT / Handshake / Retry for v1, raw type otherwise), version (version 0 → Version Negotiation), and the destination/source connection IDs (≤ 20 bytes) | Frames and any encrypted payload; short or malformed headers (stay UDP); 0-RTT/handshake decryption; HTTP/3 |
+| GRE / VXLAN | GRE (IP protocol 47, carrying IPv4, IPv6 or transparent Ethernet) and VXLAN (UDP 4789, whose I flag marks a valid 24-bit VNI) are unwrapped to the inner conversation, with the outer header kept as its own layer | More than two tunnels deep is left undecoded rather than guessed |
+| Other application protocols | Named and folded at naming level: mDNS, LLMNR, NBNS, DHCP, NTP, TFTP, HTTP/2, WebSocket, SIP, SSH, FTP, SMTP, POP3, IMAP, SSDP, SMB 2/3, Kerberos and LDAP | Field-by-field parsing. HTTP/2 and WebSocket message bodies are read in Follow Stream only |
+
+**Help ▸ Supported Protocols** lists every protocol the installed build recognizes, what is read from
+each, and the Session Expression keywords that find it. That window is generated from source, so it is
+current for the build in front of you where this page is a summary.
 
 ## Explicitly not implemented
 

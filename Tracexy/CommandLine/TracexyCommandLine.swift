@@ -11,16 +11,18 @@ import Foundation
 /// It runs only when the first argument is one of its commands, which LaunchServices
 /// never passes, so a normal app launch is unaffected.
 ///
-///     tracexy summary  <capture> [--json]
-///     tracexy sessions <capture> [--expression <text>] [--format csv|json]
-///     tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning]
+///     tracexy summary  <capture> [--json] [--decode-as …]
+///     tracexy sessions <capture> [--expression <text>] [--format csv|json] [--decode-as udp:5300:dns …]
+///     tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning] [--decode-as …]
 ///     tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json]
-///     tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details]
-///     tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>]
+/// [--decode-as …]
+///     tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details [--frames <list>]]
+/// [--decode-as …]
+///     tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>] [--decode-as …]
 ///                      [--format text|csv|json] [--body <n>]
-///     tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml]
+///     tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml] [--decode-as …]
 ///     tracexy info     <capture> [--format text|json]
-///     tracexy select   <capture> [--frames <list>] [--expression <text>] [--dedupe] [--snaplen <n>]
+///     tracexy select   <capture> [--frames <list>] [--expression <text>] [--dedupe] [--snaplen <n>] [--decode-as …]
 ///                      [--time-shift <seconds>] [--comment <text>] > out.pcapng
 ///     tracexy merge    <capture> <capture>… > merged.pcapng
 ///     tracexy glossary [--format text|json]
@@ -60,7 +62,7 @@ enum TracexyCommandLine {
         var followFormat: FollowStreamExport.Format = .ascii
         /// `merge`: every capture after the first.
         var moreFiles: [URL] = []
-        /// `select --frames`: frame numbers, 1-based.
+        /// `select --frames` or `frames --details --frames`: frame numbers, 1-based.
         var frames: Set<UInt64>?
         /// `select --dedupe`: drop a frame identical to one of the previous five.
         var removesDuplicates = false
@@ -74,6 +76,8 @@ enum TracexyCommandLine {
         var details = false
         /// `frames --column Protocol:Field`: decode-tree fields added as columns.
         var columns: [FieldKey] = []
+        /// Invocation-local, read-only Decode As rules; never persisted to Project settings.
+        var decodeAsRules: [DecodeAsRule] = []
     }
 
     enum Format: String {
@@ -88,16 +92,16 @@ enum TracexyCommandLine {
 
     static let usage = """
     Usage:
-      tracexy summary  <capture> [--json]
-      tracexy sessions <capture> [--expression <text>] [--format csv|json]
-      tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning]
-      tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json]
-      tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details] [--column Proto:Field]
-      tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>]
+      tracexy summary  <capture> [--json] [--decode-as …]
+      tracexy sessions <capture> [--expression <text>] [--format csv|json] [--decode-as udp:5300:dns …]
+      tracexy findings <capture> [--expression <text>] [--format csv|json] [--fail-on note|warning] [--decode-as …]
+      tracexy stats    <capture> --tap <name> [--tap <name>…] [--expression <text>] [--format text|csv|json] [--decode-as …]
+      tracexy frames   <capture> [--expression <text>] [--format text|csv|json] [--details [--frames 2,5-7]] [--column Proto:Field] [--decode-as …]
+      tracexy objects  <capture> [--type http|imf|smb|tftp|ftp-data|x509af] [--expression <text>] [--decode-as …]
                        [--format text|csv|json] [--body <n>]
-      tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml]
+      tracexy follow   <capture> --expression <text> [--format ascii|hex|raw|c|yaml] [--decode-as …]
       tracexy info     <capture> [--format text|json]
-      tracexy select   <capture> [--frames 1-100,250] [--expression <text>] [--dedupe] [--snaplen <n>]
+      tracexy select   <capture> [--frames 1-100,250] [--expression <text>] [--dedupe] [--snaplen <n>] [--decode-as …]
                        [--time-shift <seconds>] [--comment <text>] > out.pcapng
       tracexy merge    <capture> <capture>… > merged.pcapng
       tracexy glossary [--format text|json]
@@ -106,6 +110,8 @@ enum TracexyCommandLine {
     result. Nothing is written, captured or sent. --expression takes a Session Expression, e.g.
       finding == retransmission and port == 443
     Statistics (--tap, tshark -z spellings accepted): \(StatisticsTap.names).
+    Decoding commands (including summary) accept repeatable --decode-as transport:port:protocol rules (for example udp:5300:dns; max 64).
+    Supported values follow Tracexy's Decode As protocols. Rules apply only to this invocation; TShark's -d grammar is not supported.
     info is capinfos: format, frames, times, interfaces and SHA-256. select and merge write PCAPNG to standard output,
     so a file exists only where the shell redirects it.
     Exit status: 0 ok, 1 unreadable capture, 2 usage or expression error, 3 --fail-on matched.
@@ -141,6 +147,11 @@ enum TracexyCommandLine {
             throw UsageError(message: "Choose a command.")
         }
         var invocation = Invocation(command: command)
+        if arguments.contains("--decode-as"),
+           ![.summary, .sessions, .findings, .stats, .frames, .objects, .follow, .select].contains(command)
+        {
+            throw UsageError(message: "--decode-as applies to decoding commands only.")
+        }
         guard command != .help else {
             return invocation
         }
@@ -187,10 +198,14 @@ enum TracexyCommandLine {
                     throw UsageError(message: "--tap takes one of: \(StatisticsTap.names).")
                 }
                 invocation.taps.append(tap)
+            case "--decode-as":
+                try appendDecodeAsRule(value(for: argument), to: &invocation)
             case "--frames":
                 let text = try value(for: argument)
-                guard command == .select, let frames = Self.frameList(text) else {
-                    throw UsageError(message: "--frames takes frame numbers and ranges such as 1-100,250, for select.")
+                guard [.select, .frames].contains(command), let frames = Self.frameList(text) else {
+                    throw UsageError(
+                        message: "--frames takes frame numbers and ranges such as 1-100,250, for select or frames --details."
+                    )
                 }
                 invocation.frames = frames
             case "--snaplen",
@@ -268,25 +283,44 @@ enum TracexyCommandLine {
         guard invocation.file != nil else {
             throw UsageError(message: "Name the capture file to read.")
         }
-        if invocation.expression != nil, [.summary, .info, .merge].contains(command) {
+        return try finalize(invocation, arguments: arguments)
+    }
+
+    static func run(
+        _ invocation: Invocation,
+        output: (String) -> Void,
+        data: (Data) -> Void = { FileHandle.standardOutput.write($0) }
+    )
+        throws -> Int32
+    {
+        try DecodeAs.$scopedRules.withValue(invocation.decodeAsRules) {
+            try runScoped(invocation, output: output, data: data)
+        }
+    }
+
+    // MARK: Private
+
+    private static func finalize(_ initial: Invocation, arguments: [String]) throws -> Invocation {
+        var invocation = initial
+        if invocation.expression != nil, [.summary, .info, .merge].contains(invocation.command) {
             throw UsageError(message: "--expression does not apply to summary, info or merge.")
         }
-        if command == .merge, invocation.moreFiles.isEmpty {
+        if invocation.command == .merge, invocation.moreFiles.isEmpty {
             throw UsageError(message: "merge needs two or more captures.")
         }
-        if command == .select, invocation.frames != nil, invocation.expression != nil {
-            throw UsageError(message: "select takes --frames or --expression, not both.")
-        }
-        if command == .info, !arguments.contains("--format"), !arguments.contains("-f") {
+        try validateFrameSelection(invocation)
+        if invocation.command == .info, !arguments.contains("--format"), !arguments.contains("-f") {
             invocation.format = .text
         }
-        if command == .follow, invocation.expression == nil {
+        if invocation.command == .follow, invocation.expression == nil {
             throw UsageError(message: "follow needs --expression naming exactly one TCP session.")
         }
-        if [.frames, .objects].contains(command), !arguments.contains("--format"), !arguments.contains("-f") {
+        if [.frames, .objects].contains(invocation.command), !arguments.contains("--format"),
+           !arguments.contains("-f")
+        {
             invocation.format = .text
         }
-        if command == .stats {
+        if invocation.command == .stats {
             guard !invocation.taps.isEmpty else {
                 throw UsageError(message: "Name a statistic with --tap: \(StatisticsTap.names).")
             }
@@ -297,10 +331,10 @@ enum TracexyCommandLine {
         return invocation
     }
 
-    static func run(
+    private static func runScoped(
         _ invocation: Invocation,
         output: (String) -> Void,
-        data: (Data) -> Void = { FileHandle.standardOutput.write($0) }
+        data: (Data) -> Void
     )
         throws -> Int32
     {
@@ -371,10 +405,37 @@ enum TracexyCommandLine {
             }
             return 0
         case .stats:
-            let frames = try invocation.taps.contains(where: \.needsFrames)
+            let tapsNeedFrameRows = invocation.taps.contains { tap in
+                tap.needsFrames && !tap.usesCaptureWideSRT
+            }
+            let frames = try tapsNeedFrameRows
                 ? frameRows(file: file, sessions: sessions, limited: compiled != nil) : []
-            let tables = invocation.taps.map {
-                $0.table(sessions: sessions, findings: findings, snapshot: snapshot, frames: frames)
+            var streamingSMB2SRT: StatisticsTable?
+            var streamingCorrelatedSRT: [String: StatisticsTable] = [:]
+            let tables = try invocation.taps.map { tap in
+                if tap == .serviceResponseTime(.smb2) {
+                    if let streamingSMB2SRT {
+                        return streamingSMB2SRT
+                    }
+                    let table = try streamingSMB2SRTTable(
+                        file: file, sessions: sessions, limited: compiled != nil
+                    )
+                    streamingSMB2SRT = table
+                    return table
+                }
+                if case let .serviceResponseTime(service) = tap, service != .smb2 {
+                    if let cached = streamingCorrelatedSRT[service.rawValue] {
+                        return cached
+                    }
+                    let table = try service.isEcho
+                        ? streamingEchoSRTTable(service, file: file, sessions: sessions, limited: compiled != nil)
+                        : streamingServiceSRTTable(
+                            service, file: file, sessions: sessions, limited: compiled != nil
+                        )
+                    streamingCorrelatedSRT[service.rawValue] = table
+                    return table
+                }
+                return tap.table(sessions: sessions, findings: findings, snapshot: snapshot, frames: frames)
             }
             switch invocation.format {
             case .text:
@@ -392,27 +453,37 @@ enum TracexyCommandLine {
             guard invocation.format != .csv else {
                 throw UsageError(message: "--details prints text or json.")
             }
+            let spool = FileManager.default.temporaryDirectory
+                .appendingPathComponent("tracexy-cli-dissections-\(UUID().uuidString)")
+            guard FileManager.default.createFile(atPath: spool.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            defer { try? FileManager.default.removeItem(at: spool) }
+            let writer = try FileHandle(forWritingTo: spool)
+            defer { try? writer.close() }
             try withExpandedCapture(file) { url in
                 _ = try DissectionExporter.export(
                     from: url, sessions: compiled == nil ? nil : Set(sessions.map(\.id)),
-                    format: invocation.format == .json ? .json : .text, to: data
+                    frameOrdinals: invocation.frames,
+                    format: invocation.format == .json ? .json : .text,
+                    to: { try writer.write(contentsOf: $0) }
                 )
+            }
+            try writer.close()
+            let reader = try FileHandle(forReadingFrom: spool)
+            defer { try? reader.close() }
+            // Validate the staged output before the first byte reaches stdout.
+            while let chunk = try reader.read(upToCount: 256 * 1_024), !chunk.isEmpty {}
+            try reader.seek(toOffset: 0)
+            while let chunk = try reader.read(upToCount: 256 * 1_024), !chunk.isEmpty {
+                data(chunk)
             }
             return 0
         case .frames:
-            let table = try framesTable(
-                file: file, sessions: sessions, limited: compiled != nil, columns: invocation.columns
+            try streamFrames(
+                file: file, sessions: sessions, limited: compiled != nil,
+                columns: invocation.columns, format: invocation.format, output: output
             )
-            switch invocation.format {
-            case .text: output(table.text)
-            case .csv: output(table.csv)
-            case .json:
-                let data = try JSONSerialization.data(
-                    withJSONObject: table.jsonObject,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                output((String(bytes: data, encoding: .utf8) ?? "") + "\n")
-            }
             return 0
         case .help,
              .glossary,
@@ -425,7 +496,49 @@ enum TracexyCommandLine {
         }
     }
 
-    // MARK: Private
+    private static func appendDecodeAsRule(_ value: String, to invocation: inout Invocation) throws {
+        guard [.summary, .sessions, .findings, .stats, .frames, .objects, .follow, .select]
+            .contains(invocation.command) else
+        {
+            throw UsageError(message: "--decode-as applies to decoding commands only.")
+        }
+        guard invocation.decodeAsRules.count < 64,
+              let rule = decodeAsRule(value),
+              !invocation.decodeAsRules.contains(where: {
+                  $0.transport == rule.transport && $0.port == rule.port
+              }) else
+        {
+            throw UsageError(
+                message: "--decode-as takes a unique tcp|udp:port:protocol rule (1–65535; max 64), such as udp:5300:dns."
+            )
+        }
+        invocation.decodeAsRules.append(rule)
+    }
+
+    private static func decodeAsRule(_ value: String) -> DecodeAsRule? {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let transport = DecodeAsRule.Transport(rawValue: String(parts[0])),
+              let portValue = UInt16(parts[1]), portValue > 0,
+              let proto = DecodeAsProtocol(rawValue: String(parts[2])) else
+        {
+            return nil
+        }
+        let rule = DecodeAsRule(transport: transport, port: portValue, decode: proto)
+        return rule.isValid ? rule : nil
+    }
+
+    private static func validateFrameSelection(_ invocation: Invocation) throws {
+        guard invocation.frames != nil else {
+            return
+        }
+        if invocation.command == .select, invocation.expression != nil {
+            throw UsageError(message: "select takes --frames or --expression, not both.")
+        }
+        if invocation.command == .frames, !invocation.details {
+            throw UsageError(message: "frames --frames requires --details.")
+        }
+    }
 
     /// `frames --column Protocol:Field`.
     private static func column(_ text: String, command: Command) throws -> FieldKey {

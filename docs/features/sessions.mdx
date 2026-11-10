@@ -1,0 +1,31 @@
+---
+title: Sessions
+description: Investigate conversations instead of manually following a packet list.
+---
+
+
+**Status: Available**
+
+Investigate conversations instead of manually following a packet list.
+
+## Try it
+
+Open **Sessions**, choose a row, and inspect its endpoints, application hints, timing, volume, and retained evidence. Add columns or sort the table for the question at hand. Open its Evidence facet to follow exact frame citations.
+
+Use **Edit → Find** (⌘F) to search the list, **Edit → Pin Session** to keep the selected row above whatever the filter shows, and **View → Session Grouping** to switch between **Group Into Actions** and **Show Every Session**. Focus Sets and Noise Control, in the sidebar, keep chosen or muted hosts out of the way.
+
+## What you can see
+
+A shared fold groups batch, live, and saved traffic by canonical conversation identity, for TCP, UDP, and SCTP. Optional TCP completeness identifies lifecycle stages actually observed. Process attribution is best effort and remains unknown when unavailable.
+
+## Coverage limits
+
+A session is a view over observed frames, not proof of a complete connection or application exchange. Missing capture time and missing tail packets are shown as gaps in knowledge.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Packet inspector" href="/features/packet-inspector" />
+  <Card title="Follow Stream" href="/features/follow-stream" />
+  <Card title="Session Expressions" href="/features/session-expressions" />
+</CardGroup>

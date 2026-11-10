@@ -104,7 +104,128 @@ struct TrafficRateGraphTests {
         #expect(TrafficIntervalAxis.intervalTitle(3_600) == "1 h")
     }
 
+    @Test("Filtered traffic distinguishes matches, nonmatches, unknowns and untimed frames")
+    func filteredCoverageAndOriginalByteLengths() throws {
+        var accumulator = try TrafficGraphComparisonAccumulator(
+            configuration: configuration([("Large", "frame.len >= 100")])
+        )
+        accumulator.record(row(1, time: at(0), length: 50))
+        accumulator.record(row(2, time: at(5), length: 200))
+        accumulator.record(row(3, time: at(10), length: 300, known: false))
+        accumulator.record(row(4, time: nil, length: 400))
+        accumulator.record(row(5, time: nil, length: 10))
+        let result = accumulator.result(requestedInterval: 1)
+        let series = try #require(result.series.first)
+        let coverage = try #require(series.coverage)
+        let graph = series.graph
+        #expect(result.scannedFrames == 5)
+        #expect(result.untimedCaptureFrames == 2)
+        #expect(coverage.matchedFrames == 2)
+        #expect(coverage.nonmatchingFrames == 2)
+        #expect(coverage.unknownFrames == 1)
+        #expect(coverage.untimedMatchingFrames == 1)
+        #expect(coverage.matchedBytes == 600, "Untimed matches belong in coverage bytes, never in graph bytes")
+        #expect(graph.untimedFrameCount == 1)
+        #expect(graph.totalFrames == 1)
+        #expect(graph.totalBytes == 200, "Use on-wire length, not the retained 20-byte prefix")
+        #expect(graph.columns.count == 11)
+        #expect(graph.columns[5].frames == 1)
+        let csv = result.csv()
+        #expect(csv.contains("Scanned frames,Matched frames,Nonmatching frames,Unknown frames"))
+        #expect(csv.contains("5,2,2,1,2,1,600\r\n"))
+    }
+
+    @Test("Zero matches still draw zero intervals across the original capture extent")
+    func zeroMatchesPreserveAxis() throws {
+        var accumulator = try TrafficGraphComparisonAccumulator(
+            configuration: configuration([("Jumbo", "frame.len > 1000")])
+        )
+        accumulator.record(row(1, time: at(10), length: 50))
+        accumulator.record(row(2, time: at(-3), length: 50))
+        let result = accumulator.result(requestedInterval: 1)
+        let series = try #require(result.series.first)
+        #expect(series.timeline.captureStartFrame == at(10))
+        #expect(series.graph.axis?.origin == at(-3))
+        #expect(series.graph.columns.count == 14)
+        #expect(series.graph.columns.allSatisfy { $0.frames == 0 && $0.bytes == 0 })
+        #expect(series.coverage?.matchedFrames == 0)
+        #expect(series.coverage?.nonmatchingFrames == 2)
+    }
+
+    @Test("An untimed-only filtered capture exports honest coverage without inventing an axis")
+    func untimedFilteredCapture() throws {
+        var accumulator = try TrafficGraphComparisonAccumulator(
+            configuration: configuration([("Exact", "frame.len == 100")])
+        )
+        accumulator.record(row(1, time: nil, length: 100))
+        let result = accumulator.result(requestedInterval: 1)
+        let series = try #require(result.series.first)
+        #expect(result.axis == nil)
+        #expect(series.graph.axis == nil)
+        #expect(series.graph.columns.isEmpty, "No axis means no interval row may be invented")
+        #expect(series.coverage?.matchedFrames == 1)
+        #expect(series.coverage?.untimedMatchingFrames == 1)
+        #expect(series.graph.untimedFrameCount == 1)
+        #expect(result.csv().contains("1,1,0,0,1,1,100\r\n"))
+    }
+
+    @Test("Filtered scans see beyond the retained page and apply the capture time correction")
+    func scannerStreamsAllFramesWithCorrection() throws {
+        let query = PacketBuilder.dnsQueryFrame(name: "example.test", src: "192.0.2.1", dst: "192.0.2.2")
+        let reply = PacketBuilder.dnsResponseFrame(
+            name: "example.test", answers: ["198.51.100.1"], src: "192.0.2.2", dst: "192.0.2.1"
+        )
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("filtered-traffic-\(UUID()).pcap")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try PcapWriter.write(linkType: LinkType.ethernet, frames: [query, reply, query, reply].enumerated().map {
+            CapturedFrame(bytes: $0.element, timestamp: at(Double($0.offset * 10)), originalLength: $0.element.count)
+        }, to: url)
+        let identity = try CaptureStreamReader(contentsOf: url).identity
+        let scanner = try CaptureFrameListScanner(
+            contentsOf: url, expectedIdentity: identity, sourceToken: UUID(),
+            configuration: .init(maxRetainedFrames: 1, timeCorrection: CaptureTimeCorrection(shiftBy: 1_000))
+        )
+        var accumulator = try TrafficGraphComparisonAccumulator(
+            configuration: configuration([("Responses", "dns.response")])
+        )
+        let list = try scanner.scan(onRow: { accumulator.record($0) })
+        let result = accumulator.result(requestedInterval: 10)
+        let series = try #require(result.series.first)
+        #expect(list.rows.count == 1)
+        #expect(list.completeness == .complete)
+        #expect(result.scannedFrames == 4)
+        #expect(series.coverage?.matchedFrames == 2)
+        #expect(series.coverage?.unknownFrames == 0)
+        #expect(series.timeline.captureStartFrame == at(1_000))
+        #expect(series.graph.axis?.origin == at(1_000))
+        #expect(series.graph.columns.map(\.frames) == [0, 1, 0, 1])
+        #expect(series.graph.totalBytes == reply.count * 2)
+    }
+
     // MARK: Private
+
+    private func configuration(_ entries: [(String, String)]) throws -> TrafficGraphComparisonConfiguration {
+        try TrafficGraphComparisonConfiguration(validating: entries.map {
+            TrafficGraphSeriesDraft(name: $0.0, expressionText: $0.1)
+        })
+    }
+
+    private func row(_ ordinal: UInt64, time: Date?, length: Int, known: Bool = true) -> CaptureFrameRow {
+        var row = CaptureFrameRow(
+            provenance: SessionFrameProvenance(
+                ordinal: FrameOrdinal(rawValue: ordinal), timestamp: time,
+                capturedLength: min(20, length), originalLength: length, linkType: LinkType.ethernet
+            ),
+            source: "", destination: "", protocolName: "", info: "frame.len >= 100", sessionID: nil,
+            interfaceID: 0, hasComment: false
+        )
+        if known {
+            row.filterFacts = FrameFilterFacts(
+                packet: DecodedPacket(timestamp: time, originalLength: length), capturedLength: min(20, length)
+            )
+        }
+        return row
+    }
 
     private func at(_ seconds: Double) -> Date {
         Date(timeIntervalSince1970: 1_700_000_000 + seconds)

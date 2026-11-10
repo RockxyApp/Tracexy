@@ -44,6 +44,7 @@ final class FieldPlotController {
         let sessions = limitToSessionsInView ? Set(coordinator.visibleSessions.map(\.id)) : nil
         let savedURL = coordinator.isViewingSavedCapture ? coordinator.savedCaptureEvidenceURL : nil
         let savedIdentity = coordinator.adoptedSavedCaptureIdentity
+        let timeCorrection = coordinator.activeSavedCapture?.timeCorrection
         let spool = coordinator.liveCaptureSpool
         isLoading = true
         task = Task.detached(priority: .userInitiated) { [weak self] in
@@ -55,7 +56,9 @@ final class FieldPlotController {
                 let source = try await MainContentCoordinator.frameToolSource(
                     savedURL: savedURL, savedIdentity: savedIdentity, spool: spool, temporaryURL: temporaryURL
                 )
-                let scanner = try FieldValueScanner(contentsOf: source.url, expectedIdentity: source.identity)
+                let scanner = try FieldValueScanner(
+                    contentsOf: source.url, expectedIdentity: source.identity, timeCorrection: timeCorrection
+                )
                 outcome = try .success(scanner.scanPoints(field, sessions: sessions))
             } catch {
                 outcome = .failure(error)
@@ -64,10 +67,13 @@ final class FieldPlotController {
         }
     }
 
-    func cancel() {
+    func cancel(clearResult: Bool = false) {
         task?.cancel()
         requestID &+= 1
         isLoading = false
+        if clearResult {
+            result = nil
+        }
     }
 
     // MARK: Private

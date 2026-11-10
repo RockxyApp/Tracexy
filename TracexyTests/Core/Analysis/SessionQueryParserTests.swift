@@ -48,6 +48,7 @@ struct SessionQueryParserTests {
             "ipv4": .ipv4, "ipv6": .ipv6, "arp": .arp, "icmp": .icmp, "icmpv6": .icmpv6,
             "tcp": .tcp, "udp": .udp, "dns": .dns, "tls": .tls, "http": .http,
             "http2": .http2, "quic": .quic, "websocket": .websocket, "stun": .stun,
+            "sctp": .sctp,
         ]
         for (keyword, kind) in expected {
             #expect(try parser.parse(keyword) == .leaf(.protocolStackContains(kind)))

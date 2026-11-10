@@ -17,6 +17,7 @@ struct TrafficTimelineTests {
         #expect(timeline.timedSpan == 0)
         #expect(timeline.bucketCount == 0)
         #expect(timeline.firstTimedFrame == nil)
+        #expect(timeline.captureStartFrame == nil)
         #expect(timeline == .empty)
     }
 
@@ -59,6 +60,7 @@ struct TrafficTimelineTests {
         #expect(timeline.totals.bytes == 100)
         #expect(timeline.untimedFrameCount == 1)
         #expect(timeline.timedSpan == 0)
+        #expect(timeline.captureStartFrame == nil, "the first frame was untimed")
         #expect(timeline.points().count == 1)
         #expect(timeline.points().first?.totals.bytes == 40)
 
@@ -76,6 +78,7 @@ struct TrafficTimelineTests {
         let timeline = accumulator.timeline()
 
         #expect(timeline.firstTimedFrame == at(3))
+        #expect(timeline.captureStartFrame == at(10), "capture start follows the first frame, not minimum time")
         #expect(timeline.lastTimedFrame == at(10))
         let points = timeline.points()
         #expect(points.first?.date == at(3))
@@ -134,6 +137,31 @@ struct TrafficTimelineTests {
         let first = build()
         let second = build()
         #expect(first == second)
+    }
+
+    @Test("Excluded traffic preserves the capture axis and coarsening without adding counts")
+    func excludedTrafficPreservesExtent() {
+        var filtered = TrafficTimelineAccumulator(maxBuckets: 4)
+        var complete = TrafficTimelineAccumulator(maxBuckets: 4)
+        for second in 0 ..< 40 {
+            let included = second == 17
+            filtered.add(
+                timestamp: at(Double(second)), originalLength: 100, direction: .unattributed,
+                includesTraffic: included
+            )
+            complete.add(timestamp: at(Double(second)), originalLength: 100, direction: .unattributed)
+        }
+        let result = filtered.timeline()
+        let source = complete.timeline()
+        #expect(result.bucketCount <= 4)
+        #expect(result.bucketWidth == source.bucketWidth)
+        #expect(result.captureStartFrame == source.captureStartFrame)
+        #expect(result.firstTimedFrame == source.firstTimedFrame)
+        #expect(result.lastTimedFrame == source.lastTimedFrame)
+        #expect(result.points().map(\.date) == source.points().map(\.date))
+        #expect(result.totals.frames == 1)
+        #expect(result.totals.bytes == 100)
+        #expect(result.points().reduce(0) { $0 + $1.totals.frames } == 1)
     }
 
     @Test("Reset drops every slice and total together")

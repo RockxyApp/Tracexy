@@ -60,6 +60,12 @@ final class SMBExportObjectsUITests: XCTestCase {
         let saveButton = window.buttons["exportObjects.saveSelected"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
         saveButton.click()
+        // Object bodies are application data, so saving asks first.
+        let acknowledgement = app.dialogs.firstMatch
+        XCTAssertTrue(acknowledgement.waitForExistence(timeout: 10), app.debugDescription)
+        let proceed = acknowledgement.buttons["Export Raw Capture"]
+        XCTAssertTrue(proceed.waitForExistence(timeout: 5), acknowledgement.debugDescription)
+        proceed.click()
         let savePanel = app.dialogs.firstMatch
         XCTAssertTrue(savePanel.waitForExistence(timeout: 10), app.debugDescription)
         let save = savePanel.buttons["Save"]
@@ -72,6 +78,75 @@ final class SMBExportObjectsUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertEqual(try Data(contentsOf: savedFile), Data(SMBExportUICapture.fileBytes))
+    }
+
+    /// Citing a contributing frame is a step taken *from* this list and usually
+    /// followed by another one here, so it must not move key away: a workspace
+    /// window jumping in front leaves the objects list needing a reactivating
+    /// click before anything in it responds, which looks like a dead window.
+    ///
+    /// Key is asserted the way the user would discover it — ⌘W closes whichever
+    /// window is key. If the regression returns, the workspace is key, Export
+    /// Objects survives the keystroke, and this fails.
+    @MainActor
+    func testCitingAFrameLeavesTheObjectsWindowKey() throws {
+        let fixture = try SMBExportUICapture.write()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--smb-export-objects-ui-test"]
+        app.launchEnvironment = [
+            "TRACEXY_TEST_RUN_TOKEN": "ui-smb-key-\(UUID().uuidString)",
+            "TRACEXY_SMB_UI_TEST_CAPTURE": fixture.path,
+        ]
+        app.launch()
+        defer { app.terminate() }
+
+        let window = app.windows["Export Objects"]
+        XCTAssertTrue(window.waitForExistence(timeout: 30), app.debugDescription)
+
+        // SMB is the kind this fixture reconstructs; the default kind lists
+        // nothing, so there would be no evidence menu to open.
+        let smbPicker = window.descendants(matching: .any)["exportObjects.kind"]
+        XCTAssertTrue(smbPicker.waitForExistence(timeout: 15), app.debugDescription)
+        let smbButton = smbPicker.radioButtons["SMB"]
+        if smbButton.exists {
+            smbButton.click()
+        } else {
+            smbPicker.click()
+            app.radioButtons["SMB"].click()
+        }
+        XCTAssertTrue(
+            window.staticTexts["report.txt"].waitForExistence(timeout: 45),
+            "SMB must list the fixture file before a frame can be cited from it"
+        )
+
+        let evidence = window.descendants(matching: .any)["exportObjects.evidence"]
+        XCTAssertTrue(evidence.waitForExistence(timeout: 20), window.debugDescription)
+        evidence.click()
+        let frameItem = app.menuItems.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "exportObjects.frame.")
+        ).firstMatch
+        XCTAssertTrue(frameItem.waitForExistence(timeout: 10), app.debugDescription)
+        frameItem.click()
+
+        // The cite did happen: the frame is loaded in the workspace's Layers.
+        XCTAssertTrue(
+            app.descendants(matching: .any)["evidence.citedFrameLoaded"].waitForExistence(timeout: 20),
+            "Citing must still load the source frame in Layers"
+        )
+
+        // And the list is still the window the user is working in.
+        let saveSelected = window.buttons["exportObjects.saveSelected"]
+        XCTAssertTrue(saveSelected.waitForExistence(timeout: 10), window.debugDescription)
+        XCTAssertTrue(saveSelected.isHittable, "The footer must stay reachable after citing a frame")
+
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(
+            waitUntil(15) { !window.exists },
+            "⌘W after citing a frame must close Export Objects, which means it kept key; "
+                + "it is still open, so citing moved key to another window: \(app.debugDescription)"
+        )
     }
 }
 

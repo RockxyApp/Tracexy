@@ -63,6 +63,7 @@ extension MainContentCoordinator {
         let originProjectID = activeRuntime.projectID
         let originGeneration = startGeneration
         let notes = format == .session ? exportedNotes(for: session) : []
+        let timeCorrection = isViewingSavedCapture ? activeSavedCapture?.timeCorrection : nil
 
         Task { @MainActor [weak self] in
             guard let self else {
@@ -81,7 +82,8 @@ extension MainContentCoordinator {
                         defaultLinkType: capture.linkType,
                         format: format,
                         privacy: exportPrivacy,
-                        notes: notes
+                        notes: notes,
+                        timeCorrectionProvenance: timeCorrection?.request.provenanceComment
                     )
                 }.value
                 let panel = NSSavePanel()

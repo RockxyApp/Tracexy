@@ -36,7 +36,7 @@ struct GeneralSettingsView: View {
                 SettingsDivider()
 
                 SettingsRow(label: "Default view:") {
-                    Picker("", selection: $defaultView) {
+                    Picker("Default view", selection: $defaultView) {
                         ForEach(DefaultView.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     .labelsHidden()
@@ -47,7 +47,7 @@ struct GeneralSettingsView: View {
 
             SettingsSection("Units") {
                 SettingsRow(label: "Byte units:") {
-                    Picker("", selection: $byteUnits) {
+                    Picker("Byte units", selection: $byteUnits) {
                         ForEach(ByteUnits.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     .labelsHidden()

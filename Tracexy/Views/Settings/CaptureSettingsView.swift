@@ -14,7 +14,7 @@ struct CaptureSettingsView: View {
         SettingsPane {
             SettingsSection("Interface") {
                 SettingsRow(label: "Default interface:") {
-                    Picker("", selection: $defaultInterface) {
+                    Picker("Default interface", selection: $defaultInterface) {
                         Text("Automatic").tag("")
                         ForEach(interfaceGroups) { group in
                             Section(group.category.title) {
@@ -46,7 +46,7 @@ struct CaptureSettingsView: View {
 
             SettingsSection("Filter") {
                 SettingsRow(label: "Capture filter:") {
-                    Picker("", selection: $filterMode) {
+                    Picker("Capture filter", selection: $filterMode) {
                         ForEach(CaptureFilterMode.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     .labelsHidden()
@@ -90,7 +90,7 @@ struct CaptureSettingsView: View {
 
             SettingsSection("Buffer") {
                 SettingsRow(label: "Snap length:") {
-                    Picker("", selection: $snapLength) {
+                    Picker("Snap length", selection: $snapLength) {
                         Text("Full packet (65 536 bytes)").tag(65_536)
                         Text("256 KiB").tag(262_144)
                         Text("Headers only (128 bytes)").tag(128)
@@ -177,7 +177,7 @@ struct CaptureSettingsView: View {
                 SettingsIndented {
                     SettingsFootnote(
                         "While capturing, Tracexy starts a new file at whichever limit comes first and keeps the set in "
-                            + "this Project’s Captures folder, named so File ▸ Next File in Set walks it. Keeping only the "
+                            + "this Project’s Captures folder, named so File ▸ File Set ▸ Next File walks it. Keeping only the "
                             + "newest files deletes older ones as the capture runs; a finding that cites a deleted file "
                             + "says so. Follow and Frames read the newest file; Save Capture keeps every file still kept."
                     )
@@ -186,7 +186,7 @@ struct CaptureSettingsView: View {
                 SettingsDivider()
 
                 SettingsRow(label: "Retain up to:") {
-                    Picker("", selection: $retainPackets) {
+                    Picker("Retain up to", selection: $retainPackets) {
                         Text("8 000 packets").tag(8_000)
                         Text("20 000 packets").tag(20_000)
                         Text("50 000 packets").tag(50_000)

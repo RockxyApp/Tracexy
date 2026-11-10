@@ -77,6 +77,18 @@ enum PcapngFixture {
         return block(type: 0x00000003, little: little, body: body)
     }
 
+    static func nameResolutionBlock(little: Bool, records: [(UInt16, [UInt8])]) -> [UInt8] {
+        var body: [UInt8] = []
+        for (type, value) in records {
+            body += u16(type, little) + u16(UInt16(value.count), little) + value
+            while body.count % 4 != 0 {
+                body.append(0)
+            }
+        }
+        body += u16(0, little) + u16(0, little)
+        return block(type: 4, little: little, body: body)
+    }
+
     /// Frame a block body with the type / total-length / trailing-length envelope,
     /// padding the body to a 32-bit boundary.
     static func block(type: UInt32, little: Bool, body: [UInt8]) -> [UInt8] {
@@ -170,6 +182,30 @@ struct PcapngStreamReaderTests {
     }
 
     @Test
+    func packetOptionsExcludeEndMarkerOnlyLists() throws {
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.interfaceDescription(little: true)
+        file += PcapngFixture.enhancedPacket(
+            little: true, ticks: 1, captured: [0xAA], trailingOptions: PcapngFixture.option(
+                code: 0,
+                value: [],
+                little: true
+            )
+        )
+        file += PcapngFixture.enhancedPacket(
+            little: true, ticks: 2, captured: [0xBB], trailingOptions: PcapngFixture.option(
+                code: 1, value: Array("comment".utf8), little: true
+            ) + PcapngFixture.option(code: 0, value: [], little: true)
+        )
+
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            #expect(try Self.expectFrame(reader.next()).reference.hasOptions == false)
+            #expect(try Self.expectFrame(reader.next()).reference.hasOptions)
+        }
+    }
+
+    @Test
     func bigEndianEnhancedPacketDecodes() throws {
         let payload: [UInt8] = [0x01, 0x02, 0x03]
         var file = PcapngFixture.sectionHeader(little: false)
@@ -183,6 +219,88 @@ struct PcapngStreamReaderTests {
             let instant = try #require(event.reference.timestamp)
             #expect(abs(instant.timeIntervalSince1970 - 2.0) < 1e-6)
         }
+    }
+
+    @Test
+    func packetDirectionFlagsSurviveBothByteOrdersAndPipeParsing() throws {
+        for little in [true, false] {
+            let flags = PcapngFixture.option(code: 2, value: PcapngFixture.u32(2, little), little: little)
+                + PcapngFixture.option(code: 0, value: [], little: little)
+            var file = PcapngFixture.sectionHeader(little: little)
+            file += PcapngFixture.interfaceDescription(little: little)
+            file += PcapngFixture.enhancedPacket(
+                little: little, ticks: 1_000_000, captured: [0xAA], trailingOptions: flags
+            )
+            #expect(try PcapngReader.read(file).frames.map(\.direction) == [.outbound])
+            try Self.withTempFile(file) { url in
+                let reader = try CaptureStreamReader(contentsOf: url)
+                guard case let .frame(event) = try reader.next() else {
+                    Issue.record("Missing directed frame")
+                    return
+                }
+                #expect(event.reference.direction == .outbound)
+            }
+            var pipe = CaptureByteStreamParser()
+            #expect(try pipe.append(file).map(\.frame.direction) == [.outbound])
+        }
+    }
+
+    @Test
+    func duplicatePacketDirectionFlagsAreRejected() throws {
+        let one = PcapngFixture.option(code: 2, value: PcapngFixture.u32(1, true), little: true)
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.interfaceDescription(little: true)
+        file += PcapngFixture.enhancedPacket(
+            little: true, ticks: 1_000_000, captured: [0xAA], trailingOptions: one + one
+        )
+        #expect(throws: PacketError.self) { _ = try PcapngReader.read(file) }
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            #expect(throws: PacketError.self) { _ = try reader.next() }
+        }
+        var pipe = CaptureByteStreamParser()
+        #expect(throws: CaptureByteStreamParser.Failure.self) { _ = try pipe.append(file) }
+    }
+
+    @Test
+    func packetIDsSurviveBothByteOrdersAndPipeParsing() throws {
+        for little in [true, false] {
+            let options = PcapngFixture.option(code: 5, value: PcapngFixture.u64(UInt64.max, little), little: little)
+                + PcapngFixture.option(code: 0, value: [], little: little)
+            var file = PcapngFixture.sectionHeader(little: little)
+            file += PcapngFixture.interfaceDescription(little: little)
+            file += PcapngFixture.enhancedPacket(
+                little: little, ticks: 1_000_000, captured: [0xAA], trailingOptions: options
+            )
+            #expect(try PcapngReader.read(file).frames.map(\.packetID) == [UInt64.max])
+            try Self.withTempFile(file) { url in
+                let reader = try CaptureStreamReader(contentsOf: url)
+                guard case let .frame(event) = try reader.next() else {
+                    Issue.record("Missing packet ID frame")
+                    return
+                }
+                #expect(event.reference.packetID == UInt64.max)
+            }
+            var pipe = CaptureByteStreamParser()
+            #expect(try pipe.append(file).map(\.frame.packetID) == [UInt64.max])
+        }
+    }
+
+    @Test
+    func duplicatePacketIDsAreRejected() throws {
+        let one = PcapngFixture.option(code: 5, value: PcapngFixture.u64(7, true), little: true)
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.interfaceDescription(little: true)
+        file += PcapngFixture.enhancedPacket(
+            little: true, ticks: 1_000_000, captured: [0xAA], trailingOptions: one + one
+        )
+        #expect(throws: PacketError.self) { _ = try PcapngReader.read(file) }
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            #expect(throws: PacketError.self) { _ = try reader.next() }
+        }
+        var pipe = CaptureByteStreamParser()
+        #expect(throws: CaptureByteStreamParser.Failure.self) { _ = try pipe.append(file) }
     }
 
     // MARK: - Multiple sections and interfaces
@@ -260,6 +378,78 @@ struct PcapngStreamReaderTests {
     }
 
     // MARK: - Simple Packet Block
+
+    @Test
+    func nameResolutionBlockReadsIPv4AndIPv6InBothByteOrders() throws {
+        for little in [true, false] {
+            var file = PcapngFixture.sectionHeader(little: little)
+            file += PcapngFixture.nameResolutionBlock(little: little, records: [
+                (1, [192, 0, 2, 7] + Array("api.example.test\0".utf8)),
+                (
+                    2,
+                    [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                        + Array("v6.example.test\0".utf8)
+                ),
+            ])
+            try Self.withTempFile(file) { url in
+                let reader = try PcapngStreamReader(contentsOf: url)
+                guard case .end = try reader.next() else {
+                    Issue.record("expected end")
+                    return
+                }
+                #expect(reader.nameResolutionRecords.map(\.address) == ["192.0.2.7", "2001:db8::1"])
+                #expect(reader.nameResolutionRecords.map(\.name.text) == ["api.example.test", "v6.example.test"])
+                #expect(reader.fileProperties.blockInventory.nameResolutionBlockCount == 1)
+            }
+        }
+    }
+
+    @Test
+    func nameResolutionBlockMalformedRecordFailsWithoutInventingMappings() throws {
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.block(type: 4, little: true, body: [1, 0, 20, 0, 192, 0, 2, 1])
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            #expect(throws: (any Error).self) { try reader.next() }
+            #expect(reader.nameResolutionRecords.isEmpty)
+        }
+    }
+
+    @Test
+    func nameResolutionRetentionLimitReportsOmittedMappings() throws {
+        let records = (0 ..< 501).map { index in
+            (UInt16(1), [192, 0, 2, UInt8(index % 255)] + Array("host-\(index).test\0".utf8))
+        }
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.nameResolutionBlock(little: true, records: records)
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            guard case .end = try reader.next() else {
+                Issue.record("expected end")
+                return
+            }
+            #expect(reader.nameResolutionRecords.count == 500)
+            #expect(reader.fileProperties.blockInventory.nameResolutionMappingCount == 500)
+            #expect(reader.fileProperties.blockInventory.nameResolutionMappingOmittedCount == 1)
+        }
+    }
+
+    @Test
+    func oversizedNameResolutionBlockIsReportedAsSkipped() throws {
+        var file = PcapngFixture.sectionHeader(little: true)
+        file += PcapngFixture.nameResolutionBlock(little: true, records: [
+            (1, [192, 0, 2, 1] + [UInt8](repeating: 0x61, count: 65_530)),
+        ])
+        try Self.withTempFile(file) { url in
+            let reader = try PcapngStreamReader(contentsOf: url)
+            guard case .end = try reader.next() else {
+                Issue.record("expected end")
+                return
+            }
+            #expect(reader.nameResolutionRecords.isEmpty)
+            #expect(reader.fileProperties.blockInventory.oversizedNameResolutionBlockCount == 1)
+        }
+    }
 
     @Test
     func simplePacketUsesInterfaceZeroSnapLengthAndUnknownTime() throws {

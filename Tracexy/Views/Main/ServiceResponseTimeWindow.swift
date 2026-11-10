@@ -3,9 +3,8 @@ import SwiftUI
 
 // MARK: - ServiceResponseTimeWindow
 
-/// Statistics ▸ Service Response Time: Wireshark's SRT tables for SMB2, LDAP and
-/// Kerberos over the frames the All Frames list shows — each procedure's paired
-/// replies and their minimum, maximum, mean and total time.
+/// Statistics ▸ Service Response Time. Every protocol is rescanned across the stable
+/// capture, independently of All Frames paging.
 struct ServiceResponseTimeWindow: View {
     // MARK: Internal
 
@@ -13,65 +12,137 @@ struct ServiceResponseTimeWindow: View {
 
     var body: some View {
         @Bindable var frames = coordinator.allFrames
-        let inView = Set(coordinator.visibleSessions.map(\.id))
-        let visible = frames.visibleRows(sessionsInView: inView)
-        let rows = ServiceResponseTime.table(service, rows: visible)
-        let echo = service.isEcho ? EchoResponseTime(rows: visible, ipv6: service == .icmpv6) : nil
-        Group {
-            if frames.isLoading {
-                ProgressView("Listing frames…")
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = frames.error {
-                ContentUnavailableView(
-                    "Service Response Time Unavailable", systemImage: "stopwatch", description: Text(error)
-                )
-            } else if let echo, echo.requests > 0 {
-                echoSummary(echo)
-            } else if rows.isEmpty {
-                ContentUnavailableView(
-                    "No Paired Replies",
-                    systemImage: "stopwatch",
-                    description: Text(service.isEcho
-                        ? "No \(service.title) echo request is in view."
-                        : "No \(service.title) reply in view could be paired with its request.")
-                )
-            } else {
-                table(rows)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Toggle("Limit to Sessions in View", isOn: $frames.limitToSessionsInView)
-                    .toggleStyle(.checkbox)
-                    .help("Count only the frames of the sessions the main window shows")
-            }
-        }
-        .tracexySafeAreaBar(edge: .top) {
-            HStack {
-                Picker("Service", selection: $service) {
-                    ForEach(ServiceResponseTime.Service.allCases) { Text($0.title).tag($0) }
+        let rows = scannedRows
+        let omittedCorrelations = scannedOmittedCorrelations
+        let echo = service.isEcho ? echoScanResult : nil
+        scanContent(rows, echo: echo)
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Toggle("Limit to Sessions in View", isOn: $frames.limitToSessionsInView)
+                        .toggleStyle(.checkbox)
+                        .help("Count only the frames of the sessions the main window shows")
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Which protocol's requests and replies to time")
-                Spacer(minLength: 0)
             }
-            .controlSize(.small)
-            .padding(.horizontal, Theme.Metrics.spacingL)
-            .padding(.vertical, Theme.Metrics.spacingS)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .tracexySafeAreaBar(edge: .bottom) { footer(rows, echo: echo) }
-        .frame(minWidth: 640, minHeight: 320)
-        .onAppear { coordinator.loadAllFrames() }
+            .tracexyDenseScrollEdge()
+            // Expanded before the bar is attached: a bar attached first is
+            // sized together with the content and the pair is then centred, so
+            // the picker floated below the titlebar in the empty state.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexySafeAreaBar(edge: .top) {
+                HStack {
+                    Picker("Service", selection: $service) {
+                        ForEach(ServiceResponseTime.Service.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Which protocol's requests and replies to time")
+                    Spacer(minLength: 0)
+                }
+                .controlSize(.small)
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.vertical, Theme.Metrics.spacingS)
+            }
+            .tracexySafeAreaBar(edge: .bottom) {
+                footer(rows, echo: echo, omittedCorrelations: omittedCorrelations)
+            }
+            .frame(minWidth: 640, minHeight: 320)
+            .onAppear { coordinator.loadAllFrames() }
+            .task(id: scanKey) { await runScan() }
     }
 
     // MARK: Private
 
     @State private var service = ServiceResponseTime.Service.smb2
     @State private var notice: String?
+    @State private var smb2ScanResult: ServiceResponseTime.StreamingSMB2Accumulator.Result?
+    @State private var correlatedScanResult: ServiceResponseTime.StreamingAccumulator.Result?
+    @State private var echoScanResult: EchoResponseTime?
+    @State private var smb2ScanError: String?
+    @State private var smb2ScanIsLoading = false
+    @State private var smb2ScanRequestID = 0
+    @State private var scanWasCancelled = false
+    @State private var rescanToken = 0
+    @State private var scanTask: Task<Void, Never>?
+
+    private var captureIsLive: Bool {
+        coordinator.isCapturing || coordinator.isStarting
+    }
+
+    /// The scan is keyed on the capture's identity, not on the live session list:
+    /// keying on `visibleSessions` restarted (and first cleared) a whole-capture
+    /// scan for every session a live capture folded, so the window never settled.
+    /// While the capture is live the scoped key is frozen and Rescan is the way to
+    /// take in newer sessions.
+    private var scanKey: String {
+        let frames = coordinator.allFrames
+        let scope: String = if !frames.limitToSessionsInView {
+            "all-sessions"
+        } else if captureIsLive {
+            "sessions-in-view-live"
+        } else {
+            coordinator.visibleSessions.map(\.id.uuidString).sorted().joined(separator: ",")
+        }
+        let availability = coordinator.allFramesUnavailableReason ?? "available"
+        return "\(service.rawValue)|\(coordinator.projectStore.activeProjectID.uuidString)|\(coordinator.startGeneration)|\(availability)|\(frames.limitToSessionsInView)|\(scope)|\(rescanToken)"
+    }
+
+    private var scannedRows: [ServiceResponseTime.Row] {
+        switch service {
+        case .smb2: smb2ScanResult?.rows ?? []
+        case .ldap,
+             .kerberos: correlatedScanResult?.rows ?? []
+        case .icmp,
+             .icmpv6: []
+        }
+    }
+
+    private var scannedOmittedCorrelations: Int {
+        switch service {
+        case .smb2: smb2ScanResult?.omittedRequests ?? 0
+        case .ldap,
+             .kerberos: correlatedScanResult?.omittedCorrelations ?? 0
+        case .icmp,
+             .icmpv6: 0
+        }
+    }
+
+    @ViewBuilder
+    private func scanContent(_ rows: [ServiceResponseTime.Row], echo: EchoResponseTime?) -> some View {
+        if smb2ScanIsLoading {
+            VStack(spacing: Theme.Metrics.spacingM) {
+                ProgressView("Scanning capture for response times…")
+                    .controlSize(.small)
+                Button("Cancel", role: .cancel) { cancelScan() }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("serviceResponseTime.cancel")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let smb2ScanError {
+            ContentUnavailableView(
+                "Service Response Time Unavailable", systemImage: "stopwatch", description: Text(smb2ScanError)
+            )
+        } else if scanWasCancelled {
+            ContentUnavailableView(
+                "Scan Cancelled",
+                systemImage: "stopwatch",
+                description: Text("This scan stopped before it finished. Rescan to time these replies.")
+            )
+        } else if let echo, echo.requests > 0 {
+            echoSummary(echo)
+        } else if rows.isEmpty {
+            ContentUnavailableView(
+                "No Paired Replies",
+                systemImage: "stopwatch",
+                description: Text(service.isEcho
+                    ? "No \(service.title) echo request is in this capture scope."
+                    : "No \(service.title) reply in this capture scope could be paired with its request.")
+            )
+        } else {
+            table(rows)
+        }
+    }
 
     private func table(_ rows: [ServiceResponseTime.Row]) -> some View {
         Table(rows) {
@@ -137,15 +208,23 @@ struct ServiceResponseTimeWindow: View {
         .formStyle(.grouped)
     }
 
-    private func footer(_ rows: [ServiceResponseTime.Row], echo: EchoResponseTime?) -> some View {
+    private func footer(
+        _ rows: [ServiceResponseTime.Row], echo: EchoResponseTime?, omittedCorrelations: Int
+    )
+        -> some View
+    {
         let calls = echo?.replies ?? rows.reduce(0) { $0 + $1.calls }
-        let csv = echo?.csv ?? ServiceResponseTime.csv(service, rows)
-        let isEmpty = echo.map { $0.requests == 0 } ?? rows.isEmpty
+        let csv = echo?.csv ?? ServiceResponseTime.csv(service, rows, omittedRequests: omittedCorrelations)
+        let isEmpty = (echo.map { $0.requests == 0 } ?? rows.isEmpty) && omittedCorrelations == 0
+        var summary = omittedCorrelations > 0
+            ? String(localized: "\(omittedCorrelations.formatted()) correlations omitted at the 200,000-record limit")
+            : calls == 1 ? String(localized: "1 reply timed") : String(localized: "\(calls.formatted()) replies timed")
+        if captureIsLive {
+            summary += String(localized: "; the capture is still running — rescan to include newer frames")
+        }
         return HStack(spacing: Theme.Metrics.spacingM) {
-            Text(notice ?? (calls == 1 ? String(localized: "1 reply timed") : String(
-                localized: "\(calls.formatted()) replies timed"
-            )))
-            .lineLimit(1)
+            Text(notice ?? summary)
+                .lineLimit(1)
             Spacer()
             Button("Copy as CSV") {
                 NSPasteboard.general.clearContents()
@@ -156,11 +235,96 @@ struct ServiceResponseTimeWindow: View {
                 notice = StatisticsExport.saveText(csv, suggestedName: "\(service.title) SRT.csv")
             }
             .disabled(isEmpty)
+            Button("Rescan") { rescanToken &+= 1 }
+                .disabled(smb2ScanIsLoading)
+                .accessibilityIdentifier("serviceResponseTime.rescan")
+                .help("Scan the capture again, taking in everything captured since the last scan")
         }
         .font(Theme.Typography.caption)
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
+    }
+
+    /// Runs the scan as a task this view can cancel from the Cancel button, while
+    /// still cancelling with the surrounding `.task` when the key changes.
+    @MainActor
+    private func runScan() async {
+        let task = Task { @MainActor in await loadCaptureWideSRT() }
+        scanTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if scanTask == task {
+            scanTask = nil
+        }
+    }
+
+    @MainActor
+    private func cancelScan() {
+        scanTask?.cancel()
+        scanTask = nil
+        scanWasCancelled = true
+        smb2ScanIsLoading = false
+        smb2ScanRequestID &+= 1
+    }
+
+    @MainActor
+    private func loadCaptureWideSRT() async {
+        smb2ScanRequestID &+= 1
+        let requestID = smb2ScanRequestID
+        let requestedService = service
+        scanWasCancelled = false
+        echoScanResult = nil
+        smb2ScanResult = nil
+        correlatedScanResult = nil
+        smb2ScanError = nil
+        smb2ScanIsLoading = true
+        defer {
+            if requestID == smb2ScanRequestID {
+                smb2ScanIsLoading = false
+            }
+        }
+        let frames = coordinator.allFrames
+        let sessionScope = frames.limitToSessionsInView ? Set(coordinator.visibleSessions.map(\.id)) : nil
+        do {
+            if requestedService.isEcho {
+                let result = try await coordinator.scanEchoResponseTime(
+                    ipv6: requestedService == .icmpv6,
+                    sessionsInScope: sessionScope
+                )
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                echoScanResult = result
+            } else if requestedService == .smb2 {
+                let result = try await coordinator.scanSMB2ServiceResponseTime(sessionsInScope: sessionScope)
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                smb2ScanResult = result
+            } else {
+                let result = try await coordinator.scanServiceResponseTime(
+                    requestedService,
+                    sessionsInScope: sessionScope
+                )
+                guard requestID == smb2ScanRequestID else {
+                    return
+                }
+                correlatedScanResult = result
+            }
+        } catch is CancellationError {
+            if requestID == smb2ScanRequestID {
+                scanWasCancelled = true
+            }
+            return
+        } catch {
+            if requestID == smb2ScanRequestID {
+                smb2ScanError = error.localizedDescription
+            }
+        }
     }
 }

@@ -144,7 +144,9 @@ nonisolated enum PcapngReader {
                     bytes: event.bytes,
                     timestamp: event.reference.timestamp,
                     originalLength: event.reference.originalLength,
-                    linkType: event.reference.linkType
+                    linkType: event.reference.linkType,
+                    direction: event.reference.direction,
+                    packetID: event.reference.packetID
                 ))
             case .end:
                 break loop
@@ -238,12 +240,59 @@ nonisolated enum PcapngReader {
         }
         let payload = try buffer.bytes(payloadStart, capturedLength)
         let timestamp = try packetTimestamp(ticksHigh: ticksHigh, ticksLow: ticksLow, interface: interface)
+        let options = try packetOptions(
+            buffer: buffer, little: little, optionsStart: paddedEnd, optionsEnd: blockEnd - 4
+        )
         return CapturedFrame(
             bytes: payload,
             timestamp: timestamp,
             originalLength: originalLength,
-            linkType: interface.linkType
+            linkType: interface.linkType,
+            direction: options.direction,
+            packetID: options.packetID
         )
+    }
+
+    private static func packetOptions(
+        buffer: PacketBuffer, little: Bool, optionsStart: Int, optionsEnd: Int
+    )
+        throws -> (direction: CaptureDirection, packetID: UInt64?)
+    {
+        var cursor = optionsStart
+        var direction: CaptureDirection = .unknown
+        var sawFlags = false
+        var packetID: UInt64?
+        while cursor + 4 <= optionsEnd {
+            let code = try little ? buffer.u16le(cursor) : buffer.u16(cursor)
+            let length = try Int(little ? buffer.u16le(cursor + 2) : buffer.u16(cursor + 2))
+            cursor += 4
+            if code == 0 {
+                guard length == 0 else {
+                    throw PacketError.malformed("pcapng: opt_endofopt length \(length)")
+                }
+                break
+            }
+            guard let valueEnd = checkedSum(cursor, roundUpToWord(length)), valueEnd <= optionsEnd else {
+                throw PacketError.malformed("pcapng: enhanced packet option overruns block")
+            }
+            if code == 2 {
+                guard length == 4, !sawFlags else {
+                    throw PacketError.malformed("pcapng: invalid or duplicate epb_flags")
+                }
+                let flags = try little ? buffer.u32le(cursor) : buffer.u32(cursor)
+                direction = CaptureDirection(epbFlags: flags)
+                sawFlags = true
+            } else if code == 5 {
+                guard length == 8, packetID == nil else {
+                    throw PacketError.malformed("pcapng: invalid or duplicate epb_packetid")
+                }
+                let first = try UInt64(little ? buffer.u32le(cursor) : buffer.u32(cursor))
+                let second = try UInt64(little ? buffer.u32le(cursor + 4) : buffer.u32(cursor + 4))
+                packetID = little ? (second << 32 | first) : (first << 32 | second)
+            }
+            cursor = valueEnd
+        }
+        return (direction, packetID)
     }
 
     private static func readSimplePacket(

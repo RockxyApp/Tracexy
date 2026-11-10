@@ -1,0 +1,89 @@
+---
+title: Capture and file workflows
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/live-capture) · [All coverage areas](/reference/feature-coverage)
+
+## Live interface capture; start, stop, restart
+
+**Available**
+
+Signed macOS helper, interface selection, readiness, loss accounting. The **Capture** menu carries Start/Stop Capture, Restart Capture, Refresh Interfaces and Manage Interfaces….
+
+## Capture filters
+
+**Available**
+
+BPF filter entry, validation, saved/imported named filters.
+
+## Remote capture and extcap sources
+
+**Partial**
+
+Supported local FIFO/source workflows; no general extcap or remote-capture plugin system.
+
+## Auto-stop and capture rotation
+
+**Partial**
+
+Bounded auto-stop after a number of minutes or packets, and rotation into a file set by size or duration keeping only the newest files; not all Wireshark dumpcap options.
+
+## Open PCAP/PCAPNG and compressed captures
+
+**Available**
+
+Content sniffing, saved/open-in-place workflows, bounded gzip/LZ4 and selected archives. **File Set → Next/Previous File** steps through the members of a rotated set in place.
+
+## Merge, split, save, export selected packets
+
+**Available**
+
+Supported capture formats with explicit conversion limits, including exact selected-frame PCAP/PCAPNG export, streamed export of frames matching an applied Tracexy Frame Expression, and opt-in exclusion of ignored capture ordinals. PCAPNG options are copied verbatim only for unchanged complete little-endian sequences; selected/subset or other byte-order exports preserve independent comments, unchanged-byte hashes, and reconstructed packet IDs/flags where valid. Unsupported, changed-byte, or sequence-dependent options are counted.
+
+## Text hex-dump import
+
+**Partial**
+
+**File → Import Hex Dump…** accepts bounded offset rows in an explicitly selected hexadecimal, decimal or octal base, or one frame of offset-free hexadecimal byte rows. Byte tokens are single bytes by default, with explicit 1–4-byte network or little-endian grouping. Explicit regex scopes extract one packet per line or nonoverlapping multiline matches across the file from a named `data` group in selected hexadecimal, octal, binary or Base64 encoding, with optional UTC `time`, interface-relative `dir` and positive decimal `seqno` groups. Unmatched noncomment text refuses the import.
+
+The link type is selected as Ethernet, Raw IP, or Linux cooked. An explicit option can add a synthetic Ethernet header to each complete IPv4/IPv6 packet, retaining original IP bytes and identifying the generated layer in the managed filename. The default creates an untimed PCAPNG in the active Project; explicit modes preserve UTC ISO 8601 preambles, I/O capture-interface direction as packet flags and `seqno` as PCAPNG packet ID. Direction and packet ID require real timestamps.
+
+Explicit IPv4/IPv6 UDP and TCP payload modes generate bounded IP/transport headers and checksums from entered endpoint addresses and ports, with inbound direction swapping endpoints. Synthetic TCP sequence numbers start at zero per direction without a fabricated handshake. Explicit SCTP modes wrap complete chunks with a common header and CRC32C, or place application bytes in a synthetic DATA chunk with a PPI; SCTP association and stream reassembly are absent. Arbitrary IP-protocol header generation remains unavailable.
+
+## Every Wireshark capture format
+
+**Coming soon**
+
+Use Wireshark to convert unsupported inputs to PCAPNG.
+
+## Capture file properties, comments, timestamps
+
+**Partial**
+
+**Get Info** reports file properties and supported comment/time handling; not every pcapng option or Wireshark metadata view.
+
+## Capture file structure
+
+**Available**
+
+**File → Show File Structure** (⇧⌘F) lists the open capture's own pcapng blocks or pcap records, read from the file rather than from decoded packets. It covers the role Wireshark fills with *Reload as File Format/Capture*.
+
+## Export packet dissections
+
+**Partial**
+
+**File → Export Packet Dissections…** supports composable text summary/details/captured bytes, an optional UTC timestamp preamble for text hex dumps, JSON with optional bounded raw hex for exactly mapped decoded fields, and a spreadsheet-guarded summary CSV whose default remains seven columns; an opt-in adds up to four applied Project field columns before Info, with bounded joined values.
+
+CSV covers frames of the sessions in view, one selected All Frames row (including frames without a session), marked frames, first-to-last-marked frames, a capture-wide numeric frame range, or every complete-capture frame matching an applied Frame Expression; unknown expression results are omitted and counted, with optional exclusion of ignored frame ordinals. Full Wireshark format and packet-range controls are not included.
+
+## Print packet views
+
+**Partial**
+
+**File → Print Packet Views** prints bounded packet summaries, decoded dissection text, or captured-byte hex dumps for sessions in view, one selected frame, marked frames, first-to-last-marked frames, a capture-wide numeric range, or every complete-capture frame matching an applied Frame Expression; unknown expression results are omitted and counted, with optional exclusion of ignored frame ordinals. A custom sessions-in-view action combines sections; full Wireshark print settings are not included.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

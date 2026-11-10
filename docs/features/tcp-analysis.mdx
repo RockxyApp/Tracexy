@@ -1,0 +1,40 @@
+---
+title: TCP analysis
+description: Check lifecycle, sequence evidence, and timing without hiding capture gaps.
+---
+
+
+**Status: Partial**
+
+Check lifecycle, sequence evidence, and timing without hiding capture gaps.
+
+## Try it
+
+Use the Sessions **Completeness** column, then select a TCP session. Open **TCP Health** in the right Details inspector for the charts. Hover a point to read its observed frame; click it to open that exact frame in the evidence inspector. Review Findings for the retained lifecycle, retransmission, window, and acknowledgement observations, or open **Follow Stream** for a stable source.
+
+## What you can see
+
+Tracexy retains bounded connection incarnations and per-direction sequence evidence. The completeness code describes stages seen in this capture, not a claim about a connection's entire lifetime.
+
+TCP Health offers **Sequence**, **Throughput**, **Round Trip**, and **Window** charts when the relevant points exist. Series are named by the endpoint that sent or received the observed frames.
+
+- **Sequence** plots bytes past each direction's first observed sequence number, including SACK ranges the receiver reported and D-SACK ranges for duplicate sequence data.
+- **Throughput** plots wire bytes sent and receiver-acknowledged sequence bytes per second, so goodput sits beside the wire rate.
+- **Round Trip** plots seconds from data to the cumulative ACK or the receiver's SACK report covering it.
+- **Window** plots offered bytes.
+
+When a chart has more points than it can draw, each capture-order group keeps its first, last, minimum, and maximum, and the chart says how many of how many points are shown.
+
+## Coverage limits
+
+Charts describe retained observations, not a diagnosis of congestion or application performance. Untimed segments cannot be plotted. D-SACK is the receiver's report of duplicate sequence data; it does not identify the cause. The UI reports retained-run truncation, known capture loss, snap-length truncation, or unknown loss when applicable. A receive window without an observed SYN window scale is shown as a raw advertised value and may understate the real window.
+
+**Coming soon:** the remaining Wireshark TCP stream graphs and universal TCP expert analysis. Midstream starts and capture gaps can also limit current conclusions.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Findings" href="/features/findings" />
+  <Card title="Follow Stream" href="/features/follow-stream" />
+  <Card title="Analysis coverage" href="/coverage/analysis" />
+</CardGroup>

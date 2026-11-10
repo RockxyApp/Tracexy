@@ -1,0 +1,53 @@
+---
+title: Command line
+description: Inspect a local capture from the Tracexy app binary without opening the window.
+---
+
+**Status: Partial**
+
+Tracexy has a read-only command-line mode in its app executable. Run the executable inside your installed `Tracexy.app/Contents/MacOS` directory, or use a local shell alias named `tracexy` that points to it. The executable path is specific to your Mac; avoid putting it in shared examples or logs.
+
+## Try it
+
+```sh
+tracexy summary capture.pcapng --json
+tracexy sessions capture.pcapng --format json
+tracexy findings capture.pcapng --fail-on warning
+tracexy stats capture.pcapng --tap phs --format text
+tracexy frames capture.pcapng --details
+tracexy info capture.pcapng
+tracexy select capture.pcapng --frames 1-100 --dedupe > out.pcapng
+```
+
+`--expression` on supported commands uses a [Session Expression](/features/session-expressions), for example `finding == retransmission and port == 443`. Run `tracexy help` for the current list of statistics taps and options.
+
+## Commands and output
+
+| Command | Supported action |
+| --- | --- |
+| `summary`, `info` | Capture summary, or `capinfos`-style file metadata: format, frames, times, interfaces, SHA-256. |
+| `sessions`, `findings`, `frames` | Session, finding, and decoded-frame output. `frames` also accepts `--details`, `--frames 2,5-7`, and `--column Proto:Field`. |
+| `stats` | One or more supported `--tap` statistics; the `tshark -z` spellings are accepted. |
+| `objects` | List supported `http`, `imf`, `smb`, `tftp`, `ftp-data`, or `x509af` objects; `--body <n>` emits one object's bytes. |
+| `follow` | Reconstruct one matching TCP session; choose `ascii`, `hex`, `raw`, `c`, or `yaml`. |
+| `select`, `merge` | Emit PCAPNG bytes to standard output. `select` also takes `--frames`, `--dedupe`, `--snaplen`, `--time-shift <seconds>`, and `--comment <text>`. Redirect explicitly if you want a file. |
+| `glossary` | List supported analysis terms. |
+| `help` | Print the usage summary and the current tap names. |
+
+Decoding commands, including `summary`, accept repeatable `--decode-as transport:port:protocol` rules — for example `udp:5300:dns`, up to 64. Supported values follow Tracexy's Decode As protocols, and the rules apply only to that invocation.
+
+The process reads a local PCAP/PCAPNG capture, including supported gzip or LZ4 wrappers. It prints to standard output and does not open a capture interface, Project, Library, History store, or network listener. Shell redirection can create a file; `select`, `merge`, `objects --body`, and `follow --format raw` can emit sensitive packet bytes.
+
+Exit codes are `0` for success, `1` for an unreadable capture, `2` for usage or expression errors, and `3` when `findings --fail-on` matches.
+
+## Coverage limits
+
+**Coming soon:** live command-line capture, general TShark `-T fields` compatibility, the full Wireshark tap catalog, and Wireshark profile or script compatibility. TShark's `-d` grammar is not supported — use the `transport:port:protocol` form above. A `--column` field is limited to Tracexy's decoded tree; unsupported protocols do not acquire Wireshark field coverage.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Session Expressions" href="/features/session-expressions" />
+  <Card title="Automation coverage" href="/coverage/automation" />
+  <Card title="Development" href="/reference/development" />
+</CardGroup>

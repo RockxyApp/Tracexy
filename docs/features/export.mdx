@@ -1,0 +1,40 @@
+---
+title: Export and share
+description: Take the evidence you need, with explicit control over sensitive bytes.
+---
+
+
+**Status: Available**
+
+Take the evidence you need, with explicit control over sensitive bytes.
+
+## Try it
+
+Choose a supported export from the **File** menu or the session actions:
+
+- **Export Frames…** — the frames in view as PCAPNG or PCAP.
+- **Export Investigation** — **Sessions as CSV…**, **Sessions and Findings as JSON…**, **Findings as CSV…**, or an **Investigation Report…** in Markdown.
+- **Export Objects** — the files and messages the capture carried: **HTTP**, **Email (IMF)**, **SMB**, **TFTP**, **FTP Data**, or **X.509 Certificates**.
+- **Export PDUs…** — application-layer protocol data units.
+- **Export Packet Dissections…**, plus **Export Marked Packet Dissections…**, **Export First to Last Marked Dissections…**, and **Export Capture Frame Range Dissections…**.
+- **Save Capture…** or a protected session document.
+
+**File → Print Packet Views** prints the same material: **Custom Packet Views…**, **Packet Summaries…**, **Packet Dissections…** (⌘P), **Packet Bytes…**, each also in a marked-only, first-to-last-marked, or capture frame range form.
+
+Review destination and privacy settings before saving.
+
+## What you can see
+
+Project configuration exports contain no packets. History automation exposes bounded summaries. Raw PCAP/PCAPNG and frame exports preserve packet content; a protected session document omits packet bytes entirely and follows your **Protected Session Export** choice in **Settings → Privacy**. Writing an exported object body to disk asks first.
+
+## Coverage limits
+
+Redaction cannot make an arbitrary raw packet capture safe to share. Review the exact export and recipient before sending. Some reconstructed output requires valid timestamps and complete source bytes.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Projects" href="/features/projects" />
+  <Card title="MCP" href="/features/mcp" />
+  <Card title="Privacy" href="/reference/privacy" />
+</CardGroup>

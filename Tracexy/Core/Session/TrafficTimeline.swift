@@ -178,6 +178,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         totals: TrafficTotals,
         directionMayHaveChanged: Bool,
         untimedFrameCount: Int,
+        captureStartFrame: Date?,
         firstTimedFrame: Date?,
         lastTimedFrame: Date?,
         sessionBuckets: [UUID: [Int64: TrafficSessionCell]] = [:],
@@ -190,6 +191,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         self.totals = totals
         self.directionMayHaveChanged = directionMayHaveChanged
         self.untimedFrameCount = untimedFrameCount
+        self.captureStartFrame = captureStartFrame
         self.firstTimedFrame = firstTimedFrame
         self.lastTimedFrame = lastTimedFrame
     }
@@ -202,6 +204,7 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         totals: TrafficTotals(),
         directionMayHaveChanged: false,
         untimedFrameCount: 0,
+        captureStartFrame: nil,
         firstTimedFrame: nil,
         lastTimedFrame: nil
     )
@@ -218,6 +221,8 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
     /// Accepted frames whose source carried no capture time. Counted in
     /// ``totals`` and excluded from every bucket and from the span.
     let untimedFrameCount: Int
+    /// Timestamp of the first captured frame, or nil when that frame was untimed.
+    let captureStartFrame: Date?
     /// Instant of the earliest and latest timed frame, or `nil` with no timed frame.
     let firstTimedFrame: Date?
     let lastTimedFrame: Date?
@@ -318,7 +323,15 @@ nonisolated struct TrafficTimeline: Equatable, Sendable {
         }
         let cap = max(1, maxCount)
         var shift = 0
-        while (maximumKey >> shift) - (minimumKey >> shift) + 1 > Int64(cap), shift < 62 {
+        // `key(for:)` deliberately clamps an absurd instant to `Int64.max`/`.min`
+        // rather than trapping on the conversion. Subtracting those two directly
+        // would trap here instead, undoing that choice, so widen the window until
+        // the span is both representable and small enough.
+        while shift < 62 {
+            let (span, overflowed) = (maximumKey >> shift).subtractingReportingOverflow(minimumKey >> shift)
+            if !overflowed, span != Int64.max, span + 1 <= Int64(cap) {
+                break
+            }
             shift += 1
         }
         return (shift, minimumKey >> shift, maximumKey >> shift, bucketWidth * Double(1 << shift))
@@ -356,11 +369,22 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
         timestamp: Date?,
         originalLength: Int,
         direction: TrafficDirection,
-        sessionID: UUID? = nil
+        sessionID: UUID? = nil,
+        includesTraffic: Bool = true
     ) {
-        totals.add(bytes: originalLength, direction: direction)
+        // A filtered scan observes every source timestamp so its axis and retained
+        // resolution stay capture-wide, while only included frames add traffic.
+        if includesTraffic {
+            totals.add(bytes: originalLength, direction: direction)
+        }
+        if !hasSeenFirstFrame {
+            captureStartFrame = timestamp
+            hasSeenFirstFrame = true
+        }
         guard let timestamp else {
-            untimedFrames += 1
+            if includesTraffic {
+                untimedFrames += 1
+            }
             return
         }
         if let first = firstTimed, timestamp < first {
@@ -382,6 +406,12 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
             doubleWidthAndMerge()
             key = Self.key(for: timestamp, width: width)
         }
+        if !includesTraffic {
+            if buckets[key] == nil {
+                buckets[key] = TrafficTotals()
+            }
+            return
+        }
         buckets[key, default: TrafficTotals()].add(bytes: originalLength, direction: direction)
         if let sessionID {
             addSessionBytes(originalLength, key: key, sessionID: sessionID)
@@ -401,6 +431,8 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
         totals = TrafficTotals()
         directionMayHaveChanged = false
         untimedFrames = 0
+        hasSeenFirstFrame = false
+        captureStartFrame = nil
         firstTimed = nil
         lastTimed = nil
     }
@@ -412,6 +444,7 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
             totals: totals,
             directionMayHaveChanged: directionMayHaveChanged,
             untimedFrameCount: untimedFrames,
+            captureStartFrame: captureStartFrame,
             firstTimedFrame: firstTimed,
             lastTimedFrame: lastTimed,
             sessionBuckets: sessionBuckets,
@@ -431,6 +464,8 @@ nonisolated struct TrafficTimelineAccumulator: Sendable {
     private var totals = TrafficTotals()
     private var directionMayHaveChanged = false
     private var untimedFrames = 0
+    private var hasSeenFirstFrame = false
+    private var captureStartFrame: Date?
     private var firstTimed: Date?
     private var lastTimed: Date?
 

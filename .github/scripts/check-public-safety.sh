@@ -283,6 +283,13 @@ report "Forbidden sensitive path (policy)" "$FORBIDDEN_OUT"
 legacy_personal_mail_commit() {
     case "$1" in
     09d3dd91c755fd853e79b5d49762140263149993 \
+        | 13158408bb7c06deef6eb136166ce2dacad96aa3 \
+        | 370c8a4b50e44a74c2a538aca0a2fc679c50bca6 \
+        | 46897c416e7e2dca94d97be21c7cb850ebe87dd7 \
+        | 64ae7776f847d38704f07fda8d634047415ef374 \
+        | 70335b99edae0baf3d02be8b238ffc965214576a \
+        | 7553bee5dfc58c43c8cb4642897436ba83e83f8f \
+        | 93a1ad2b6e3eb436edb619e63fc5565fc5ed4439 \
         | 1985bb707285fbf25b0e92a6c8b724be3a79b8f6 \
         | 1ed28f0c656dfb95ab23a39ca3c4f9df53130e55 \
         | 1ab9e42b9d79133359befa73af28cb878fbc9a54 \

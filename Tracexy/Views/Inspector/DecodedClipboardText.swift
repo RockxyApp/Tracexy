@@ -31,4 +31,40 @@ enum DecodedClipboardText {
     static func layerSummary(_ layer: DecodedLayer) -> String {
         layer.summary.isEmpty ? layer.title : "\(layer.title): \(layer.summary)"
     }
+
+    /// The clicked layer and only its currently expanded displayed descendants.
+    /// Siblings and fields absent from the supplied display projection are never read.
+    static func visibleSubtree(_ layer: DecodedLayer, collapsed: Set<String>) -> String {
+        var lines: [String] = []
+
+        func appendLines(_ text: String, prefix: String, continuation: String) {
+            let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            let parts = normalized.components(separatedBy: "\n")
+            for (index, part) in parts.enumerated() {
+                lines.append((index == 0 ? prefix : continuation) + part)
+            }
+        }
+
+        func append(_ current: DecodedLayer, depth: Int) {
+            let indentation = String(repeating: "  ", count: depth)
+            appendLines(layerSummary(current), prefix: indentation, continuation: indentation)
+            guard !collapsed.contains(current.title) else {
+                return
+            }
+            for field in current.fields {
+                let fieldIndentation = indentation + "  "
+                appendLines(
+                    field.value, prefix: "\(fieldIndentation)\(field.name): ",
+                    continuation: fieldIndentation + "  "
+                )
+            }
+            for child in current.children {
+                append(child, depth: depth + 1)
+            }
+        }
+
+        append(layer, depth: 0)
+        return lines.joined(separator: "\n")
+    }
 }

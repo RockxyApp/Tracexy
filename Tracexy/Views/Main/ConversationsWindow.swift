@@ -19,7 +19,7 @@ struct TrafficKindPicker: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
-        .help("Network addresses (IPv4, IPv6) or addresses with their port (TCP, UDP)")
+        .help("Network addresses (IPv4, IPv6) or addresses with their port (TCP, UDP, SCTP)")
     }
 }
 
@@ -56,6 +56,7 @@ struct ConversationsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows: rows, total: all.count, sessions: sessions.count)
         }

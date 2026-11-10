@@ -117,6 +117,7 @@ struct ManageInterfacesWindow: View {
             .width(min: 100, ideal: 110)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows)
         }

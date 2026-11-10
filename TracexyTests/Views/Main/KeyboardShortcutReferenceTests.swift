@@ -14,7 +14,7 @@ struct KeyboardShortcutReferenceTests {
         for entry in KeyboardShortcutReference.groups.flatMap(\.entries) {
             let expected = try #require(Self.parse(entry.keys), "\(entry.keys) must parse")
             let found = sources.contains { source in
-                Self.shortcut(following: entry.command, in: source) == expected
+                Self.shortcuts(following: entry.command, in: source).contains(expected)
             }
             #expect(found, "\(entry.command) is not bound to \(entry.keys) in the menu source")
         }
@@ -52,27 +52,37 @@ struct KeyboardShortcutReferenceTests {
         return Shortcut(key: namedKeys[key] ?? "\"\(key.lowercased())\"", modifiers: modifiers)
     }
 
-    /// The `.keyboardShortcut(...)` within a few lines after the button whose title is
-    /// `command` (a literal, or the scope actions' `title` constants).
-    private static func shortcut(following command: String, in source: String) -> Shortcut? {
+    /// Every `.keyboardShortcut(...)` found within a few lines after an occurrence
+    /// of `command` — a title literal, or the scope actions' `title` constants.
+    ///
+    /// The title is not required to sit on the `Button(` line itself. A command
+    /// whose label is a view rather than a string writes its titles inside the
+    /// trailing `label:` closure, which is still the button's own declaration and
+    /// still directly above its shortcut; requiring `Button(` read that form as
+    /// an unbound command. Every occurrence is tried, so a title that also
+    /// appears elsewhere in the file cannot mask the binding.
+    private static func shortcuts(following command: String, in source: String) -> [Shortcut] {
         let lines = source.components(separatedBy: "\n")
         let marker = switch command {
         case SessionScopeReturnAction.title: "SessionScopeReturnAction.title"
         case SessionScopeForwardAction.title: "SessionScopeForwardAction.title"
         default: "\"\(command)\""
         }
-        guard let start = lines.firstIndex(where: { $0.contains("Button(") && $0.contains(marker) }) else {
+        return lines.indices.filter { lines[$0].contains(marker) }.compactMap { start in
+            for line in lines[start ..< min(start + 8, lines.count)]
+                where line.contains(".keyboardShortcut(")
+            {
+                let inner = line.components(separatedBy: ".keyboardShortcut(").last ?? ""
+                let parts = inner.components(separatedBy: ", modifiers:")
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                let modifierText = parts.count > 1 ? parts[1] : ""
+                let modifiers = Set(
+                    ["command", "option", "shift", "control"].filter { modifierText.contains(".\($0)") }
+                )
+                return Shortcut(key: key, modifiers: modifiers)
+            }
             return nil
         }
-        for line in lines[start ..< min(start + 8, lines.count)] where line.contains(".keyboardShortcut(") {
-            let inner = line.components(separatedBy: ".keyboardShortcut(").last ?? ""
-            let parts = inner.components(separatedBy: ", modifiers:")
-            let key = parts[0].trimmingCharacters(in: .whitespaces)
-            let modifierText = parts.count > 1 ? parts[1] : ""
-            let modifiers = Set(["command", "option", "shift", "control"].filter { modifierText.contains(".\($0)") })
-            return Shortcut(key: key, modifiers: modifiers)
-        }
-        return nil
     }
 
     private func readProjectFile(_ relativePath: String) throws -> String {

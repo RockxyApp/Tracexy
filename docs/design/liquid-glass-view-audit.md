@@ -1,6 +1,6 @@
 # Liquid Glass view audit
 
-Audited 2026-08-24 against the production `Tracexy/Views` tree and every app scene in `TracexyApp.swift`. This inventory is exhaustive for current source. It distinguishes functional chrome from data content so “more glass” never becomes glass behind packet text, tables or evidence.
+Audited 2026-08-24 against the production `Tracexy/Views` tree and every app scene in `TracexyApp.swift`. This inventory was exhaustive when audited; views added since — All Frames, the Statistics windows, Follow, GeoIP and the workspace tab strip — are not yet inventoried. It distinguishes functional chrome from data content so “more glass” never becomes glass behind packet text, tables or evidence.
 
 Toolbar entries reconciled 2026-09-04: Project context and capture-source controls now have separate native toolbar ownership and responsive interface labeling. A noninteractive native vertical separator distinguishes the source menu from Start/Stop; Export retains its native bordered surface even when disabled.
 
@@ -35,7 +35,7 @@ Toolbar entries reconciled 2026-09-04: Project context and capture-source contro
 | `Sessions/StructuredFilterBar.swift` | Glass add/remove actions and functional preset controls. | Dense rule rows remain opaque content surfaces. |
 | `Sessions/SessionStatusBar.swift` | Read-only telemetry in the workspace glass footer. | No fabricated metrics; semantic colors remain system colors. |
 | `Sessions/InvestigationQueryView.swift` | Safe-area glass header and action footer. | Query rows remain opaque because they carry dense editable data. |
-| `Sessions/RealtimeChart.swift` | No independent glass; it belongs inside the session control shelf. | Chart marks stay content. |
+| `Sessions/ThroughputChart.swift` | No independent glass; it belongs inside the session control shelf. | Chart marks stay content. |
 | `Sessions/SessionHistoryScrollObserver.swift` | Infrastructure only; no presentation. | Not applicable. |
 | `Flow/FlowMapView.swift` | Native safe-area scope header; the standalone focus action retains native control treatment. | Endpoint list, graph marks and labels stay content. |
 | `History/HistoryView.swift` | Native safe-area header with one consistent small-control action cluster. | Native sidebar list and history session details remain content; obsolete hand-painted material removed. |
@@ -64,7 +64,7 @@ Toolbar entries reconciled 2026-09-04: Project context and capture-source contro
 | `Settings/PrivacySettingsView.swift` | Native privacy controls inside Settings content. |
 | `Settings/HelperSettingsView.swift` | Native helper status/actions inside Settings content. |
 | `Settings/UpdatesSettingsView.swift` | Native update status/actions inside Settings content. |
-| `Settings/MCPSettingsView.swift` | Truthful planned-state content; no fake glass service status. |
+| `Settings/MCPSettingsView.swift` | The live **MCP & Assistant** pane: real grant and service state, no fake glass service status. |
 | `Settings/HelperRecoveryPresenter.swift` | Presentation bridge only; no custom surface. |
 | `Helper/HelperInstallPromptView.swift` | Native sheet structure, safe-area header/footer, one shared title scale and standalone glass actions. |
 | `Toolbar/CaptureReadinessPopover.swift` | Native popover structure, scrollable facts, safe-area header/footer and standalone glass actions. |

@@ -503,7 +503,14 @@ private extension View {
     @ViewBuilder
     func tracexyMaterialSurface(tint: Color?, in shape: some InsettableShape) -> some View {
         if let tint {
-            background(tint.opacity(Theme.Glass.fallbackTintOpacity), in: shape)
+            // The tint layers over the material rather than replacing it. A bare
+            // tint wash carries no blur, so a tinted surface would read with
+            // markedly lower label contrast here than the same surface renders
+            // with on systems that have native glass.
+            background(.regularMaterial, in: shape)
+                .overlay {
+                    shape.fill(tint.opacity(Theme.Glass.fallbackTintOpacity))
+                }
                 .overlay {
                     shape.strokeBorder(
                         tint.opacity(Theme.Glass.fallbackStrokeOpacity),

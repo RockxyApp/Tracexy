@@ -429,6 +429,8 @@ struct HistoryView: View {
         case .captured: return formatted
         case .opened: return "Opened \(formatted)"
         case .legacy: return "Recorded \(formatted)"
+        case .correctedCaptured: return "Corrected capture \(formatted)"
+        case .openedCorrected: return "Opened corrected copy \(formatted)"
         }
     }
 
@@ -504,6 +506,14 @@ private struct HistoryCaptureRow: View {
                         Image(systemName: "clock.arrow.circlepath")
                             .help("Saved before capture-time provenance was tracked. The recorded times are preserved.")
                             .accessibilityLabel("Legacy time")
+                    } else if capture.record.timeBasis == .correctedCaptured
+                        || capture.record.timeBasis == .openedCorrected
+                    {
+                        Image(systemName: "clock.arrow.2.circlepath")
+                            .help(
+                                "A section comment declares a timestamp correction. Treat the displayed times as derived from frame/time anchors."
+                            )
+                            .accessibilityLabel("Corrected capture timestamps")
                     }
                 }
                 .font(Theme.Typography.caption)
@@ -514,6 +524,7 @@ private struct HistoryCaptureRow: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .help("Capture summary is incomplete")
+                    .accessibilityLabel("Incomplete capture summary")
             }
         }
         .padding(.vertical, 2)

@@ -38,14 +38,79 @@ struct FollowConversationPresentationTests {
         #expect(query.pairing == "Answered in frame 2")
         #expect(query.payload.isEmpty)
         #expect(query.timeLabel == "+0.000 s")
+        #expect(query.deltaLabel == nil)
 
         let response = presentation.rows[1]
+        #expect(response.deltaLabel == "Δ +0.024 s")
         #expect(response.dnsHeadline == "Response NOERROR for A www.example.test")
         #expect(response.dnsAnswers == ["A 192.0.2.80"])
         #expect(response.pairing == "Answers frame 1 after 24.0 ms")
 
         let unanswered = presentation.rows[2]
         #expect(unanswered.pairing == "No response was observed")
+        #expect(unanswered.deltaLabel == "Δ +0.476 s")
+    }
+
+    @Test("UDP direction filters transcript rows and search while keeping capture-order deltas")
+    func datagramDirectionScopesRowsAndSearch() throws {
+        let result = try Self.datagramResult()
+        let forward = FollowDatagramPresentation(result: result, mode: .text, direction: .aToB)
+        let reverse = FollowDatagramPresentation(result: result, mode: .text, direction: .bToA)
+
+        #expect(forward.rows.map(\.id) == [0, 2])
+        #expect(reverse.rows.map(\.id) == [1])
+        #expect(forward.rows[1].deltaLabel == "Δ +0.476 s")
+        #expect(forward.rows[0].pairing == "Answered in frame 2")
+        #expect(forward.matchingRowIDs(query: "example.test", caseSensitive: false) == [0, 2])
+        #expect(forward.matchCount(query: "Response", caseSensitive: false) == 0)
+        #expect(reverse.matchingRowIDs(query: "Response", caseSensitive: false) == [1])
+        #expect(reverse.matchCount(query: "query", caseSensitive: false) == 0)
+        #expect(result.matchedFrameCount == 3)
+        #expect(result.scannedFrameCount == 3)
+    }
+
+    @Test("Hidden directions do not consume the transcript byte budget")
+    func datagramDirectionReservesDisplayBudgetForVisibleRows() throws {
+        let result = try Self.datagramResult()
+        let reverse = FollowDatagramPresentation(result: result, mode: .hex, direction: .bToA, maxDisplayBytes: 8)
+        #expect(reverse.rows.map(\.id) == [1])
+        #expect(reverse.rows[0].payload.hasPrefix("0000"))
+        #expect(reverse.rows[0].payload.contains("0A 0A"))
+    }
+
+    @Test("UDP capture-time deltas preserve zero, backward and untimed adjacency")
+    func datagramTimeDeltas() {
+        let time = Date(timeIntervalSince1970: 100)
+        #expect(FollowDatagramPresentation.deltaLabel(time, from: time) == "Δ +0.000 s")
+        #expect(
+            FollowDatagramPresentation.deltaLabel(time.addingTimeInterval(-0.125), from: time)
+                == "Δ -0.125 s"
+        )
+        #expect(FollowDatagramPresentation.deltaLabel(nil, from: time) == nil)
+        #expect(FollowDatagramPresentation.deltaLabel(time, from: nil) == nil)
+        #expect(FollowDatagramPresentation.timeLabel(time, since: time.addingTimeInterval(0.125)) == "-0.125 s")
+        #expect(FollowDatagramPresentation.timeLabel(time, since: nil) == "Offset unavailable")
+    }
+
+    @Test("An untimed datagram breaks the adjacent delta instead of being skipped")
+    func untimedDatagramBreaksDelta() throws {
+        let presentation = try FollowDatagramPresentation(
+            result: Self.datagramResult(untimedIndexes: [1]), mode: .text
+        )
+        #expect(presentation.rows[0].deltaLabel == nil)
+        #expect(presentation.rows[1].deltaLabel == nil)
+        #expect(presentation.rows[2].deltaLabel == nil)
+    }
+
+    @Test("A timed datagram without a timed first row reports an unavailable offset")
+    func timedDatagramHasUnavailableOriginOffset() throws {
+        let presentation = try FollowDatagramPresentation(
+            result: Self.datagramResult(untimedIndexes: [0]), mode: .text
+        )
+        #expect(presentation.rows[0].timeLabel == "Untimed")
+        #expect(presentation.rows[1].timeLabel == "Offset unavailable")
+        #expect(presentation.rows[2].timeLabel == "Offset unavailable")
+        #expect(presentation.rows[2].deltaLabel == "Δ +0.476 s")
     }
 
     @Test("Hex mode shows DNS bytes too, under the display bound")
@@ -103,7 +168,7 @@ struct FollowConversationPresentationTests {
 
     // MARK: Private
 
-    private static func datagramResult() throws -> FollowDatagramResult {
+    private static func datagramResult(untimedIndexes: Set<Int> = []) throws -> FollowDatagramResult {
         let base = Date(timeIntervalSince1970: 1_800_000_000)
         struct Frame {
             let client: Bool
@@ -135,7 +200,7 @@ struct FollowConversationPresentationTests {
                 direction: client ? .aToB : .bToA,
                 provenance: SessionFrameProvenance(
                     ordinal: FrameOrdinal(UInt64(index + 1)),
-                    timestamp: base.addingTimeInterval(offset),
+                    timestamp: untimedIndexes.contains(index) ? nil : base.addingTimeInterval(offset),
                     capturedLength: 80, originalLength: 80, linkType: 1
                 ),
                 payload: payload,

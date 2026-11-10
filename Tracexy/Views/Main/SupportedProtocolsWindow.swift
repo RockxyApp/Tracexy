@@ -54,6 +54,7 @@ struct SupportedProtocolsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) { footer(rows: rows, counts: counts) }
         .frame(minWidth: 640, minHeight: 360)
     }

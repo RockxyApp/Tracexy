@@ -222,6 +222,8 @@ private extension ZlibInflateStream.Mode {
 /// Show Packet Bytes: Wireshark's "Show as" — how the decoded bytes are drawn.
 nonisolated enum PacketBytesPresentation: String, CaseIterable, Identifiable, Sendable {
     case text
+    case utf16LittleEndian
+    case utf16BigEndian
     case json
     case hexDump
     case cArray
@@ -236,6 +238,8 @@ nonisolated enum PacketBytesPresentation: String, CaseIterable, Identifiable, Se
     var title: String {
         switch self {
         case .text: String(localized: "Text (UTF-8)")
+        case .utf16LittleEndian: String(localized: "Text (UTF-16 LE)")
+        case .utf16BigEndian: String(localized: "Text (UTF-16 BE)")
         case .json: String(localized: "JSON")
         case .hexDump: String(localized: "Hex Dump")
         case .cArray: String(localized: "C Array")
@@ -254,6 +258,10 @@ nonisolated enum PacketBytesPresentation: String, CaseIterable, Identifiable, Se
         switch self {
         case .text:
             return lossyUTF8(bytes)
+        case .utf16LittleEndian:
+            return lossyUTF16(bytes, littleEndian: true)
+        case .utf16BigEndian:
+            return lossyUTF16(bytes, littleEndian: false)
         case .json:
             guard let object = try? JSONSerialization.jsonObject(with: Data(bytes), options: [.fragmentsAllowed]),
                   let pretty = try? JSONSerialization.data(
@@ -273,9 +281,128 @@ nonisolated enum PacketBytesPresentation: String, CaseIterable, Identifiable, Se
     }
 }
 
+// MARK: - PacketBytesRenderingSave
+
+/// Bounded UTF-8 export of the text currently shown in Show Packet Bytes.
+nonisolated enum PacketBytesRenderingSave {
+    enum Failure: LocalizedError {
+        case inputTooLarge(limit: Int)
+        case outputTooLarge(limit: Int)
+        case imageIsNotText
+
+        // MARK: Internal
+
+        var errorDescription: String? {
+            switch self {
+            case let .inputTooLarge(limit):
+                String(
+                    localized: "Narrow the byte range to \(ByteUnits.string(Int64(limit))) or less before saving this rendering."
+                )
+            case let .outputTooLarge(limit):
+                String(
+                    localized: "The rendering exceeds the \(ByteUnits.string(Int64(limit))) save limit. Narrow the byte range."
+                )
+            case .imageIsNotText:
+                String(localized: "Image presentations do not have a text rendering to save.")
+            }
+        }
+    }
+
+    static let maximumOutputBytes = 8 * 1_024 * 1_024
+
+    static func outputData(
+        _ bytes: [UInt8], presentation: PacketBytesPresentation, byteDumpStyle: ByteDumpStyle? = nil
+    )
+        throws -> Data
+    {
+        guard presentation != .image else {
+            throw Failure.imageIsNotText
+        }
+        let inputLimit = switch presentation {
+        case .text: 2 * 1_024 * 1_024
+        case .utf16LittleEndian,
+             .utf16BigEndian: 2 * 1_024 * 1_024
+        case .json: 16 * 1_024
+        case .hexDump: 128 * 1_024
+        case .cArray: 1 * 1_024 * 1_024
+        case .image: 0
+        }
+        guard bytes.count <= inputLimit else {
+            throw Failure.inputTooLarge(limit: inputLimit)
+        }
+        guard let text = text(for: bytes, presentation: presentation, byteDumpStyle: byteDumpStyle) else {
+            throw Failure.imageIsNotText
+        }
+        let data = Data(text.utf8)
+        guard data.count <= maximumOutputBytes else {
+            throw Failure.outputTooLarge(limit: maximumOutputBytes)
+        }
+        return data
+    }
+
+    static func text(
+        for bytes: [UInt8], presentation: PacketBytesPresentation, byteDumpStyle: ByteDumpStyle? = nil
+    )
+        -> String?
+    {
+        guard presentation == .hexDump, let byteDumpStyle else {
+            return presentation.text(for: bytes)
+        }
+        let width = byteDumpStyle.bytesPerRow
+        return stride(from: 0, to: bytes.count, by: width).map { start in
+            let end = min(start + width, bytes.count)
+            var row = String(format: "%04X   ", start)
+            switch byteDumpStyle {
+            case .hex:
+                for column in 0 ..< width {
+                    row += column + start < end ? String(format: "%02X ", bytes[start + column]) : "   "
+                    if column == 7 {
+                        row += " "
+                    }
+                }
+                row += "  "
+            case .bits:
+                for column in 0 ..< width {
+                    if column + start < end {
+                        let bits = String((0 ..< 8).map { bytes[start + column] & (0x80 >> $0) == 0 ? "0" : "1" })
+                        row += bits + " "
+                    } else {
+                        row += String(repeating: " ", count: 9)
+                    }
+                }
+                row += " "
+            }
+            for index in start ..< end {
+                let byte = bytes[index]
+                row.append(byte >= 0x20 && byte < 0x7F ? Character(UnicodeScalar(byte)) : ".")
+            }
+            if byteDumpStyle == .hex {
+                row += String(repeating: " ", count: width - (end - start))
+            }
+            return row
+        }.joined(separator: "\n")
+    }
+}
+
 /// Captured bytes as text, invalid sequences shown as U+FFFD rather than refused —
 /// a capture's text is whatever was sent, and hiding it would hide evidence.
 private func lossyUTF8(_ bytes: [UInt8]) -> String {
     // swiftlint:disable:next optional_data_string_conversion
     String(decoding: bytes, as: UTF8.self)
+}
+
+private func lossyUTF16(_ bytes: [UInt8], littleEndian: Bool) -> String {
+    var units: [UInt16] = []
+    units.reserveCapacity((bytes.count + 1) / 2)
+    var index = 0
+    while index + 1 < bytes.count {
+        let first = UInt16(bytes[index])
+        let second = UInt16(bytes[index + 1])
+        units.append(littleEndian ? first | (second << 8) : (first << 8) | second)
+        index += 2
+    }
+    if index < bytes.count {
+        units.append(0xFFFD)
+    }
+    return String(decoding: units, as: UTF16.self)
 }

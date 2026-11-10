@@ -172,13 +172,18 @@ nonisolated final class FieldValueScanner {
     init(
         contentsOf url: URL,
         expectedIdentity: PcapFileIdentity,
+        timeCorrection: CaptureTimeCorrection? = nil,
         isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
     )
         throws
     {
         let reader = try CaptureStreamReader(
             contentsOf: url,
-            configuration: .init(maxCapturedLength: CapturedFrame.maxReasonableLength, isCancelled: isCancelled)
+            configuration: .init(
+                maxCapturedLength: CapturedFrame.maxReasonableLength,
+                timestampTransform: timeCorrection?.streamTransform,
+                isCancelled: isCancelled
+            )
         )
         guard reader.identity.matches(expectedIdentity) else {
             throw FollowStreamError.identityMismatch

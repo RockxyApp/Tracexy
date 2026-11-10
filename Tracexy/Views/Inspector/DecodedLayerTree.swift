@@ -17,6 +17,11 @@ struct DecodedLayerTree: View {
     let onSelect: (Range<Int>?) -> Void
     /// Apply as Filter / Prepare as Filter: the term, how it joins, and whether to apply.
     var onFilter: (String, DecodedFieldFilter.Combination, Bool) -> Void = { _, _, _ in }
+    var onFrameFilter: (String, DecodedFieldFilter.Combination, Bool) -> Void = { _, _, _ in }
+    var onHighlightFrameFilter: (String) -> Void = { _ in }
+    var onDecodeAs: ((DecodeAsRule.Transport, UInt16) -> Void)?
+    var frameFilterAvailability: DecodedFrameFilter.Availability?
+    var allowsFieldFilters = true
     /// Apply as Column's list of columns, when the tree offers it.
     var columnOptions: PacketDetailOptions?
     var depth = 0
@@ -33,7 +38,12 @@ struct DecodedLayerTree: View {
                         if !layer.children.isEmpty {
                             DecodedLayerTree(
                                 layers: layer.children, selectedRange: selectedRange, collapsed: $collapsed,
-                                onSelect: onSelect, onFilter: onFilter, columnOptions: columnOptions,
+                                onSelect: onSelect, onFilter: onFilter, onFrameFilter: onFrameFilter,
+                                onHighlightFrameFilter: onHighlightFrameFilter,
+                                onDecodeAs: onDecodeAs,
+                                frameFilterAvailability: frameFilterAvailability,
+                                allowsFieldFilters: allowsFieldFilters,
+                                columnOptions: columnOptions,
                                 depth: depth + 1
                             )
                             .padding(.leading, 14)
@@ -74,7 +84,9 @@ struct DecodedLayerTree: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    .frame(width: 16, height: 16)
+                    // 20pt is the HIG hard minimum; the 28pt default would stretch
+                    // every layer header and break this dense tree's row rhythm.
+                    .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -86,6 +98,7 @@ struct DecodedLayerTree: View {
                     .foregroundStyle(Theme.color(for: layer.proto))
                 if !layer.summary.isEmpty {
                     Text(layer.summary).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .help(layer.summary)
                 }
                 Spacer(minLength: 0)
             }
@@ -99,9 +112,15 @@ struct DecodedLayerTree: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { onSelect(layer.byteRange) }
             .contextMenu {
-                Button(isCollapsed ? "Expand Subtree" : "Collapse Subtree") {
-                    toggle(layer.title)
+                let subtreeTitles = Self.titles([layer])
+                Button("Expand Subtree") {
+                    collapsed.subtract(subtreeTitles)
                 }
+                .disabled(subtreeTitles.isDisjoint(with: collapsed))
+                Button("Collapse Subtree") {
+                    collapsed.formUnion(subtreeTitles)
+                }
+                .disabled(subtreeTitles.isSubset(of: collapsed))
                 Button("Expand All") {
                     collapsed.removeAll()
                 }
@@ -112,7 +131,13 @@ struct DecodedLayerTree: View {
                 Button("Copy Layer Summary", systemImage: "doc.on.doc") {
                     copy(DecodedClipboardText.layerSummary(layer))
                 }
-                if let term = DecodedFieldFilter.term(for: layer.proto) {
+                Button("Copy Visible Subtree", systemImage: "list.bullet.indent") {
+                    copy(DecodedClipboardText.visibleSubtree(layer, collapsed: collapsed))
+                }
+                if let onDecodeAs {
+                    decodeAsMenu(layer, action: onDecodeAs)
+                }
+                if allowsFieldFilters, let term = DecodedFieldFilter.term(for: layer.proto) {
                     Divider()
                     FieldFilterMenus(term: term, action: onFilter)
                 }
@@ -145,9 +170,28 @@ struct DecodedLayerTree: View {
             Button("Copy \u{201C}Name: Value\u{201D}", systemImage: "text.append") {
                 copy(DecodedClipboardText.nameValue(field))
             }
-            if let term = DecodedFieldFilter.term(proto: layer.proto, field: field.name, value: field.value) {
+            let sessionTerm = DecodedFieldFilter.term(proto: layer.proto, field: field.name, value: field.value)
+            let frameTerm = frameFilterAvailability?.supports(proto: layer.proto, field: field.name) == true
+                ? DecodedFrameFilter.term(proto: layer.proto, field: field.name, value: field.value)
+                : nil
+            if allowsFieldFilters, let frameTerm {
                 Divider()
-                FieldFilterMenus(term: term, action: onFilter)
+                Button("Highlight Matching Frames", systemImage: "highlighter") {
+                    onHighlightFrameFilter(frameTerm)
+                    openWindow(id: TracexyApp.allFramesWindowID)
+                }
+                Button("Copy as Frame Filter", systemImage: "doc.on.doc") {
+                    copy(frameTerm)
+                }
+            }
+            if allowsFieldFilters, sessionTerm != nil || frameTerm != nil {
+                Divider()
+                FieldFilterMenus(
+                    term: sessionTerm,
+                    action: onFilter,
+                    frameTerm: frameTerm,
+                    frameAction: onFrameFilter
+                )
             }
             if let columnOptions {
                 ApplyAsColumnButton(key: FieldKey(proto: layer.proto, name: field.name), options: columnOptions)
@@ -161,6 +205,26 @@ struct DecodedLayerTree: View {
                 Button("Plot Over Time", systemImage: "chart.xyaxis.line") {
                     FieldPlotController.shared.field = FieldKey(proto: layer.proto, name: field.name)
                     openWindow(id: TracexyApp.fieldPlotWindowID)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func decodeAsMenu(
+        _ layer: DecodedLayer,
+        action: @escaping (DecodeAsRule.Transport, UInt16) -> Void
+    )
+        -> some View
+    {
+        let targets = DecodeAsPacketTargets.from(layer)
+        if !targets.isEmpty {
+            Divider()
+            Menu("Decode As…") {
+                ForEach(targets) { target in
+                    Button(target.title) {
+                        action(target.transport, target.port)
+                    }
                 }
             }
         }

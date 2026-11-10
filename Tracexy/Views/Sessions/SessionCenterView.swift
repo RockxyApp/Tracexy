@@ -154,33 +154,6 @@ struct SessionCenterView: View {
         .accessibilityIdentifier("capture-import-progress")
     }
 
-    private var frameExportNotice: some View {
-        HStack(spacing: Theme.Metrics.spacingM) {
-            Image(systemName: "square.and.arrow.up")
-                .foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(coordinator.isCancellingFrameExport ? "Cancelling export…" : "Exporting frames…")
-                    .font(Theme.Typography.bodyEmphasis)
-                if let name = coordinator.frameExportName {
-                    Text(name).font(Theme.Typography.caption).lineLimit(1).truncationMode(.middle)
-                }
-                if let fraction = coordinator.frameExportFraction {
-                    ProgressView(value: fraction)
-                        .accessibilityValue(Text(fraction, format: .percent))
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            Spacer(minLength: 0)
-            Button("Cancel Export") { coordinator.cancelFrameExport() }
-                .disabled(coordinator.isCancellingFrameExport)
-        }
-        .padding(.horizontal, Theme.Metrics.spacingL)
-        .padding(.vertical, Theme.Metrics.spacingS)
-        .background(Color.accentColor.opacity(0.06))
-        .accessibilityIdentifier("frame-export-progress")
-    }
-
     private var savedCaptureSourceNotice: some View {
         HStack(spacing: Theme.Metrics.spacingS) {
             Image(systemName: "doc")
@@ -298,8 +271,9 @@ struct SessionCenterView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            // Command-R belongs to File > Reload, which carries the
+            // canReloadActiveSavedCapture guard this button does not.
             Button("Reload") { coordinator.reloadActiveSavedCapture() }
-                .keyboardShortcut("r", modifiers: .command)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingS)
@@ -361,9 +335,6 @@ struct SessionCenterView: View {
         VStack(spacing: 0) {
             if coordinator.isImportingCapture {
                 captureImportNotice
-                Divider()
-            } else if coordinator.isExportingFrames {
-                frameExportNotice
                 Divider()
             } else if coordinator.isOpeningSavedCapture {
                 savedCaptureOpeningNotice
@@ -465,7 +436,7 @@ struct SessionCenterView: View {
     private func timeCell(_ startTime: Date?) -> some View {
         if let startTime {
             Text(coordinator.sessionTimeDisplay.format.string(
-                for: startTime, captureStart: coordinator.trafficTimeline.firstTimedFrame
+                for: startTime, captureStart: coordinator.trafficTimeline.captureStartFrame
             ))
             .font(Theme.Typography.monoSmall)
             .foregroundStyle(.secondary)
@@ -516,7 +487,10 @@ struct SessionCenterView: View {
             TableColumn("Host", value: \.host) { session in
                 HStack(spacing: Theme.Metrics.spacingS) {
                     SessionTagDots(tags: coordinator.investigationNotes.tags(onSession: session.id))
-                    Text(coordinator.addressNames.displayHost(for: session)).font(Theme.Typography.body).lineLimit(1)
+                    Text(coordinator.addressNames.displayHost(for: session))
+                        .font(Theme.Typography.body)
+                        .lineLimit(1)
+                        .help(coordinator.addressNames.displayHost(for: session))
                     if coordinator.investigationNotes.hasNote(onSession: session.id) {
                         Image(systemName: "note.text")
                             .font(.system(size: Theme.Icon.small))
@@ -550,6 +524,10 @@ struct SessionCenterView: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(Theme.color(for: session.status))
                     .help(session.status.label)
+                    // The column header is intentionally empty, and help text is
+                    // pointer-only, so state would otherwise be colour and shape
+                    // alone with nothing for VoiceOver to announce.
+                    .accessibilityLabel(session.status.label)
             }
             .width(20)
             .customizationID("status")
@@ -559,6 +537,8 @@ struct SessionCenterView: View {
                     .font(Theme.Typography.body)
                     .lineLimit(1)
                     .foregroundStyle(session.status == .error ? Color.red : Color.primary)
+                    // The most content-rich column, and the one most often cut.
+                    .help(session.infoSummary)
             }
             .width(min: 160, ideal: 280)
             .customizationID("summary")
@@ -643,6 +623,7 @@ struct SessionCenterView: View {
                     .font(.system(size: Theme.Icon.small))
                     .foregroundStyle(Theme.color(for: row.status))
                     .help(row.status.label)
+                    .accessibilityLabel(row.status.label)
             }
             .width(20)
             TableColumn("Summary") { (row: SessionRow) in

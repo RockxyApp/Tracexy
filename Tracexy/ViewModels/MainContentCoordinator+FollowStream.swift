@@ -95,18 +95,21 @@ nonisolated private struct FollowTarget: Sendable {
         url: URL,
         identity: PcapFileIdentity,
         sourceToken: UUID?,
+        timeCorrection: CaptureTimeCorrection?,
         onProgress: (PcapStreamProgress) -> Void
     )
         throws -> FollowOutcome
     {
         if tuple.proto == .udp {
             let reader = try FollowDatagramReader(
-                contentsOf: url, expectedIdentity: identity, tuple: tuple, sourceToken: sourceToken
+                contentsOf: url, expectedIdentity: identity, tuple: tuple, sourceToken: sourceToken,
+                configuration: .init(timeCorrection: timeCorrection)
             )
             return try .datagrams(reader.read(onProgress: onProgress))
         }
         let reader = try FollowStreamReader(
-            contentsOf: url, expectedIdentity: identity, tuple: tuple, sourceToken: sourceToken
+            contentsOf: url, expectedIdentity: identity, tuple: tuple, sourceToken: sourceToken,
+            configuration: .init(timeCorrection: timeCorrection)
         )
         return try .stream(reader.read(onProgress: onProgress))
     }
@@ -297,10 +300,12 @@ extension MainContentCoordinator {
         -> Task<Void, Never>
     {
         let token = SavedCaptureStreamLoader.sourceToken(for: identity)
+        let timeCorrection = activeSavedCapture?.timeCorrection
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let outcome = try target.read(
-                    url: url, identity: identity, sourceToken: token, onProgress: relay.submit
+                    url: url, identity: identity, sourceToken: token,
+                    timeCorrection: timeCorrection, onProgress: relay.submit
                 )
                 try Task.checkCancellation()
                 await self?.finishFollow(
@@ -349,7 +354,8 @@ extension MainContentCoordinator {
                 let identity = PcapFileIdentity.snapshot(of: handle)
                 try handle.close()
                 let outcome = try target.read(
-                    url: temporaryURL, identity: identity, sourceToken: token, onProgress: relay.submit
+                    url: temporaryURL, identity: identity, sourceToken: token,
+                    timeCorrection: nil, onProgress: relay.submit
                 )
                 try Task.checkCancellation()
                 await self?.finishFollow(

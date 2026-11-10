@@ -11,6 +11,7 @@ enum TrafficAddressKind: String, CaseIterable, Identifiable, Sendable {
     case ipv6
     case tcp
     case udp
+    case sctp
 
     // MARK: Internal
 
@@ -25,12 +26,14 @@ enum TrafficAddressKind: String, CaseIterable, Identifiable, Sendable {
         case .ipv6: "IPv6"
         case .tcp: "TCP"
         case .udp: "UDP"
+        case .sctp: "SCTP"
         }
     }
 
-    /// Whether rows carry a port (TCP/UDP) or only an address (Ethernet/IPv4/IPv6).
+    /// Whether rows carry a port (TCP/UDP/SCTP) or only an address
+    /// (Ethernet/IPv4/IPv6).
     var usesPorts: Bool {
-        self == .tcp || self == .udp
+        self == .tcp || self == .udp || self == .sctp
     }
 
     /// The Session Expression field its addresses are matched with.
@@ -340,6 +343,10 @@ enum TrafficStatistics {
         case .ipv6: value.family == .v6
         case .tcp: session.protocolStack.contains(.tcp)
         case .udp: session.protocolStack.contains(.udp)
+        // An SCTP flow is a conversation between its port pair, like TCP and UDP.
+        // The verification tag identifies the association and is deliberately not
+        // part of the row: these counts are per endpoint pair, not per association.
+        case .sctp: session.protocolStack.contains(.sctp)
         }
         guard belongs else {
             return nil

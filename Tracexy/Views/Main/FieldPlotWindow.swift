@@ -33,9 +33,20 @@ struct FieldPlotWindow: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The plot is fixed content rather than a scroll view, so it gains no
+            // safe-area inset of its own and would sit under the footer's glass.
+            .tracexyChromeContentClearance(
+                edge: .bottom,
+                length: Theme.Metrics.footerBarHeight + Theme.Glass.functionalBarVerticalInset * 2
+            )
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 620, minHeight: 360)
-            .task(id: RunKey(field: controller.field, limited: controller.limitToSessionsInView)) {
+            .task(id: RunKey(
+                field: controller.field,
+                limited: controller.limitToSessionsInView,
+                project: coordinator.projectStore.activeProjectID,
+                generation: coordinator.startGeneration
+            )) {
                 controller.run(from: coordinator)
             }
             .onDisappear { controller.cancel() }
@@ -58,9 +69,13 @@ struct FieldPlotWindow: View {
         case line
     }
 
+    /// Carries the Project and capture generation so switching either reloads
+    /// this window instead of leaving it on the previous capture's figures.
     private struct RunKey: Hashable {
         let field: FieldKey?
         let limited: Bool
+        let project: UUID
+        let generation: Int
     }
 
     @State private var style = Style.dots
@@ -68,6 +83,8 @@ struct FieldPlotWindow: View {
     @State private var startsAtFirstPoint = false
     @State private var hovered: FieldPlot.Point?
     @State private var notice: String?
+    /// The point the keyboard route is on, so going to a frame needs no pointer.
+    @State private var navigationIndex = 0
 
     private var controller: FieldPlotController {
         FieldPlotController.shared
@@ -94,6 +111,59 @@ struct FieldPlotWindow: View {
             text = String(localized: "\(text), \(plot.nonNumericCount.formatted()) not numeric")
         }
         return text
+    }
+
+    /// The points as the chart draws them, so the keyboard route and the plot agree
+    /// on what point an index means.
+    private var navigablePoints: [FieldPlot.Point] {
+        Self.drawable(controller.result?.points ?? [], logarithmic: isLogarithmic)
+    }
+
+    /// Clamped on both sides: the result can shrink under a stored index.
+    private var navigationBinding: Binding<Int> {
+        Binding {
+            min(max(0, navigationIndex), max(0, navigablePoints.count - 1))
+        } set: { requested in
+            let points = navigablePoints
+            guard !points.isEmpty else {
+                return
+            }
+            let index = min(max(0, requested), points.count - 1)
+            navigationIndex = index
+            hovered = points[index]
+        }
+    }
+
+    private var navigationLabel: String {
+        let position = (navigationBinding.wrappedValue + 1).formatted()
+        return String(localized: "Point \(position) of \(navigablePoints.count.formatted())")
+    }
+
+    private var navigatedPoint: FieldPlot.Point? {
+        let points = navigablePoints
+        let index = min(max(0, navigationIndex), points.count - 1)
+        return points.indices.contains(index) ? points[index] : nil
+    }
+
+    /// What VoiceOver reads for the plot as a whole, rather than one mark's coordinate.
+    private var chartAccessibilityValue: String {
+        guard let plot = controller.result, !plot.points.isEmpty else {
+            return String(localized: "No points")
+        }
+        let points = navigablePoints
+        guard let first = points.first, let last = points.last,
+              let lowest = points.min(by: { $0.value < $1.value }),
+              let highest = points.max(by: { $0.value < $1.value }) else
+        {
+            return String(localized: "No points")
+        }
+        return String(
+            localized: """
+            \(points.count.formatted()) points, \
+            \(lowest.value.formatted()) to \(highest.value.formatted()), \
+            over \((last.time - first.time).formatted(.number.precision(.fractionLength(3)))) seconds
+            """
+        )
     }
 
     private var csv: String {
@@ -154,10 +224,23 @@ struct FieldPlotWindow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer()
+            if navigablePoints.count > 1 {
+                Stepper(value: navigationBinding, in: 0 ... (navigablePoints.count - 1)) {
+                    Text(navigationLabel).lineLimit(1)
+                }
+                .help("Choose a point with the keyboard or VoiceOver, then activate Show frame.")
+            }
+            if let navigatedPoint {
+                Button("Show frame \(navigatedPoint.frame.formatted())") {
+                    notice = coordinator.goToFrame(navigatedPoint.frame)
+                }
+                .help("Select frame \(navigatedPoint.frame.formatted()) in All Frames")
+            }
             Button("Copy as CSV") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(csv, forType: .string)
             }
+            .keyboardShortcut(.defaultAction)
             .disabled(controller.result?.points.isEmpty ?? true)
             Button("Save as CSV…") {
                 notice = StatisticsExport.saveText(csv, suggestedName: "Plot.csv")
@@ -218,7 +301,11 @@ struct FieldPlotWindow: View {
                     }
             }
         }
+        // One element for the whole plot: each mark would otherwise be announced
+        // on its own as a bare coordinate pair.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Plot of \(plot.key.title) over time"))
+        .accessibilityValue(Text(chartAccessibilityValue))
     }
 
     private func point(

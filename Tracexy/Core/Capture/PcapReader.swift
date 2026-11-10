@@ -14,7 +14,9 @@ nonisolated struct CapturedFrame: Sendable {
         originalLength: Int,
         capturedLength: Int? = nil,
         linkType: UInt32? = nil,
-        processName: String? = nil
+        processName: String? = nil,
+        direction: CaptureDirection = .unknown,
+        packetID: UInt64? = nil
     ) {
         self.bytes = bytes
         self.timestamp = timestamp
@@ -25,6 +27,8 @@ nonisolated struct CapturedFrame: Sendable {
         self.capturedLength = capturedLength ?? bytes.count
         self.linkType = linkType
         self.processName = processName
+        self.direction = direction
+        self.packetID = packetID
     }
 
     /// Builds a `CapturedFrame` from a helper's `NSSecureCoding` DTO, validating
@@ -101,6 +105,10 @@ nonisolated struct CapturedFrame: Sendable {
     var linkType: UInt32?
     /// Originating process name from pktap, when capturing live (nil = unknown).
     var processName: String?
+    /// Interface-relative packet direction, if the capture supplied it.
+    let direction: CaptureDirection
+    /// Arbitrary packet identity carried by pcapng `epb_packetid`.
+    let packetID: UInt64?
 }
 
 // MARK: - PcapReader

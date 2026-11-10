@@ -53,6 +53,7 @@ struct FlowGraphWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .top) {
             if let callID = frames.flowCallID {
                 HStack(spacing: Theme.Metrics.spacingM) {

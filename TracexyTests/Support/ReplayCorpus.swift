@@ -18,7 +18,8 @@ import Foundation
 /// The corpus is intentionally compact and *current-decoder truthful*: it exercises
 /// only what the direct `PacketDecoder` actually recognises today (Ethernet/ARP,
 /// IPv4/IPv6, ICMP, TCP/UDP, DNS, TLS incl. a first-record split across TCP
-/// segments, HTTP/1 recognition, STUN and conservative QUIC long-header metadata).
+/// segments, HTTP/1 recognition, STUN and conservative QUIC long-header metadata,
+/// plus a separate two-frame SCTP association).
 /// It makes no HTTP/2, HTTP/3, WebSocket, gRPC or deep-QUIC claim.
 enum ReplayCorpus {
     // MARK: Internal
@@ -172,6 +173,63 @@ enum ReplayCorpus {
                 timestamp: frame.timestamp,
                 originalLength: frame.bytes.count
             )
+        }
+    }
+
+    // MARK: The SCTP association corpus
+
+    /// A two-frame SCTP association (INIT, then INIT ACK) over IPv4. SCTP folds into
+    /// sessions exactly like TCP and UDP, so it must replay identically across the
+    /// batch, live and saved paths. It is deliberately kept out of ``conversation()``
+    /// because that corpus's snapshot digests are pinned by ``ReplayGoldens``, and
+    /// appending to it would invalidate the goldens rather than extend coverage.
+    static func sctpAssociationFrames() -> [Frame] {
+        let client = "192.0.2.11"
+        let server = "192.0.2.12"
+        func frame(
+            from source: String, to destination: String, sourcePort: Int, destinationPort: Int,
+            chunkType: UInt8, inbound: Bool
+        )
+            -> [UInt8]?
+        {
+            guard let source = SyntheticIPPacketEnvelope.address(source, ipv6: false),
+                  let destination = SyntheticIPPacketEnvelope.address(destination, ipv6: false) else
+            {
+                return nil
+            }
+            // Common header (ports, verification tag, zeroed checksum) then one
+            // minimal 4-byte chunk, which is all the session fold reads.
+            let sctp = SyntheticIPPacketEnvelope.word(sourcePort)
+                + SyntheticIPPacketEnvelope.word(destinationPort)
+                + SyntheticIPPacketEnvelope.doubleWord(0x12345678)
+                + SyntheticIPPacketEnvelope.doubleWord(0)
+                + [chunkType, 0, 0, 4]
+            let ip = SyntheticIPPacketEnvelope.ipHeader(
+                source: source, destination: destination,
+                transportLength: sctp.count, protocolNumber: 132, ipv6: false
+            )
+            return SyntheticIPPacketEnvelope.ethernetHeader(inbound: inbound, ipv6: false) + ip + sctp
+        }
+        let bytes = [
+            frame(
+                from: client, to: server, sourcePort: 5_000, destinationPort: 5_001,
+                chunkType: 1, inbound: false
+            ),
+            frame(
+                from: server, to: client, sourcePort: 5_001, destinationPort: 5_000,
+                chunkType: 2, inbound: true
+            ),
+        ]
+        return bytes.enumerated().compactMap { offset, bytes in
+            bytes.map { Frame(bytes: $0, offsetSeconds: offset + 1, linkType: LinkType.ethernet) }
+        }
+    }
+
+    /// The SCTP association as `CapturedFrame`s, with no intrinsic link type so the
+    /// Ethernet default decodes them on every path.
+    static func sctpAssociationCapturedFrames() -> [CapturedFrame] {
+        sctpAssociationFrames().map { frame in
+            CapturedFrame(bytes: frame.bytes, timestamp: frame.timestamp, originalLength: frame.bytes.count)
         }
     }
 

@@ -26,9 +26,15 @@ struct ValueDistributionWindow: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tracexyDenseScrollEdge()
             .tracexySafeAreaBar(edge: .bottom) { footer }
             .frame(minWidth: 520, minHeight: 320)
-            .task(id: RunKey(field: controller.field, limited: controller.limitToSessionsInView)) {
+            .task(id: RunKey(
+                field: controller.field,
+                limited: controller.limitToSessionsInView,
+                project: coordinator.projectStore.activeProjectID,
+                generation: coordinator.startGeneration
+            )) {
                 controller.run(from: coordinator)
             }
             .onDisappear { controller.cancel() }
@@ -55,9 +61,13 @@ struct ValueDistributionWindow: View {
 
     // MARK: Private
 
+    /// Carries the Project and capture generation so switching either reloads
+    /// this window instead of leaving it on the previous capture's figures.
     private struct RunKey: Hashable {
         let field: FieldKey?
         let limited: Bool
+        let project: UUID
+        let generation: Int
     }
 
     @State private var selection: FieldValueDistribution.Row.ID?
@@ -141,6 +151,7 @@ struct ValueDistributionWindow: View {
                     NSPasteboard.general.setString(result.csv(), forType: .string)
                 }
             }
+            .keyboardShortcut(.defaultAction)
             .disabled(controller.result?.rows.isEmpty ?? true)
             Button("Save as CSV…") {
                 if let result = controller.result {

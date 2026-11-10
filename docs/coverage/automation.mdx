@@ -1,0 +1,41 @@
+---
+title: Automation and customization
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/mcp) · [All coverage areas](/reference/feature-coverage)
+
+## Command-line capture/open/export
+
+**Partial**
+
+Read-only local-file commands for summaries, sessions, findings, statistics, frames, objects, TCP follow, file information, selection, merge, and an expression glossary. `select` and `merge` emit PCAPNG to standard output for explicit shell redirection. `info` reports the same kind of file properties as `capinfos`, and the statistics flag accepts TShark `-z` names. Decoding verbs accept up to 64 invocation-local `--decode-as udp:5300:dns` rules, which never load or change Project settings. **Coming soon:** command-line live capture, and general TShark/dumpcap option compatibility. [Command-line guide](/features/command-line).
+
+## Read-only automation
+
+**Available**
+
+Scoped MCP History projection after an explicit Project grant; no raw packets or capture control.
+
+## TShark field extraction and scripting pipelines
+
+**Partial**
+
+`tracexy frames` emits text, CSV or JSON across a complete stable capture, includes interface-relative `capture_direction` (`inbound`, `outbound`, or `unknown`), and accepts repeated `--column Protocol:Field` for supported decoded fields. This exposes selected fields from Tracexy's own decoded tree; there is no general Wireshark field registry and no `-T fields` compatibility.
+
+## Configuration profiles and portable settings
+
+**Partial**
+
+Project configuration transfer, plus individual import of Wireshark `cfilters` capture-filter lists, `dfilters` display-filter lists, and `coloring_rules.jsonc` or legacy `colorfilters` coloring rules, each reporting what could not be translated. A whole Wireshark profile and its preferences are not imported.
+
+## Lua plugins, custom dissectors, extcap integration
+
+**Coming soon**
+
+No public extension SDK.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.

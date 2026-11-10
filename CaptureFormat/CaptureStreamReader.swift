@@ -12,6 +12,27 @@ nonisolated enum CaptureStreamFormat: Sendable, Equatable {
     case pcapng
 }
 
+// MARK: - CaptureStreamReaderError
+
+private enum CaptureStreamReaderError: LocalizedError {
+    case frameOrdinalOverflow
+
+    // MARK: Internal
+
+    var errorDescription: String? {
+        "The capture has more frames than can be assigned a stable ordinal."
+    }
+}
+
+// MARK: - CaptureFrameCommentReference
+
+/// Coordinates for reading options from one pcapng packet block without
+/// retaining comment text on every packet row.
+nonisolated struct CaptureFrameCommentReference: Sendable, Equatable, Hashable {
+    let optionsRange: Range<UInt64>
+    let littleEndian: Bool
+}
+
 // MARK: - CaptureFrameReference
 
 /// A format-neutral pointer to one captured frame within the opened file, carrying
@@ -29,6 +50,12 @@ nonisolated struct CaptureFrameReference: Sendable, Equatable {
     /// Decoded capture timestamp, or `nil` when the source block carried none (a
     /// pcapng Simple Packet Block). Classic `.pcap` records always carry one.
     let timestamp: Date?
+    /// Interface-relative packet direction when available.
+    let direction: CaptureDirection
+    /// Complete source `epb_flags` word, when present in a PCAPNG packet block.
+    let packetFlags: UInt32?
+    /// Arbitrary pcapng packet identity when carried by the source.
+    let packetID: UInt64?
     /// Link type of this specific frame. For classic `.pcap` this is the file's
     /// single link type; for `.pcapng` it is the frame's own interface link type,
     /// so a mixed-interface capture keeps each frame's real DLT.
@@ -40,6 +67,13 @@ nonisolated struct CaptureFrameReference: Sendable, Equatable {
     /// Whether the source block carried a comment option (always `false` for
     /// classic `.pcap`, which has no per-record options).
     let hasComment: Bool
+    /// Whether the source packet block carried any options, including options
+    /// other than comments. Used to report metadata that cannot be copied.
+    let hasPacketOptions: Bool
+    /// On-demand access to this pcapng packet's option list when it carries a comment.
+    var frameCommentReference: CaptureFrameCommentReference?
+    /// On-demand access to packet options for selective metadata export.
+    var packetOptionsReference: CaptureFrameCommentReference?
     /// Absolute byte range of the source block's options, when the format has
     /// them and the section is little-endian (copyable verbatim); `nil` otherwise.
     let copyableOptionsRange: Range<UInt64>?
@@ -108,6 +142,7 @@ nonisolated final class CaptureStreamReader {
     ///   a pcapng section header nor short is handed to the classic reader, which
     ///   validates its own magic.
     init(contentsOf url: URL, configuration: Configuration = Configuration()) throws {
+        self.configuration = configuration
         let magic = try Self.sniffLeadingMagic(url)
         if magic == Self.pcapngSectionHeaderMagic {
             let reader = try PcapngStreamReader(
@@ -142,15 +177,19 @@ nonisolated final class CaptureStreamReader {
 
         init(
             maxCapturedLength: Int = CaptureFormatLimits.maxCapturedLength,
+            timestampTransform: (@Sendable (Date?, UInt64) throws -> Date?)? = nil,
             isCancelled: @escaping @Sendable () -> Bool = { Task.isCancelled }
         ) {
             self.maxCapturedLength = maxCapturedLength
+            self.timestampTransform = timestampTransform
             self.isCancelled = isCancelled
         }
 
         // MARK: Internal
 
         let maxCapturedLength: Int
+        /// Optional saved-capture overlay; raw source bytes and identity remain unchanged.
+        let timestampTransform: (@Sendable (Date?, UInt64) throws -> Date?)?
         let isCancelled: @Sendable () -> Bool
     }
 
@@ -159,6 +198,14 @@ nonisolated final class CaptureStreamReader {
     /// Identity of the opened file, snapshotted once. Frame references and evidence
     /// references are valid only against this identity.
     let identity: PcapFileIdentity
+
+    /// Host mappings supplied by PCAPNG; classic PCAP has no container-level NRB.
+    var nameResolutionRecords: [CaptureNameResolutionRecord] {
+        if case let .pcapng(reader) = backing {
+            return reader.nameResolutionRecords
+        }
+        return []
+    }
 
     /// The file's compatibility-default link type: the classic single link type
     /// for `.pcap`, or the first declared IDB link type for `.pcapng` (`nil` until
@@ -190,21 +237,27 @@ nonisolated final class CaptureStreamReader {
         case let .pcap(reader):
             switch try reader.next() {
             case let .frame(event):
-                .frame(CaptureFrameEvent(
+                try .frame(corrected(CaptureFrameEvent(
                     reference: CaptureFrameReference(
                         payloadOffset: event.reference.payloadOffset,
                         capturedLength: event.reference.capturedLength,
                         originalLength: event.reference.originalLength,
                         timestamp: event.reference.timestamp,
+                        direction: .unknown,
+                        packetFlags: nil,
+                        packetID: nil,
                         linkType: reader.metadata.linkType,
                         sectionIndex: 0,
                         interfaceID: 0,
                         hasComment: false,
+                        hasPacketOptions: false,
+                        frameCommentReference: nil,
+                        packetOptionsReference: nil,
                         copyableOptionsRange: nil
                     ),
                     bytes: event.bytes,
                     progress: event.progress
-                ))
+                )))
             case let .end(completion):
                 .end(CaptureStreamCompletion(
                     reason: Self.map(completion.reason), progress: completion.progress
@@ -213,22 +266,36 @@ nonisolated final class CaptureStreamReader {
         case let .pcapng(reader):
             switch try reader.next() {
             case let .frame(event):
-                .frame(CaptureFrameEvent(
+                try .frame(corrected(CaptureFrameEvent(
                     reference: CaptureFrameReference(
                         payloadOffset: event.reference.payloadOffset,
                         capturedLength: event.reference.capturedLength,
                         originalLength: event.reference.originalLength,
                         timestamp: event.reference.timestamp,
+                        direction: event.reference.direction,
+                        packetFlags: event.reference.packetFlags,
+                        packetID: event.reference.packetID,
                         linkType: event.reference.linkType,
                         sectionIndex: event.reference.sectionIndex,
                         interfaceID: event.reference.interfaceID,
                         hasComment: event.reference.hasComment,
+                        hasPacketOptions: event.reference.hasOptions,
+                        frameCommentReference: event.reference.hasComment
+                            ? CaptureFrameCommentReference(
+                                optionsRange: event.reference.optionsRange,
+                                littleEndian: event.reference.littleEndian
+                            ) : nil,
+                        packetOptionsReference: event.reference.hasOptions
+                            ? CaptureFrameCommentReference(
+                                optionsRange: event.reference.optionsRange,
+                                littleEndian: event.reference.littleEndian
+                            ) : nil,
                         copyableOptionsRange: event.reference.littleEndian && !event.reference.optionsRange.isEmpty
                             ? event.reference.optionsRange : nil
                     ),
                     bytes: event.bytes,
                     progress: event.progress
-                ))
+                )))
             case let .end(completion):
                 .end(CaptureStreamCompletion(
                     reason: Self.map(completion.reason), progress: completion.progress
@@ -248,6 +315,10 @@ nonisolated final class CaptureStreamReader {
     /// The pcapng Section Header Block's leading type bytes, which are byte-order
     /// independent and therefore usable as a raw sniff signature.
     private static let pcapngSectionHeaderMagic: [UInt8] = [0x0A, 0x0D, 0x0D, 0x0A]
+
+    private var scannedFrameOrdinal: UInt64 = 0
+
+    private let configuration: Configuration
 
     private let backing: Backing
 
@@ -275,6 +346,43 @@ nonisolated final class CaptureStreamReader {
         case .partialBlockHeader: .partialHeader
         case .partialBlockBody: .partialBody
         }
+    }
+
+    private static func retimed(_ event: CaptureFrameEvent, to timestamp: Date?) -> CaptureFrameEvent {
+        let reference = event.reference
+        return CaptureFrameEvent(
+            reference: CaptureFrameReference(
+                payloadOffset: reference.payloadOffset,
+                capturedLength: reference.capturedLength,
+                originalLength: reference.originalLength,
+                timestamp: timestamp,
+                direction: reference.direction,
+                packetFlags: reference.packetFlags,
+                packetID: reference.packetID,
+                linkType: reference.linkType,
+                sectionIndex: reference.sectionIndex,
+                interfaceID: reference.interfaceID,
+                hasComment: reference.hasComment,
+                hasPacketOptions: reference.hasPacketOptions,
+                frameCommentReference: reference.frameCommentReference,
+                packetOptionsReference: reference.packetOptionsReference,
+                copyableOptionsRange: reference.copyableOptionsRange
+            ),
+            bytes: event.bytes,
+            progress: event.progress
+        )
+    }
+
+    private func corrected(_ event: CaptureFrameEvent) throws -> CaptureFrameEvent {
+        guard let transform = configuration.timestampTransform else {
+            return event
+        }
+        let (ordinal, overflow) = scannedFrameOrdinal.addingReportingOverflow(1)
+        guard !overflow else {
+            throw CaptureStreamReaderError.frameOrdinalOverflow
+        }
+        scannedFrameOrdinal = ordinal
+        return try Self.retimed(event, to: transform(event.reference.timestamp, ordinal))
     }
 }
 

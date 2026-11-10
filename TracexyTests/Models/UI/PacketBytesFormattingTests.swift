@@ -30,11 +30,25 @@ struct PacketBytesFormattingTests {
         #expect(PacketBytesFormat.escapedString.text(for: slice) == "\\x16\\x03\\x01\\x00")
         #expect(PacketBytesFormat.base64.text(for: slice) == Data(slice).base64EncodedString())
         #expect(PacketBytesFormat.printableText.text(for: bytes[0 ..< 3]) == "GET")
+        let mixedBytes: [UInt8] = [0x41, 0x00, 0x42, 0xFF]
+        #expect(PacketBytesFormat.printableText.text(for: mixedBytes[...]) == "AB")
         #expect(PacketBytesFormat.cArray.text(for: slice)
             == "static const unsigned char bytes[4] = {\n    0x16, 0x03, 0x01, 0x00\n};")
         let dump = PacketBytesFormat.hexDump.text(for: bytes[16 ..< 29], startOffset: 16)
         #expect(dump.hasPrefix("0010  48 6f 73 74"))
         #expect(dump.hasSuffix("Host: a......"))
+    }
+
+    @Test
+    func rawBinaryClipboardValuePreservesZeroAndNonUTF8Bytes() {
+        let bytes: [UInt8] = [0x00, 0xFF, 0xC3, 0x28]
+
+        #expect(PacketBytesFormat.rawBinary.menuTitle == "As Raw Binary")
+        #expect(
+            PacketBytesFormat.rawBinary.clipboardValue(for: bytes[1...])
+                == .data(Data([0xFF, 0xC3, 0x28]), type: "application/octet-stream")
+        )
+        #expect(PacketBytesFormat.hexStream.clipboardValue(for: bytes[1...]) == .text("ffc328"))
     }
 
     // MARK: Private

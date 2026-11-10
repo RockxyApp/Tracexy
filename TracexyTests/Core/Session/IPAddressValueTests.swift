@@ -29,6 +29,17 @@ struct IPAddressValueTests {
         let expanded = try #require(IPAddressValue(parsing: "2001:0db8:0000:0000:0000:0000:0000:0001"))
         #expect(compressed == expanded)
         #expect(compressed.hashValue == expanded.hashValue)
+        #expect(expanded.compressedText == "2001:db8::1")
+    }
+
+    @Test
+    func compressedIPv6UsesLongestZeroRunAndLeavesSingleZeroUncompressed() throws {
+        let tie = try #require(IPAddressValue(parsing: "2001:0:0:1:0:0:1:1"))
+        let singleZero = try #require(IPAddressValue(parsing: "2001:db8:0:1:2:3:4:5"))
+        #expect(tie.compressedText == "2001::1:0:0:1:1")
+        #expect(singleZero.compressedText == "2001:db8:0:1:2:3:4:5")
+        #expect(try #require(IPAddressValue(parsing: "::")).compressedText == "::")
+        #expect(try #require(IPAddressValue(parsing: "2001:db8::")).compressedText == "2001:db8::")
     }
 
     // MARK: Address boundaries

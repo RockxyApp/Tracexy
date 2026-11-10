@@ -1,0 +1,38 @@
+---
+title: Saved captures
+description: Open packet evidence without starting a live capture or installing the helper.
+---
+
+
+**Status: Available**
+
+Open packet evidence without starting a live capture or installing the helper.
+
+## Try it
+
+Choose **File → Open…** (⌘O) to inspect a PCAP or PCAPNG in place, or pick one from **Open Recent**. Use **Import into Library…** (⌥⌘O) when you want a Project-managed copy. Review format and progress before switching to the resulting sessions.
+
+The File menu also carries:
+
+- **Import Hex Dump…** — build a capture from a text hex dump, choosing the link type, timestamps, offset radix, byte grouping, direction indicators, an optional regular expression, and synthetic Ethernet, UDP, TCP, or SCTP headers.
+- **Merge Captures…** and **Split Capture…**
+- **File Set → Next File** and **Previous File**, plus **Show File Set in Finder**, for a capture written as a rotating set.
+- **Get Info** (⌘I) for format, frame counts, times, interfaces, and the file's SHA-256, and **Show File Structure** (⇧⌘F) for the file's own blocks and records.
+- **Reload** (⌘R) and **Close Capture** (⇧⌘W).
+- **Edit → Time Shift…**, with **Undo Time Shift**, to move a capture's timestamps.
+
+## What you can see
+
+The file header determines format even when the extension is unusual. Gzip and LZ4 wrapped captures and the supported TCP Viewer schema-1 capture payload import into a managed copy. Truncated final records retain accepted earlier evidence with a warning.
+
+## Coverage limits
+
+Zstandard, bzip2, xz, HAR, and arbitrary session archives are unsupported; a ZIP is accepted only as the exact TCP Viewer session layout, never searched for "some capture inside". An invalid or cancelled open leaves the current investigation in place.
+
+## Keep exploring
+
+<CardGroup cols={3}>
+  <Card title="Projects" href="/features/projects" />
+  <Card title="Frames" href="/features/frames" />
+  <Card title="File-format coverage" href="/coverage/capture-files" />
+</CardGroup>

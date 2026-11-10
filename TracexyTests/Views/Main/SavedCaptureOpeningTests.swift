@@ -50,6 +50,99 @@ struct SavedCaptureOpeningTests {
         #expect(coordinator.selectedSessionEvidenceID == selected.id)
     }
 
+    @Test("A capture with no sessions still has a stable source for All Frames")
+    func sessionlessCaptureCanListFrames() async throws {
+        let environment = try await makeEnvironment()
+        defer { environment.teardown() }
+        // An Ethertype in the local-experimental range folds into no session at
+        // all. An SCTP frame used to stand here, but SCTP now carries a
+        // five-tuple and folds into a session, so it no longer proves this.
+        let bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0xB5, 0xAA]
+        let frame = CapturedFrame(
+            bytes: bytes, timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            originalLength: bytes.count, linkType: LinkType.ethernet
+        )
+        let decoded = PacketDecoder.decode(
+            PacketBuffer(frame.bytes), linkType: LinkType.ethernet, timestamp: frame.timestamp,
+            originalLength: frame.originalLength
+        )
+        #expect(decoded.decodeStop == nil)
+        #expect(decoded.fiveTuple == nil)
+        let capture = try writeCapture(named: "sessionless", frames: [frame], in: environment.directory)
+
+        environment.coordinator.openSavedCapture(capture)
+        await environment.coordinator.waitForSavedCaptureOpen()
+
+        let coordinator = environment.coordinator
+        #expect(coordinator.sessions.isEmpty)
+        #expect(coordinator.savedCaptureEvidence.isEmpty)
+        #expect(coordinator.adoptedSavedCaptureIdentity != nil)
+        #expect(coordinator.allFramesUnavailableReason == nil)
+        coordinator.loadAllFrames()
+        await coordinator.allFrames.task?.value
+        #expect(coordinator.allFrames.list?.rows.map(\.ordinal) == [1])
+
+        let state = coordinator.allFrames
+        #expect(state.visibleRows(sessionsInView: []).isEmpty)
+        state.search = "does-not-match"
+        state.frameExpressionDraft = "tcp.rst"
+        state.applyFrameExpression()
+        for _ in 0 ..< 1_000 where state.isEvaluatingFrameExpression {
+            await Task.yield()
+        }
+        #expect(!state.isEvaluatingFrameExpression)
+        #expect(state.acceptedFrameExpressionText == "tcp.rst")
+        state.showFramesOutsideSessionsInView()
+        #expect(!state.limitToSessionsInView)
+        #expect(state.search == "does-not-match")
+        #expect(state.acceptedFrameExpressionText == "tcp.rst")
+        #expect(state.visibleRows(sessionsInView: []).isEmpty)
+        state.search = ""
+        #expect(state.visibleRows(sessionsInView: []).isEmpty)
+        state.clearFrameExpression()
+        #expect(state.visibleRows(sessionsInView: []).map(\.ordinal) == [1])
+    }
+
+    @Test("Opening an orphan frame reads and presents its exact saved bytes")
+    func opensExactBytesForOrphanFrame() async throws {
+        let environment = try await makeEnvironment()
+        defer { environment.teardown() }
+        let bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0xB5]
+        let frame = CapturedFrame(
+            bytes: bytes,
+            timestamp: Date(),
+            originalLength: bytes.count,
+            linkType: LinkType.ethernet
+        )
+        let capture = try writeCapture(named: "orphan-frame", frames: [frame], in: environment.directory)
+
+        let coordinator = environment.coordinator
+        coordinator.openSavedCapture(capture)
+        await coordinator.waitForSavedCaptureOpen()
+        coordinator.loadAllFrames()
+        await coordinator.allFrames.task?.value
+
+        let row = try #require(coordinator.allFrames.list?.rows.first)
+        #expect(row.sessionID == nil)
+        #expect(await coordinator.frameBytesForCopy(row) == .bytes(bytes))
+        #expect(await coordinator.inspectOrphanFrameBytes(row) == .ready)
+        let subject = try #require(coordinator.packetBytesInspection.subject)
+        #expect(subject.title == "Frame 1")
+        #expect(subject.bytes == bytes)
+        #expect(subject.layers.map(\.proto) == [.ethernet])
+        #expect(subject.suggestedPresentation == .hexDump)
+    }
+
+    @Test("A stopped capture can list frames even if no session folded")
+    func sessionlessStoppedCaptureIsEligibleForAllFrames() async throws {
+        let environment = try await makeEnvironment()
+        defer { environment.teardown() }
+        let coordinator = environment.coordinator
+        #expect(coordinator.sessions.isEmpty)
+        coordinator.stoppedCaptureReadyGeneration = coordinator.startGeneration
+        #expect(coordinator.allFramesUnavailableReason == nil)
+    }
+
     @Test("A malformed newer open preserves the previously published capture")
     func malformedOpenPreservesPublishedState() async throws {
         let environment = try await makeEnvironment()
@@ -214,6 +307,7 @@ struct SavedCaptureOpeningTests {
         await environment.coordinator.waitForSavedCaptureOpen()
         #expect(!environment.coordinator.connectionSnapshot.summaries.isEmpty)
         #expect(!environment.coordinator.connectionAnalysisSnapshot.findings.isEmpty)
+        #expect(environment.coordinator.adoptedSavedCaptureIdentity != nil)
 
         environment.coordinator.clearSessions()
 
@@ -222,6 +316,7 @@ struct SavedCaptureOpeningTests {
         #expect(environment.coordinator.connectionSnapshot == .empty)
         #expect(environment.coordinator.connectionAnalysisSnapshot == .empty)
         #expect(environment.coordinator.datagramAnalysisSnapshot == .empty)
+        #expect(environment.coordinator.adoptedSavedCaptureIdentity == nil)
     }
 
     @Test("A malformed newer open preserves the previously published session/connection pair")

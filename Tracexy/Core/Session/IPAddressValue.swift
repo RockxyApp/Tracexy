@@ -207,18 +207,39 @@ nonisolated struct CIDRValue: Hashable, Sendable {
     }
 }
 
-extension IPAddressValue {
+nonisolated extension IPAddressValue {
     /// RFC 5952 text for display — `2001:db8::10`, the form Wireshark and `inet_ntop`
     /// print. Display only: session identity keeps the decoder's own spelling.
     var compressedText: String {
-        var storage = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-        let family = family == .v4 ? AF_INET : AF_INET6
-        let written = bytes.withUnsafeBytes { raw in
-            inet_ntop(family, raw.baseAddress, &storage, socklen_t(storage.count))
-        }
-        guard written != nil else {
+        guard family == .v6 else {
             return bytes.map(String.init).joined(separator: ".")
         }
-        return String(cString: storage)
+
+        let groups = stride(from: 0, to: bytes.count, by: 2).map { offset in
+            UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
+        }
+        var bestRun: Range<Int>?
+        var index = 0
+        while index < groups.count {
+            guard groups[index] == 0 else {
+                index += 1
+                continue
+            }
+            let start = index
+            while index < groups.count, groups[index] == 0 {
+                index += 1
+            }
+            let candidate = start ..< index
+            if candidate.count >= 2, candidate.count > (bestRun?.count ?? 0) {
+                bestRun = candidate
+            }
+        }
+
+        guard let bestRun else {
+            return groups.map { String($0, radix: 16) }.joined(separator: ":")
+        }
+        let left = groups[..<bestRun.lowerBound].map { String($0, radix: 16) }.joined(separator: ":")
+        let right = groups[bestRun.upperBound...].map { String($0, radix: 16) }.joined(separator: ":")
+        return "\(left)::\(right)"
     }
 }

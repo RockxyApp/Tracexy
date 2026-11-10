@@ -105,7 +105,7 @@ final class MainContentCoordinator {
         expressionLibrary.bind(to: bootDefaults)
         addressNames.bind(to: bootDefaults)
         investigationViewStates.bind(to: bootDefaults)
-        bindViewPreferences(to: bootDefaults)
+        bindViewPreferences(to: bootDefaults, projectID: projectStore.activeProjectID)
         refreshSavedCaptures()
         // Before any destructive/privileged helper op (force reset), settle the
         // active capture, retire what the destroyed connection still owes, and
@@ -140,7 +140,8 @@ final class MainContentCoordinator {
 
     /// True when the app was launched in direct-capture dev mode — via the env
     /// var `TRACEXY_DIRECT_CAPTURE=1` or the launch argument `--direct-capture`
-    /// (both set by `scripts/run.sh`). Bypasses the privileged helper and captures
+    /// (the launch argument is what `scripts/run.sh -d` passes). Bypasses the
+    /// privileged helper and captures
     /// through libpcap directly, and suppresses the first-run helper-install sheet.
     static let forceDirectCapture: Bool =
         ProcessInfo.processInfo.environment["TRACEXY_DIRECT_CAPTURE"] == "1"
@@ -265,7 +266,7 @@ final class MainContentCoordinator {
     /// a file dropped on the window) before Projects finished hydrating at launch.
     /// Replayed exactly once when hydration completes; never persisted.
     var pendingExternalCaptureURL: URL?
-    @ObservationIgnored var savedCaptureLoadOperation: SavedCaptureLoadOperation = .streaming
+    @ObservationIgnored var savedCaptureOpeningOperations = SavedCaptureOpeningOperations()
     @ObservationIgnored var captureSaveOperation: CaptureSaveOperation = .copy
 
     /// Monotonic identity of the newest managed capture-I/O request. The handle
@@ -370,6 +371,8 @@ final class MainContentCoordinator {
     /// Get Info window and the interface context; file-authored strings never enter
     /// Sources, History, automation or the Assistant brief through this value.
     var savedCaptureProperties: CaptureFileProperties?
+    /// Host mappings retained from the active saved PCAPNG, when present.
+    var savedCaptureNameResolutionRecords: [CaptureNameResolutionRecord] = []
 
     /// Saved-file opening is an off-main, final-only transaction. The previous
     /// workspace remains intact while this is true; only monotonic byte progress
@@ -435,8 +438,14 @@ final class MainContentCoordinator {
     var pendingSavedCaptureOpen: SavedCaptureOpenRequest?
     var savedCaptureBoundaryTask: Task<Void, Never>?
     var savedCaptureOpenTask: Task<Void, Never>?
+    /// Saved-capture Time Shift's asynchronous anchor resolution and reload.
+    var timeShiftTask: Task<Void, Never>?
+    var timeShiftRequestID = 0
+    var timeShiftError: String?
+    var isTimeShiftPresented = false
     var savedCaptureEvidence: [UUID: CaptureEvidenceReference] = [:]
     var savedCaptureEvidenceURL: URL?
+    var savedCaptureFileIdentity: PcapFileIdentity?
     var selectedSessionEvidenceID: UUID?
     var selectedSessionEvidenceRequestID = 0
     var selectedSessionEvidenceTask: Task<Void, Never>?
@@ -1051,12 +1060,6 @@ final class MainContentCoordinator {
         isExportingSession = isExporting
     }
 
-    /// Saved-opening activation is split into its own file, while the engine
-    /// reset implementation remains private to this file's live pipeline.
-    func resetSessionEngineForSavedCapture(token: Int) {
-        resetSessionEngine(token: token)
-    }
-
     /// The only cross-file mutation seam for published investigation state. It adopts
     /// the complete immutable snapshot, projects the existing analysis properties and
     /// refreshes only accepted capture-local queries, so sessions/evidence/results can
@@ -1139,6 +1142,7 @@ final class MainContentCoordinator {
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
         savedCaptureProperties = nil
+        savedCaptureNameResolutionRecords = []
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
         resetCaptureHash()
@@ -1210,6 +1214,7 @@ final class MainContentCoordinator {
         savedCaptureActivity = nil
         savedCaptureMetadata = nil
         savedCaptureProperties = nil
+        savedCaptureNameResolutionRecords = []
         activeSavedCaptureChangedOnDisk = false
         unavailableReferencedCapture = nil
         resetCaptureHash()
@@ -1967,36 +1972,6 @@ extension MainContentCoordinator {
     /// accumulation — see ``retainedFrameLimit``.
     func appendRetainedFrames(_ frames: [CapturedFrame]) {
         retainedFrames.append(contentsOf: frames)
-    }
-
-    /// Clears the engine and adopts a new capture generation. Enqueued on the
-    /// ingest chain so it is ordered ahead of subsequent ingests; older in-flight
-    /// work carries the previous token and is dropped by the engine's epoch guard.
-    func resetSessionEngine(token: Int, fileSet: LiveCaptureSpool.FileSetPolicy? = nil) {
-        retireCaptureLocalTools()
-        let engine = sessionEngine
-        let spool = liveCaptureSpool
-        // The runtime this reset belongs to, captured before the first `await`. A
-        // queued reset can outlive a Project change, and its spool failure describes
-        // the Project that owns that spool — never the one now on screen.
-        let origin = activeRuntime
-        let previous = ingestChain
-        ingestChain = Task { @MainActor in
-            await previous?.value
-            await engine.reset(epoch: token)
-            do {
-                try await spool.reset(epoch: token, fileSet: fileSet)
-            } catch {
-                let message = "Capture spool unavailable — \(error.localizedDescription)"
-                if self.activeRuntime !== origin {
-                    // Already parked: report it into its own Project's bucket so the
-                    // failure is still there when that Project comes back.
-                    origin.captureError = message
-                } else if self.startGeneration == token {
-                    self.captureError = message
-                }
-            }
-        }
     }
 
     /// The capture source stopped on its own (libpcap reported a read error: the

@@ -89,6 +89,7 @@ struct PacketLengthsWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tracexyDenseScrollEdge()
         .tracexySafeAreaBar(edge: .bottom) {
             footer(rows: ranges + [total], sessions: sessions.count)
         }
@@ -169,10 +170,15 @@ struct PacketLengthsWindow: View {
 
     private func footer(rows: [PacketLengthRow], sessions: Int) -> some View {
         HStack(spacing: Theme.Metrics.spacingM) {
-            Text("Frames of the \(sessions.formatted()) sessions in view; frames outside any session are not counted")
+            // Short enough to survive the window's own default width. The
+            // qualifier was part of the sentence and truncated away with it,
+            // leaving a caption that stopped mid-clause and could not be read
+            // at all; it belongs in help text the pointer can reach.
+            Text("Frames of the \(sessions.formatted()) sessions in view")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .help("Frames outside any session are not counted")
             Spacer()
             if let notice {
                 Text(notice).font(Theme.Typography.caption).foregroundStyle(.secondary).lineLimit(1)

@@ -12,6 +12,7 @@ nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
     case icmpv6
     case tcp
     case udp
+    case sctp
     case dns
     case tls
     case http
@@ -68,6 +69,7 @@ nonisolated enum ProtocolKind: String, CaseIterable, Identifiable, Hashable {
         case .icmpv6: "ICMPv6"
         case .tcp: "TCP"
         case .udp: "UDP"
+        case .sctp: "SCTP"
         case .dns: "DNS"
         case .tls: "TLS"
         case .http: "HTTP"

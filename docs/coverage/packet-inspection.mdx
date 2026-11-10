@@ -1,0 +1,89 @@
+---
+title: Packet inspection and navigation
+description: Wireshark workflow coverage, one capability at a time.
+---
+
+
+Use this inventory to compare familiar Wireshark workflows with Tracexy. **Available** identifies a supported action; **Partial** identifies narrower coverage; **Coming soon** means unavailable today, with no release date promised.
+
+[Explore the Tracexy feature](/features/packet-inspector) · [All coverage areas](/reference/feature-coverage)
+
+## Packet list, details tree, hex/bytes pane
+
+**Partial**
+
+All Frames pages through a stable capture with at most 200,000 retained rows per scan; a Frame Expression counts matches across the capture and shows them by page, while toolbar search applies to the current page. The evidence inspector presents a selection through nine facets — Timeline, Evidence, Ladder, Frames, Stream, Layers, Requests, Payload and Hex — so the decoded layers and the exact bytes stay one click apart from the session that cites them.
+
+Optional Relative TCP Seq/Ack displays capture-order relative values in All Frames only, bounded to 200,000 conversations; raw protocol facts and filtering remain unchanged, and ACK stays unknown until its reverse-direction origin is observed. Up to 16 capture-local pinned rows stay in a separate strip across paging and filters, with go-to and unpin actions.
+
+Session and standalone frame-details trees filter decoded layer titles/summaries and field names/values by substring, preserve byte mappings, recursively expand/collapse subtrees, and copy a layer's visible subtree while honoring folded descendants and the displayed projection. Both trees navigate with arrows, Return, Shift+Arrow and Command+Arrow while focused. Double-clicking a frame with no folded session opens a frame-scoped details tree beside its exact hex bytes without inventing a session. The packet-list context menu and bytes pane copy complete frame bytes in hex/text formats or raw `application/octet-stream`; the bytes pane also copies selected fields. The CLI `frames` table streams every row of a complete stable capture.
+
+## Search/find packet, go to frame, related packets
+
+**Available**
+
+Bounded text/hex/regex and Frame Expression **Find in Frames** scans the stable capture and navigates across pages without changing the applied filter; expression search counts frames whose facts are unknown and reports a truncated tail. String/Bytes supports UTF-8, UTF-16 LE, UTF-16 BE, or all three encodings. Toolbar search remains page-local. All Frames has bounded Back/Forward selection history with guarded filter and paging behavior, First/Last on the current page, and frame/session navigation.
+
+## Packet marking, ignoring, comments
+
+**Available**
+
+Local investigation controls including Mark/Unmark All Displayed and Ignore All Displayed for the current visible result, read-only on-demand display of selected PCAPNG source comments, Tracexy-authored frame comments on explicit export, and optional capture-export exclusion of ignored ordinals.
+
+## Custom columns, layout, colorization
+
+**Partial**
+
+Custom session columns, native layout, a temporary page-local Frame Expression highlight, up to ten capture-local conversation color slots, and ordered Project-local packet coloring rules with foreground/background colors and draft-only duplicate actions. Import accepts Wireshark `coloring_rules.jsonc` and legacy `colorfilters` records only when filters fit Tracexy's bounded grammar; unsupported rules are reported. Profiles and display-filter semantics are not imported.
+
+## Decode As and enabled protocols
+
+**Partial**
+
+Project-local TCP/UDP port overrides and protocol enable/disable; All Frames and packet-details TCP/UDP context menus can prefill a reviewed, unapplied source- or destination-port rule. The read-only CLI accepts up to 64 invocation-local `--decode-as udp:5300:dns` rules on decoding verbs, including summary, and never loads or changes Project settings. An existing same-port rule is replaced on Apply; there is no universal dissector dispatch or TShark `-d` grammar.
+
+## Checksum validation and malformed-packet hints
+
+**Partial**
+
+Opt-in IPv4/TCP/UDP/SCTP/ICMP/ICMPv6 checks and bounded decode warnings; no universal expert validation.
+
+## Name resolution and address book
+
+**Partial**
+
+Project-local address names can be added from Sessions or an All Frames packet row, merged from an explicitly selected standard/Wireshark `hosts` file (bounded to 256 KiB, 10,000 lines and 500 addresses), or read from PCAPNG Name Resolution Blocks up to 64 KiB and 500 mappings (omitted records/blocks are reported in Capture Info). DNS/mDNS answer facts remain separately attributed. Existing Project labels win in All Frames.
+
+A MaxMind-format GeoIP/ASN database you already have can be added per Project from **Statistics → GeoIP Databases…**, read locally only, adding Country/City/AS columns, a GeoIP inspector layer and `$geoip_*` Session Expression macros. There is no automatic profile discovery, external DNS, bundled database, or broad Wireshark resolver parity.
+
+## Time references, shift and display formats
+
+**Partial**
+
+Selected frame time controls distinguish previous displayed from previous captured packets, preserve unknown deltas, use the first packet's timestamp as capture origin, and support up to 16 temporary references. All Frames references are capture-wide, remain visible across pages and display filters, and can be navigated; its optional Cumulative Bytes column sums captured lengths capture-wide and resets at each reference frame. Session Frames also supports session-scoped references.
+
+**Edit → Time Shift…** applies an in-memory whole-capture offset to a saved capture, from one frame/time anchor or two anchors for linear drift, with **Undo Time Shift**; sessions, findings, evidence, timelines, All Frames and Follow views are recomputed from the same overlay. The original file remains unchanged; Save Capture and supported PCAPNG exports carry the correction and its provenance. Live capture shifting and full Wireshark profile/time-field compatibility remain unavailable.
+
+## Field-level packet display filters
+
+**Partial**
+
+All Frames supports a bounded Frame Expression subset over typed per-frame facts, including capture-interface direction (`frame.capture_direction == inbound` or `== outbound`, with absent metadata remaining unknown), `ip.addr`/source/destination matches across decoded outer and inner IPv4/IPv6 tunnel headers, observed TCP control flags and raw sequence/acknowledgement equality, IPv4 Identification equality and a Don't Fragment predicate, per-header IPv4 TTL / IPv6 hop limit numeric comparisons, IPv4 fragment more / byte-offset predicates, DNS response/rcode/transaction-ID/truncation fields, and ICMP/ICMPv6 type/code equality. Transport port terms `tcp.port`/`srcport`/`dstport`, `udp.*` and `sctp.*` are supported.
+
+The session decode tree can copy a supported standalone field term, highlight matching frames temporarily, or apply/prepare supported unique-layer TCP FIN/SYN/RST/PSH/ACK/URG/ECE/CWR flags, DNS IDs and TC flags, IPv4 Identification/address/TTL/fragmentation/Don't Fragment, IPv6 address/hop-limit, ICMP/ICMPv6 type/code, directional TCP/UDP port, and TCP window/sequence/acknowledgement predicates as Frame Expressions. Choosing a preset fills the draft and requires explicit Apply.
+
+Session Expressions remain separate: they query whole sessions and deliberately use different syntax. A Wireshark `dfilters` list can be imported — filters that describe sessions become saved Session Expressions, and the rest are refused individually with a reason instead of being approximated silently. There is no general field registry and no Wireshark grammar compatibility.
+
+## Filter macros
+
+**Partial**
+
+Named Session Expression macros accept positional values, so one saved name can stand for a longer expression. These are macros over session fields, not Wireshark display-filter macros, and there are none for packet-level Frame Expressions.
+
+## Wireshark profiles, coloring-rule sets, and preferences import
+
+**Partial**
+
+Coloring rules can be imported from user-selected JSONC and legacy `colorfilters` files when filters fit Tracexy's bounded grammar; rules append to the Project draft and unsupported rules are reported. A Wireshark `dfilters` file imports as saved Session Expressions and a `cfilters` file as capture filters, in both cases reporting what could not be translated. Full profile import and preference compatibility remain unavailable.
+
+Wireshark names are used for orientation. Tracexy is a separate, session-centric macOS product.
