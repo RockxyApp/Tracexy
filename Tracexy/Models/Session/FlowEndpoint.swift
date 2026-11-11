@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - FlowEndpoint
+
 /// One remote destination address in the captured traffic, with everything the
 /// Flow surface needs to place it, list it and drill into it.
 ///
@@ -118,7 +120,7 @@ struct FlowEndpoint: Identifiable, Hashable {
     /// Reported rather than hidden: without it the address list would quietly
     /// describe fewer sessions than the surface says it is showing.
     static func omittedSessionCount(in sessions: [SessionSummary]) -> Int {
-        sessions.count { Self.destination(of: $0) == nil }
+        sessions.count { destination(of: $0) == nil }
     }
 
     // MARK: Private
@@ -148,4 +150,70 @@ struct FlowEndpoint: Identifiable, Hashable {
         }
         return .ok
     }
+}
+
+// MARK: - FlowMapRegionTraffic
+
+/// One registry-region rollup derived from the same endpoint rows as the Flow Map.
+struct FlowMapRegionTraffic: Equatable, Hashable {
+    let region: EndpointRegion
+    let bytes: Int
+    let sessions: Int
+}
+
+// MARK: - FlowMapProjection
+
+/// All Flow Map data for one already-filtered session scope.
+///
+/// Views derive this value once per body evaluation and pass it through the map,
+/// legend and address list. Animation state can then change without each child
+/// independently rebuilding and reparsing the same 50k-session scope.
+struct FlowMapProjection: Equatable {
+    // MARK: Lifecycle
+
+    init(sessions: [SessionSummary], isCapturing: Bool) {
+        visibleSessionCount = sessions.count
+        let endpointRows = FlowEndpoint.endpoints(from: sessions)
+        endpoints = endpointRows
+        let includedSessionCount = endpointRows.reduce(0) { $0 + $1.sessionCount }
+        omittedSessionCount = max(0, sessions.count - includedSessionCount)
+        unmappableCount = endpointRows.filter { !$0.isMappable }.count
+
+        var totals: [EndpointRegion: (bytes: Int, sessions: Int)] = [:]
+        for endpoint in endpointRows {
+            let current = totals[endpoint.region] ?? (0, 0)
+            totals[endpoint.region] = (
+                current.bytes + endpoint.bytes,
+                current.sessions + endpoint.sessionCount
+            )
+        }
+        regionTraffic = totals.map { region, value in
+            FlowMapRegionTraffic(region: region, bytes: value.bytes, sessions: value.sessions)
+        }
+        .sorted { ($0.bytes, $0.region.rawValue) < ($1.bytes, $1.region.rawValue) }
+
+        routes = regionTraffic.filter { $0.region != .local && $0.region != .unknown }
+        maxBytes = max(routes.map(\.bytes).max() ?? 1, 1)
+        let revealAddresses = endpointRows
+            .filter(\.isMappable)
+            .map(\.address)
+            .sorted()
+            .joined(separator: ",")
+        revealSignature = "\(isCapturing ? "live" : "saved")|\(revealAddresses)"
+        regionSignature = routes.map(\.region.rawValue).sorted().joined(separator: ",")
+    }
+
+    // MARK: Internal
+
+    let visibleSessionCount: Int
+    let endpoints: [FlowEndpoint]
+    let regionTraffic: [FlowMapRegionTraffic]
+    /// Traffic that can be placed on the world map; local and unresolved rows stay
+    /// in `regionTraffic` for honest accounting but have no map route.
+    let routes: [FlowMapRegionTraffic]
+    let omittedSessionCount: Int
+    let unmappableCount: Int
+    let maxBytes: Int
+    let revealSignature: String
+    let regionSignature: String
 }
