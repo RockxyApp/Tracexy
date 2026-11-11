@@ -74,6 +74,7 @@ struct FlowMapView: View {
     private static let listMinWidth: CGFloat = 260
     private static let listIdealWidth: CGFloat = 320
     private static let listMaxWidth: CGFloat = 460
+
     /// The address selected in the list. Selection lives here rather than in the
     /// workspace: it is a way of reading this surface, not a filter the rest of
     /// the app should inherit.
@@ -167,11 +168,13 @@ struct FlowMapView: View {
                     Spacer(minLength: 0)
                 }
             }
-            Text("Destination addresses grouped by registry region. Map positions indicate address "
-                + "administration, not server locations; the capture origin is not shown.")
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Destination addresses grouped by registry region. Map positions indicate address "
+                    + "administration, not server locations; the capture origin is not shown."
+            )
+            .font(Theme.Typography.micro)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
@@ -203,14 +206,17 @@ struct FlowMapView: View {
                 // the fold could not give one to belongs in no row, and saying
                 // how many is the difference between a bounded list and a list
                 // that quietly describes less than the surface claims.
-                Text("\(projection.omittedSessionCount.formatted()) session"
-                    + "\(projection.omittedSessionCount == 1 ? "" : "s") not listed — no destination address decoded.")
-                    .font(Theme.Typography.micro)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Theme.Metrics.spacingL)
-                    .padding(.bottom, Theme.Metrics.spacingM)
-                    .accessibilityIdentifier("flow-endpoints-omitted-notice")
+                Text(
+                    "\(projection.omittedSessionCount.formatted()) session"
+                        +
+                        "\(projection.omittedSessionCount == 1 ? "" : "s") not listed — no destination address decoded."
+                )
+                .font(Theme.Typography.micro)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.bottom, Theme.Metrics.spacingM)
+                .accessibilityIdentifier("flow-endpoints-omitted-notice")
             }
             Divider()
             if listedEndpoints.isEmpty {
@@ -234,13 +240,17 @@ struct FlowMapView: View {
     private func listEmpty(projection: FlowMapProjection) -> some View {
         VStack(spacing: Theme.Metrics.spacingM) {
             Spacer()
-            Text(projection.visibleSessionCount == 0
-                ?
-                (coordinator.sessions
-                    .isEmpty ? "No sessions in this capture." : "No addresses match the current scope.")
-                : "No addresses in this region.")
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                projection.visibleSessionCount == 0
+                    ?
+                    (
+                        coordinator.sessions
+                            .isEmpty ? "No sessions in this capture." : "No addresses match the current scope."
+                    )
+                    : "No addresses in this region."
+            )
+            .font(Theme.Typography.caption)
+            .foregroundStyle(.secondary)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -341,9 +351,11 @@ struct FlowMapView: View {
             .tracexyGlassButtonStyle()
             .controlSize(.small)
             .disabled(isStaleDestination(endpoint))
-            .help(isStaleDestination(endpoint)
-                ? "The session list is already scoped to another destination address."
-                : "Narrow the current scope to sessions sent to \(endpoint.address)")
+            .help(
+                isStaleDestination(endpoint)
+                    ? "The session list is already scoped to another destination address."
+                    : "Narrow the current scope to sessions sent to \(endpoint.address)"
+            )
             .padding(.top, 2)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
