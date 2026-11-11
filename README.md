@@ -134,7 +134,7 @@ interfaces, processes, protocols, and session relationships.
 | **Workspace** | Native sidebar, independent workspace tabs, vertical or bottom inspector layouts, status/footer surfaces, Focus Sets, and Noise Control |
 | **Projects** | Isolated investigations with separate workspaces, saved-capture Library, History, capture/privacy settings, and configuration-only import/export |
 | **Attribution** | Best-effort process ownership from `pktap` metadata with a local socket-to-process fallback |
-| **Languages** | English and Vietnamese |
+| **Languages** | English, Vietnamese, and Simplified Chinese |
 
 ## Comparison at a glance
 
