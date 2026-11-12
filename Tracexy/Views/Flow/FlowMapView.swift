@@ -42,10 +42,14 @@ struct FlowMapView: View {
     var coordinator: MainContentCoordinator
 
     var body: some View {
-        HSplitView {
-            mapSide
+        let projection = FlowMapProjection(
+            sessions: coordinator.visibleSessions,
+            isCapturing: coordinator.isCapturing
+        )
+        return HSplitView {
+            mapSide(projection: projection)
                 .frame(minWidth: Self.mapMinWidth, maxWidth: .infinity, maxHeight: .infinity)
-            endpointList
+            endpointList(projection: projection)
                 .frame(
                     minWidth: Self.listMinWidth,
                     idealWidth: Self.listIdealWidth,
@@ -61,11 +65,7 @@ struct FlowMapView: View {
             length: Theme.Metrics.footerBarHeight + Theme.Glass.functionalBarVerticalInset * 2
         )
         .tracexyDenseScrollEdge()
-        .tracexySafeAreaBar(edge: .top) { topBar }
-        // Keyed by the set of addresses (plus capture mode), not by bytes or row
-        // order, so a saved capture reveals exactly once and a live one re-reveals
-        // only when a genuinely new address appears — never on a byte-count tick.
-        .task(id: revealSignature) { await revealRoutes() }
+        .tracexySafeAreaBar(edge: .top) { topBar(projection: projection) }
     }
 
     // MARK: Private
@@ -74,158 +74,27 @@ struct FlowMapView: View {
     private static let listMinWidth: CGFloat = 260
     private static let listIdealWidth: CGFloat = 320
     private static let listMaxWidth: CGFloat = 460
-    /// Points each route is sampled to along its geodesic. Fixed and small: the
-    /// reveal advances a prefix of these, so the cost is bounded no matter how far
-    /// the destination is.
-    private static let routeSampleCount = 20
 
-    /// A user who has asked for less motion gets the finished, static map with no
-    /// reveal and no pop.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// How many sampled points of every route are currently drawn. The routes
-    /// reveal outward from the anchor by advancing this prefix exactly once — it
-    /// never loops. A saved capture reveals once and stays; a live capture
-    /// re-reveals only when the set of addresses changes (see `revealSignature`).
-    @State private var visiblePointCount = 2
-    /// Drives the single settle pop at the anchor and each marker after a reveal.
-    /// A plain 0→1 progress mapped through a sine, so opacity rises and falls once
-    /// and ends invisible — a one-shot pop, never a perpetual pulse.
-    @State private var pulseProgress: Double = 0
     /// The address selected in the list. Selection lives here rather than in the
     /// workspace: it is a way of reading this surface, not a filter the rest of
     /// the app should inherit.
     @State private var selectedAddress: String?
     /// A region focused by clicking its marker or legend entry. Narrows the list.
     @State private var focusedRegion: EndpointRegion?
-    /// Let MapKit fit the anchor and every real registry destination into the
-    /// available map pane. User pan/zoom still takes over through this binding.
-    @State private var camera: MapCameraPosition = .automatic
-    /// Refit only when the set of registry destinations changes. Address growth
-    /// inside an existing region can replay the route without stealing a user's
-    /// current pan/zoom.
-    @State private var fittedRegionSignature = ""
-
-    private var endpoints: [FlowEndpoint] {
-        coordinator.flowEndpoints
-    }
-
-    /// Rows after any marker focus — the map narrowing the list is the whole
-    /// point of having both side by side.
-    private var listedEndpoints: [FlowEndpoint] {
-        guard let focusedRegion else {
-            return endpoints
-        }
-        return endpoints.filter { $0.region == focusedRegion }
-    }
-
-    private var selectedEndpoint: FlowEndpoint? {
-        endpoints.first { $0.address == selectedAddress }
-    }
-
-    /// Regions carrying traffic that actually left this network. `.local` is
-    /// excluded — it has no place on a world map, and drawing it at 0,0 would
-    /// put private traffic in the Gulf of Guinea.
-    private var routes: [(region: EndpointRegion, bytes: Int, sessions: Int)] {
-        coordinator.regionTraffic.filter { $0.region != .local && $0.region != .unknown }
-    }
-
-    private var unmappableCount: Int {
-        endpoints.count { !$0.isMappable }
-    }
-
-    /// Sessions in view that carry no usable typed destination address, so they
-    /// are in none of the rows. Reported rather than dropped in silence.
-    private var omittedSessionCount: Int {
-        FlowEndpoint.omittedSessionCount(in: coordinator.visibleSessions)
-    }
-
-    private var maxBytes: Int {
-        max(routes.map(\.bytes).max() ?? 1, 1)
-    }
-
-    /// The capture anchor: a fixed, neutral point in the mid-Atlantic that every
-    /// route leaves from. It is deliberately *not* a position — not this Mac's,
-    /// and not the capture's, which for an imported file was recorded somewhere
-    /// this app cannot know. A mid-ocean placeholder is chosen precisely because
-    /// it cannot be read as a city, and the legend and its help say so. Keeping
-    /// it constant is also what lets a saved capture reveal identically every
-    /// time.
-    private var captureAnchor: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: 32, longitude: -40)
-    }
-
-    /// Stable key for the reveal. Built from the set of mappable addresses (sorted,
-    /// so order is irrelevant) plus the capture mode — never from bytes — so a live
-    /// capture re-reveals when a new address appears but sits still as existing
-    /// conversations grow, and a saved capture reveals exactly once.
-    private var revealSignature: String {
-        let addresses = endpoints
-            .filter(\.isMappable)
-            .map(\.address)
-            .sorted()
-            .joined(separator: ",")
-        return "\(coordinator.isCapturing ? "live" : "saved")|\(addresses)"
-    }
-
-    private var regionSignature: String {
-        routes
-            .map(\.region.rawValue)
-            .sorted()
-            .joined(separator: ",")
-    }
-
-    /// Each drawn route, its destination geodesic sampled to a fixed number of
-    /// points once. The reveal draws a growing prefix of `points`; the last point
-    /// is the region-centre marker.
-    private var sampledRoutes: [SampledRoute] {
-        let start = captureAnchor
-        return routes.map { route in
-            let point = route.region.coordinate
-            let destination = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
-            return SampledRoute(
-                region: route.region,
-                bytes: route.bytes,
-                sessions: route.sessions,
-                points: Self.geodesicSamples(from: start, to: destination, count: Self.routeSampleCount)
-            )
-        }
-    }
-
-    /// Sine-shaped 0→1→0 envelope for the settle pop, driven by `pulseProgress`.
-    /// Rises then falls across a single reveal and ends invisible, so nothing
-    /// pulses forever.
-    private var pulseEnvelope: Double {
-        sin(min(max(pulseProgress, 0), 1) * .pi)
-    }
-
-    private var mapEmptyReason: String {
-        if coordinator.visibleSessions.isEmpty {
-            return coordinator.sessions.isEmpty
-                ? "Open or start a capture to inspect its addresses."
-                : "Sessions exist in this capture, but none match the current scope."
-        }
-        if unmappableCount > 0 {
-            return "All \(unmappableCount) addresses so far are private, loopback or unallocated — "
-                + "they have no registry region to place. They are listed on the right."
-        }
-        return "Everything captured so far stayed on the local network."
-    }
 
     /// The existing header plus the shared scope line. Flow draws the same
     /// filtered session set as the table, so it says so in the same words — and,
     /// having no filter shelf of its own, carries the same single reset route.
-    private var topBar: some View {
+    private func topBar(projection: FlowMapProjection) -> some View {
         // The scope is read here so the line's own padding is added only when
         // there is a line; an empty notice must not reserve height in the bar.
-        let shownCount = coordinator.visibleSessions.count
-        let scope = coordinator.sessionScope(shownCount: shownCount)
+        let scope = coordinator.sessionScope(shownCount: projection.visibleSessionCount)
         return VStack(alignment: .leading, spacing: 0) {
-            header
+            header(projection: projection)
             if scope.isConstrained || coordinator.canReturnToPreviousSessionScope {
                 SessionScopeNotice(
                     coordinator: coordinator,
-                    shownCount: shownCount,
+                    shownCount: projection.visibleSessionCount,
                     showsResetAction: true
                 )
                 .padding(.horizontal, Theme.Metrics.spacingL)
@@ -234,11 +103,11 @@ struct FlowMapView: View {
         }
     }
 
-    private var header: some View {
+    private func header(projection: FlowMapProjection) -> some View {
         HStack(spacing: Theme.Metrics.spacingM) {
             Label("Flow", systemImage: "globe.americas")
                 .font(Theme.Typography.title)
-            Text("\(endpoints.count) addresses in \(routes.count) regions")
+            Text("\(projection.endpoints.count) addresses in \(projection.routes.count) regions")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(.secondary)
             Spacer(minLength: Theme.Metrics.spacingM)
@@ -259,112 +128,27 @@ struct FlowMapView: View {
 
     // MARK: Map side
 
-    private var mapSide: some View {
+    private func mapSide(projection: FlowMapProjection) -> some View {
         VStack(spacing: 0) {
-            if routes.isEmpty {
-                mapEmpty
-            } else {
-                map
-            }
+            FlowMapCanvas(
+                projection: projection,
+                hasCapturedSessions: !coordinator.sessions.isEmpty,
+                focusedRegion: $focusedRegion,
+                onToggleFocus: { toggleFocus($0, projection: projection) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
-            legend
+            legend(projection: projection)
         }
     }
 
-    private var map: some View {
-        Map(position: $camera, interactionModes: [.pan, .zoom]) {
-            Annotation("Captured traffic", coordinate: captureAnchor) {
-                anchorMarker
-            }
-
-            ForEach(sampledRoutes) { route in
-                // A growing prefix of the sampled geodesic — the route drawing
-                // outward from the anchor. Always at least two points so a stub is
-                // visible from the first frame.
-                let count = max(2, min(visiblePointCount, route.points.count))
-                MapPolyline(coordinates: Array(route.points.prefix(count)))
-                    .stroke(
-                        Theme.color(for: route.region).opacity(strokeOpacity(for: route.region)),
-                        style: StrokeStyle(lineWidth: weight(for: route.bytes), lineCap: .round)
-                    )
-
-                if let destination = route.points.last {
-                    let isRevealed = visiblePointCount >= route.points.count
-                    Annotation(route.region.title, coordinate: destination) {
-                        marker(for: route)
-                            // Keep the annotation in MapKit's content bounds from
-                            // frame one so `.automatic` can fit every destination,
-                            // but do not visually or interactively expose it until
-                            // the route actually arrives.
-                            .opacity(isRevealed ? 1 : 0)
-                            .scaleEffect(isRevealed ? 1 : 0.72)
-                            .allowsHitTesting(isRevealed)
-                            .accessibilityHidden(!isRevealed)
-                    }
-                }
-            }
-        }
-        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .mapControlVisibility(.hidden)
-    }
-
-    /// The capture anchor. A neutral marker disc, with a one-shot pop after the
-    /// routes land.
-    ///
-    /// It carries no device glyph on purpose: a laptop reads as "this Mac", and
-    /// an opened capture file may have been recorded anywhere, by anything. The
-    /// anchor is a drawing convention holding one end of every route, never a
-    /// claim about where the traffic came from.
-    private var anchorMarker: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.secondary.opacity(pulseEnvelope * 0.5), lineWidth: 1)
-                .frame(width: 26, height: 26)
-                .scaleEffect(1 + pulseEnvelope * 0.9)
-            Circle()
-                .fill(.regularMaterial)
-                .frame(width: 22, height: 22)
-                .overlay(Circle().stroke(Color.secondary.opacity(0.55), lineWidth: 1))
-            Image(systemName: "smallcircle.filled.circle")
-                .font(.system(size: Theme.Icon.small))
-                .foregroundStyle(.secondary)
-                .scaleEffect(1 + pulseEnvelope * 0.12)
-        }
-        .accessibilityLabel("Captured traffic")
-        .accessibilityHint("Traffic recorded in the current capture. Its origin location is not shown.")
-        .help("Traffic recorded in the current capture")
-    }
-
-    /// The map's own empty state, which names the reason instead of saying "no
-    /// data". With a capture running, an empty map almost always means the
-    /// traffic stayed local — and that is a finding, not a failure.
-    private var mapEmpty: some View {
-        VStack(spacing: Theme.Metrics.spacingM) {
-            Spacer()
-            Image(systemName: "globe.americas")
-                .font(.system(size: Theme.Icon.hero))
-                .foregroundStyle(.tertiary)
-            Text(coordinator.visibleSessions.isEmpty && !coordinator.sessions.isEmpty
-                ? "No Matching Sessions" : "No Mappable Addresses")
-                .font(Theme.Typography.surfaceTitle)
-            Text(mapEmptyReason)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, Theme.Metrics.spacingL)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var legend: some View {
+    private func legend(projection: FlowMapProjection) -> some View {
         VStack(alignment: .leading, spacing: Theme.Metrics.spacingS) {
-            if !routes.isEmpty {
+            if !projection.routes.isEmpty {
                 HStack(spacing: Theme.Metrics.spacingL) {
-                    ForEach(routes.reversed(), id: \.region) { route in
+                    ForEach(projection.routes.reversed(), id: \.region) { route in
                         Button {
-                            toggleFocus(route.region)
+                            toggleFocus(route.region, projection: projection)
                         } label: {
                             HStack(spacing: 5) {
                                 StatusDot(Theme.color(for: route.region))
@@ -384,11 +168,13 @@ struct FlowMapView: View {
                     Spacer(minLength: 0)
                 }
             }
-            Text("Destination addresses grouped by registry region. Map positions indicate address "
-                + "administration, not server locations; the capture origin is not shown.")
-                .font(Theme.Typography.micro)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Destination addresses grouped by registry region. Map positions indicate address "
+                    + "administration, not server locations; the capture origin is not shown."
+            )
+            .font(Theme.Typography.micro)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
         .padding(.vertical, Theme.Metrics.spacingM)
@@ -403,31 +189,38 @@ struct FlowMapView: View {
 
     // MARK: List side
 
-    private var endpointList: some View {
-        VStack(spacing: 0) {
+    private func endpointList(projection: FlowMapProjection) -> some View {
+        let listedEndpoints = focusedRegion.map { region in
+            projection.endpoints.filter { $0.region == region }
+        } ?? projection.endpoints
+        let selectedEndpoint = projection.endpoints.first { $0.address == selectedAddress }
+        return VStack(spacing: 0) {
             SectionHeader(
                 focusedRegion?.title ?? "Addresses",
                 detail: "\(listedEndpoints.count)"
             )
             .padding(.horizontal, Theme.Metrics.spacingL)
             .padding(.vertical, Theme.Metrics.spacingM)
-            if omittedSessionCount > 0 {
+            if projection.omittedSessionCount > 0 {
                 // Rows are grouped by the typed destination address. A session
                 // the fold could not give one to belongs in no row, and saying
                 // how many is the difference between a bounded list and a list
                 // that quietly describes less than the surface claims.
-                Text("\(omittedSessionCount.formatted()) session"
-                    + "\(omittedSessionCount == 1 ? "" : "s") not listed — no destination address decoded.")
-                    .font(Theme.Typography.micro)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Theme.Metrics.spacingL)
-                    .padding(.bottom, Theme.Metrics.spacingM)
-                    .accessibilityIdentifier("flow-endpoints-omitted-notice")
+                Text(
+                    "\(projection.omittedSessionCount.formatted()) session"
+                        +
+                        "\(projection.omittedSessionCount == 1 ? "" : "s") not listed — no destination address decoded."
+                )
+                .font(Theme.Typography.micro)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Metrics.spacingL)
+                .padding(.bottom, Theme.Metrics.spacingM)
+                .accessibilityIdentifier("flow-endpoints-omitted-notice")
             }
             Divider()
             if listedEndpoints.isEmpty {
-                listEmpty
+                listEmpty(projection: projection)
             } else {
                 List(listedEndpoints, selection: $selectedAddress) { endpoint in
                     endpointRow(endpoint)
@@ -444,55 +237,23 @@ struct FlowMapView: View {
         .background(.background)
     }
 
-    private var listEmpty: some View {
+    private func listEmpty(projection: FlowMapProjection) -> some View {
         VStack(spacing: Theme.Metrics.spacingM) {
             Spacer()
-            Text(coordinator.visibleSessions.isEmpty
-                ?
-                (coordinator.sessions
-                    .isEmpty ? "No sessions in this capture." : "No addresses match the current scope.")
-                : "No addresses in this region.")
-                .font(Theme.Typography.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                projection.visibleSessionCount == 0
+                    ?
+                    (
+                        coordinator.sessions
+                            .isEmpty ? "No sessions in this capture." : "No addresses match the current scope."
+                    )
+                    : "No addresses in this region."
+            )
+            .font(Theme.Typography.caption)
+            .foregroundStyle(.secondary)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// A disc sized by volume, marking where a route lands. After the route
-    /// reaches it, a single ring pops out once and settles — there is no perpetual
-    /// pulse, so a saved capture is fully static and a live one only re-pops when
-    /// the set of addresses changes.
-    private func marker(for route: SampledRoute) -> some View {
-        let tint = Theme.color(for: route.region)
-        let size = 12 + 20 * (Double(route.bytes) / Double(maxBytes))
-        let isFocused = focusedRegion == route.region
-        return ZStack {
-            // One-shot settle pop. `pulseEnvelope` is 0 at rest, so this ring is
-            // invisible except during the brief pop after a reveal.
-            Circle()
-                .fill(tint.opacity(pulseEnvelope * 0.32))
-                .frame(width: size * 2, height: size * 2)
-                .scaleEffect(0.6 + pulseEnvelope * 0.9)
-            Circle()
-                .fill(tint)
-                .frame(width: size, height: size)
-                .scaleEffect(1 + pulseEnvelope * 0.12)
-                .overlay(
-                    Circle()
-                        .stroke(isFocused ? Color.primary : .white.opacity(0.85), lineWidth: isFocused ? 2 : 1)
-                )
-        }
-        .opacity(focusedRegion == nil || isFocused ? 1 : 0.45)
-        .contentShape(Circle())
-        .onTapGesture { toggleFocus(route.region) }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { toggleFocus(route.region) }
-        .accessibilityLabel("\(route.region.title) registry region")
-        .accessibilityHint("Registry region administering these addresses, not a server location. "
-            + "\(route.sessions) sessions.")
-        .help("\(route.region.title) — \(route.sessions) sessions, \(Self.bytes(route.bytes)). "
-            + "Registry region, not a server location. Click to filter the list.")
     }
 
     private func endpointRow(_ endpoint: FlowEndpoint) -> some View {
@@ -590,9 +351,11 @@ struct FlowMapView: View {
             .tracexyGlassButtonStyle()
             .controlSize(.small)
             .disabled(isStaleDestination(endpoint))
-            .help(isStaleDestination(endpoint)
-                ? "The session list is already scoped to another destination address."
-                : "Narrow the current scope to sessions sent to \(endpoint.address)")
+            .help(
+                isStaleDestination(endpoint)
+                    ? "The session list is already scoped to another destination address."
+                    : "Narrow the current scope to sessions sent to \(endpoint.address)"
+            )
             .padding(.top, 2)
         }
         .padding(.horizontal, Theme.Metrics.spacingL)
@@ -627,14 +390,302 @@ struct FlowMapView: View {
         ByteUnits.string(Int64(count))
     }
 
-    /// Samples the geodesic between two points into a fixed number of coordinates,
-    /// so a drawn `MapPolyline` follows the globe's curve rather than cutting a
-    /// flat straight line across the projection.
-    ///
-    /// Pure and bounded: it builds one `MKGeodesicPolyline`, then resamples its
-    /// own densified point list down to exactly `count` evenly spaced coordinates.
-    /// No state, no allocation beyond the returned array — safe to call from the
-    /// view body.
+    /// Whether this row can no longer narrow anything, because the list is
+    /// already scoped to a different destination. Such a click is a no-op rather
+    /// than a replacement — swapping the address would widen past the row that
+    /// produced the current scope.
+    private func isStaleDestination(_ endpoint: FlowEndpoint) -> Bool {
+        guard let current = coordinator.activeWorkspace.aggregateDestinationFilter else {
+            return false
+        }
+        return IPAddressValue(parsing: current) != IPAddressValue(parsing: endpoint.address)
+    }
+
+    // MARK: Behaviour
+
+    /// Clicking a marker or a legend entry focuses that region; clicking the
+    /// focused one again clears it. A toggle rather than a mode, so there is no
+    /// state the user can get stuck in without an obvious way out.
+    private func toggleFocus(_ region: EndpointRegion, projection: FlowMapProjection) {
+        let next: EndpointRegion? = (focusedRegion == region) ? nil : region
+        withAnimation(.smooth(duration: 0.2)) {
+            focusedRegion = next
+        }
+        // A selection from another region would sit under a filter that hides
+        // it, so it is dropped rather than left silently applied.
+        let selectedEndpoint = projection.endpoints.first { $0.address == selectedAddress }
+        if let next, selectedEndpoint?.region != next {
+            selectedAddress = nil
+        }
+    }
+
+    private func clearFocus() {
+        withAnimation(.smooth(duration: 0.2)) {
+            focusedRegion = nil
+        }
+    }
+}
+
+// MARK: - FlowMapCanvas
+
+/// Owns the map's reveal animation so its frequent state updates do not rebuild
+/// the parent FlowMap projection from every visible session.
+private struct FlowMapCanvas: View {
+    let projection: FlowMapProjection
+    let hasCapturedSessions: Bool
+    @Binding var focusedRegion: EndpointRegion?
+    let onToggleFocus: (EndpointRegion) -> Void
+
+    // MARK: Internal
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var visiblePointCount = 2
+    @State private var pulseProgress: Double = 0
+    /// MapKit pan/zoom state stays inside the canvas, so changing it cannot rebuild
+    /// the parent FlowMap projection.
+    @State private var camera: MapCameraPosition = .automatic
+    @State private var fittedRegionSignature = ""
+
+    private static let routeSampleCount = 20
+
+    var body: some View {
+        Group {
+            if projection.routes.isEmpty {
+                mapEmpty
+            } else {
+                map
+            }
+        }
+        // Keyed by the same endpoint set used to build this canvas. Animation state
+        // changes stay inside this child and never rebuild the parent projection.
+        .task(id: projection.revealSignature) { await revealRoutes() }
+    }
+
+    // MARK: Private
+
+    private var captureAnchor: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: 32, longitude: -40)
+    }
+
+    private var pulseEnvelope: Double {
+        sin(min(max(pulseProgress, 0), 1) * .pi)
+    }
+
+    private var sampledRoutes: [SampledRoute] {
+        let start = captureAnchor
+        return projection.routes.map { route in
+            let point = route.region.coordinate
+            let destination = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+            return SampledRoute(
+                region: route.region,
+                bytes: route.bytes,
+                sessions: route.sessions,
+                points: Self.geodesicSamples(from: start, to: destination, count: Self.routeSampleCount)
+            )
+        }
+    }
+
+    private var map: some View {
+        Map(position: $camera, interactionModes: [.pan, .zoom]) {
+            Annotation("Captured traffic", coordinate: captureAnchor) {
+                anchorMarker
+            }
+
+            ForEach(sampledRoutes) { route in
+                // A growing prefix of the sampled geodesic — the route drawing
+                // outward from the anchor. Always at least two points so a stub is
+                // visible from the first frame.
+                let count = max(2, min(visiblePointCount, route.points.count))
+                MapPolyline(coordinates: Array(route.points.prefix(count)))
+                    .stroke(
+                        Theme.color(for: route.region).opacity(strokeOpacity(for: route.region)),
+                        style: StrokeStyle(
+                            lineWidth: weight(for: route.bytes), lineCap: .round
+                        )
+                    )
+
+                if let destination = route.points.last {
+                    let isRevealed = visiblePointCount >= route.points.count
+                    Annotation(route.region.title, coordinate: destination) {
+                        marker(for: route)
+                            // Keep the annotation in MapKit's content bounds from
+                            // frame one so `.automatic` can fit every destination,
+                            // but do not visually or interactively expose it until
+                            // the route actually arrives.
+                            .opacity(isRevealed ? 1 : 0)
+                            .scaleEffect(isRevealed ? 1 : 0.72)
+                            .allowsHitTesting(isRevealed)
+                            .accessibilityHidden(!isRevealed)
+                    }
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+        .mapControlVisibility(.hidden)
+    }
+
+    /// The capture anchor. A neutral marker disc, with a one-shot pop after the
+    /// routes land. It is a drawing convention, never a claim about this Mac's
+    /// location or the location where an imported capture was recorded.
+    private var anchorMarker: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(pulseEnvelope * 0.5), lineWidth: 1)
+                .frame(width: 26, height: 26)
+                .scaleEffect(1 + pulseEnvelope * 0.9)
+            Circle()
+                .fill(.regularMaterial)
+                .frame(width: 22, height: 22)
+                .overlay(Circle().stroke(Color.secondary.opacity(0.55), lineWidth: 1))
+            Image(systemName: "smallcircle.filled.circle")
+                .font(.system(size: Theme.Icon.small))
+                .foregroundStyle(.secondary)
+                .scaleEffect(1 + pulseEnvelope * 0.12)
+        }
+        .accessibilityLabel("Captured traffic")
+        .accessibilityHint("Traffic recorded in the current capture. Its origin location is not shown.")
+        .help("Traffic recorded in the current capture")
+    }
+
+    /// The map's empty state names why no route can be drawn.
+    private var mapEmpty: some View {
+        let emptyTitle = projection.visibleSessionCount == 0 && hasCapturedSessions
+            ? "No Matching Sessions"
+            : "No Mappable Addresses"
+        VStack(spacing: Theme.Metrics.spacingM) {
+            Spacer()
+            Image(systemName: "globe.americas")
+                .font(.system(size: Theme.Icon.hero))
+                .foregroundStyle(.tertiary)
+            Text(emptyTitle)
+                .font(Theme.Typography.surfaceTitle)
+            Text(mapEmptyReason)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Metrics.spacingL)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var mapEmptyReason: String {
+        if projection.visibleSessionCount == 0 {
+            return hasCapturedSessions
+                ? "Sessions exist in this capture, but none match the current scope."
+                : "Open or start a capture to inspect its addresses."
+        }
+        if projection.unmappableCount > 0 {
+            return "All \(projection.unmappableCount) addresses so far are private, loopback or unallocated — "
+                + "they have no registry region to place. They are listed on the right."
+        }
+        return "Everything captured so far stayed on the local network."
+    }
+
+    /// Advances the route reveal once. Only this canvas updates as the sampled
+    /// point prefix grows; the parent FlowMap projection remains unchanged.
+    @MainActor
+    private func revealRoutes() async {
+        guard !projection.routes.isEmpty else {
+            visiblePointCount = 2
+            pulseProgress = 0
+            return
+        }
+        fitCameraIfNeeded()
+        if reduceMotion {
+            visiblePointCount = Self.routeSampleCount
+            pulseProgress = 0
+            return
+        }
+
+        visiblePointCount = 2
+        pulseProgress = 0
+        let steps = Self.routeSampleCount
+        let perStep = UInt64(0.6 / Double(steps - 1) * 1_000_000_000)
+        for step in 2 ... steps {
+            visiblePointCount = step
+            do {
+                try await Task.sleep(nanoseconds: perStep)
+            } catch {
+                return
+            }
+        }
+        visiblePointCount = Self.routeSampleCount
+        withAnimation(.easeOut(duration: 0.5)) {
+            pulseProgress = 1
+        }
+    }
+
+    /// Fits the map only when the set of registry destinations changes.
+    @MainActor
+    private func fitCameraIfNeeded() {
+        guard projection.regionSignature != fittedRegionSignature else {
+            return
+        }
+        let coordinates = [captureAnchor] + sampledRoutes.flatMap(\.points)
+        guard let first = coordinates.first else {
+            return
+        }
+        let firstPoint = MKMapPoint(first)
+        var rect = MKMapRect(x: firstPoint.x, y: firstPoint.y, width: 1, height: 1)
+        for coordinate in coordinates.dropFirst() {
+            let point = MKMapPoint(coordinate)
+            rect = rect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
+        }
+        let horizontalPadding = max(rect.size.width * 0.12, 1)
+        let verticalPadding = max(rect.size.height * 0.18, 1)
+        camera = .rect(rect.insetBy(dx: -horizontalPadding, dy: -verticalPadding))
+        fittedRegionSignature = projection.regionSignature
+    }
+
+    private func marker(for route: SampledRoute) -> some View {
+        let tint = Theme.color(for: route.region)
+        let size = 12 + 20 * (Double(route.bytes) / Double(projection.maxBytes))
+        let isFocused = focusedRegion == route.region
+        let hint = [
+            "Registry region administering these addresses, not a server location.",
+            "\(route.sessions) sessions.",
+        ].joined(separator: " ")
+        let help = [
+            "\(route.region.title) — \(route.sessions) sessions, \(ByteUnits.string(Int64(route.bytes))).",
+            "Registry region, not a server location. Click to filter the list.",
+        ].joined(separator: " ")
+        return ZStack {
+            Circle()
+                .fill(tint.opacity(pulseEnvelope * 0.32))
+                .frame(width: size * 2, height: size * 2)
+                .scaleEffect(0.6 + pulseEnvelope * 0.9)
+            Circle()
+                .fill(tint)
+                .frame(width: size, height: size)
+                .scaleEffect(1 + pulseEnvelope * 0.12)
+                .overlay(
+                    Circle()
+                        .stroke(isFocused ? Color.primary : .white.opacity(0.85), lineWidth: isFocused ? 2 : 1)
+                )
+        }
+        .opacity(focusedRegion == nil || isFocused ? 1 : 0.45)
+        .contentShape(Circle())
+        .onTapGesture { onToggleFocus(route.region) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onToggleFocus(route.region) }
+        .accessibilityLabel("\(route.region.title) registry region")
+        .accessibilityHint(hint)
+        .help(help)
+    }
+
+    private func strokeOpacity(for region: EndpointRegion) -> Double {
+        guard let focusedRegion else {
+            return 0.55
+        }
+        return focusedRegion == region ? 0.85 : 0.15
+    }
+
+    private func weight(for bytes: Int) -> Double {
+        1 + 4 * (Double(bytes) / Double(projection.maxBytes))
+    }
+
     private static func geodesicSamples(
         from start: CLLocationCoordinate2D,
         to end: CLLocationCoordinate2D,
@@ -659,119 +710,6 @@ struct FlowMapView: View {
             result.append(points[clamped].coordinate)
         }
         return result
-    }
-
-    /// Whether this row can no longer narrow anything, because the list is
-    /// already scoped to a different destination. Such a click is a no-op rather
-    /// than a replacement — swapping the address would widen past the row that
-    /// produced the current scope.
-    private func isStaleDestination(_ endpoint: FlowEndpoint) -> Bool {
-        guard let current = coordinator.activeWorkspace.aggregateDestinationFilter else {
-            return false
-        }
-        return IPAddressValue(parsing: current) != IPAddressValue(parsing: endpoint.address)
-    }
-
-    /// Advances the route reveal once, then fires a single settle pop.
-    ///
-    /// This is deliberately a bounded loop, not a `TimelineView` or a
-    /// `repeatForever` animation: it draws each route outward from the anchor in
-    /// one simultaneous burst over ~0.6 s and then stops. Cancellation (a new
-    /// signature, or the view going away) drops out of the sleep and leaves the
-    /// next run to reset the state.
-    @MainActor
-    private func revealRoutes() async {
-        guard !routes.isEmpty else {
-            visiblePointCount = 2
-            pulseProgress = 0
-            return
-        }
-        fitCameraIfNeeded()
-        // Reduced motion: no reveal, no pop — the finished map, immediately.
-        if reduceMotion {
-            visiblePointCount = Self.routeSampleCount
-            pulseProgress = 0
-            return
-        }
-
-        visiblePointCount = 2
-        pulseProgress = 0
-        let steps = Self.routeSampleCount
-        let perStep = UInt64(0.6 / Double(steps - 1) * 1_000_000_000)
-        for step in 2 ... steps {
-            visiblePointCount = step
-            do {
-                try await Task.sleep(nanoseconds: perStep)
-            } catch {
-                return // cancelled — the next run resets the prefix
-            }
-        }
-        visiblePointCount = Self.routeSampleCount
-
-        // One restrained pop at the anchor and each marker, then settle.
-        withAnimation(.easeOut(duration: 0.5)) {
-            pulseProgress = 1
-        }
-    }
-
-    /// Explicitly fit every sampled geodesic, not just the currently visible
-    /// prefix. MapKit's automatic camera can otherwise lock onto the short first
-    /// frame and leave a far registry marker just outside the pane.
-    @MainActor
-    private func fitCameraIfNeeded() {
-        let signature = regionSignature
-        guard signature != fittedRegionSignature else {
-            return
-        }
-        let coordinates = [captureAnchor] + sampledRoutes.flatMap(\.points)
-        guard let first = coordinates.first else {
-            return
-        }
-
-        let firstPoint = MKMapPoint(first)
-        var rect = MKMapRect(x: firstPoint.x, y: firstPoint.y, width: 1, height: 1)
-        for coordinate in coordinates.dropFirst() {
-            let point = MKMapPoint(coordinate)
-            rect = rect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
-        }
-        let horizontalPadding = max(rect.size.width * 0.12, 1)
-        let verticalPadding = max(rect.size.height * 0.18, 1)
-        camera = .rect(rect.insetBy(dx: -horizontalPadding, dy: -verticalPadding))
-        fittedRegionSignature = signature
-    }
-
-    // MARK: Behaviour
-
-    /// Clicking a marker or a legend entry focuses that region; clicking the
-    /// focused one again clears it. A toggle rather than a mode, so there is no
-    /// state the user can get stuck in without an obvious way out.
-    private func toggleFocus(_ region: EndpointRegion) {
-        let next: EndpointRegion? = (focusedRegion == region) ? nil : region
-        withAnimation(.smooth(duration: 0.2)) {
-            focusedRegion = next
-        }
-        // A selection from another region would sit under a filter that hides
-        // it, so it is dropped rather than left silently applied.
-        if let next, selectedEndpoint?.region != next {
-            selectedAddress = nil
-        }
-    }
-
-    private func clearFocus() {
-        withAnimation(.smooth(duration: 0.2)) {
-            focusedRegion = nil
-        }
-    }
-
-    private func strokeOpacity(for region: EndpointRegion) -> Double {
-        guard let focusedRegion else {
-            return 0.55
-        }
-        return focusedRegion == region ? 0.85 : 0.15
-    }
-
-    private func weight(for bytes: Int) -> Double {
-        1 + 4 * (Double(bytes) / Double(maxBytes))
     }
 }
 
