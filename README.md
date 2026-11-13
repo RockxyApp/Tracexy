@@ -32,11 +32,52 @@
 <!-- BEGIN GENERATED: latest-release -->
 ## Latest Tagged Release
 
-**v0.9.2** — 2026-10-21
+**v0.10.0** — 2026-11-13
+
+### Added
+
+- Import a text hex dump from File → Import Hex Dump…, with an explicit offset base, byte grouping, regular-expression scopes for packet bytes, timestamps, direction and sequence numbers, a chosen link type, and optional generated Ethernet, IPv4/IPv6, UDP, TCP or SCTP headers around entered payload bytes.
+- Export the frames you chose: an exact selected-frame capture, every frame matching an applied Frame Expression, and an opt-in that leaves ignored frames out of the written file.
+- Export packet dissections as text summaries, details and captured bytes, as JSON with optional raw hex for exactly mapped fields, or as a summary CSV that can add up to four applied Project field columns.
+- Print packet summaries, decoded dissections or captured-byte hex dumps for the sessions in view, one frame, marked frames, a numeric frame range, or every frame matching an applied Frame Expression.
+- Filter All Frames with a bounded Frame Expression over typed frame facts, including capture direction, inner tunnel addresses, TCP control flags and raw sequence/acknowledgement values, IPv4 Identification, Don't Fragment, TTL and fragment offsets, IPv6 hop limits, DNS transaction IDs and the TC flag, and ICMP/ICMPv6 type and code.
+- Build Frame Expressions straight from the decode tree: copy a field as a filter term, highlight matching frames temporarily, or prefill a supported predicate for review before you apply it.
+- Colorize packets with ordered Project-local coloring rules, up to ten capture-local conversation color slots, and an import that accepts Wireshark JSONC and legacy `colorfilters` records whose filters fit Tracexy's grammar; unsupported rules are reported rather than silently dropped.
+- Resolve addresses from more sources: name an address from an All Frames row, merge a bounded standard or Wireshark `hosts` file, and read PCAPNG Name Resolution Blocks when a capture carries them, with omitted records reported in Capture Info.
+- Correct the time of a saved capture in memory with a whole-capture offset, one anchor, or two anchors for linear drift, with Undo; sessions, findings, timelines, All Frames and Follow views recompute from the same correction, and supported exports carry it with its provenance.
+- Set capture-wide time references in All Frames that survive paging and display filters, add a Cumulative Bytes column that resets at each reference, and keep up to sixteen temporary references per scope.
+- Compare up to four named Frame Expression series in the I/O Graph over one pass of a stable capture, with per-series match, unknown and untimed coverage, CSV and chart-image export, and a jump from a chart interval to a representative matching frame.
+- Read more TCP evidence in Session Health: receiver-reported SACK ranges, RFC 2883 D-SACK ranges shown as the receiver's report rather than a cause, SACK-aware Goodput beside wire throughput, a conservative SACK-reported RTT line beside Karn-safe RTT, and typed window-update and zero-window probe observations.
+- Navigate and search a capture more directly: Frame Expression Find, UTF-8 and UTF-16 string search, bounded Back/Forward selection history, First/Last on the current page, pinned rows that persist across paging, Mark and Ignore All Displayed, and a frame-scoped details tree for a frame with no folded session.
+- Filter, expand, copy and keyboard-navigate decoded layer trees in both the Session Inspector and standalone frame details, including a visible-subtree copy that honors what is folded.
+- Follow conversations with more honest export: attributed TCP source chunks with per-peer indexes, direction-scoped UDP transcripts, raw payload export when completeness checks pass, and disabled bidirectional actions with a stated reason when retained provenance cannot prove cross-direction order.
+- Override decoding per Project with TCP/UDP port rules prefilled from the packet list or packet details for review, and pass invocation-local `--decode-as` rules to the read-only command line without touching Project settings.
+- Stream frame tables from the command line with `tracexy frames`, including capture direction and repeated `--column Protocol:Field` for supported decoded fields.
+- Read SCTP common headers, verification tags and bounded chunk headers, validate CRC32C when the declared packet boundary is fully captured, and import SCTP chunks or payload bytes from a hex dump.
+- See SCTP traffic as sessions: flows fold on their endpoint pair with directional packets and bytes, an SCTP tab joins Conversations and Endpoints (`--tap conv,sctp`, `--tap endpoints,sctp`), an observed INIT chunk names the side that opened the association, and an observed ABORT marks the session as an error. Sessions are keyed on the endpoint pair, not the verification tag, and SCTP streams are still not reassembled. An SCTP pill joins the session filter pills, so a capture that mixes SCTP with other transports can be narrowed to it, and `sctp` is a Session Expression protocol term like `tcp` and `udp`, so Help ▸ Supported Protocols, expression completion and the `sctp` and `sctp port` display-filter imports all name it.
+- Rescan one TCP conversation on a stable source for deeper graph evidence, and see SMB2, LDAP, Kerberos, ICMP and ICMPv6 service response times over the complete capture in the window and the command line.
 
 ### Fixed
 
-- The official macOS download includes Settings → License so purchased Pro keys can be activated.
+- A Frame Expression typed in All Frames applies when you press Return, and the field shows its grammar in a tooltip again.
+- Exported and printed packet dissections carry a saved capture's Time Shift, so their times match All Frames instead of the uncorrected source.
+- Go to Packet on a pinned frame now says when that frame is outside the capture in view, instead of doing nothing. A frame named by Find before any page has been listed now lists the page that would hold it rather than being refused.
+- The first frame on a later All Frames page shows its real time delta from the frame before it, taken from the same scan that built the page, instead of an unknown delta. A filtered page whose opening frame is hidden, and a time reference pinned from another page, still report unknown rather than borrowing that time.
+- Split Capture and the capture file-set settings now name the menu that walks a file set correctly, File ▸ File Set ▸ Next File, in English and Vietnamese. The old text named an item that does not exist.
+- Overview's Measure and Series chart choices are kept per Project instead of being shared by every Project on this Mac, including a Synthetic Project. Both reset to their defaults once, because they move to a Project-owned setting.
+- The All Frames footer reads `Showing 37 of frames 200,001–400,000, 500,000 scanned` rather than repeating "of" twice, and it is now translated.
+- The All Frames expression field and its Highlight button are no longer drawn hard against the window edge with their leading corners clipped.
+- The All Frames footer no longer truncates its own commands to "Mark All Di…" and "Unignore D…" at the window's ordinary width: the bulk mark and ignore commands share a Marks menu, the export and print commands an Export menu, and each is unavailable when it has nothing to act on. The Relative TCP Seq/Ack toggle reads on one line again instead of three.
+- The IP Statistics and Service Response Time choosers sit under the titlebar instead of floating down the middle of an otherwise empty window.
+- The Packet Lengths, Resolved Addresses, Protocol Hierarchy and Message Counts footers stay on one line at any window width; a caption that used to stop mid-clause now states the fact and names the bound it counts to in its tooltip.
+- Decode As shows its rule-limit and redecode notices on their own line, so its buttons stay reachable on one line when a draft, the rule limit and a pending redecode coincide. Overview's chart notices stack for the same reason.
+- Manage Interfaces opens at the size it declares rather than clamped to its minimum with the interface columns already squeezed.
+
+### Changed
+
+- TCP acknowledgement, window and checksum values, IPv4 Identification and fragment flags, and DNS transaction ID and TC flags now appear in the packet inspector and can be filtered.
+- All Frames pages through a stable capture with a stated retained-row limit, so Frame Expression match counts describe the whole capture while toolbar search stays page-local.
+- Settings → Privacy now states that all data stays on this Mac and that no usage analytics are collected, in place of two checkboxes that could not change either: Tracexy has no upload path and ships no analytics collection.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 <!-- END GENERATED: latest-release -->
