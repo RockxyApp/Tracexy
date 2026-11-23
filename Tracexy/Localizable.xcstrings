@@ -6052,7 +6052,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选取一个本地历史记录条目以检查其保存的会话。"
+            "value": "选取一个本地历史记录条目以检查其存储的会话。"
           }
         }
       }
@@ -7334,7 +7334,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "保存抓包并以文件形式打开后，即可查看容器信息（格式、节、注释、摘要）。"
+            "value": "存储抓包并以文件形式打开后，即可查看容器信息（格式、节、注释、摘要）。"
           }
         }
       }
@@ -8134,7 +8134,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法保存流图：%@"
+            "value": "无法存储流图：%@"
           }
         }
       }
@@ -8150,7 +8150,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法保存统计信息：%@"
+            "value": "无法存储统计信息：%@"
           }
         }
       }
@@ -8166,7 +8166,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法保存流：%@"
+            "value": "无法存储流：%@"
           }
         }
       }
@@ -8182,7 +8182,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法保存：%@"
+            "value": "无法存储：%@"
           }
         }
       }
@@ -9341,7 +9341,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "每个项目都有各自的会话、已保存抓包资源库、本地历史记录以及抓包/隐私设置。导出的项目文件仅包含配置。"
+            "value": "每个项目都有各自的会话、已存储抓包资源库、本地历史记录以及抓包/隐私设置。导出的项目文件仅包含配置。"
           }
         }
       }
@@ -14857,7 +14857,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在此项目中以名称保存此表达式"
+            "value": "在此项目中以名称存储此表达式"
           }
         }
       }
@@ -17745,7 +17745,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "最多可保存 %lld 个焦点集合。已保存的焦点集合仍可使用。"
+            "value": "最多可存储 %lld 个焦点集合。已存储的焦点集合仍可使用。"
           }
         }
       }
@@ -19250,7 +19250,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无已保存的抓包"
+            "value": "无已存储的抓包"
           }
         }
       }
@@ -20341,7 +20341,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "导出 PDU 前，请打开已保存的抓包或停止实时抓包。"
+            "value": "导出 PDU 前，请打开已存储的抓包或停止实时抓包。"
           }
         }
       }
@@ -20357,7 +20357,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "导出解析结果前，请打开已保存的抓包或停止实时抓包。"
+            "value": "导出解析结果前，请打开已存储的抓包或停止实时抓包。"
           }
         }
       }
@@ -28673,7 +28673,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "停止实时抓包或打开已保存的抓包，以在此处添加本地摘要。"
+            "value": "停止实时抓包或打开已存储的抓包，以在此处添加本地摘要。"
           }
         }
       }
@@ -29444,7 +29444,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "该抓包将从“已保存”中消失，可从废纸篓恢复。"
+            "value": "该抓包将从“已存储”中消失，可从废纸篓恢复。"
           }
         }
       }
@@ -29940,7 +29940,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已保存的抓包来源不可用。"
+            "value": "已存储的抓包来源不可用。"
           }
         }
       }
@@ -30182,7 +30182,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这些保护措施适用于 .tracexysession 文档。“屏蔽 IP 地址”也适用于“导出调查”文件和已保存的历史记录。原始 pcap 和 pcapng 导出会保留抓取的字节，并且在启用保护措施时始终需要确认。"
+            "value": "这些保护措施适用于 .tracexysession 文档。“屏蔽 IP 地址”也适用于“导出调查”文件和已存储的历史记录。原始 pcap 和 pcapng 导出会保留抓取的字节，并且在启用保护措施时始终需要确认。"
           }
         }
       }
@@ -30246,7 +30246,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此抓包包含超出此导出格式支持范围的时间。请保存原始抓包以保留该时间。"
+            "value": "此抓包包含超出此导出格式支持范围的时间。请存储原始抓包以保留该时间。"
           }
         }
       }
@@ -30278,7 +30278,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此抓包结束时未保存会话摘要。"
+            "value": "此抓包结束时未存储会话摘要。"
           }
         }
       }
@@ -30648,7 +30648,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这将移除所有已保存的历史记录摘要。当前抓包数据和已保存的抓包文件不受影响。"
+            "value": "这将移除所有已存储的历史记录摘要。当前抓包数据和已存储的抓包文件不受影响。"
           }
         }
       }
