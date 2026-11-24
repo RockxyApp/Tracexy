@@ -126,6 +126,41 @@ struct FlowEndpointTests {
         #expect(FlowEndpoint.omittedSessionCount(in: sessions) == 2)
     }
 
+    @Test("A Flow Map projection derives rows, routes, omissions and reveal identity from one scope")
+    func flowMapProjectionPreservesScope() throws {
+        var displayOnly = session(ip: "93.184.16.34", port: 443, host: "api.example.com", bytes: 10)
+        displayOnly.destinationEndpointValue = nil
+        var invalid = session(ip: "93.184.16.34", port: 443, host: "broken.example", bytes: 10)
+        invalid.destinationEndpointValue = IPEndpoint(ip: "not-an-address", port: 443)
+        let sessions = [
+            session(ip: "93.184.16.34", port: 443, host: "api.example.com", bytes: 100),
+            session(ip: "93.184.16.34", port: 8_443, host: "api.example.com", bytes: 50),
+            session(ip: "192.168.1.10", port: 445, host: "nas.local", bytes: 20),
+            displayOnly,
+            invalid,
+        ]
+
+        let expectedEndpoints = FlowEndpoint.endpoints(from: sessions)
+        let remote = try #require(expectedEndpoints.first { $0.address == "93.184.16.34" })
+        let local = try #require(expectedEndpoints.first { $0.address == "192.168.1.10" })
+        let expectedRegions = [
+            FlowMapRegionTraffic(region: local.region, bytes: local.bytes, sessions: local.sessionCount),
+            FlowMapRegionTraffic(region: remote.region, bytes: remote.bytes, sessions: remote.sessionCount),
+        ].sorted { ($0.bytes, $0.region.rawValue) < ($1.bytes, $1.region.rawValue) }
+        let projection = FlowMapProjection(sessions: sessions, isCapturing: false)
+
+        #expect(projection.visibleSessionCount == sessions.count)
+        #expect(projection.endpoints == expectedEndpoints)
+        #expect(projection.regionTraffic == expectedRegions)
+        #expect(projection.routes == expectedRegions.filter { $0.region != .local && $0.region != .unknown })
+        #expect(projection.omittedSessionCount == 2)
+        #expect(projection.unmappableCount == 1)
+        #expect(projection.maxBytes == remote.bytes)
+        #expect(projection.revealSignature == "saved|93.184.16.34")
+        #expect(projection.regionSignature == remote.region.rawValue)
+        #expect(FlowMapProjection(sessions: sessions, isCapturing: true).revealSignature == "live|93.184.16.34")
+    }
+
     // MARK: Private
 
     private func session(
