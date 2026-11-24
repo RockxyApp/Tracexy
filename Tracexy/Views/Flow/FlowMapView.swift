@@ -552,7 +552,7 @@ private struct FlowMapCanvas: View {
         let emptyTitle = projection.visibleSessionCount == 0 && hasCapturedSessions
             ? "No Matching Sessions"
             : "No Mappable Addresses"
-        VStack(spacing: Theme.Metrics.spacingM) {
+        return VStack(spacing: Theme.Metrics.spacingM) {
             Spacer()
             Image(systemName: "globe.americas")
                 .font(.system(size: Theme.Icon.hero))
