@@ -33,6 +33,47 @@ struct AppPolicyDefaultsTests {
         struct Bare: AppPolicy {}
         #expect(Bare().maxSessionFilterRules == 12)
     }
+
+    /// Every published Community number, stated here so none can be changed in
+    /// silence.
+    ///
+    /// The licensed build's unlicensed state does not restate these numbers: it
+    /// reads them from ``DefaultAppPolicy`` so the two can never disagree. That
+    /// is the right dependency, but it means a quiet edit to a number here
+    /// would raise or lower what an unlicensed licensed build allows, with no
+    /// test anywhere failing. Only ``maxProjects`` and ``maxSessionFilterRules``
+    /// were pinned before; the other six were free to drift.
+    @Test("Every shipping limit is the published Community number")
+    func everyDefaultIsPinned() {
+        let policy = DefaultAppPolicy()
+        #expect(policy.maxProjects == 3)
+        #expect(policy.maxWorkspaceTabs == 8)
+        #expect(policy.maxFocusSets == 5)
+        #expect(policy.maxPinnedHosts == 5)
+        #expect(policy.maxSessionFilterRules == 12)
+        #expect(policy.maxFilterButtons == 10)
+        #expect(policy.maxExpressionMacros == 10)
+        #expect(policy.maxGeoIPDatabases == 1)
+    }
+
+    /// `DefaultAppPolicy` states every value itself rather than inheriting from
+    /// the protocol extension. The two must agree, or which number applies would
+    /// depend on whether a member happened to be written out — the drift that
+    /// once silently gave a policy the Community cap of three Projects.
+    @Test("The stated baseline and the protocol extension agree on every limit")
+    func baselineMatchesExtension() {
+        struct Bare: AppPolicy {}
+        let stated = DefaultAppPolicy()
+        let inherited = Bare()
+        #expect(stated.maxProjects == inherited.maxProjects)
+        #expect(stated.maxWorkspaceTabs == inherited.maxWorkspaceTabs)
+        #expect(stated.maxFocusSets == inherited.maxFocusSets)
+        #expect(stated.maxPinnedHosts == inherited.maxPinnedHosts)
+        #expect(stated.maxSessionFilterRules == inherited.maxSessionFilterRules)
+        #expect(stated.maxFilterButtons == inherited.maxFilterButtons)
+        #expect(stated.maxExpressionMacros == inherited.maxExpressionMacros)
+        #expect(stated.maxGeoIPDatabases == inherited.maxGeoIPDatabases)
+    }
 }
 
 // MARK: - FocusPolicyGateTests
